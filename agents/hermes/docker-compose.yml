@@ -1,0 +1,27 @@
+services:
+  hermes:
+    image: nousresearch/hermes-agent:latest
+    container_name: hermes
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7999:7999"
+    volumes:
+      - ./config:/root/.hermes
+      - ./workspace:/workspace
+      - /opt/scarlix:/opt/scarlix:ro
+    environment:
+      - HERMES_HOME=/root/.hermes
+      - OPENAI_API_BASE=http://litellm:4000/v1
+      - OPENAI_API_KEY=${LITELLM_MASTER_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_ZMOR_CHAT_ID}
+      - TZ=Europe/Bratislava
+    networks: [scarlix_ai, scarlix_net]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7999/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+networks:
+  scarlix_ai: { external: true }
+  scarlix_net: { external: true }

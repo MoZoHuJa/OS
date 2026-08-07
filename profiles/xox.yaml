@@ -1,0 +1,15 @@
+name: xox
+display_name: "XOX (dcera)"
+role: family
+permissions: [read_photos_only, kids_content, ai_chat]
+scarlix_mode:
+  default: ai
+  allowed: [ai]
+  can_switch: false
+hud_theme: creative
+token_budget:
+  monthly: 10000
+  model: qwen3.6:14b-ollama
+content_filter:
+  enabled: true
+  blocklist: [violence, adult, drugs, gambling]

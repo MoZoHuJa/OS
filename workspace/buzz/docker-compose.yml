@@ -1,0 +1,56 @@
+services:
+  buzz-relay:
+    image: ghcr.io/block/buzz-relay:latest
+    container_name: buzz-relay
+    restart: unless-stopped
+    ports:
+      - "100.64.0.1:3000:3000"
+    volumes:
+      - ./data:/data
+    environment:
+      - BUZZ_RELAY_URL=ws://100.64.0.1:3000
+      - BUZZ_DOMAIN=scarlix.local
+      - POSTGRES_HOST=buzz-postgres
+      - POSTGRES_PASSWORD=${BUZZ_POSTGRES_PASSWORD}
+      - REDIS_URL=redis://buzz-redis:6379
+      - MINIO_ENDPOINT=buzz-minio:9000
+    depends_on: [buzz-postgres, buzz-redis, buzz-minio]
+    networks: [scarlix_net]
+
+  buzz-postgres:
+    image: postgres:16-alpine
+    container_name: buzz-postgres
+    restart: unless-stopped
+    volumes:
+      - ./postgres/data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=${BUZZ_POSTGRES_PASSWORD}
+      - POSTGRES_DB=buzz
+    networks: [scarlix_net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  buzz-redis:
+    image: redis:7-alpine
+    container_name: buzz-redis
+    restart: unless-stopped
+    networks: [scarlix_net]
+
+  buzz-minio:
+    image: minio/minio:latest
+    container_name: buzz-minio
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - ./minio/data:/data
+    environment:
+      - MINIO_ROOT_USER=scarlix
+      - MINIO_ROOT_PASSWORD=${BUZZ_MINIO_PASSWORD}
+    command: server /data
+    networks: [scarlix_net]
+networks:
+  scarlix_net: { external: true }

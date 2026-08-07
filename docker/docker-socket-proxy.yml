@@ -1,0 +1,19 @@
+services:
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    container_name: docker-socket-proxy
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - CONTAINERS=1
+      - INFO=1
+      - VERSION=1
+      - EVENTS=1
+      - EXEC=0
+      - POST=0
+      - AUTH=0
+      - BUILD=0
+    networks: [scarlix_net]
+networks:
+  scarlix_net: { external: true }

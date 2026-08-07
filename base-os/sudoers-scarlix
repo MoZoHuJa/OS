@@ -1,0 +1,3 @@
+scarlix ALL=(ALL) NOPASSWD: /usr/local/bin/scarlix-mode,/usr/bin/docker, \
+  /usr/bin/systemctl,/usr/bin/journalctl,/usr/sbin/ufw,/usr/bin/apt
+scarlix ALL=(ALL) PASSWD: ALL

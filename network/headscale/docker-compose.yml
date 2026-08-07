@@ -1,0 +1,16 @@
+services:
+  headscale:
+    image: headscale/headscale:0.25.0
+    container_name: headscale
+    restart: unless-stopped
+    ports:
+      - "100.64.0.1:8080:8080"
+      - "100.64.0.1:50443:50443/udp"
+    volumes:
+      - ./config:/etc/headscale
+      - ./data:/var/lib/headscale
+    environment:
+      - HEADSCALE_LISTEN_ADDR=0.0.0.0:8080
+    networks: [scarlix_net]
+networks:
+  scarlix_net: { external: true }

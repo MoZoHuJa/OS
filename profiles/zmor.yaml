@@ -1,0 +1,10 @@
+name: zmor
+display_name: "Zmor (admin)"
+role: admin
+permissions: [all]
+scarlix_mode:
+  default: ai
+  allowed: [ai, game, turbo, offline]
+  can_switch: true
+hud_theme: iron-man
+token_budget: unlimited

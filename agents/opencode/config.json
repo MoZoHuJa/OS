@@ -1,0 +1,18 @@
+{
+  "provider": "openai",
+  "model": "qwen3.6:14b",
+  "openai": {
+    "baseURL": "http://100.64.0.1:4000/v1",
+    "apiKey": "sk-scarlix-master-key-change-me"
+  },
+  "mcp": {
+    "scarlihq": {
+      "url": "http://100.64.0.1:8091/mcp",
+      "transport": "http"
+    }
+  },
+  "agents": {
+    "build": { "model": "qwen3.6:14b" },
+    "plan": { "model": "qwen3.6:14b" }
+  }
+}

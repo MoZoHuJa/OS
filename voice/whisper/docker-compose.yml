@@ -1,0 +1,25 @@
+services:
+  whisper-sk:
+    image: fedirz/faster-whisper-server:0.10.0
+    container_name: whisper-sk
+    restart: unless-stopped
+    ports:
+      - "8002:8000"
+    volumes:
+      - ./data:/root/.cache
+    environment:
+      - WHISPER__MODEL=Systran/faster-whisper-large-v3
+      - WHISPER__INFERENCE_DEVICE=cuda
+      - WHISPER__COMPUTE_TYPE=int8_float16
+      - WHISPER__LANGUAGE=sk
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu]
+    networks: [scarlix_ai, scarlix_net]
+networks:
+  scarlix_ai: { external: true }
+  scarlix_net: { external: true }

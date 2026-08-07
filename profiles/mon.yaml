@@ -1,0 +1,12 @@
+name: mon
+display_name: "Mon (manzelka)"
+role: family
+permissions: [read_files, read_photos, write_files, voice_assistant, ai_chat]
+scarlix_mode:
+  default: ai
+  allowed: [ai, game]
+  can_switch: true
+hud_theme: elegant
+token_budget:
+  monthly: 50000
+  model: qwen3.6:14b-ollama

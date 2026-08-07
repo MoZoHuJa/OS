@@ -1,0 +1,37 @@
+services:
+  victoria-metrics:
+    image: victoriametrics/victoria-metrics:v1.108.0
+    container_name: victoria-metrics
+    restart: unless-stopped
+    ports:
+      - "100.64.0.1:8428:8428"
+    volumes:
+      - ./victoria:/storage
+    command: --storageDataPath=/storage --retentionPeriod=90d
+    networks: [scarlix_net]
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "100.64.0.1:3000:3000"
+    volumes:
+      - ./grafana:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_SERVER_ROOT_URL=https://monitoring.scarlix.example.com
+    networks: [scarlix_net]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    restart: unless-stopped
+    ports:
+      - "100.64.0.1:4317:4317"
+      - "100.64.0.1:4318:4318"
+    volumes:
+      - ./otel/config.yaml:/etc/otelcol/config.yaml
+    networks: [scarlix_net]
+networks:
+  scarlix_net: { external: true }

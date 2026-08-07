@@ -1,0 +1,31 @@
+provider: custom
+model: qwen3.6:14b
+custom_provider:
+  base_url: http://litellm:4000/v1
+  api_key: ${LITELLM_MASTER_KEY}
+
+memory:
+  enabled: true
+  nudge_interval: 300
+
+skills:
+  enabled: true
+  auto_create: true
+
+cron:
+  enabled: true
+
+gateway:
+  telegram:
+    enabled: true
+    bot_token: ${TELEGRAM_BOT_TOKEN}
+    allowed_users:
+      - ${TELEGRAM_ZMOR_CHAT_ID}
+  discord:
+    enabled: false
+
+mcp:
+  servers:
+    scarlihq:
+      url: http://scarlihq:8091/mcp
+      transport: http

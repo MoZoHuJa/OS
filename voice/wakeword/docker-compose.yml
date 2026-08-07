@@ -1,0 +1,14 @@
+services:
+  openwakeword:
+    image: rhasspy/wyoming-openwakeword:1.10.0
+    container_name: openwakeword
+    restart: unless-stopped
+    ports:
+      - "10400:10400"
+    command: |
+      --uri 'tcp://0.0.0.0:10400'
+      --wake-word hey_jarvis
+      --threshold 0.5
+    networks: [scarlix_net]
+networks:
+  scarlix_net: { external: true }

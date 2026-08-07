@@ -1,0 +1,23 @@
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm
+    restart: unless-stopped
+    ports:
+      - "100.64.0.1:4000:4000"
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./data:/app/data
+    command: --config /app/config.yaml --port 4000
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+    networks: [scarlix_ai, scarlix_net]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+networks:
+  scarlix_ai: { external: true }
+  scarlix_net: { external: true }

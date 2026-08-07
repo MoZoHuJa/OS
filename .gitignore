@@ -1,0 +1,56 @@
+# SCARLIX OS v12 .gitignore
+
+# Secrets — NEVER commit
+.env
+*.env
+secrets.env
+secrets/
+*.key
+*.pem
+
+# Docker data
+**/data/
+**/postgres/data/
+**/redis/data/
+**/minio/data/
+**/gitea/data/
+**/nextcloud/data/
+**/coolify/data/
+**/grafana/
+**/victoria/
+
+# AI models
+/models/
+*.gguf
+*.safetensors
+*.bin
+
+# Build artifacts
+dist/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+scarlihq/scarlihq
+scarlihq/scarlihq-linux-*
+
+# Node
+node_modules/
+**/node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/

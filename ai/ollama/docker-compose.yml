@@ -1,0 +1,32 @@
+services:
+  ollama-agent:
+    image: ollama/ollama:0.5.4
+    container_name: ollama-agent
+    restart: unless-stopped
+    ports:
+      - "11435:11434"
+    volumes:
+      - ./data:/root/.ollama
+      - /models:/models:ro
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_KEEP_ALIVE=-1
+      - OLLAMA_FLASH_ATTENTION=1
+      - OLLAMA_KV_CACHE_TYPE=q4_0
+      - TZ=Europe/Bratislava
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu]
+    networks: [scarlix_ai]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+networks:
+  scarlix_ai: { external: true }

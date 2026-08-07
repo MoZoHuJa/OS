@@ -1,0 +1,21 @@
+services:
+  scarlihq:
+    build: .
+    image: localhost/scarlihq:v12
+    container_name: scarlihq
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+      - "8091:8091"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/scarlix:/var/lib/scarlix
+      - /etc/scarlix:/etc/scarlix:ro
+      - /opt/scarlix:/opt/scarlix:ro
+    environment:
+      - SCARLIHQ_PORT=8090
+      - TZ=Europe/Bratislava
+    networks: [scarlix_net, scarlix_ai]
+networks:
+  scarlix_net: { external: true }
+  scarlix_ai: { external: true }

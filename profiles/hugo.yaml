@@ -1,0 +1,12 @@
+name: hugo
+display_name: "Hugo (syn)"
+role: family
+permissions: [read_files, read_photos, play_games, coding_tutor, ai_chat]
+scarlix_mode:
+  default: game
+  allowed: [game, ai]
+  can_switch: true
+hud_theme: gaming
+token_budget:
+  monthly: 100000
+  model: qwen3.6:14b-ollama

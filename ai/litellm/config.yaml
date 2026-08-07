@@ -1,0 +1,26 @@
+model_list:
+  - model_name: qwen3.6:14b
+    litellm_params:
+      model: openai/qwen3.6:14b
+      api_base: http://sglang:30000/v1
+      api_key: not-needed
+  - model_name: qwen3.6:14b-ollama
+    litellm_params:
+      model: ollama/qwen3.6:14b
+      api_base: http://ollama-agent:11434
+  - model_name: qwen3.6:14b-cpu
+    litellm_params:
+      model: openai/qwen3.6:14b
+      api_base: http://llamacpp:8080/v1
+      api_key: not-needed
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  fallbacks:
+    - qwen3.6:14b: ["qwen3.6:14b-ollama"]
+    - qwen3.6:14b-ollama: ["qwen3.6:14b-cpu"]
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: sqlite:///litellm.db

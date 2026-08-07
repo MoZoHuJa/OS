@@ -1,0 +1,15 @@
+services:
+  crowdsec:
+    image: crowdsecurity/crowdsec:v1.4.0
+    container_name: crowdsec
+    restart: unless-stopped
+    volumes:
+      - ./config:/etc/crowdsec
+      - ./data:/var/lib/crowdsec/data
+      - /var/log/caddy:/var/log/caddy:ro
+      - /var/log/authelia:/var/log/authelia:ro
+    environment:
+      - COLLECTIONS=crowdsecurity/caddy crowdsecurity/http-cve crowdsecurity/sshd
+    networks: [scarlix_net]
+networks:
+  scarlix_net: { external: true }

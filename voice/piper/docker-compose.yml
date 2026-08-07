@@ -1,0 +1,13 @@
+services:
+  piper-sk:
+    image: rhasspy/wyoming-piper:1.5.0
+    container_name: piper-sk
+    restart: unless-stopped
+    ports:
+      - "8003:10200"
+    volumes:
+      - ./models:/voices:ro
+    command: --voice sk_SK-lili-medium
+    networks: [scarlix_net]
+networks:
+  scarlix_net: { external: true }

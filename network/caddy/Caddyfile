@@ -1,0 +1,54 @@
+{
+  email admin@scarlix.example.com
+}
+
+(authelia) {
+  forward_auth authelia:9091 {
+    uri /api/authz/forward-auth
+    copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
+  }
+}
+
+scarlix.example.com {
+  import authelia
+  reverse_proxy scarlihq:8090
+}
+
+buzz.scarlix.example.com {
+  import authelia
+  reverse_proxy buzz-relay:3000
+}
+
+hermes.scarlix.example.com {
+  import authelia
+  reverse_proxy hermes:7999
+}
+
+git.scarlix.example.com {
+  import authelia
+  reverse_proxy hp-agent:3000
+}
+
+coolify.scarlix.example.com {
+  import authelia
+  reverse_proxy hp-agent:8000
+}
+
+files.scarlix.example.com {
+  import authelia
+  reverse_proxy hp-agent:8080
+}
+
+photos.scarlix.example.com {
+  import authelia
+  reverse_proxy hp-agent:2342
+}
+
+auth.scarlix.example.com {
+  reverse_proxy authelia:9091
+}
+
+monitoring.scarlix.example.com {
+  import authelia
+  reverse_proxy grafana:3000
+}
