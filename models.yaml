@@ -1,0 +1,65 @@
+# SCARLIX OS v15 — Model-Agnostic Configuration
+# Edit this file to use ANY HuggingFace model.
+# Then run: bash /opt/scarlix/scripts/download-models.sh
+
+# === SGLang (safetensors formát, GPU 0) ===
+sglang:
+  model_path: "/models/Qwen3-14B-Instruct-AWQ"
+  # Alternatívy (odkomentuj jednu):
+  # model_path: "/models/Meta-Llama-3.1-8B-Instruct"
+  # model_path: "/models/mistralai/Mistral-7B-Instruct-v0.3"
+  # model_path: "/models/google/gemma-2-9b-it"
+  # model_path: "/models/microsoft/Phi-3-medium-128k-instruct"
+  # model_path: "/models/deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct"
+  quantization: "awq"
+  context_length: 32768
+  mem_fraction: 0.85
+  flashinfer: true
+
+# === Ollama Main (GGUF, GPU 0) ===
+ollama_main:
+  model: "qwen3.6:14b"
+  # Alternatívy:
+  # model: "llama3.1:8b"
+  # model: "mistral:7b"
+  # model: "gemma2:9b"
+  # model: "phi3:14b"
+  keep_alive: "15m"
+  num_parallel: 4
+
+# === Ollama Agent (GGUF, GPU 1) ===
+ollama_agent:
+  model: "qwen3.6:14b"
+  # Alternatívy:
+  # model: "llama3.1:8b"
+  # model: "qwen2.5-coder:14b"
+  # model: "mistral-nemo:12b"
+  keep_alive: "-1"
+  num_parallel: 2
+
+# === llama.cpp (CPU fallback, GGUF) ===
+llamacpp:
+  model_file: "/models/qwen3.6-14b-instruct-q4_k_m.gguf"
+  context_size: 8192
+  threads: 16
+
+# === Needle2 Router (GPU 1, 26M params) ===
+needle:
+  model_path: "/models/needle-router-v1"
+
+# === ComfyUI (creative mode, GPU 0) ===
+comfyui:
+  checkpoint: "flux1-dev-fp8.safetensors"
+
+# === Whisper (STT, GPU 1) ===
+whisper:
+  model: "Systran/faster-whisper-large-v3"
+  language: "sk"
+
+# === Piper (TTS, CPU) ===
+piper:
+  voice: "sk_SK-lili-medium"
+
+# === Embeddings ===
+embeddings:
+  model: "nomic-embed-text"

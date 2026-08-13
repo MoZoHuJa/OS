@@ -1,4 +1,4 @@
-# AGENTS.md — SCARLIX OS v12
+# AGENTS.md — SCARLIX OS v15
 
 ## Authority
 - This file has HIGHEST priority.
@@ -40,6 +40,7 @@
 - Check scarlix-mode before inference.
 - If GPU > 90% utilized, defer and suggest turbo mode.
 - Prefer SGLang (primary) over Ollama (fallback).
+- Model-Agnostic: check /etc/scarlix/models.yaml for current model config.
 
 ## Privacy
 - NO telemetry.

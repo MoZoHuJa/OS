@@ -1,0 +1,20 @@
+services:
+  needle-router:
+    image: ghcr.io/cactus-compute/needle:latest
+    container_name: needle-router
+    restart: unless-stopped
+    ports: ["127.0.0.1:11440:11440"]
+    volumes:
+      - ./data:/root/.needle
+      - /models:/models:ro
+    environment:
+      - NEEDLE_MODEL_PATH=/models/needle-router-v1
+      - NEEDLE_BACKENDS=sglang:30000,ollama-main:11434,ollama-agent:11435,llamacpp:8080
+      - NEEDLE_ROUTING_STRATEGY=latency-aware
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, device_ids: ['1'], capabilities: [gpu]}]
+    networks: [scarlix_ai]
+networks:
+  scarlix_ai: {external: true}

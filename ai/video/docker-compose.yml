@@ -1,0 +1,19 @@
+services:
+  video-api:
+    build: .
+    container_name: video-api
+    restart: unless-stopped
+    ports: ["7861:7861"]
+    volumes:
+      - ./data/models:/app/models
+      - ./data/output:/app/output
+    environment: [NVIDIA_VISIBLE_DEVICES=0]
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, device_ids: ['0'], capabilities: [gpu]}]
+    networks: [scarlix_ai, scarlix_net]
+    profiles: [creative]
+networks:
+  scarlix_ai: {external: true}
+  scarlix_net: {external: true}

@@ -1,0 +1,14 @@
+services:
+  media-tools:
+    build: .
+    container_name: media-tools
+    restart: unless-stopped
+    ports: ["8200:8200"]
+    volumes:
+      - ./data/input:/data/input
+      - ./data/output:/data/output
+      - ./data/templates:/data/templates
+    networks: [scarlix_net]
+    deploy: {resources: {limits: {memory: 4G, cpus: '2'}}}
+networks:
+  scarlix_net: {external: true}

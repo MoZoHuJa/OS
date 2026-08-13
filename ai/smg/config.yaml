@@ -1,0 +1,31 @@
+upstreams:
+  - name: sglang-main
+    url: http://sglang:30000/v1
+    type: openai
+    weight: 10
+    kv_cache_aware: true
+  - name: ollama-agent
+    url: http://ollama-agent:11434/v1
+    type: openai
+    weight: 5
+  - name: ollama-main
+    url: http://ollama-main:11434/v1
+    type: openai
+    weight: 3
+  - name: llamacpp-cpu
+    url: http://llamacpp:8080/v1
+    type: openai
+    weight: 1
+routing:
+  strategy: latency-aware
+  fallback_chain: [sglang-main, ollama-agent, ollama-main, llamacpp-cpu]
+  retry_count: 2
+  timeout_ms: 30000
+auth:
+  master_key: "${SMG_MASTER_KEY}"
+rate_limiting:
+  profiles:
+    zmor: {rpm: 100, tpm: 1000000}
+    hugo: {rpm: 20, tpm: 100000}
+    xox: {rpm: 10, tpm: 10000}
+    mon: {rpm: 30, tpm: 50000}

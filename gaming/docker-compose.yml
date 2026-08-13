@@ -1,0 +1,54 @@
+services:
+  sunshine:
+    image: lizardbyte/sunshine:latest
+    container_name: sunshine
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./sunshine/config:/config
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /dev/input:/dev/input:ro
+    devices: [/dev/dri, /dev/uinput, /dev/nvidia0, /dev/nvidiactl, /dev/nvidia-modeset, /dev/nvidia-uvm]
+    environment: [DISPLAY=:0, TZ=Europe/Bratislava]
+    privileged: true
+    profiles: [gaming]
+
+  steam-headless:
+    image: freshgum-baking/steam-headless:latest
+    container_name: steam-headless
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./steam:/home/default/steam
+      - /mnt/games/steam-games:/home/default/.steam/steam/steamapps/common
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    environment: [DISPLAY=:0, USER_PASSWORD=${STEAM_PASSWORD}, TZ=Europe/Bratislava]
+    privileged: true
+    profiles: [gaming]
+
+  jellyfin:
+    image: jellyfin/jellyfin:10.10
+    container_name: jellyfin
+    restart: unless-stopped
+    ports: ["8096:8096"]
+    volumes:
+      - ./jellyfin/config:/config
+      - /mnt/files/media:/media:ro
+    environment: [TZ=Europe/Bratislava]
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, device_ids: ['0'], capabilities: [gpu]}]
+    networks: [scarlix_net]
+
+  minecraft:
+    image: ghcr.io/pumpkin-mc/pumpkin:latest
+    container_name: minecraft
+    restart: unless-stopped
+    ports: ["25565:25565"]
+    volumes: ["./minecraft/data:/data"]
+    environment: [MAX_MEMORY=4G, TZ=Europe/Bratislava]
+    networks: [scarlix_net]
+
+networks:
+  scarlix_net: {external: true}

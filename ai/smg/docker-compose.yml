@@ -1,0 +1,22 @@
+services:
+  smg:
+    image: ghcr.io/lightseekorg/smg:latest
+    container_name: smg
+    restart: unless-stopped
+    ports: ["4000:4000"]
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - ./data:/data
+    environment:
+      - SMG_CONFIG=/config/config.yaml
+      - SMG_PORT=4000
+      - TZ=Europe/Bratislava
+    networks: [scarlix_ai, scarlix_net]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+networks:
+  scarlix_ai: {external: true}
+  scarlix_net: {external: true}
