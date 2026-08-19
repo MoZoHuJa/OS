@@ -1,11 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "=== SCARLIX OS v16.3 — First Boot ==="
+
+# SCARLIX OS v16.4 — First Boot Setup
+# Logs every step to /var/log/scarlix/first-boot.log with SUCCESS/FAILED
+# Continues on error (does not stop)
+
+LOG_DIR="/var/log/scarlix"
+LOG_FILE="$LOG_DIR/first-boot.log"
+SUCCESS_COUNT=0
+FAIL_COUNT=0
+SERVICES_STARTED=""
+
+mkdir -p "$LOG_DIR"
+
+log() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+log_success() {
+  log "  ✓ SUCCESS: $1"
+  SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+  SERVICES_STARTED="$SERVICES_STARTED\n  ✓ $1"
+}
+
+log_failed() {
+  log "  ✗ FAILED: $1"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  SERVICES_STARTED="$SERVICES_STARTED\n  ✗ $1"
+}
+
+log "=== SCARLIX OS v16.4 — First Boot ==="
 
 # Check if already installed
-[[ -f /opt/scarlix/.installed ]] && { echo "Already installed."; exit 0; }
+if [ -f /opt/scarlix/.installed ]; then
+  log "Already installed. Skipping."
+  exit 0
+fi
 
-# Detect PC type if not set
+# Detect PC type
 PC_TYPE=$(cat /etc/scarlix/pc_type 2>/dev/null || echo "")
 if [ -z "$PC_TYPE" ]; then
   GPU_COUNT=$(lspci | grep -ic nvidia 2>/dev/null || echo 0)
@@ -16,84 +48,133 @@ if [ -z "$PC_TYPE" ]; then
   fi
   echo "$PC_TYPE" | tee /etc/scarlix/pc_type >/dev/null
 fi
-
-echo "PC Type: $PC_TYPE"
+log "PC Type: $PC_TYPE"
 
 # Generate .env if missing
 if [ ! -f /etc/scarlix/.env ]; then
-  echo "Generating .env..."
-  /etc/systemd/system/generate-env.sh
+  log "Generating .env..."
+  /etc/systemd/system/generate-env.sh >> "$LOG_FILE" 2>&1 && log_success ".env generation" || log_failed ".env generation"
+else
+  log ".env already exists"
 fi
 
 # Create directories
 mkdir -p /opt/scarlix /models /var/lib/scarlix /etc/scarlix/{profiles,secrets}
 mkdir -p /mnt/{files,games,photos,backup/restic}
 chown -R scarlix:scarlix /opt/scarlix /models /var/lib/scarlix /etc/scarlix /mnt
+log "Directories created"
 
-# FIX 2-b: Install NVIDIA + CUDA post-install (only on Main PC)
+# FIX 5-a: NVIDIA + CUDA install with logging (only Main PC)
 if [ "$PC_TYPE" == "main" ]; then
-  echo "Installing NVIDIA driver + CUDA (post-install)..."
-  sudo pacman -S --noconfirm --needed nvidia-dkms nvidia-utils nvidia-settings lib32-nvidia-utils
-  sudo pacman -S --noconfirm --needed cuda cudnn
-  sudo mkinitcpio -P
-  echo "NVIDIA + CUDA installed."
-  
-  # NVIDIA Container Toolkit (from AUR)
-  echo "Installing NVIDIA Container Toolkit..."
-  yay -S --noconfirm nvidia-container-toolkit 2>/dev/null || true
-  sudo nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
+  log "Installing NVIDIA driver..."
+  if sudo pacman -S --noconfirm --needed nvidia-dkms nvidia-utils nvidia-settings lib32-nvidia-utils >> "$LOG_FILE" 2>&1; then
+    log_success "NVIDIA driver install"
+  else
+    log_failed "NVIDIA driver install"
+  fi
+
+  log "Installing CUDA..."
+  if sudo pacman -S --noconfirm --needed cuda cudnn >> "$LOG_FILE" 2>&1; then
+    log_success "CUDA install"
+  else
+    log_failed "CUDA install"
+  fi
+
+  log "Rebuilding initramfs..."
+  if sudo mkinitcpio -P >> "$LOG_FILE" 2>&1; then
+    log_success "initramfs rebuild"
+  else
+    log_failed "initramfs rebuild"
+  fi
+
+  log "Installing NVIDIA Container Toolkit..."
+  if yay -S --noconfirm nvidia-container-toolkit >> "$LOG_FILE" 2>&1; then
+    log_success "NVIDIA Container Toolkit"
+    sudo nvidia-ctk runtime configure --runtime=docker >> "$LOG_FILE" 2>&1 && log_success "Docker NVIDIA runtime" || log_failed "Docker NVIDIA runtime"
+  else
+    log_failed "NVIDIA Container Toolkit"
+  fi
 fi
 
 # Start Docker
-systemctl start docker
-sleep 3
+log "Starting Docker..."
+if systemctl start docker >> "$LOG_FILE" 2>&1; then
+  log_success "Docker start"
+  sleep 3
+else
+  log_failed "Docker start"
+fi
 
-# FIX 5-c: Absolute paths (no cd pattern), UFW already in install-garuda.sh (no duplication)
+# Load environment
+set -a; source /etc/scarlix/.env; set +a
+
+# FIX 5-a + FIX 6-a: Start services with logging — absolute paths, continue on error
+start_service() {
+  local name="$1"
+  local compose_file="$2"
+  log "Starting: $name"
+  if docker compose -f "$compose_file" up -d >> "$LOG_FILE" 2>&1; then
+    log_success "$name"
+  else
+    log_failed "$name"
+  fi
+}
+
 if [ "$PC_TYPE" == "main" ]; then
-  echo "Starting Main PC services..."
-  set -a; source /etc/scarlix/.env; set +a
+  log "--- Starting Main PC services ---"
   
-  # AI Stack — absolute paths
-  docker compose -f /opt/scarlix-src/ai/smg/docker-compose.yml up -d 2>/dev/null || true
-  docker compose -f /opt/scarlix-src/ai/sglang/docker-compose.yml up -d 2>/dev/null || true
-  docker compose -f /opt/scarlix-src/ai/ollama/docker-compose-main.yml up -d 2>/dev/null || true
-  docker compose -f /opt/scarlix-src/ai/ollama/docker-compose-agent.yml up -d 2>/dev/null || true
-  docker compose -f /opt/scarlix-src/ai/needle/docker-compose.yml up -d 2>/dev/null || true
-  docker compose -f /opt/scarlix-src/ai/llamacpp/docker-compose.yml up -d 2>/dev/null || true
+  start_service "smg"           "/opt/scarlix-src/ai/smg/docker-compose.yml"
+  start_service "SGLang"        "/opt/scarlix-src/ai/sglang/docker-compose.yml"
+  start_service "Ollama Main"   "/opt/scarlix-src/ai/ollama/docker-compose-main.yml"
+  start_service "Ollama Agent"  "/opt/scarlix-src/ai/ollama/docker-compose-agent.yml"
+  start_service "Needle2"       "/opt/scarlix-src/ai/needle/docker-compose.yml"
+  start_service "llama.cpp"     "/opt/scarlix-src/ai/llamacpp/docker-compose.yml"
+  start_service "Network/Sec"   "/opt/scarlix-src/network/docker-compose.yml"
+  start_service "Voice"         "/opt/scarlix-src/voice/docker-compose.yml"
+  start_service "Buzz"          "/opt/scarlix-src/workspace/buzz/docker-compose.yml"
+  start_service "Hermes"        "/opt/scarlix-src/agents/hermes/docker-compose.yml"
+  start_service "ScarliHQ"      "/opt/scarlix-src/scarlihq/docker-compose.yml"
+  start_service "Monitoring"    "/opt/scarlix-src/monitoring/docker-compose.yml"
   
-  # Network & Security
-  docker compose -f /opt/scarlix-src/network/docker-compose.yml up -d 2>/dev/null || true
-  
-  # Voice pipeline
-  docker compose -f /opt/scarlix-src/voice/docker-compose.yml up -d 2>/dev/null || true
-  
-  # Workspace & Agents
-  docker compose -f /opt/scarlix-src/workspace/buzz/docker-compose.yml up -d 2>/dev/null || true
-  docker compose -f /opt/scarlix-src/agents/hermes/docker-compose.yml up -d 2>/dev/null || true
-  
-  # ScarliHQ
-  docker compose -f /opt/scarlix-src/scarlihq/docker-compose.yml up -d 2>/dev/null || true
-  
-  # Monitoring
-  docker compose -f /opt/scarlix-src/monitoring/docker-compose.yml up -d 2>/dev/null || true
-  
-  # Gaming (always-on Docker services only — Steam/Lutris are native)
-  docker compose -f /opt/scarlix-src/gaming/docker-compose.yml up -d jellyfin minecraft 2>/dev/null || true
+  # Gaming (Docker only — Steam/Lutris are native)
+  log "Starting Jellyfin + Minecraft..."
+  if docker compose -f /opt/scarlix-src/gaming/docker-compose.yml up -d jellyfin minecraft >> "$LOG_FILE" 2>&1; then
+    log_success "Jellyfin + Minecraft"
+  else
+    log_failed "Jellyfin + Minecraft"
+  fi
   
   # Set default mode
   echo "ai" | tee /var/lib/scarlix/current-mode >/dev/null
+  log "Default mode: ai"
   
   # Download models in background
-  echo "Starting model download in background..."
-  nohup /etc/systemd/system/download-models.sh >/dev/null 2>&1 &
+  log "Starting model download in background..."
+  nohup /etc/systemd/system/download-models.sh >> "$LOG_FILE" 2>&1 &
+  log_success "Model download (background)"
 else
-  echo "Starting HP Agent services..."
-  set -a; source /etc/scarlix/.env; set +a
+  log "--- Starting HP Agent services ---"
   
-  # HP Agent — absolute paths
-  docker compose -f /opt/scarlix-src/coding-pipeline/docker-compose.yml up -d 2>/dev/null || true
-  docker compose -f /opt/scarlix-src/media-tools/docker-compose.yml up -d 2>/dev/null || true
+  start_service "Coding Pipeline" "/opt/scarlix-src/coding-pipeline/docker-compose.yml"
+  start_service "Media Tools"     "/opt/scarlix-src/media-tools/docker-compose.yml"
 fi
 
-echo "=== First boot complete ==="
-echo "Dashboard: http://$(hostname -I | awk '{print $1}'):8090"
+# FIX 6-a: Summary
+log ""
+log "========================================"
+log "  SCARLIX OS v16.4 — First Boot Summary"
+log "========================================"
+log "  SUCCESS: $SUCCESS_COUNT"
+log "  FAILED:  $FAIL_COUNT"
+log ""
+log "  Services:"
+echo -e "$SERVICES_STARTED" | tee -a "$LOG_FILE"
+log ""
+log "  Dashboard: http://$(hostname -I | awk '{print $1}'):8090"
+log "  Full log:  $LOG_FILE"
+log "========================================"
+
+# Mark as installed
+touch /opt/scarlix/.installed
+
+exit 0

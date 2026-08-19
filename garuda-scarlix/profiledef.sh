@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2154
-# SCARLIX OS v16.3 — archiso profile definition
+# SCARLIX OS v16.4 — archiso profile definition
 
 iso_name="scarlix-os"
-iso_label="SCARLIX_V163"
+iso_label="SCARLIX_V164"
 iso_publisher="MoZoHuJa"
-iso_application="SCARLIX OS v16.3 — Garuda Edition"
-iso_version="16.3.0"
+iso_application="SCARLIX OS v16.4 — Garuda Edition"
+iso_version="16.4.0"
 install_dir="scarlix"
 buildmodes=('bios' 'uefi')
 bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito' 'uefi-x64.systemd-boot.esp' 'uefi-x64.systemd-boot.eltorito')
