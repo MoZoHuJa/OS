@@ -78,7 +78,7 @@ case "$MODE" in
     echo "tv" | tee "$STATE_FILE" >/dev/null
     ;;
   status)
-    echo "=== SCARLIX OS v16.2 (Garuda) Status ==="
+    echo "=== SCARLIX OS v16.3 (Garuda) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Base: $(cat /etc/garuda-release 2>/dev/null || echo 'Garuda Linux')"
     echo "Kernel: $(uname -r)"

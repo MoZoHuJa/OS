@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-TITLE="SCARLIX OS v16.2 Setup"
+TITLE="SCARLIX OS v16.3 Setup"
 
 whiptail --title "$TITLE" --msgbox \
-  "Vitaj v SCARLIX OS v16.2 (Garuda Edition)!\n\n\
+  "Vitaj v SCARLIX OS v16.3 (Garuda Edition)!\n\n\
 Base: Garuda Linux (Arch, Zen kernel, BTRFS)\n\n\
 Stlac Enter pre pokracovanie." 20 70
 
@@ -42,16 +42,17 @@ if [ -d /opt/scarlix-src ]; then
   sudo cp -r /opt/scarlix-src/* /opt/scarlix/ 2>/dev/null || true
 fi
 
-# Enable first-boot service
+# FIX 1-c: Enable first-boot service HERE (not in profiledef or Calamares)
 sudo systemctl enable scarlix-first-boot.service
 
 # Confirm
 whiptail --title "$TITLE" --yesno \
-  "PC Typ: $PC_TYPE\nIP: $IP\n\nSpustit instalaciu po reboote?" 18 60 3>&1 1>&2 2>&3
+  "PC Typ: $PC_TYPE\nIP: $IP\n\nFirst-boot service enabled.\nReboot for automatic setup?" 18 60 3>&1 1>&2 2>&3
 
 echo ""
 echo "========================================"
-echo "  SCARLIX OS v16.2 — Setup complete!"
-echo "  Reboot for first-boot to start."
+echo "  SCARLIX OS v16.3 — Setup complete!"
+echo "  First-boot service: ENABLED"
+echo "  Reboot to start automatic setup."
 echo "  Dashboard: http://$IP:8090"
 echo "========================================"

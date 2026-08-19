@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v16.2 — Model-Agnostic Downloader (rewritten from scratch)
+# SCARLIX OS v16.3 — Model-Agnostic Downloader (rewritten from scratch)
 # Reads /etc/scarlix/models.yaml and downloads any HuggingFace model
 # Shows progress bars
 
@@ -9,7 +9,7 @@ MODELS_CONFIG="${MODELS_CONFIG:-/etc/scarlix/models.yaml}"
 MODELS_DIR="${MODELS_DIR:-/models}"
 
 echo "============================================"
-echo "  SCARLIX OS v16.2 — Model Downloader"
+echo "  SCARLIX OS v16.3 — Model Downloader"
 echo "============================================"
 echo ""
 

@@ -6,24 +6,15 @@ linux-headers
 linux-firmware
 btrfs-progs
 
-# Garuda essentials
+# Garuda essentials (only common-settings for ZRAM+tweaks — 3-c)
 garuda-common-settings
-garuda-dr460nized
-garuda-welcome
 
 # Kernel
 linux-zen
 linux-zen-headers
 
-# NVIDIA
-nvidia-dkms
-nvidia-utils
-nvidia-settings
-lib32-nvidia-utils
-
-# CUDA
-cuda
-cudnn
+# NOTE: NVIDIA + CUDA removed from ISO — installed post-install via first-boot.sh (2-b)
+# This keeps ISO smaller and avoids dependency conflicts during mkarchiso
 
 # Docker
 docker
@@ -44,7 +35,7 @@ bc
 python
 python-pip
 
-# Gaming (native)
+# Gaming (native — no Docker)
 steam
 wine
 wine-gecko

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v16.2 — Garuda ISO Builder (archiso-based)
+# SCARLIX OS v16.3 — Garuda ISO Builder (archiso-based)
 VERSION="16.2.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -11,7 +11,7 @@ OUTPUT_DIR="$REPO_ROOT/output"
 mkdir -p "$WORK_DIR" "$OUTPUT_DIR"
 
 echo "================================================"
-echo "  SCARLIX OS v16.2 — Garuda ISO Builder"
+echo "  SCARLIX OS v16.3 — Garuda ISO Builder"
 echo "================================================"
 
 # Check dependencies
@@ -73,7 +73,7 @@ fi
 echo "[8/8] Done!"
 echo ""
 echo "================================================"
-echo "  ✅ SCARLIX OS v16.2 ISO BUILD COMPLETE"
+echo "  ✅ SCARLIX OS v16.3 ISO BUILD COMPLETE"
 echo "================================================"
 echo "  ISO:     $ISO_FILE"
 echo "  Size:    $ISO_SIZE"
