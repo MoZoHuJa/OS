@@ -1,0 +1,12 @@
+[Trigger]
+Operation = Upgrade
+Operation = Install
+Operation = Remove
+Type = Package
+Target = *
+
+[Action]
+Description = Creating BTRFS snapshot before pacman transaction
+Depends = snapper
+When = PreTransaction
+Exec = /usr/bin/snapper -c root create --description "pre-pacman"

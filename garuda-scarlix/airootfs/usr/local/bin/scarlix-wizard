@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+TITLE="SCARLIX OS v16.2 Setup"
+
+whiptail --title "$TITLE" --msgbox \
+  "Vitaj v SCARLIX OS v16.2 (Garuda Edition)!\n\n\
+Base: Garuda Linux (Arch, Zen kernel, BTRFS)\n\n\
+Stlac Enter pre pokracovanie." 20 70
+
+# A2-b: TUI wizard pýta Main alebo HP Agent
+PC_TYPE=$(whiptail --title "$TITLE" --menu "Vyber typ tohto PC:" 15 60 2 \
+  "main" "Main PC (Garuda Dr460nized + AI + 2x GPU + Gaming)" \
+  "hp_agent" "HP Agent PC (Headless Worker — coding + files)" 3>&1 1>&2 2>&3)
+
+DEFAULT_IP="192.168.1.100"
+[ "$PC_TYPE" = "hp_agent" ] && DEFAULT_IP="192.168.1.101"
+IP=$(whiptail --title "$TITLE" --inputbox "IP adresa:" 10 50 "$DEFAULT_IP" 3>&1 1>&2 2>&3)
+
+PASS=$(whiptail --title "$TITLE" --passwordbox "Heslo pre scarlix user:" 10 50 3>&1 1>&2 2>&3)
+
+TG_TOKEN=$(whiptail --title "$TITLE" --inputbox "Telegram Bot Token (prazdne = preskoc):" 10 60 "" 3>&1 1>&2 2>&3)
+TG_CHAT_ID=""
+[ -n "$TG_TOKEN" ] && TG_CHAT_ID=$(whiptail --title "$TITLE" --inputbox "Telegram Chat ID:" 10 50 "" 3>&1 1>&2 2>&3)
+
+# Save PC type
+echo "$PC_TYPE" | sudo tee /etc/scarlix/pc_type >/dev/null
+
+# Set static IP (NetworkManager — not netplan!)
+sudo nmcli connection modify "Wired connection 1" \
+  ipv4.addresses "$IP/24" \
+  ipv4.gateway 192.168.1.1 \
+  ipv4.dns "1.1.1.1 8.8.8.8" \
+  ipv4.method manual 2>/dev/null || true
+
+# Generate .env
+export TELEGRAM_BOT_TOKEN="$TG_TOKEN"
+export TELEGRAM_ZMOR_CHAT_ID="$TG_CHAT_ID"
+sudo /etc/systemd/system/generate-env.sh
+
+# Copy SCARLIX source
+if [ -d /opt/scarlix-src ]; then
+  sudo cp -r /opt/scarlix-src/* /opt/scarlix/ 2>/dev/null || true
+fi
+
+# Enable first-boot service
+sudo systemctl enable scarlix-first-boot.service
+
+# Confirm
+whiptail --title "$TITLE" --yesno \
+  "PC Typ: $PC_TYPE\nIP: $IP\n\nSpustit instalaciu po reboote?" 18 60 3>&1 1>&2 2>&3
+
+echo ""
+echo "========================================"
+echo "  SCARLIX OS v16.2 — Setup complete!"
+echo "  Reboot for first-boot to start."
+echo "  Dashboard: http://$IP:8090"
+echo "========================================"

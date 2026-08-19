@@ -1,0 +1,25 @@
+# SCARLIX OS v16.2 — Snapper config for root
+# Only snap-pac (before pacman), no timeline snapshots
+
+SUBVOLUME="/"
+FSTYPE="btrfs"
+QGROUP=""
+
+# Allow groups
+ALLOW_GROUPS=""
+
+# Timeline (disabled — user choice C1-b)
+TIMELINE_CREATE="no"
+TIMELINE_CLEANUP="no"
+
+# Cleanup
+EMPTY_CLEANUP="yes"
+EMPTY_FIRST_PRE_POST="no"
+EMPTY_MIN_AGE="1800"
+
+# Number of snapshots to keep
+NUMBER_LIMIT="10"
+NUMBER_LIMIT_IMPORTANT="5"
+
+# Limits for cleanup
+LIMIT_TIMELINE="no"

@@ -1,7 +1,11 @@
 services:
-  sunshine:
+  # NOTE: Steam, Wine, Proton, Lutris, RetroArch are NATIVE (pacman/AUR)
+  # Sunshine is NATIVE for game mode (systemd service)
+  # Sunshine Docker container is for TV mode only
+  
+  sunshine-tv:
     image: lizardbyte/sunshine:latest
-    container_name: sunshine
+    container_name: sunshine-tv
     restart: unless-stopped
     network_mode: host
     volumes:
@@ -11,21 +15,8 @@ services:
     devices: [/dev/dri, /dev/uinput, /dev/nvidia0, /dev/nvidiactl, /dev/nvidia-modeset, /dev/nvidia-uvm]
     environment: [DISPLAY=:0, TZ=Europe/Bratislava]
     privileged: true
-    profiles: [gaming]
-
-  steam-headless:
-    image: freshgum-baking/steam-headless:latest
-    container_name: steam-headless
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - ./steam:/home/default/steam
-      - /mnt/games/steam-games:/home/default/.steam/steam/steamapps/common
-      - /tmp/.X11-unix:/tmp/.X11-unix
-    environment: [DISPLAY=:0, USER_PASSWORD=${STEAM_PASSWORD}, TZ=Europe/Bratislava]
-    privileged: true
-    profiles: [gaming]
-
+    profiles: [tv]
+  
   jellyfin:
     image: jellyfin/jellyfin:10.10
     container_name: jellyfin

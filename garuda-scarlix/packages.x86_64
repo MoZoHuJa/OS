@@ -1,0 +1,84 @@
+# Base system
+base
+base-devel
+linux
+linux-headers
+linux-firmware
+btrfs-progs
+
+# Garuda essentials
+garuda-common-settings
+garuda-dr460nized
+garuda-welcome
+
+# Kernel
+linux-zen
+linux-zen-headers
+
+# NVIDIA
+nvidia-dkms
+nvidia-utils
+nvidia-settings
+lib32-nvidia-utils
+
+# CUDA
+cuda
+cudnn
+
+# Docker
+docker
+docker-compose
+
+# Network
+networkmanager
+ufw
+fail2ban
+chrony
+
+# Development
+git
+curl
+wget
+jq
+bc
+python
+python-pip
+
+# Gaming (native)
+steam
+wine
+wine-gecko
+wine-mono
+lutris
+retroarch
+
+# Audio
+pulseaudio
+pulseaudio-alsa
+pulseaudio-bluetooth
+alsa-utils
+portaudio
+
+# Bluetooth
+bluez
+bluez-utils
+blueman
+
+# Filesystem tools
+snapper
+snap-pac
+rsync
+restic
+
+# Installer
+calamares
+archiso
+
+# Terminal
+neovim
+tmux
+
+# Utils
+htop
+nano
+whiptail
