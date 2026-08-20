@@ -1,0 +1,15 @@
+[Unit]
+Description=SCARLIX OS v16.5 Model Manager (weekly model update + VRAM + Telegram)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/model-manager.sh
+User=root
+StandardOutput=journal
+StandardError=journal
+# Long-running downloads — give it 2 hours
+TimeoutStartSec=7200
+# Don't restart automatically — runs weekly via timer
+Restart=no

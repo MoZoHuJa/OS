@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v16.4 — First Boot Setup
+# SCARLIX OS v16.5 — First Boot Setup
 # Logs every step to /var/log/scarlix/first-boot.log with SUCCESS/FAILED
 # Continues on error (does not stop)
+#
+# v16.5 P1 fixes:
+#   10-a: BTRFS CoW disabled on /models, /mnt/games, /var/lib/docker via chattr +C
 
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/first-boot.log"
@@ -29,7 +32,7 @@ log_failed() {
   SERVICES_STARTED="$SERVICES_STARTED\n  ✗ $1"
 }
 
-log "=== SCARLIX OS v16.4 — First Boot ==="
+log "=== SCARLIX OS v16.5 — First Boot ==="
 
 # Check if already installed
 if [ -f /opt/scarlix/.installed ]; then
@@ -61,10 +64,35 @@ fi
 # Create directories
 mkdir -p /opt/scarlix /models /var/lib/scarlix /etc/scarlix/{profiles,secrets}
 mkdir -p /mnt/{files,games,photos,backup/restic}
+mkdir -p /var/lib/docker
 chown -R scarlix:scarlix /opt/scarlix /models /var/lib/scarlix /etc/scarlix /mnt
 log "Directories created"
 
-# FIX 5-a: NVIDIA + CUDA install with logging (only Main PC)
+# FIX 10-a: Disable Copy-on-Write on BTRFS for large mutable stores.
+# These directories hold Docker images, model weights, and game files which
+# are rewritten in place. CoW on BTRFS fragments these badly and wastes space.
+# chattr +C must be applied on EMPTY directories (before any data is written),
+# so we do it immediately after mkdir above.
+disable_cow() {
+  local target="$1"
+  if command -v chattr >/dev/null 2>&1; then
+    if chattr +C "$target" 2>/dev/null; then
+      log "  CoW disabled: $target"
+    else
+      # Non-fatal: ext4 / non-btrfs filesystems don't support +C
+      log "  (CoW not applicable on $target — non-BTRFS or already has files)"
+    fi
+  fi
+}
+
+log "Disabling BTRFS CoW on large stores..."
+disable_cow /models
+disable_cow /mnt/games
+disable_cow /var/lib/docker
+disable_cow /var/lib/scarlix
+log_success "BTRFS CoW configuration"
+
+# NVIDIA + CUDA install with logging (only Main PC)
 if [ "$PC_TYPE" == "main" ]; then
   log "Installing NVIDIA driver..."
   if sudo pacman -S --noconfirm --needed nvidia-dkms nvidia-utils nvidia-settings lib32-nvidia-utils >> "$LOG_FILE" 2>&1; then
@@ -108,7 +136,7 @@ fi
 # Load environment
 set -a; source /etc/scarlix/.env; set +a
 
-# FIX 5-a + FIX 6-a: Start services with logging — absolute paths, continue on error
+# Start services with logging — absolute paths, continue on error
 start_service() {
   local name="$1"
   local compose_file="$2"
@@ -122,7 +150,7 @@ start_service() {
 
 if [ "$PC_TYPE" == "main" ]; then
   log "--- Starting Main PC services ---"
-  
+
   start_service "smg"           "/opt/scarlix-src/ai/smg/docker-compose.yml"
   start_service "SGLang"        "/opt/scarlix-src/ai/sglang/docker-compose.yml"
   start_service "Ollama Main"   "/opt/scarlix-src/ai/ollama/docker-compose-main.yml"
@@ -135,7 +163,7 @@ if [ "$PC_TYPE" == "main" ]; then
   start_service "Hermes"        "/opt/scarlix-src/agents/hermes/docker-compose.yml"
   start_service "ScarliHQ"      "/opt/scarlix-src/scarlihq/docker-compose.yml"
   start_service "Monitoring"    "/opt/scarlix-src/monitoring/docker-compose.yml"
-  
+
   # Gaming (Docker only — Steam/Lutris are native)
   log "Starting Jellyfin + Minecraft..."
   if docker compose -f /opt/scarlix-src/gaming/docker-compose.yml up -d jellyfin minecraft >> "$LOG_FILE" 2>&1; then
@@ -143,26 +171,26 @@ if [ "$PC_TYPE" == "main" ]; then
   else
     log_failed "Jellyfin + Minecraft"
   fi
-  
+
   # Set default mode
   echo "ai" | tee /var/lib/scarlix/current-mode >/dev/null
   log "Default mode: ai"
-  
+
   # Download models in background
   log "Starting model download in background..."
   nohup /etc/systemd/system/download-models.sh >> "$LOG_FILE" 2>&1 &
   log_success "Model download (background)"
 else
   log "--- Starting HP Agent services ---"
-  
+
   start_service "Coding Pipeline" "/opt/scarlix-src/coding-pipeline/docker-compose.yml"
   start_service "Media Tools"     "/opt/scarlix-src/media-tools/docker-compose.yml"
 fi
 
-# FIX 6-a: Summary
+# Summary
 log ""
 log "========================================"
-log "  SCARLIX OS v16.4 — First Boot Summary"
+log "  SCARLIX OS v16.5 — First Boot Summary"
 log "========================================"
 log "  SUCCESS: $SUCCESS_COUNT"
 log "  FAILED:  $FAIL_COUNT"

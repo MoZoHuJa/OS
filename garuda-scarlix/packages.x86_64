@@ -9,9 +9,15 @@ btrfs-progs
 # Garuda essentials (only common-settings for ZRAM+tweaks — 3-c)
 garuda-common-settings
 
-# Kernel
+# Kernel (Zen = default, LTS = fallback for NVIDIA regressions — 5-a + 10)
 linux-zen
 linux-zen-headers
+# FIX 5-a: LTS kernel as fallback if NVIDIA driver breaks on Zen
+linux-lts
+linux-lts-headers
+
+# FIX 7-a: downgrade AUR tool for NVIDIA driver rollback (available in Garuda repo)
+downgrade
 
 # NOTE: NVIDIA + CUDA removed from ISO — installed post-install via first-boot.sh (2-b)
 # This keeps ISO smaller and avoids dependency conflicts during mkarchiso
@@ -60,6 +66,9 @@ snapper
 snap-pac
 rsync
 restic
+
+# ZRAM (FIX 9-a: zstd + 32GB config via /etc/systemd/zram-generator.conf)
+zram-generator
 
 # Installer
 calamares

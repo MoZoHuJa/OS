@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
-TITLE="SCARLIX OS v16.4 Setup"
+TITLE="SCARLIX OS v16.5 Setup"
 
 whiptail --title "$TITLE" --msgbox \
-  "Vitaj v SCARLIX OS v16.4 (Garuda Edition)!\n\n\
-Base: Garuda Linux (Arch, Zen kernel, BTRFS)\n\n\
+  "Vitaj v SCARLIX OS v16.5 (Garuda Edition)!\n\n\
+Base: Garuda Linux (Arch, Zen kernel, BTRFS)\n\
+Kernel: Zen (default) + LTS (fallback)\n\n\
 Stlac Enter pre pokracovanie." 20 70
 
-# A2-b: TUI wizard pýta Main alebo HP Agent
+# TUI wizard asks Main or HP Agent
 PC_TYPE=$(whiptail --title "$TITLE" --menu "Vyber typ tohto PC:" 15 60 2 \
   "main" "Main PC (Garuda Dr460nized + AI + 2x GPU + Gaming)" \
   "hp_agent" "HP Agent PC (Headless Worker — coding + files)" 3>&1 1>&2 2>&3)
@@ -42,16 +43,24 @@ if [ -d /opt/scarlix-src ]; then
   sudo cp -r /opt/scarlix-src/* /opt/scarlix/ 2>/dev/null || true
 fi
 
-# FIX 1-c: Enable first-boot service HERE (not in profiledef or Calamares)
+# Enable first-boot service HERE (not in profiledef or Calamares)
 sudo systemctl enable scarlix-first-boot.service
+
+# FIX 6-b: Enable weekly model-manager timer (if present)
+if [ -f /etc/systemd/system/model-manager.timer ]; then
+  sudo systemctl enable model-manager.timer 2>/dev/null || true
+  log_msg="Model manager timer: ENABLED (weekly)"
+else
+  log_msg="Model manager timer: not installed"
+fi
 
 # Confirm
 whiptail --title "$TITLE" --yesno \
-  "PC Typ: $PC_TYPE\nIP: $IP\n\nFirst-boot service enabled.\nReboot for automatic setup?" 18 60 3>&1 1>&2 2>&3
+  "PC Typ: $PC_TYPE\nIP: $IP\n\nFirst-boot service enabled.\n$log_msg\nReboot for automatic setup?" 18 60 3>&1 1>&2 2>&3
 
 echo ""
 echo "========================================"
-echo "  SCARLIX OS v16.4 — Setup complete!"
+echo "  SCARLIX OS v16.5 — Setup complete!"
 echo "  First-boot service: ENABLED"
 echo "  Reboot to start automatic setup."
 echo "  Dashboard: http://$IP:8090"

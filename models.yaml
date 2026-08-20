@@ -1,6 +1,9 @@
-# SCARLIX OS v16.4 — Model-Agnostic Configuration
+# SCARLIX OS v16.5 — Model-Agnostic Configuration
 # Edit this file to use ANY HuggingFace model.
 # Then run: bash /opt/scarlix/scripts/download-models.sh
+#
+# Weekly auto-update: model-manager.sh (Monday 04:00) — pulls latest HF
+# models + Ollama tags, reports VRAM before/after, sends Telegram summary.
 
 # === SGLang (safetensors formát, GPU 0) ===
 sglang:
@@ -38,7 +41,8 @@ ollama_agent:
   num_parallel: 2
 
 # === llama.cpp (CPU fallback, GGUF) ===
-# FIX 8-b: hf_repo field for direct HuggingFace GGUF download
+# hf_repo field enables direct HuggingFace GGUF download (v16.4+) and
+# weekly auto-update via model-manager.sh (v16.5+).
 llamacpp:
   model_file: "/models/qwen3.6-14b-instruct-q4_k_m.gguf"
   hf_repo: "Qwen/Qwen3-14B-Instruct-GGUF"           # HuggingFace repo for GGUF

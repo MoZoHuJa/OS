@@ -1,5 +1,5 @@
 [Unit]
-Description=SCARLIX OS v16.2 First Boot Setup
+Description=SCARLIX OS v16.5 First Boot Setup
 After=network-online.target docker.service
 Wants=network-online.target
 ConditionPathExists=!/opt/scarlix/.installed

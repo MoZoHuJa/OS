@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v16.4 — QEMU Boot Test (UEFI + SHA256 + real PASS/FAIL)
-ISO_FILE="${1:-output/scarlix-os-v16.4-x86_64.iso}"
+# SCARLIX OS v16.5 — QEMU Boot Test (UEFI + SHA256 + real PASS/FAIL)
+#
+# v16.5 P0 fixes:
+#   1-a: set -euo pipefail + tee pipeline → capture PIPESTATUS[0] correctly
+#   2-a: OVMF fallback removed → FAIL if OVMF_VARS.fd template missing
+#   3-a: console=ttyS0 added to boot configs → deterministic serial output
+
+ISO_FILE="${1:-output/scarlix-os-v16.5-x86_64.iso}"
 TEST_TIMEOUT="${2:-90}"
 SERIAL_LOG="/tmp/scarlix-qemu-serial.log"
 
-echo "=== SCARLIX OS v16.4 — QEMU Boot Test ==="
+echo "=== SCARLIX OS v16.5 — QEMU Boot Test ==="
 echo "ISO: $ISO_FILE"
 echo "Timeout: ${TEST_TIMEOUT}s"
 
@@ -51,7 +57,7 @@ if [ -f "$SHA_FILE" ]; then
 else
   echo "  ⚠ No .sha256 file — generating..."
   cd "$(dirname "$ISO_FILE")" && sha256sum "$(basename "$ISO_FILE")" > "$(basename "$ISO_FILE" .iso).sha256"
-  echo "  ✓ SHA256 generated: $(cat "$(basename "$ISO_FILE" .iso).sha256" | awk '{print $1}')"
+  echo "  ✓ SHA256 generated: $(awk '{print $1}' "$(basename "$ISO_FILE" .iso).sha256")"
   PASS=$((PASS + 1))
 fi
 
@@ -59,27 +65,36 @@ fi
 echo ""
 echo "[3/3] UEFI boot test..."
 
-# FIX 2-b: Proper OVMF CODE (read-only) + VARS (writable copy from template)
+# FIX 2-a: OVMF CODE (read-only) + VARS (writable copy from template)
+# NO FALLBACK — if VARS template is missing, FAIL immediately.
 OVMF_CODE="/usr/share/edk2-ovmf/x64/OVMF_CODE.fd"
 OVMF_VARS_TEMPLATE="/usr/share/edk2-ovmf/x64/OVMF_VARS.fd"
 OVMF_VARS="/tmp/scarlix_ovmf_vars.fd"
 
 if [ ! -f "$OVMF_CODE" ]; then
-  echo "  ⚠ OVMF not found — install: sudo pacman -S edk2-ovmf"
-  echo "  Skipping UEFI test."
+  echo "  ✗ OVMF_CODE.fd not found — install: sudo pacman -S edk2-ovmf"
+  echo "  ✗ UEFI boot: FAIL (OVMF missing)"
+  FAIL=$((FAIL + 1))
+elif [ ! -f "$OVMF_VARS_TEMPLATE" ]; then
+  # FIX 2-a: FAIL if VARS template missing (do NOT copy from CODE — that produces
+  # a firmware with no writable NVRAM vars and breaks UEFI boot silently).
+  echo "  ✗ OVMF_VARS.fd template not found at: $OVMF_VARS_TEMPLATE"
+  echo "  ✗ This file ships with edk2-ovmf. Reinstall: sudo pacman -S edk2-ovmf"
+  echo "  ✗ UEFI boot: FAIL (OVMF_VARS missing)"
+  FAIL=$((FAIL + 1))
 else
-  # FIX 2-b: Create writable VARS copy from template (NOT from CODE)
-  if [ -f "$OVMF_VARS_TEMPLATE" ]; then
-    cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
-  else
-    # If VARS template doesn't exist, create from CODE (fallback)
-    cp "$OVMF_CODE" "$OVMF_VARS"
-  fi
+  # Create writable VARS copy from the template (NOT from CODE)
+  cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
 
   echo "  Starting QEMU UEFI boot (timeout: ${TEST_TIMEOUT}s)..."
   echo "  Serial log: $SERIAL_LOG"
-  
-  # FIX 3-a: Capture serial output, grep for boot markers
+  rm -f "$SERIAL_LOG"
+
+  # FIX 1-a: set -euo pipefail causes `cmd | tee` to only see tee's exit code.
+  # We disable -e temporarily, run QEMU with tee, capture PIPESTATUS[0] (qemu exit),
+  # then re-enable -e. timeout returns 124 on timeout, which is OK (archiso may
+  # still have written boot markers to the serial log before being killed).
+  set +e
   timeout "$TEST_TIMEOUT" qemu-system-x86_64 \
     -m 4096 -smp 4 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
@@ -87,11 +102,25 @@ else
     -cdrom "$ISO_FILE" \
     -boot d \
     -display none \
-    -serial file:"$SERIAL_LOG" 2>/dev/null || true
+    -serial file:"$SERIAL_LOG" 2>/dev/null | tee /tmp/scarlix-qemu-stdout.log
+  QEMU_EXIT=${PIPESTATUS[0]}
+  set -e
 
-  # FIX 3-a: Real PASS/FAIL — check serial log for boot markers
+  echo "  QEMU exit code: $QEMU_EXIT (124 = timeout, expected for live ISO)"
+
+  # FIX 3-a: console=ttyS0 is now baked into the boot config (archiso-x86_64.conf
+  # + syslinux.cfg), so the kernel WILL output to ttyS0 → serial log is deterministic.
   if [ -f "$SERIAL_LOG" ]; then
-    if grep -qiE "SCARLIX|scarlix|welcome|login:|archiso|Garuda" "$SERIAL_LOG" 2>/dev/null; then
+    SERIAL_LINES=$(wc -l < "$SERIAL_LOG" 2>/dev/null || echo 0)
+    SERIAL_BYTES=$(wc -c < "$SERIAL_LOG" 2>/dev/null || echo 0)
+    echo "  Serial log: $SERIAL_LINES lines, $SERIAL_BYTES bytes"
+
+    if [ "$SERIAL_BYTES" -lt 100 ]; then
+      echo "  ✗ UEFI boot: FAIL (serial log nearly empty — kernel did not boot)"
+      echo "  Last 20 lines:"
+      tail -20 "$SERIAL_LOG" 2>/dev/null || echo "  (log empty)"
+      FAIL=$((FAIL + 1))
+    elif grep -qiE "SCARLIX|scarlix|welcome|login:|archiso|Garuda|Linux version" "$SERIAL_LOG" 2>/dev/null; then
       echo "  ✓ UEFI boot: PASS (boot markers found in serial log)"
       PASS=$((PASS + 1))
     else

@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+# SCARLIX OS v16.5 — GPU Mode Switcher (6 modes + status + vram)
+#
+# v16.5 P1 fixes:
+#   8-b: Integrated `vram` subcommand (replaces separate vram-check.sh script)
+
 LOG_FILE="/var/log/scarlix-mode.log"
 STATE_FILE="/var/lib/scarlix/current-mode"
 LOCK_FILE="/tmp/scarlix-mode.lock"
@@ -7,22 +13,87 @@ LOCK_FILE="/tmp/scarlix-mode.lock"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"; }
 
 exec 200>"$LOCK_FILE"
-flock -n 200 || { log "ERROR: iny proces prepina rezim"; exit 1; }
+flock -n 200 || { log "ERROR: another process is switching mode"; exit 1; }
 
 MODE="${1:-status}"
 CURRENT_MODE=$(cat "$STATE_FILE" 2>/dev/null || echo "unknown")
 
 dump_vram() {
-  log "Uvolnujem VRAM..."
+  log "Releasing VRAM..."
   curl -s -X POST "http://localhost:11434/api/generate" -d '{"model":"qwen3.6:14b","keep_alive":0}' >/dev/null 2>&1 || true
   curl -s -X POST "http://localhost:11435/api/generate" -d '{"model":"qwen3.6:14b","keep_alive":0}' >/dev/null 2>&1 || true
   docker stop sglang 2>/dev/null || true
   sleep 3
 }
 
+# FIX 8-b: vram-check integrated as a subcommand (no separate script).
+# Reports VRAM usage per GPU + identifies the heaviest container, and warns
+# if VRAM utilization crosses the safety threshold (default 90%).
+show_vram() {
+  echo "=== SCARLIX OS v16.5 — VRAM Check ==="
+  echo "Time: $(date '+%Y-%m-%d %H:%M:%S')"
+  echo ""
+
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "  nvidia-smi not available — NVIDIA driver not installed yet."
+    echo "  (This is normal during first-boot, before NVIDIA install completes.)"
+    return 0
+  fi
+
+  # Per-GPU VRAM table
+  echo "GPU VRAM (per-device):"
+  nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu \
+            --format=csv,noheader,nounits 2>/dev/null | while IFS=',' read -r idx name total used free util; do
+    idx=$(echo "$idx" | tr -d ' ')
+    name=$(echo "$name" | tr -d ' ')
+    total=$(echo "$total" | tr -d ' ')
+    used=$(echo "$used" | tr -d ' ')
+    free=$(echo "$free" | tr -d ' ')
+    util=$(echo "$util" | tr -d ' ')
+    if [ "$total" -gt 0 ] 2>/dev/null; then
+      pct=$((used * 100 / total))
+      bar=$(printf '█%.0s' $(seq 1 $((pct / 5))) 2>/dev/null)
+      bar_empty=$(printf '░%.0s' $(seq 1 $((20 - pct / 5))) 2>/dev/null)
+      warn=""
+      [ "$pct" -ge 90 ] && warn=" ⚠ CRITICAL"
+      printf "  GPU %s %-20s %5d/%5d MiB [%s%s] %3d%% util%s\n" \
+        "$idx" "$name" "$used" "$total" "$bar" "$bar_empty" "$util" "$warn"
+    fi
+  done
+  echo ""
+
+  # Heaviest GPU-consuming containers
+  echo "Top GPU memory consumers (Docker):"
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}" 2>/dev/null | head -10 || echo "  (no running containers)"
+  else
+    echo "  Docker not running."
+  fi
+  echo ""
+
+  # Aggregate VRAM + recommendation
+  TOTAL_USED=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | awk '{s+=$1} END {print s}')
+  TOTAL_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | awk '{s+=$1} END {print s}')
+  echo "Aggregate VRAM:  ${TOTAL_USED:-0} MiB used / ${TOTAL_FREE:-0} MiB free"
+
+  if [ -n "${TOTAL_USED:-}" ] && [ -n "${TOTAL_FREE:-}" ] && [ "$((TOTAL_USED + TOTAL_FREE))" -gt 0 ]; then
+    AGG_PCT=$((TOTAL_USED * 100 / (TOTAL_USED + TOTAL_FREE)))
+    if [ "$AGG_PCT" -ge 90 ]; then
+      echo "⚠ WARNING: VRAM utilization at ${AGG_PCT}% — consider switching to 'offline' mode."
+      return 2
+    elif [ "$AGG_PCT" -ge 75 ]; then
+      echo "⚠ Notice: VRAM utilization at ${AGG_PCT}% — high load."
+      return 1
+    else
+      echo "✓ VRAM utilization healthy (${AGG_PCT}%)."
+      return 0
+    fi
+  fi
+}
+
 case "$MODE" in
   ai)
-    [[ "$CURRENT_MODE" == "ai" ]] && { log "Uz v AI mode."; exit 0; }
+    [[ "$CURRENT_MODE" == "ai" ]] && { log "Already in AI mode."; exit 0; }
     log "=== AI mode ==="
     # Native: stop Steam/Lutris
     killall steam lutris 2>/dev/null || true
@@ -39,16 +110,16 @@ case "$MODE" in
     echo "ai" | tee "$STATE_FILE" >/dev/null
     ;;
   game)
-    [[ "$CURRENT_MODE" == "game" ]] && { log "Uz v Game mode."; exit 0; }
+    [[ "$CURRENT_MODE" == "game" ]] && { log "Already in Game mode."; exit 0; }
     log "=== GAME mode (native Sunshine) ==="
     dump_vram
     docker compose -f /opt/scarlix/ai/comfyui/docker-compose.yml --profile creative stop 2>/dev/null || true
-    # B2-c: Native Sunshine for game mode
+    # Native Sunshine for game mode
     sudo systemctl start sunshine
     echo "game" | tee "$STATE_FILE" >/dev/null
     ;;
   creative)
-    [[ "$CURRENT_MODE" == "creative" ]] && { log "Uz v Creative mode."; exit 0; }
+    [[ "$CURRENT_MODE" == "creative" ]] && { log "Already in Creative mode."; exit 0; }
     log "=== CREATIVE mode ==="
     dump_vram
     sudo systemctl stop sunshine 2>/dev/null || true
@@ -72,16 +143,21 @@ case "$MODE" in
     ;;
   tv)
     log "=== TV mode (Docker Sunshine) ==="
-    # B2-c: Docker Sunshine for TV mode
     docker compose -f /opt/scarlix/gaming/docker-compose.yml --profile tv up -d
     sudo systemctl start scarlix-tv-mode.service 2>/dev/null || true
     echo "tv" | tee "$STATE_FILE" >/dev/null
     ;;
+  vram|vram-check)
+    # FIX 8-b: integrated VRAM check (was separate vram-check.sh in v16.4 review)
+    show_vram
+    exit $?
+    ;;
   status)
-    echo "=== SCARLIX OS v16.4 (Garuda) Status ==="
+    echo "=== SCARLIX OS v16.5 (Garuda) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Base: $(cat /etc/garuda-release 2>/dev/null || echo 'Garuda Linux')"
     echo "Kernel: $(uname -r)"
+    echo "LTS kernel available: $(command -v linux-lts >/dev/null 2>&1 && echo 'yes' || (pacman -Q linux-lts 2>/dev/null | head -1 || echo 'not installed'))"
     echo ""
     echo "GPU:"
     nvidia-smi --query-gpu=index,name,memory.used,memory.free,utilization.gpu --format=csv,noheader 2>/dev/null || echo "  nvidia-smi not available"
@@ -93,11 +169,23 @@ case "$MODE" in
     docker ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | head -30
     echo ""
     echo "Native gaming:"
-    echo "  Steam: $(which steam 2>/dev/null || echo 'not installed')"
+    echo "  Steam: $(command -v steam 2>/dev/null || echo 'not installed')"
     echo "  Sunshine: $(systemctl is-active sunshine 2>/dev/null || echo 'stopped')"
+    echo ""
+    echo "Tip: run 'scarlix-mode vram' for detailed VRAM usage."
     ;;
   *)
-    echo "Usage: scarlix-mode {ai|game|creative|turbo|offline|tv|status}"
+    echo "Usage: scarlix-mode {ai|game|creative|turbo|offline|tv|status|vram}"
+    echo ""
+    echo "Modes:"
+    echo "  ai       — SGLang + Ollama (default, AI inference)"
+    echo "  game     — Native Steam/Sunshine (full GPU for gaming)"
+    echo "  creative — ComfyUI + Video + Musicgen"
+    echo "  turbo    — SGLang + Ollama together (max throughput)"
+    echo "  offline  — llama.cpp CPU only (low power)"
+    echo "  tv       — Docker Sunshine (family streaming)"
+    echo "  status   — Show current mode + system summary"
+    echo "  vram     — Detailed VRAM usage + health check (NEW in v16.5)"
     exit 1
     ;;
 esac
