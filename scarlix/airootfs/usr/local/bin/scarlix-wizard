@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.2 — EndeavourOS Edition — Setup Wizard
-# Q8a: Added --skip-models + --experimental flags
+# SCARLIX OS v17.2.1 — EndeavourOS Edition — Setup Wizard
+# v17.2.1: Auto-detect 2+ NVIDIA GPUs → auto-suggest 5-tier (experimental) mode
+#   - 1 GPU  → 2-tier default (SGLang + BeeLlama) — stable
+#   - 2+ GPU → 5-tier recommended (vLLM TP=2, FreeToken, Laya) — full 32GB+ VRAM
 
-TITLE="SCARLIX OS v17.2 Setup"
+TITLE="SCARLIX OS v17.2.1 Setup"
 
-# Auto-detect NVIDIA dGPU (Q5a — ignore Intel iGPU)
+# Auto-detect NVIDIA dGPUs (Q5a — ignore Intel iGPU on hybrid laptops)
 NVIDIA_DGPU_COUNT=$(lspci -nn 2>/dev/null | grep -iE 'NVIDIA.*(VGA|3D)' | wc -l || echo 0)
+
 if [ "$NVIDIA_DGPU_COUNT" -gt 0 ]; then
   SUGGESTED_TYPE="ai_server"
   SUGGESTED_DESC="Auto-detected: ${NVIDIA_DGPU_COUNT} NVIDIA dGPU(s)"
@@ -16,12 +19,27 @@ else
   SUGGESTED_DESC="Auto-detected: no NVIDIA dGPU"
 fi
 
+# v17.2.1: If 2+ NVIDIA GPUs detected, auto-suggest 5-tier (experimental) mode
+# This enables vLLM TP=2 (tensor parallelism across both GPUs) for large models
+# like Qwen3-72B that won't fit on a single 16GB card.
+if [ "$NVIDIA_DGPU_COUNT" -ge 2 ]; then
+  DEFAULT_EXPERIMENTAL="yes"
+  EXPERIMENTAL_DEFAULT_LABEL="← Odporúčané pre ${NVIDIA_DGPU_COUNT} GPU (5-tier, vLLM TP=2)"
+  EXPERIMENTAL_NO_LABEL="2-tier default (SGLang + BeeLlama) — ak nechceš vLLM"
+else
+  DEFAULT_EXPERIMENTAL="no"
+  EXPERIMENTAL_DEFAULT_LABEL="2-tier default (SGLang + BeeLlama) — odporúčané pre ${NVIDIA_DGPU_COUNT} GPU"
+  EXPERIMENTAL_YES_LABEL="Áno — zapnúť experimentálne (potrebuje 2+ GPU)"
+fi
+
 whiptail --title "$TITLE" --msgbox \
-  "Vitaj v SCARLIX OS v17.2 (EndeavourOS Edition)!\n\n\
-Minimal Working Baseline — 2-tier inference default.\n\
+  "Vitaj v SCARLIX OS v17.2.1 (EndeavourOS Edition)!\n\n\
+Minimal Working Baseline — auto-detect hardvéru.\n\
 Base: EndeavourOS (near-vanilla Arch)\n\
 Kernel: linux + linux-lts (fallback)\n\
 BTRFS + Snapper · Pipewire · ZRAM min(ram/2, 16GB)\n\n\
+Detected: ${NVIDIA_DGPU_COUNT} NVIDIA dGPU(s)\n\
+$([ "$NVIDIA_DGPU_COUNT" -ge 2 ] && echo "→ 5-tier inference odporúčané (vLLM TP=2)" || echo "→ 2-tier inference default")\n\n\
 Stlac Enter pre pokracovanie." 22 70
 
 # PC type selection (auto-detect + override)
@@ -41,17 +59,26 @@ TG_TOKEN=$(whiptail --title "$TITLE" --inputbox "Telegram Bot Token (prazdne = p
 TG_CHAT_ID=""
 [ -n "$TG_TOKEN" ] && TG_CHAT_ID=$(whiptail --title "$TITLE" --inputbox "Telegram Chat ID:" 10 50 "" 3>&1 1>&2 2>&3)
 
-# Q8a: Model download opt-in (default: skip, user opts in)
+# Model download opt-in (default: skip, user opts in)
 DOWNLOAD_MODELS=$(whiptail --title "$TITLE" --menu \
   "Stiahnuť AI modely (50-150GB) pri first-boot?" 15 70 2 \
   "skip" "Preskočiť (rýchlejšia inštalácia, stiahnem neskôr)" \
   "download" "Áno, stiahnuť na pozadí (trvá hodiny)" 3>&1 1>&2 2>&3) || DOWNLOAD_MODELS="skip"
 
-# Q3a: Experimental mode opt-in (vLLM/FreeToken/Laya)
-EXPERIMENTAL=$(whiptail --title "$TITLE" --menu \
-  "Experimental inference backends?\n(vLLM Multi-LoRA, FreeToken MoE, Laya router)" 15 70 2 \
-  "no" "Nie — 2-tier default (SGLang + BeeLlama) — odporúčané" \
-  "yes" "Áno — zapnúť experimentálne (potrebuje 2+ GPU)" 3>&1 1>&2 2>&3) || EXPERIMENTAL="no"
+# v17.2.1: Experimental mode menu — auto-suggest based on GPU count
+if [ "$NVIDIA_DGPU_COUNT" -ge 2 ]; then
+  # 2+ GPU: 5-tier is first option (default selection)
+  EXPERIMENTAL=$(whiptail --title "$TITLE" --menu \
+    "Inference backends? (${NVIDIA_DGPU_COUNT} NVIDIA GPUs detected)\n\n5-tier enables vLLM TP=2 (Multi-LoRA, dual-GPU)\nfor large models like Qwen3-72B (36GB → 18GB per GPU)." 18 70 2 \
+    "yes" "$EXPERIMENTAL_DEFAULT_LABEL" \
+    "no" "$EXPERIMENTAL_NO_LABEL" 3>&1 1>&2 2>&3) || EXPERIMENTAL="$DEFAULT_EXPERIMENTAL"
+else
+  # 1 GPU: 2-tier is first option (default selection)
+  EXPERIMENTAL=$(whiptail --title "$TITLE" --menu \
+    "Experimental inference backends?\n(vLLM Multi-LoRA, FreeToken MoE, Laya router — needs 2+ GPU)" 16 70 2 \
+    "no" "$EXPERIMENTAL_DEFAULT_LABEL" \
+    "yes" "$EXPERIMENTAL_YES_LABEL" 3>&1 1>&2 2>&3) || EXPERIMENTAL="$DEFAULT_EXPERIMENTAL"
+fi
 
 # Save config
 echo "$PC_TYPE" | sudo tee /etc/scarlix/pc_type >/dev/null
@@ -87,17 +114,21 @@ sudo systemctl enable scarlix-first-boot.service
 # Enable model-manager timer
 [ -f /etc/systemd/system/model-manager.timer ] && sudo systemctl enable model-manager.timer 2>/dev/null
 
-# Confirm
+# Summary
+TIER_DESC="2-tier (SGLang + BeeLlama)"
+[ "$EXPERIMENTAL" = "yes" ] && TIER_DESC="5-tier (SGLang + vLLM TP=2 + Ollama + BeeLlama + FreeToken/Laya)"
+
 whiptail --title "$TITLE" --yesno \
-  "PC Typ: $PC_TYPE\nIP: $IP\nModely: $DOWNLOAD_MODELS\nExperimental: $EXPERIMENTAL\n\nFirst-boot: ENABLED (3-phase, auto-resume)\nReboot for automatic setup?" 20 60 3>&1 1>&2 2>&3
+  "PC Typ: $PC_TYPE\nIP: $IP\nGPU count: ${NVIDIA_DGPU_COUNT} NVIDIA\nModely: $DOWNLOAD_MODELS\nInference: $TIER_DESC\n\nFirst-boot: ENABLED (3-phase, auto-resume)\nReboot for automatic setup?" 20 65 3>&1 1>&2 2>&3
 
 echo ""
 echo "========================================"
-echo "  SCARLIX OS v17.2 — EndeavourOS Edition"
+echo "  SCARLIX OS v17.2.1 — EndeavourOS Edition"
 echo "  Setup complete!"
 echo "  PC Type: $PC_TYPE"
+echo "  GPU: ${NVIDIA_DGPU_COUNT} NVIDIA dGPU(s)"
 echo "  Models: $DOWNLOAD_MODELS"
-echo "  Experimental: $EXPERIMENTAL"
+echo "  Inference: $TIER_DESC"
 echo "  First-boot: ENABLED (3-phase checkpointed, Restart=on-failure)"
 echo "  Reboot to start automatic setup."
 echo "  Dashboard: http://$IP:8090"

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.2 — EndeavourOS Edition — First Boot (Minimal Working Baseline)
+# SCARLIX OS v17.2.1 — EndeavourOS Edition — First Boot (Auto 5-Tier for Dual GPU)
 #
-# v17.2 CORRECTION (vs v17.1):
+# v17.2.1: Wizard auto-suggests experimental mode for 2+ NVIDIA GPU.
+#   If /etc/scarlix/.experimental exists (auto-set by wizard for 2+ GPU),
+#   first-boot starts vLLM/FreeToken/Laya in addition to 2-tier default.
 #   Q1a: yay installed via git clone (not in ISO packages — was breaking mkarchiso)
 #   Q2b: Only @ + @home in Calamares; specialized subvols created HERE as EMPTY
 #   Q4b: Checkpoint resume actually works (service has Restart=on-failure)
@@ -32,8 +34,8 @@ checkpoint() { touch "$CHECKPOINT_DIR/.checkpoint-phase$1"; log "  ⏸ Checkpoin
 is_checkpoint() { [ -f "$CHECKPOINT_DIR/.checkpoint-phase$1" ]; }
 
 log "========================================"
-log "  SCARLIX OS v17.2 — EndeavourOS Edition"
-log "  First Boot (Minimal Working Baseline)"
+log "  SCARLIX OS v17.2.1 — EndeavourOS Edition"
+log "  First Boot (Auto 5-Tier for Dual GPU)"
 log "========================================"
 log "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"
 log "Kernel: $(uname -r)"
@@ -404,7 +406,7 @@ fi
 # ============================================================================
 log ""
 log "========================================"
-log "  SCARLIX OS v17.2 — First Boot Summary"
+log "  SCARLIX OS v17.2.1 — First Boot Summary"
 log "========================================"
 log "  Base:        EndeavourOS (Arch)"
 log "  Kernel:      $(uname -r)"
