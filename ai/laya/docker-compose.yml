@@ -12,6 +12,7 @@ services:
     image: laya/decision-engine:latest
     container_name: laya
     restart: unless-stopped
+    profiles: ["experimental"]  # v17.2: opt-in only (replaces Needle2)
     ports:
       - "11440:8000"
     volumes:

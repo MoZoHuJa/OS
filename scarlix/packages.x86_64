@@ -1,11 +1,15 @@
 # ============================================================================
-# SCARLIX OS v17.1 — EndeavourOS Edition
+# SCARLIX OS v17.2 — EndeavourOS Edition — Minimal Working Baseline
 # archiso packages.x86_64
 #
-# v17.1 changes vs v17.0:
-#   - Removed: snap-pac-grub (AUR), downgrade (AUR), archiso (build-only)
-#   - Added: yay (AUR helper for first-boot AUR installs)
-#   - Kept: snap-pac (sufficient for GRUB snapshots), all v17.0 packages
+# v17.2 CORRECTION (vs v17.1):
+#   - REMOVED: yay (was AUR, broke mkarchiso — P0 blocker)
+#   - first-boot installs yay via git clone (git is in ISO)
+#   - nvidia-container-toolkit from Docker official repo (not AUR)
+#   - downgrade = optional (git install if user opts in)
+#
+# 2-tier default: SGLang + BeeLlama.cpp
+# vLLM/FreeToken/Laya behind --profile experimental (opt-in)
 # ============================================================================
 
 # === Base system ===
@@ -32,9 +36,6 @@ zram-generator
 docker
 docker-compose
 
-# === AUR helper (first-boot installs downgrade + AUR packages) ===
-yay
-
 # === Network / security / time ===
 networkmanager
 ufw
@@ -42,7 +43,7 @@ fail2ban
 chrony
 openssh
 
-# === Development tools ===
+# === Development tools (for building yay from AUR source in first-boot) ===
 git
 curl
 wget
@@ -90,7 +91,9 @@ nano
 whiptail
 
 # === Explicitly NOT in ISO ===
+# yay — AUR package, breaks mkarchiso. Installed via git clone in first-boot.sh
 # nvidia* cuda* cudnn* — post-install via first-boot.sh
 # archiso — build-host only
-# snap-pac-grub — AUR, snap-pac is sufficient
-# downgrade — AUR, installed post-boot via yay
+# nvidia-container-toolkit — from Docker official repo (added to pacman.conf), not AUR
+# downgrade — optional, installed via yay if user opts in
+# vllm/freetoken/laya docker images — pulled on demand if --experimental

@@ -1,174 +1,187 @@
-# SCARLIX OS v17.1 — EndeavourOS Edition
+# SCARLIX OS v17.2 — EndeavourOS Edition (Minimal Working Baseline)
 
 > Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
 > **Base:** EndeavourOS (near-vanilla Arch)
-> **5-Tier Inference:** SGLang → vLLM → Ollama → BeeLlama.cpp → FreeToken
-> **Model-Agnostic:** Supports any HuggingFace model.
+> **2-Tier Default:** SGLang + BeeLlama.cpp (vLLM/FreeToken/Laya = opt-in experimental)
 
-**Version:** v17.1.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v17.2.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
-## 🚀 What's New in v17.1 (vs v17.0)
+## 🎯 What's New in v17.2 (vs v17.1)
 
-Based on 4 independent code reviews of v17.0 + research of 13 GitHub repos.
+**v17.2 is a correction release.** v17.1 was over-engineered — 5-tier inference + 7 new integrations broke the basic ISO build path. v17.2 strips back to a **minimal working baseline** that actually builds and installs.
 
-### Track 1: Review Fixes (10 P0-P1 issues fixed)
+### 🔴 P0 Fixes (ISO build + install blockers)
 
-| # | Fix | Detail |
-|---|-----|--------|
-| Q1a | AUR packages removed from ISO | `snap-pac-grub`, `downgrade`, `archiso` removed; `yay` added for first-boot AUR installs |
-| Q2a | `archiso` is build-only | Removed from runtime packages (was orphaned on installed system) |
-| Q3b | BTRFS subvols in Calamares | Moved from first-boot.sh → `calamares/modules/mount.conf` (was too late, conflicted with Calamares auto-layout) |
-| Q4a | `nvidia-open-lts` added | LTS kernel fallback now works with NVIDIA (was broken — only `nvidia-open` installed) |
-| Q5b | first-boot.sh 3-phase checkpointing | If crash, re-run resumes from last checkpoint (was one mega-script, half-installed on crash) |
-| Q6a | NVIDIA GPU auto-detection | Turing+ → `nvidia-open`, pre-Turing → `nvidia` proprietary (was always nvidia-open, broke GTX 1080) |
-| Q7a | Docker volume backup hook | `snap-pac` pre-update hook backs up Docker volumes before kernel/NVIDIA updates (rollback was losing volumes) |
-| Q8b | model-manager split | HF models auto-pull (safe); Ollama tags require `--apply-ollama` (was auto-updating Ollama, risked CUDA regression) |
-| Q9a | ZRAM formula fixed | `min(ram/2, 16384)` — ArchWiki recommendation (was `min(ram, 32768)`, caused thrashing on 16GB RAM) |
-| Q10a | PC types renamed | "Main PC" → "AI Server", "HP Agent" → "Dev Workstation" (clearer naming) |
+| # | Fix | v17.1 Problem | v17.2 Solution |
+|---|-----|---------------|-----------------|
+| Q1a | **yay removed from ISO** | `yay` is AUR → `mkarchiso` failed "target not found" | Removed from `packages.x86_64`; first-boot installs via `git clone https://aur.archlinux.org/yay.git && makepkg -si` |
+| Q2b | **Calamares mount.conf stripped** | 8 subvols in mount.conf crashed Calamares on existing subvols | Only `@` and `@home` in mount.conf; specialized subvols created by first-boot **empty** → `chattr +C` works |
+| Q3a | **2-tier default** | 5-tier (9GB ISO, OOM on 16GB VRAM) | Default: SGLang + BeeLlama.cpp; vLLM/FreeToken/Laya behind `--profile experimental` |
+| Q4b | **Checkpoint resume works** | `ConditionPathExists` blocked re-run after crash | Removed condition; added `Restart=on-failure` + `RestartSec=30s` |
+| Q5a | **NVIDIA dGPU-only detect** | `lspci` returned 2 cards on hybrid laptops → installed both drivers → black screen | Filter: `lspci -nn \| grep -iE 'NVIDIA.*(VGA\|3D)'` (ignores Intel iGPU) |
+| Q6a | **Atomic NVIDIA install** | linux-lts + nvidia-open-lts version mismatch → unbootable | Both installed in ONE `pacman -S` call (atomic dependency resolution) |
+| Q7a | **CoW on empty subvols** | chattr +C on non-empty dirs (Calamares had written data) → Docker overlay2 broke | Subvols created empty in Phase 1 → chattr +C before any data |
+| Q8a | **AUR optional + Docker repo** | AUR in first-boot fragile (network/DNS) | `nvidia-container-toolkit` from Docker official repo (added to pacman.conf); model download opt-in `--skip-models` |
 
-### Track 2: New Inference Engines (3 integrations)
-
-| Tier | Engine | What | Port |
-|------|--------|------|------|
-| 2 | **vLLM** ⭐ | Multi-GPU tensor parallelism, Multi-LoRA (Hermes/OpenCode/Voice share base) | 8089 |
-| 4 | **BeeLlama.cpp** ⭐ | KVarN KV-cache quantization (~50% VRAM reduction), replaces llama.cpp | 11438 |
-| — | **oh-my-pi (omp)** ⭐ | Coding agent with 14 LSP ops + 28 DAP ops, replaces OpenCode | — |
-
-### Track 3: New Integrations (from 13-repo research)
-
-| # | Integration | Replaces | License |
-|---|-------------|----------|---------|
-| Q11a | **Laya** (System-1 router, 33ms decisions) | Needle2 | Apache-2.0 |
-| Q12a | **FreeToken** (Tier-5 MoE engine, experimental `--profile moe`) | — (new) | Apache-2.0 |
-| Q13a | **Playwright MCP** (browser automation) | — (new, replaces AGPL Sitegeist) | Apache-2.0 |
-| Q14b | **ScarliHQ Kanban** (built-in Go board, replaces Multica) | — (new) | MIT |
-| Q15b | **WebSocket activity log** (real-time agent activity in dashboard) | — (new, AG-UI inspired) | MIT |
-| Q16a | **Unified image** (one ISO, auto-detect hardware) | Two profiles (Main/HP) | — |
-| Q17a | **omp default + qwen-code opt-in** | OpenCode only | MIT/Apache |
-
-### Track 4: AgentVerse Merge Plan
-
-See `docs/AGENTVERSE_MERGE_PLAN.md` — analysis of sister project + phased roadmap (v17.2-v18.0).
-
-## 🏗️ 5-Tier Inference Architecture (NEW in v17.1)
+### 📦 2-Tier Default Inference (NEW in v17.2)
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  System-1: Laya (33ms router, replaces Needle2)        │
-│  HITL Triage → safe? execute / risky? Telegram approve │
-├─────────────────────────────────────────────────────────┤
-│  Tier-1: SGLang (GPU 0, RadixAttention, agents)         │
-│  Tier-2: vLLM (GPU 0+1 TP=2, Multi-LoRA, batch) [NEW]  │
-│  Tier-3: Ollama ×2 (GGUF, concurrent, GPU 0+1)         │
-│  Tier-4: BeeLlama.cpp (CPU, KVarN, 32k context) [NEW]  │
-│  Tier-5: FreeToken (MoE, experimental) [NEW]           │
-├─────────────────────────────────────────────────────────┤
-│  Browser MCP: Playwright (Apache-2.0, replaces AGPL)   │
-│  Coding Agent: oh-my-pi (LSP+DAP, replaces OpenCode)   │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│  DEFAULT (starts on first-boot):                │
+│  Tier-1: SGLang (agents, RadixAttention)        │
+│  Tier-3: Ollama (GGUF concurrent)              │
+│  Tier-4: BeeLlama.cpp (offline, KVarN, 32k ctx) │
+├─────────────────────────────────────────────────┤
+│  EXPERIMENTAL (opt-in via wizard):             │
+│  Tier-2: vLLM (Multi-LoRA, TP=2, needs 2 GPU)  │
+│  Tier-5: FreeToken (MoE, --profile moe)         │
+│  System-1: Laya (33ms router)                   │
+└─────────────────────────────────────────────────┘
 ```
+
+### 🔧 Wizard Options (NEW)
+
+The setup wizard now asks:
+1. **PC Type**: Auto-detected (NVIDIA dGPU → AI Server, else Dev Workstation)
+2. **Model Download**: Skip (default, faster) or Download (50-150GB, hours)
+3. **Experimental Mode**: No (default, 2-tier) or Yes (vLLM/FreeToken/Laya)
+
+### ✅ Kept from v17.1 (all good engineering)
+
+- archiso-based build, model-agnostic models.yaml
+- 6 GPU modes (ai/game/creative/turbo/offline/tv) + vram
+- Pipewire audio, BTRFS+Snapper, ZRAM min(ram/2, 16384)
+- NVIDIA auto-detect (Turing+ → nvidia-open, older → proprietary)
+- nvidia-open-lts for LTS kernel fallback
+- 3-phase checkpointed first-boot
+- Docker volume backup pacman hook (pre-rollback safety)
+- model-manager.sh (HF auto + Ollama --apply-ollama manual)
+- omp (oh-my-pi) coding agent (replaces OpenCode)
+- Playwright MCP (browser automation)
+- AgentVerse merge plan (docs/AGENTVERSE_MERGE_PLAN.md)
 
 ## 🚀 Quick Start
 
 ### Build ISO:
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git
-cd OS && git checkout v17.1
+cd OS && git checkout v17.2
 sudo pacman -S archiso edk2-ovmf qemu-desktop
 bash installer/scripts/build-iso.sh
 ```
 
 ### Install:
-1. Write ISO to USB → boot → Calamares (auto BTRFS subvol layout via `mount.conf`)
-2. Wizard: auto-detects GPU → suggests AI Server / Dev Workstation
-3. Select backend: SGLang (default) or vLLM
-4. Reboot → 3-phase checkpointed first-boot:
-   - Phase 1: BTRFS verify + Snapper + CoW + ZRAM
-   - Phase 2: NVIDIA auto-detect + nvidia-open-lts + GRUB modeset
-   - Phase 3: Docker + 5-tier inference + omp + model-manager.timer
-5. Dashboard: http://192.168.1.100:8090
+1. Write ISO to USB → boot → Calamares (BTRFS, only `@` + `@home`)
+2. Wizard: auto-detects GPU → AI Server / Dev Workstation
+3. Choose: Skip models (default) or Download
+4. Choose: 2-tier default (recommended) or Experimental
+5. Reboot → 3-phase first-boot (auto-resume on crash via Restart=on-failure):
+   - Phase 1: BTRFS subvols (empty) + Snapper + CoW + ZRAM
+   - Phase 2: NVIDIA dGPU detect + atomic nvidia-open + nvidia-open-lts + GRUB modeset
+   - Phase 3: Docker + yay (git clone) + 2-tier services + omp
+6. Dashboard: http://192.168.1.100:8090
 
 ## 🎮 GPU Modes
 
 ```bash
-scarlix-mode ai --backend sglang   # Default (RadixAttention for agents)
-scarlix-mode ai --backend vllm     # vLLM (Multi-LoRA, high throughput)
-scarlix-mode turbo                  # SGLang + vLLM + Ollama (max)
-scarlix-mode offline                # BeeLlama.cpp CPU (KVarN, 32k context)
-scarlix-mode game                   # Native Steam/Sunshine
-scarlix-mode creative               # ComfyUI + Video + Music
-scarlix-mode tv                     # Docker Sunshine
-scarlix-mode vram                   # VRAM health check
+scarlix-mode ai        # 2-tier: SGLang + BeeLlama + Ollama (default)
+scarlix-mode turbo     # SGLang + BeeLlama + Ollama (max throughput)
+scarlix-mode offline   # BeeLlama.cpp CPU (KVarN, 32k context)
+scarlix-mode game      # Native Steam/Sunshine
+scarlix-mode creative  # ComfyUI + Video + Music
+scarlix-mode tv        # Docker Sunshine
+scarlix-mode vram      # VRAM health check
+scarlix-mode status    # System summary
 ```
 
 ## 🔧 NVIDIA Rollback
 
 ```bash
-# Option 1: rollback driver version (downgrade installed via yay in first-boot)
+# Option 1: rollback driver (downgrade installed via yay in first-boot)
 sudo downgrade nvidia-open
 
-# Option 2: boot LTS kernel (nvidia-open-lts already installed)
-sudo grub-set-default 1  # linux-lts entry
+# Option 2: boot LTS kernel (nvidia-open-lts already installed atomically)
+sudo grub-set-default 1
 sudo reboot
 ```
 
-## 📁 File Layout (v17.1)
+## 🧪 Enable Experimental Mode (vLLM/FreeToken/Laya)
+
+If you have 2+ GPUs with 32GB+ VRAM and want the full 5-tier stack:
+
+```bash
+# During install: choose "Yes" for Experimental in wizard
+# OR post-install:
+sudo touch /etc/scarlix/.experimental
+sudo systemctl restart scarlix-first-boot.service
+```
+
+## 📁 File Layout (v17.2)
 
 ```
 scarlix/
-├── profiledef.sh                          # v17.1.0, SCARLIX_V171
-├── packages.x86_64                        # +yay, -snap-pac-grub, -downgrade, -archiso
-├── pacman.conf                            # [core] [extra] [multilib] only
+├── profiledef.sh                          # v17.2.0, SCARLIX_V172
+├── packages.x86_64                        # yay REMOVED (was breaking build)
+├── pacman.conf                            # +[docker] repo for nvidia-container-toolkit
 ├── airootfs/
-│   ├── etc/
-│   │   ├── calamares/modules/
-│   │   │   ├── mount.conf                # NEW Q3b: explicit BTRFS subvol layout
-│   │   │   └── partition.conf            # Default FS = btrfs
-│   │   ├── systemd/
-│   │   │   ├── zram-generator.conf        # Q9a: min(ram/2, 16384)
-│   │   │   └── system/
-│   │   │       ├── first-boot.sh         # Q5b: 3-phase checkpointed
-│   │   │       ├── model-manager.service
-│   │   │       ├── model-manager.timer   # Q8b: HF auto, Ollama --apply-ollama
-│   │   │       └── scarlix-first-boot.service
-│   │   └── pacman.d/hooks/
-│   │       ├── scarlix-docker-backup.hook # NEW Q7a
-│   │       └── scarlix-docker-backup.sh  # NEW Q7a
+│   ├── etc/calamares/modules/
+│   │   ├── mount.conf                     # Q2b: ONLY @ + @home (was 8 subvols)
+│   │   └── partition.conf
+│   ├── etc/systemd/
+│   │   ├── zram-generator.conf            # min(ram/2, 16384)
+│   │   └── system/
+│   │       ├── first-boot.sh              # Q5a+Q6a+Q7a+Q8a rewrite
+│   │       ├── scarlix-first-boot.service # Q4b: Restart=on-failure (no ConditionPathExists)
+│   │       ├── model-manager.{service,timer}
+│   ├── etc/pacman.d/hooks/
+│   │   ├── scarlix-docker-backup.hook     # Pre-rollback Docker backup
+│   │   └── scarlix-docker-backup.sh
 │   └── usr/local/bin/
-│       ├── scarlix-wizard                 # Q10a+Q16a: AI Server/Dev Workstation + auto-detect
-│       ├── scarlix-mode                   # +--backend sglang|vllm + Laya status
-│       └── model-manager.sh               # Q8b: --apply-ollama flag
+│       ├── scarlix-wizard                 # +--skip-models +--experimental
+│       ├── scarlix-mode                   # 2-tier default
+│       └── model-manager.sh
 ├── efiboot/loader/entries/archiso-x86_64.conf
 └── syslinux/syslinux.cfg
 
 ai/
-├── vllm/docker-compose.yml                # NEW I1: Tier-2 (TP=2, Multi-LoRA)
-├── laya/docker-compose.yml               # NEW Q11a: System-1 router
-├── freetoken/docker-compose.yml          # NEW Q12a: Tier-5 MoE (--profile moe)
-├── browser-mcp/docker-compose.yml        # NEW Q13a: Playwright MCP
-├── llamacpp/docker-compose.yml           # UPGRADED I2: BeeLlama.cpp (KVarN)
-├── sglang/                                # Tier-1 (unchanged)
-├── ollama/                                 # Tier-3 (unchanged)
-└── smg/                                    # Gateway (unchanged)
+├── vllm/docker-compose.yml                # profiles:[experimental]
+├── laya/docker-compose.yml               # profiles:[experimental]
+├── freetoken/docker-compose.yml          # profiles:[moe] (already)
+├── llamacpp/docker-compose.yml           # BeeLlama.cpp (default Tier-4)
+├── sglang/                                # SGLang (default Tier-1)
+├── ollama/                                # Ollama (default Tier-3)
+├── browser-mcp/                           # Playwright MCP
+└── smg/                                   # Gateway
 
-agents/omp/                                # NEW I3: oh-my-pi profile
-docs/AGENTVERSE_MERGE_PLAN.md             # NEW Track 4: sister project merge plan
-AGENTS.md                                  # Updated: 5-tier + omp delegation
-models.yaml                               # Updated: vllm + beellama + laya + freetoken sections
-installer/scripts/build-iso.sh            # v17.1.0
-tests/qemu-boot.sh                        # v17.1.0
+models.yaml                               # 2-tier default + experimental sections
+installer/scripts/build-iso.sh            # v17.2.0
+tests/qemu-boot.sh                        # v17.2.0
+docs/AGENTVERSE_MERGE_PLAN.md             # From v17.1 (sister project analysis)
 ```
 
 ## 📜 Version History
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v17.1** | 2026-09 | **10 review fixes + 5-tier inference (vLLM+BeeLlama+FreeToken) + Laya router + omp coding agent + Playwright MCP + ScarliHQ Kanban + 3-phase first-boot + Calamares BTRFS layout + AgentVerse merge plan** |
-| v17.0 | 2026-09 | Garuda → EndeavourOS re-base. Profile renamed `scarlix/`. Pipewire. Explicit BTRFS+Snapper. NVIDIA open. |
-| v16.5 | 2026-08 | 10 review fixes (PIPESTATUS, OVMF, console=ttyS0, model-manager, etc.) |
-| v16.4 | 2026-08 | VERSION consistency, OVMF CODE/VARS split, real QEMU PASS/FAIL |
-| v16.3 | 2026-08 | Wizard enables first-boot, NVIDIA post-install |
-| v16.2 | 2026-08 | archiso-based |
+| **v17.2** | 2026-10 | **Correction release. 2-tier default (SGLang+BeeLlama). yay removed from ISO. Calamares mount.conf stripped to @ + @home. NVIDIA dGPU-only detect. Atomic nvidia-open-lts install. Checkpoint resume (Restart=on-failure). Model download opt-in.** |
+| v17.1 | 2026-09 | 5-tier inference (vLLM+BeeLlama+FreeToken+Laya+omp). 10 review fixes. (Over-engineered — ISO build broken) |
+| v17.0 | 2026-09 | Garuda → EndeavourOS re-base. Profile renamed `scarlix/`. |
+| v16.5 | 2026-08 | 10 review fixes (PIPESTATUS, OVMF, console=ttyS0, etc.) |
+| v16.4 | 2026-08 | VERSION consistency, OVMF CODE/VARS split, QEMU PASS/FAIL |
 | v16.1 | 2026-07 | Garuda Linux, BTRFS+Snapper, native gaming |
 | v15 | 2026-06 | Model-Agnostic system |
 | v12 | 2026-05 | Sovereign Agent Compute Edition |
+
+## ⚠️ Known Limitations (v17.2)
+
+- **No CI/CD**: ISO build not tested automatically (manual QEMU only)
+- **No real HW test**: QEMU doesn't test NVIDIA/CUDA/Sunshine/HDMI-CEC
+- **Single maintainer**: One person maintaining the full stack
+- **SGLang on Arch**: Officially Ubuntu-only, AUR package has packaging gaps
+- **Experimental tier**: vLLM/FreeToken/Laya are NOT production-tested
+
+## 🗺️ Roadmap
+
+- **v17.3**: AgentVerse merge (944-app store, capabilities, cloudd side-car)
+- **v18.0**: Incus dev workspaces, ScarliHQ Rust refactor consideration
+- **v18.1**: Single-core consolidation (Go vs Rust decision)

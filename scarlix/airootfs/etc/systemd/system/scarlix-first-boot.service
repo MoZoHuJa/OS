@@ -1,13 +1,19 @@
 [Unit]
-Description=SCARLIX OS v17.1 First Boot Setup (3-phase checkpointed)
+Description=SCARLIX OS v17.2 First Boot (3-phase checkpointed, auto-resume)
 After=network-online.target docker.service
 Wants=network-online.target
-ConditionPathExists=!/opt/scarlix/.installed
+# FIX Q4b: Removed ConditionPathExists=!/var/lib/scarlix/.installed
+#   It was blocking re-run after crash. Now first-boot.sh checks internally
+#   and exits 0 if already installed. Service restarts on failure (Resume).
 [Service]
 Type=oneshot
 ExecStart=/etc/systemd/system/first-boot.sh
-ExecStartPost=/bin/touch /opt/scarlix/.installed
 RemainAfterExit=yes
 TimeoutStartSec=3600
+# FIX Q4b: Auto-restart on failure — resumes from last checkpoint
+Restart=on-failure
+RestartSec=30s
+# Max 5 restart attempts (Phase 2 NVIDIA may need retries)
+StartLimitBurst=5
 [Install]
 WantedBy=multi-user.target

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2154
-# SCARLIX OS v17.1 — archiso profile definition (EndeavourOS Edition)
+# SCARLIX OS v17.2 — archiso profile definition (EndeavourOS Edition — Minimal Baseline)
 
 iso_name="scarlix-os"
-iso_label="SCARLIX_V171"
+iso_label="SCARLIX_V172"
 iso_publisher="MoZoHuJa"
-iso_application="SCARLIX OS v17.1 — EndeavourOS Edition"
-iso_version="17.1.0"
+iso_application="SCARLIX OS v17.2 — EndeavourOS Edition"
+iso_version="17.2.0"
 install_dir="scarlix"
 buildmodes=('bios' 'uefi')
 bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito' 'uefi-x64.systemd-boot.esp' 'uefi-x64.systemd-boot.eltorito')
