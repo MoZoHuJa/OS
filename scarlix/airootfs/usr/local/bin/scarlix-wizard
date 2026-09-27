@@ -1,31 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.0 — EndeavourOS Edition — Setup Wizard
-#
-# v17.0 changes vs v16.5:
-#   - Removed "Garuda Dr460nized" branding
-#   - Removed linux-zen assumption
-#   - Same logic: Main PC / HP Agent selection + first-boot + model-manager.timer enable
+# SCARLIX OS v17.1 — EndeavourOS Edition — Setup Wizard
+# FIX Q10a+Q16a: Renamed "Main PC"→"AI Server", "HP Agent"→"Dev Workstation"
+# FIX Q16a: Auto-detect hardware (GPU count) and suggest PC type
 
-TITLE="SCARLIX OS v17.0 Setup"
+TITLE="SCARLIX OS v17.1 Setup"
+
+# Auto-detect GPU count for suggestion
+GPU_COUNT_DETECTED=$(lspci 2>/dev/null | grep -ic nvidia || echo 0)
+if [ "$GPU_COUNT_DETECTED" -gt 0 ]; then
+  SUGGESTED_TYPE="ai_server"
+  SUGGESTED_DESC="Auto-detected: ${GPU_COUNT_DETECTED} NVIDIA GPU(s)"
+else
+  SUGGESTED_TYPE="dev_workstation"
+  SUGGESTED_DESC="Auto-detected: no NVIDIA GPU"
+fi
 
 whiptail --title "$TITLE" --msgbox \
-  "Vitaj v SCARLIX OS v17.0 (EndeavourOS Edition)!\n\n\
+  "Vitaj v SCARLIX OS v17.1 (EndeavourOS Edition)!\n\n\
 Base: EndeavourOS (near-vanilla Arch)\n\
 Kernel: linux (default) + linux-lts (fallback)\n\
-Filesystem: BTRFS + Snapper (explicit layout)\n\
+Filesystem: BTRFS + Snapper (Calamares layout)\n\
 Audio: Pipewire\n\
-ZRAM: 32GB zstd\n\n\
+ZRAM: min(ram/2, 16GB) zstd\n\n\
 Stlac Enter pre pokracovanie." 22 70
 
-# A2-b: TUI wizard asks Main or HP Agent
-PC_TYPE=$(whiptail --title "$TITLE" --menu "Vyber typ tohto PC:" 15 60 2 \
-  "main" "Main PC (EndeavourOS + AI + 2x GPU + Gaming)" \
-  "hp_agent" "HP Agent PC (Headless Worker — coding + files)" 3>&1 1>&2 2>&3)
+# Q16a: Auto-detect + allow override
+PC_TYPE=$(whiptail --title "$TITLE" --menu \
+  "Vyber typ tohto PC:\n\n$SUGGESTED_DESC\n\n(Ak nesúhlasí s detekciou, vyber manuálne)" 18 70 2 \
+  "$SUGGESTED_TYPE" "← Auto-detected (odporúčané)" \
+  "ai_server" "AI Server (EndeavourOS + AI + 2x GPU + Gaming)" \
+  "dev_workstation" "Dev Workstation (Headless worker — coding + files)" 3>&1 1>&2 2>&3) || PC_TYPE="$SUGGESTED_TYPE"
 
 DEFAULT_IP="192.168.1.100"
-[ "$PC_TYPE" = "hp_agent" ] && DEFAULT_IP="192.168.1.101"
+[ "$PC_TYPE" = "dev_workstation" ] && DEFAULT_IP="192.168.1.101"
 IP=$(whiptail --title "$TITLE" --inputbox "IP adresa:" 10 50 "$DEFAULT_IP" 3>&1 1>&2 2>&3)
 
 PASS=$(whiptail --title "$TITLE" --passwordbox "Heslo pre scarlix user:" 10 50 3>&1 1>&2 2>&3)
@@ -34,8 +43,17 @@ TG_TOKEN=$(whiptail --title "$TITLE" --inputbox "Telegram Bot Token (prazdne = p
 TG_CHAT_ID=""
 [ -n "$TG_TOKEN" ] && TG_CHAT_ID=$(whiptail --title "$TITLE" --inputbox "Telegram Chat ID:" 10 50 "" 3>&1 1>&2 2>&3)
 
-# Save PC type
+# Backend selection (v17.1 NEW)
+BACKEND=$(whiptail --title "$TITLE" --menu \
+  "Vyber defaultný Tier-1/2 inference backend:" 15 70 2 \
+  "sglang" "SGLang (agents, RadixAttention, default)" \
+  "vllm" "vLLM (high throughput, Multi-LoRA, batch)" 3>&1 1>&2 2>&3) || BACKEND="sglang"
+
+# Save PC type + backend
 echo "$PC_TYPE" | sudo tee /etc/scarlix/pc_type >/dev/null
+echo "$BACKEND" | sudo tee /var/lib/scarlix/current-backend >/dev/null 2>/dev/null || true
+sudo mkdir -p /var/lib/scarlix 2>/dev/null
+echo "$BACKEND" | sudo tee /var/lib/scarlix/current-backend >/dev/null
 
 # Set static IP (NetworkManager)
 sudo nmcli connection modify "Wired connection 1" \
@@ -54,26 +72,27 @@ if [ -d /opt/scarlix-src ]; then
   sudo cp -r /opt/scarlix-src/* /opt/scarlix/ 2>/dev/null || true
 fi
 
-# Enable first-boot service HERE
+# Enable first-boot service
 sudo systemctl enable scarlix-first-boot.service
 
-# Enable weekly model-manager timer (if present)
+# Enable model-manager timer
 if [ -f /etc/systemd/system/model-manager.timer ]; then
-  sudo systemctl enable model-manager.timer 2>/dev/null || true
-  log_msg="Model manager timer: ENABLED (weekly Mon 04:00)"
+  sudo systemctl enable model-manager.timer 2>/dev/null && TIMER_MSG="ENABLED (weekly Mon 04:00)" || TIMER_MSG="failed"
 else
-  log_msg="Model manager timer: not installed"
+  TIMER_MSG="not installed"
 fi
 
 # Confirm
 whiptail --title "$TITLE" --yesno \
-  "PC Typ: $PC_TYPE\nIP: $IP\n\nFirst-boot service enabled.\n$log_msg\nReboot for automatic setup?" 18 60 3>&1 1>&2 2>&3
+  "PC Typ: $PC_TYPE\nIP: $IP\nBackend: $BACKEND\n\nFirst-boot service: ENABLED\nModel manager: $TIMER_MSG\n\nReboot for automatic setup?" 20 60 3>&1 1>&2 2>&3
 
 echo ""
 echo "========================================"
-echo "  SCARLIX OS v17.0 — EndeavourOS Edition"
+echo "  SCARLIX OS v17.1 — EndeavourOS Edition"
 echo "  Setup complete!"
-echo "  First-boot service: ENABLED"
+echo "  PC Type: $PC_TYPE"
+echo "  Backend: $BACKEND"
+echo "  First-boot: ENABLED (3-phase checkpointed)"
 echo "  Reboot to start automatic setup."
 echo "  Dashboard: http://$IP:8090"
 echo "========================================"

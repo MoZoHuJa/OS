@@ -1,0 +1,36 @@
+# SCARLIX OS v17.1 — Playwright MCP (Browser Automation)
+# FIX Q13a: License-clean browser automation for agents (Apache-2.0 Playwright, not AGPL Sitegeist)
+# Hermes/omp can drive the browser via MCP protocol: scraping, form filling, screenshots
+# Port: 8095 (MCP server)
+
+version: "3.9"
+
+services:
+  browser-mcp:
+    image: mcp/playwright-server:latest
+    container_name: browser-mcp
+    restart: unless-stopped
+    ports:
+      - "8095:3000"
+    environment:
+      - MCP_HEADLESS=true
+      - MCP_BROWSER=chromium
+      - MCP_TIMEOUT=30000
+    # Chromium needs --no-sandbox in Docker
+    security_opt:
+      - no-new-privileges:true
+    # Mount for screenshots/downloads
+    volumes:
+      - /var/lib/scarlix/browser-downloads:/downloads
+    command: >
+      --host 0.0.0.0
+      --port 3000
+      --enable-tools
+      navigate,screenshot,click,type,scroll,fill,evaluate,extract
+    networks:
+      - scarlix-net
+
+networks:
+  scarlix-net:
+    external: true
+    name: scarlix-net

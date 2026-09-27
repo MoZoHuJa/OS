@@ -1,13 +1,11 @@
 # ============================================================================
-# SCARLIX OS v17.0 — EndeavourOS Edition
+# SCARLIX OS v17.1 — EndeavourOS Edition
 # archiso packages.x86_64
 #
-# v17.0 changes vs v16.5:
-#   - Removed all garuda-* packages (Garuda → EndeavourOS)
-#   - Removed linux-zen (default = vanilla linux, fallback = linux-lts)
-#   - Switched audio: pulseaudio → pipewire stack
-#   - Added: efibootmgr, grub, os-prober, openssh, btop, unzip, zip, snap-pac-grub
-#   - NVIDIA + CUDA intentionally ABSENT (post-install via first-boot.sh)
+# v17.1 changes vs v17.0:
+#   - Removed: snap-pac-grub (AUR), downgrade (AUR), archiso (build-only)
+#   - Added: yay (AUR helper for first-boot AUR installs)
+#   - Kept: snap-pac (sufficient for GRUB snapshots), all v17.0 packages
 # ============================================================================
 
 # === Base system ===
@@ -26,7 +24,6 @@ os-prober
 # === Snapper / recovery ===
 snapper
 snap-pac
-snap-pac-grub
 
 # === ZRAM ===
 zram-generator
@@ -34,6 +31,9 @@ zram-generator
 # === Docker ===
 docker
 docker-compose
+
+# === AUR helper (first-boot installs downgrade + AUR packages) ===
+yay
 
 # === Network / security / time ===
 networkmanager
@@ -61,14 +61,14 @@ restic
 unzip
 zip
 
-# === Gaming (native — no Docker) ===
+# === Gaming (native) ===
 steam
 wine
 wine-gecko
 wine-mono
 lutris
 
-# === Audio (Pipewire stack — replaces pulseaudio in v17) ===
+# === Audio (Pipewire stack) ===
 pipewire
 pipewire-pulse
 pipewire-alsa
@@ -84,14 +84,13 @@ blueman
 
 # === Installer ===
 calamares
-archiso
 
 # === Utils ===
 nano
 whiptail
-downgrade
 
-# === Explicitly NOT in ISO (install post-boot via first-boot.sh) ===
-# nvidia*  cuda*  cudnn*
-# garuda-*  chaotic-aur specific
-# linux-zen / linux-zen-headers (optional, install via AUR post-boot if desired)
+# === Explicitly NOT in ISO ===
+# nvidia* cuda* cudnn* — post-install via first-boot.sh
+# archiso — build-host only
+# snap-pac-grub — AUR, snap-pac is sufficient
+# downgrade — AUR, installed post-boot via yay

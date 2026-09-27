@@ -1,62 +1,84 @@
-# SCARLIX OS v17.0 — EndeavourOS Edition — Model-Agnostic Configuration
+# SCARLIX OS v17.1 — EndeavourOS Edition — Model-Agnostic Configuration
 # Edit this file to use ANY HuggingFace model.
 # Then run: bash /opt/scarlix/scripts/download-models.sh
 #
-# Weekly auto-update: model-manager.sh (Monday 04:00) — pulls latest HF
-# models + Ollama tags, reports VRAM before/after, sends Telegram summary.
+# v17.1: 5-tier inference architecture
+#   Tier-1: SGLang (agents, RadixAttention)
+#   Tier-2: vLLM (high throughput, Multi-LoRA) [NEW]
+#   Tier-3: Ollama (GGUF, concurrent)
+#   Tier-4: BeeLlama.cpp (offline, KVarN KV cache) [NEW — replaces llama.cpp]
+#   Tier-5: FreeToken (MoE, experimental --profile moe) [NEW]
 
-# === SGLang (safetensors formát, GPU 0) ===
+# === Tier-1: SGLang (safetensors, GPU 0) ===
 sglang:
   model_path: "/models/Qwen3-14B-Instruct-AWQ"
-  # Alternatívy (odkomentuj jednu):
+  # Alternatívy:
   # model_path: "/models/Meta-Llama-3.1-8B-Instruct"
   # model_path: "/models/mistralai/Mistral-7B-Instruct-v0.3"
   # model_path: "/models/google/gemma-2-9b-it"
-  # model_path: "/models/microsoft/Phi-3-medium-128k-instruct"
-  # model_path: "/models/deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct"
   quantization: "awq"
   context_length: 32768
   mem_fraction: 0.85
   flashinfer: true
 
-# === Ollama Main (GGUF, GPU 0) ===
+# === Tier-2: vLLM (Multi-LoRA, multi-GPU TP=2) [NEW v17.1] ===
+vllm:
+  model_path: "/models/Qwen3-14B-Instruct-AWQ"
+  tensor_parallel_size: 2          # Use both GPUs for >24GB models
+  gpu_memory_utilization: 0.85
+  max_model_len: 32768
+  enable_lora: true                 # Multi-LoRA: Hermes/OpenCode/Voice share base
+  max_loras: 4
+  lora_adapters:
+    hermes: "/models/lora/hermes"
+    opencode: "/models/lora/opencode"
+    voice: "/models/lora/voice"
+  # Alternatívy:
+  # model_path: "/models/Meta-Llama-3.1-8B-Instruct"
+  # model_path: "/models/Qwen3-72B-Instruct-AWQ"  # Needs TP=2
+
+# === Tier-3: Ollama Main (GGUF, GPU 0) ===
 ollama_main:
   model: "qwen3.6:14b"
-  # Alternatívy:
-  # model: "llama3.1:8b"
-  # model: "mistral:7b"
-  # model: "gemma2:9b"
-  # model: "phi3:14b"
   keep_alive: "15m"
   num_parallel: 4
 
-# === Ollama Agent (GGUF, GPU 1) ===
+# === Tier-3: Ollama Agent (GGUF, GPU 1) ===
 ollama_agent:
   model: "qwen3.6:14b"
-  # Alternatívy:
-  # model: "llama3.1:8b"
-  # model: "qwen2.5-coder:14b"
-  # model: "mistral-nemo:12b"
   keep_alive: "-1"
   num_parallel: 2
 
-# === llama.cpp (CPU fallback, GGUF) ===
-# hf_repo field enables direct HuggingFace GGUF download + weekly auto-update.
-llamacpp:
+# === Tier-4: BeeLlama.cpp (CPU fallback, KVarN KV cache) [NEW v17.1] ===
+# Replaces llama.cpp — same GGUF files, but KVarN quantization = ~50% VRAM reduction
+# Reasoning-loop protection for unattended agent runs
+beellama:
   model_file: "/models/qwen3.6-14b-instruct-q4_k_m.gguf"
   hf_repo: "Qwen/Qwen3-14B-Instruct-GGUF"
   hf_file: "qwen3.6-14b-instruct-q4_k_m.gguf"
-  # Alternatívy:
-  # hf_repo: "Meta-Llama/Llama-3.1-8B-Instruct-GGUF"
-  # hf_file: "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
-  # hf_repo: "bartowski/Mistral-7B-Instruct-v0.3-GGUF"
-  # hf_file: "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf"
-  context_size: 8192
+  context_size: 32768              # Doubled from 8192 thanks to KVarN
   threads: 16
+  cache_type_k: "kvarn4"           # KVarN 4-bit KV cache
+  cache_type_v: "kvarn4"
+  kv_tail_tokens: 1024             # Full precision for recent tokens
+  reasoning_loop_protection: true
 
-# === Needle2 Router (GPU 1, 26M params) ===
-needle:
-  model_path: "/models/needle-router-v1"
+# === Tier-5: FreeToken (MoE, experimental) [NEW v17.1] ===
+# Activate via: docker compose --profile moe up -d
+# Runs DeepSeek-V3/V4, Qwen3-Coder-A35B on 2x16GB GPU + RAM offload
+freetoken:
+  model_path: "/models/Qwen3-Coder-A35B-FTW"
+  gpu_memory_fraction: 0.80
+  cpu_offload: true
+  semantic_kv_cache: true
+  bandwidth_adaptive: true
+
+# === System-1: Laya (33ms router, replaces Needle2) [NEW v17.1] ===
+laya:
+  model_path: "/models/laya/router-v1"
+  device: "cuda:0"
+  max_batch: 32
+  enable_mcp: true                 # MCP protocol for Hermes integration
 
 # === ComfyUI (creative mode, GPU 0) ===
 comfyui:

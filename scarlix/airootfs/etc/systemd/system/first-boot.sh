@@ -1,24 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.0 — EndeavourOS Edition — First Boot Setup
-# Logs every step to /var/log/scarlix/first-boot.log with SUCCESS/FAILED.
-# Continues on error (does not stop).
+# SCARLIX OS v17.1 — EndeavourOS Edition — First Boot Setup (3-phase with checkpointing)
 #
-# v17.0 changes vs v16.5:
-#   - Removed all Garuda assumptions (/etc/garuda-release etc.)
-#   - Added explicit BTRFS subvolume layout (was automatic on Garuda)
-#   - Added Snapper configs for root + home + timeline/cleanup timers
-#   - Kept: ZRAM (zram-generator.conf), chattr +C CoW disable, NVIDIA post-install,
-#           model-manager.timer enable, all Docker service starts
+# FIX Q5b: Split into 3 idempotent phases with checkpointing.
+#   If first-boot crashes, re-running it resumes from the last checkpoint.
+#
+# FIX Q6a: NVIDIA driver auto-detection (Turing+ → nvidia-open, older → nvidia proprietary)
+# FIX Q4a: Install BOTH nvidia-open (for linux) + nvidia-open-lts (for linux-lts)
+#
+# Phase 1: BTRFS verify + Snapper configs + chattr +C + ZRAM verify
+# Phase 2: NVIDIA auto-detect + install + GRUB modeset + initramfs rebuild
+# Phase 3: Docker + services + model-manager.timer + default mode + model download
 
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/first-boot.log"
+CHECKPOINT_DIR="/var/lib/scarlix"
 SUCCESS_COUNT=0
 FAIL_COUNT=0
 SERVICES_STARTED=""
 
-mkdir -p "$LOG_DIR"
+mkdir -p "$LOG_DIR" "$CHECKPOINT_DIR"
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
@@ -36,24 +38,38 @@ log_failed() {
   SERVICES_STARTED="$SERVICES_STARTED\n  ✗ $1"
 }
 
-log "=== SCARLIX OS v17.0 — EndeavourOS Edition — First Boot ==="
-log "Base: $(cat /etc/os-release 2>/dev/null | grep '^PRETTY_NAME=' | cut -d'"' -f2 || echo 'EndeavourOS')"
+checkpoint() {
+  local phase="$1"
+  touch "$CHECKPOINT_DIR/.checkpoint-phase${phase}"
+  log "  ⏸ Checkpoint: Phase $phase complete"
+}
+
+is_checkpoint() {
+  local phase="$1"
+  [ -f "$CHECKPOINT_DIR/.checkpoint-phase${phase}" ]
+}
+
+log "========================================"
+log "  SCARLIX OS v17.1 — EndeavourOS Edition"
+log "  First Boot Setup (3-phase checkpointed)"
+log "========================================"
+log "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"
 log "Kernel: $(uname -r)"
 
-# Check if already installed
+# Check if already fully installed
 if [ -f /opt/scarlix/.installed ]; then
   log "Already installed. Skipping."
   exit 0
 fi
 
-# Detect PC type
+# Detect PC type (Q16a: auto-detect, allow wizard override)
 PC_TYPE=$(cat /etc/scarlix/pc_type 2>/dev/null || echo "")
 if [ -z "$PC_TYPE" ]; then
   GPU_COUNT=$(lspci | grep -ic nvidia 2>/dev/null || echo 0)
   if [ "$GPU_COUNT" -gt 0 ]; then
-    PC_TYPE="main"
+    PC_TYPE="ai_server"
   else
-    PC_TYPE="hp_agent"
+    PC_TYPE="dev_workstation"
   fi
   echo "$PC_TYPE" | tee /etc/scarlix/pc_type >/dev/null
 fi
@@ -67,288 +83,335 @@ else
   log ".env already exists"
 fi
 
-# ============================================================================
-# STEP 1: BTRFS subvolumes (was automatic on Garuda, now explicit in v17)
-# ============================================================================
-log ""
-log "--- BTRFS subvolume layout ---"
-
-# Determine root mount point (Calamares mounts / at /mnt during install, but
-# at first-boot we're on the real /). Only create missing subvolumes.
-ROOT_DEV=$(findmnt -no SOURCE / 2>/dev/null || echo "")
-if echo "$ROOT_DEV" | grep -q btrfs; then
-  log "Root is on BTRFS ($ROOT_DEV) — verifying subvolume layout"
-
-  # Mount the BTRFS top-level temporarily to inspect/create subvols
-  BTRFS_TMP="/mnt/btrfs-top"
-  mkdir -p "$BTRFS_TMP"
-  if mount "$ROOT_DEV" "$BTRFS_TMP" 2>/dev/null; then
-    # Create missing subvolumes (idempotent)
-    for subvol in @ @home @root @srv @var_log @var_lib_docker @models @snapshots; do
-      if [ ! -d "$BTRFS_TMP/$subvol" ] && [ ! -e "$BTRFS_TMP/$subvol" ]; then
-        if btrfs subvolume create "$BTRFS_TMP/$subvol" >> "$LOG_FILE" 2>&1; then
-          log "  Created subvolume: $subvol"
-        else
-          log "  (could not create $subvol — may already exist or non-BTRFS)"
-        fi
-      else
-        log "  Subvolume exists: $subvol"
-      fi
-    done
-    umount "$BTRFS_TMP" 2>/dev/null || true
-  else
-    log "  (could not mount BTRFS top-level for subvol check — skipping)"
-  fi
-else
-  log "Root is NOT on BTRFS — skipping subvolume layout (non-BTRFS filesystem)"
-fi
+# Detect the real user (FIX Q10: scarlix user may have different name)
+REAL_USER=$(grep -E '^[^:]+:x:1000:' /etc/passwd 2>/dev/null | cut -d: -f1 || echo "scarlix")
+REAL_GROUP=$(id -gn "$REAL_USER" 2>/dev/null || echo "scarlix")
+log "Detected user: $REAL_USER:$REAL_GROUP"
 
 # ============================================================================
-# STEP 2: Snapper configs + timers (was auto from Garuda, now explicit)
-# ============================================================================
-log ""
-log "--- Snapper configuration ---"
-
-setup_snapper() {
-  local name="$1"
-  local path="$2"
-  if [ -d "$path" ]; then
-    if snapper -c "$name" list >/dev/null 2>&1; then
-      log "  Snapper config '$name' already exists for $path"
-    else
-      if snapper -c "$name" create-config "$path" >> "$LOG_FILE" 2>&1; then
-        log "  Created Snapper config: $name → $path"
-      else
-        log "  (could not create Snapper config '$name' — non-BTRFS or already exists)"
-      fi
-    fi
-  else
-    log "  (path $path does not exist — skipping Snapper config $name)"
-  fi
-}
-
-if command -v snapper >/dev/null 2>&1; then
-  setup_snapper "root" "/"
-  setup_snapper "home" "/home"
-
-  # Enable timeline + cleanup timers (auto snapshots hourly + cleanup)
-  if systemctl enable --now snapper-timeline.timer >> "$LOG_FILE" 2>&1; then
-    log_success "Snapper timeline timer"
-  else
-    log_failed "Snapper timeline timer"
-  fi
-  if systemctl enable --now snapper-cleanup.timer >> "$LOG_FILE" 2>&1; then
-    log_success "Snapper cleanup timer"
-  else
-    log_failed "Snapper cleanup timer"
-  fi
-else
-  log_failed "Snapper not installed (should be in packages.x86_64)"
-fi
-
-# ============================================================================
-# STEP 3: Create directories + disable BTRFS CoW on heavy stores (kept v16.5)
-# ============================================================================
-log ""
-log "--- Directory setup + BTRFS CoW disable ---"
-
-mkdir -p /opt/scarlix /models /var/lib/scarlix /etc/scarlix/{profiles,secrets}
-mkdir -p /mnt/{files,games,photos,backup/restic}
-mkdir -p /var/lib/docker
-chown -R scarlix:scarlix /opt/scarlix /models /var/lib/scarlix /etc/scarlix /mnt
-
-# Disable CoW on heavy mutable stores (chattr +C must run on EMPTY dirs)
-disable_cow() {
-  local target="$1"
-  if command -v chattr >/dev/null 2>&1; then
-    if chattr +C "$target" 2>/dev/null; then
-      log "  CoW disabled: $target"
-    else
-      log "  (CoW not applicable on $target — non-BTRFS or already has files)"
-    fi
-  fi
-}
-
-disable_cow /models
-disable_cow /mnt/games
-disable_cow /var/lib/docker
-disable_cow /var/lib/scarlix
-log_success "BTRFS CoW configuration"
-
-# ============================================================================
-# STEP 4: ZRAM verify (config in zram-generator.conf, shipped via airootfs)
-# ============================================================================
-log ""
-log "--- ZRAM ---"
-if [ -f /etc/systemd/zram-generator.conf ]; then
-  if systemctl start systemd-zram-setup@zram0 2>/dev/null || zramctl zram0 >/dev/null 2>&1; then
-    log_success "ZRAM active: $(zramctl zram0 2>/dev/null | tail -1 | awk '{print $1, $3, $4}')"
-  else
-    log "  ZRAM will activate on next boot (zram-generator)"
-  fi
-else
-  log_failed "zram-generator.conf missing"
-fi
-
-# ============================================================================
-# STEP 5: NVIDIA + CUDA install (Main PC only — post-install keeps ISO small)
-# ============================================================================
-if [ "$PC_TYPE" == "main" ]; then
-  log ""
-  log "--- NVIDIA + CUDA install (Main PC) ---"
-
-  log "Installing NVIDIA open driver (Turing+)..."
-  if sudo pacman -S --noconfirm --needed nvidia-open nvidia-utils lib32-nvidia-utils nvidia-settings >> "$LOG_FILE" 2>&1; then
-    log_success "NVIDIA open driver install"
-  else
-    log_failed "NVIDIA open driver install (trying proprietary fallback)"
-    if sudo pacman -S --noconfirm --needed nvidia nvidia-utils lib32-nvidia-utils >> "$LOG_FILE" 2>&1; then
-      log_success "NVIDIA proprietary driver install (fallback)"
-    else
-      log_failed "NVIDIA proprietary driver install"
-    fi
-  fi
-
-  log "Installing CUDA + cuDNN..."
-  if sudo pacman -S --noconfirm --needed cuda cudnn >> "$LOG_FILE" 2>&1; then
-    log_success "CUDA install"
-  else
-    log_failed "CUDA install"
-  fi
-
-  log "Rebuilding initramfs..."
-  if sudo mkinitcpio -P >> "$LOG_FILE" 2>&1; then
-    log_success "initramfs rebuild"
-  else
-    log_failed "initramfs rebuild"
-  fi
-
-  log "Installing NVIDIA Container Toolkit (via AUR)..."
-  if command -v yay >/dev/null 2>&1; then
-    if yay -S --noconfirm nvidia-container-toolkit >> "$LOG_FILE" 2>&1; then
-      log_success "NVIDIA Container Toolkit"
-      sudo nvidia-ctk runtime configure --runtime=docker >> "$LOG_FILE" 2>&1 && log_success "Docker NVIDIA runtime" || log_failed "Docker NVIDIA runtime"
-    else
-      log_failed "NVIDIA Container Toolkit"
-    fi
-  else
-    log_failed "yay not installed — cannot install nvidia-container-toolkit"
-  fi
-
-  log "Setting nvidia_drm.modeset=1 in GRUB..."
-  if [ -f /etc/default/grub ]; then
-    if ! grep -q "nvidia_drm.modeset=1" /etc/default/grub; then
-      sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nvidia_drm.modeset=1"/' /etc/default/grub
-      grub-mkconfig -o /boot/grub/grub.cfg >> "$LOG_FILE" 2>&1 && log_success "GRUB nvidia_drm.modeset=1" || log_failed "GRUB update"
-    else
-      log "  nvidia_drm.modeset=1 already set"
-    fi
-  fi
-fi
-
-# ============================================================================
-# STEP 6: Start Docker + pull stacks
-# ============================================================================
-log ""
-log "--- Docker + services ---"
-
-log "Starting Docker..."
-if systemctl start docker >> "$LOG_FILE" 2>&1; then
-  log_success "Docker start"
-  sleep 3
-else
-  log_failed "Docker start"
-fi
-
-# Load environment
-set -a; source /etc/scarlix/.env; set +a
-
-# Start services with logging — absolute paths, continue on error
-start_service() {
-  local name="$1"
-  local compose_file="$2"
-  log "Starting: $name"
-  if docker compose -f "$compose_file" up -d >> "$LOG_FILE" 2>&1; then
-    log_success "$name"
-  else
-    log_failed "$name"
-  fi
-}
-
-if [ "$PC_TYPE" == "main" ]; then
-  log "--- Starting Main PC services ---"
-
-  start_service "smg"           "/opt/scarlix-src/ai/smg/docker-compose.yml"
-  start_service "SGLang"        "/opt/scarlix-src/ai/sglang/docker-compose.yml"
-  start_service "Ollama Main"   "/opt/scarlix-src/ai/ollama/docker-compose-main.yml"
-  start_service "Ollama Agent"  "/opt/scarlix-src/ai/ollama/docker-compose-agent.yml"
-  start_service "Needle2"       "/opt/scarlix-src/ai/needle/docker-compose.yml"
-  start_service "llama.cpp"     "/opt/scarlix-src/ai/llamacpp/docker-compose.yml"
-  start_service "Network/Sec"   "/opt/scarlix-src/network/docker-compose.yml"
-  start_service "Voice"         "/opt/scarlix-src/voice/docker-compose.yml"
-  start_service "Buzz"          "/opt/scarlix-src/workspace/buzz/docker-compose.yml"
-  start_service "Hermes"        "/opt/scarlix-src/agents/hermes/docker-compose.yml"
-  start_service "ScarliHQ"      "/opt/scarlix-src/scarlihq/docker-compose.yml"
-  start_service "Monitoring"    "/opt/scarlix-src/monitoring/docker-compose.yml"
-
-  log "Starting Jellyfin + Minecraft..."
-  if docker compose -f /opt/scarlix-src/gaming/docker-compose.yml up -d jellyfin minecraft >> "$LOG_FILE" 2>&1; then
-    log_success "Jellyfin + Minecraft"
-  else
-    log_failed "Jellyfin + Minecraft"
-  fi
-
-  # Set default mode
-  echo "ai" | tee /var/lib/scarlix/current-mode >/dev/null
-  log "Default mode: ai"
-
-  # Download models in background
-  log "Starting model download in background..."
-  nohup /etc/systemd/system/download-models.sh >> "$LOG_FILE" 2>&1 &
-  log_success "Model download (background)"
-else
-  log "--- Starting HP Agent services ---"
-
-  start_service "Coding Pipeline" "/opt/scarlix-src/coding-pipeline/docker-compose.yml"
-  start_service "Media Tools"     "/opt/scarlix-src/media-tools/docker-compose.yml"
-fi
-
-# ============================================================================
-# STEP 7: Enable model-manager weekly timer
-# ============================================================================
-log ""
-log "--- Model manager timer ---"
-if [ -f /etc/systemd/system/model-manager.timer ]; then
-  if systemctl enable model-manager.timer >> "$LOG_FILE" 2>&1; then
-    log_success "model-manager.timer enabled (weekly Mon 04:00)"
-  else
-    log_failed "model-manager.timer enable"
-  fi
-else
-  log_failed "model-manager.timer not installed"
-fi
-
-# ============================================================================
-# STEP 8: Summary
+# PHASE 1: BTRFS + Snapper + CoW + ZRAM
 # ============================================================================
 log ""
 log "========================================"
-log "  SCARLIX OS v17.0 — First Boot Summary"
+log "  PHASE 1: BTRFS + Snapper + CoW + ZRAM"
+log "========================================"
+
+if is_checkpoint 1; then
+  log "Phase 1 already completed — skipping."
+else
+  # Create directories
+  mkdir -p /opt/scarlix /models /var/lib/scarlix /etc/scarlix/{profiles,secrets}
+  mkdir -p /mnt/{files,games,photos,backup/restic}
+  mkdir -p /var/lib/docker
+  chown -R "$REAL_USER:$REAL_GROUP" /opt/scarlix /models /var/lib/scarlix /etc/scarlix /mnt
+
+  # BTRFS subvolumes were created by Calamares (Q3b mount.conf)
+  # Here we just verify they exist
+  log "Verifying BTRFS subvolumes (created by Calamares)..."
+  ROOT_DEV=$(findmnt -no SOURCE / 2>/dev/null || echo "")
+  if echo "$ROOT_DEV" | grep -q btrfs; then
+    log "  Root is on BTRFS ($ROOT_DEV)"
+    SUBVOLS_PRESENT=true
+    for sv in @ @home @root @srv @var_log @var_lib_docker @models @snapshots; do
+      if btrfs subvolume list / 2>/dev/null | grep -q "$sv"; then
+        log "  ✓ Subvolume: $sv"
+      else
+        log "  ⚠ Subvolume missing: $sv (may have different name from Calamares)"
+      fi
+    done
+  else
+    log "  Root is NOT on BTRFS — skipping subvolume verification"
+  fi
+
+  # Snapper configs (root + home)
+  if command -v snapper >/dev/null 2>&1; then
+    if ! snapper -c root list >/dev/null 2>&1; then
+      snapper -c root create-config / >> "$LOG_FILE" 2>&1 && log "  Created Snapper config: root" || log "  (root Snapper config may already exist)"
+    else
+      log "  Snapper config root already exists"
+    fi
+
+    if ! snapper -c home list >/dev/null 2>&1; then
+      snapper -c home create-config /home >> "$LOG_FILE" 2>&1 && log "  Created Snapper config: home" || log "  (home Snapper config may already exist)"
+    else
+      log "  Snapper config home already exists"
+    fi
+
+    systemctl enable --now snapper-timeline.timer >> "$LOG_FILE" 2>&1 && log_success "Snapper timeline timer" || log_failed "Snapper timeline timer"
+    systemctl enable --now snapper-cleanup.timer >> "$LOG_FILE" 2>&1 && log_success "Snapper cleanup timer" || log_failed "Snapper cleanup timer"
+  else
+    log_failed "Snapper not installed"
+  fi
+
+  # Disable CoW on heavy mutable stores (chattr +C on empty dirs)
+  disable_cow() {
+    local target="$1"
+    if command -v chattr >/dev/null 2>&1; then
+      if chattr +C "$target" 2>/dev/null; then
+        log "  CoW disabled: $target"
+      else
+        log "  (CoW not applicable on $target — non-BTRFS or has existing files)"
+      fi
+    fi
+  }
+  disable_cow /models
+  disable_cow /mnt/games
+  disable_cow /var/lib/docker
+  disable_cow /var/lib/scarlix
+  log_success "BTRFS + Snapper + CoW setup"
+
+  # ZRAM verify (zram-generator.conf shipped via airootfs)
+  if [ -f /etc/systemd/zram-generator.conf ]; then
+    log "ZRAM config present (min(ram/2, 16384) zstd)"
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl start systemd-zram-setup@zram0 2>/dev/null || true
+    log_success "ZRAM configuration"
+  else
+    log_failed "zram-generator.conf missing"
+  fi
+
+  checkpoint 1
+fi
+
+# ============================================================================
+# PHASE 2: NVIDIA + CUDA (Main PC / AI Server only)
+# ============================================================================
+log ""
+log "========================================"
+log "  PHASE 2: NVIDIA + CUDA (auto-detect)"
+log "========================================"
+
+if [ "$PC_TYPE" != "ai_server" ]; then
+  log "Not AI Server (PC_TYPE=$PC_TYPE) — skipping NVIDIA."
+  checkpoint 2
+else
+  if is_checkpoint 2; then
+    log "Phase 2 already completed — skipping."
+  else
+    # FIX Q6a: Detect GPU architecture
+    # Turing+ (RTX 20xx+, GTX 16xx+) = compute capability 7.5+
+    # nvidia-open works on Turing+; older GPUs need proprietary nvidia
+    GPU_IS_TURING_PLUS=false
+    GPU_INFO=""
+
+    if lspci | grep -qi nvidia; then
+      log "NVIDIA GPU detected — checking architecture..."
+
+      # Try to get GPU name from lspci
+      GPU_NAME=$(lspci | grep -i nvidia | grep -i vga | head -1 | sed 's/.*NVIDIA[^:]*: //' | cut -d'(' -f1 | xargs)
+      log "  GPU: $GPU_NAME"
+
+      # Check if it's Turing+ by GPU name pattern
+      if echo "$GPU_NAME" | grep -qiE "RTX [2-9]|GTX 16[0-9]|Quadro RTX|A[2-9]|A100|H100"; then
+        GPU_IS_TURING_PLUS=true
+        log "  Architecture: Turing+ → will use nvidia-open"
+      else
+        log "  Architecture: pre-Turing → will use nvidia (proprietary)"
+      fi
+    fi
+
+    # Install NVIDIA driver based on detection
+    if [ "$GPU_IS_TURING_PLUS" = true ]; then
+      # FIX Q4a: Install nvidia-open for linux + nvidia-open-lts for linux-lts
+      log "Installing nvidia-open (Turing+) for linux + linux-lts..."
+      if sudo pacman -S --noconfirm --needed nvidia-open nvidia-open-lts nvidia-utils lib32-nvidia-utils nvidia-settings >> "$LOG_FILE" 2>&1; then
+        log_success "NVIDIA open driver (linux + linux-lts)"
+      else
+        log_failed "NVIDIA open driver — trying proprietary fallback"
+        sudo pacman -S --noconfirm --needed nvidia nvidia-lts nvidia-utils lib32-nvidia-utils >> "$LOG_FILE" 2>&1 && log_success "NVIDIA proprietary (fallback)" || log_failed "NVIDIA proprietary"
+      fi
+    else
+      # Pre-Turing: proprietary nvidia for both kernels
+      log "Installing nvidia (proprietary) for linux + linux-lts..."
+      if sudo pacman -S --noconfirm --needed nvidia nvidia-lts nvidia-utils lib32-nvidia-utils nvidia-settings >> "$LOG_FILE" 2>&1; then
+        log_success "NVIDIA proprietary driver (linux + linux-lts)"
+      else
+        log_failed "NVIDIA proprietary driver"
+      fi
+    fi
+
+    # CUDA + cuDNN
+    log "Installing CUDA + cuDNN..."
+    if sudo pacman -S --noconfirm --needed cuda cudnn >> "$LOG_FILE" 2>&1; then
+      log_success "CUDA + cuDNN"
+    else
+      log_failed "CUDA + cuDNN"
+    fi
+
+    # Rebuild initramfs for both kernels
+    log "Rebuilding initramfs (linux + linux-lts)..."
+    if sudo mkinitcpio -P >> "$LOG_FILE" 2>&1; then
+      log_success "initramfs rebuild (all kernels)"
+    else
+      log_failed "initramfs rebuild"
+    fi
+
+    # NVIDIA Container Toolkit (via AUR/yay)
+    log "Installing NVIDIA Container Toolkit (via yay)..."
+    if command -v yay >/dev/null 2>&1; then
+      if yay -S --noconfirm nvidia-container-toolkit >> "$LOG_FILE" 2>&1; then
+        log_success "NVIDIA Container Toolkit"
+        sudo nvidia-ctk runtime configure --runtime=docker >> "$LOG_FILE" 2>&1 && log_success "Docker NVIDIA runtime" || log_failed "Docker NVIDIA runtime"
+      else
+        log_failed "NVIDIA Container Toolkit"
+      fi
+    else
+      log_failed "yay not installed — cannot install nvidia-container-toolkit"
+    fi
+
+    # Install downgrade (AUR) for driver rollback (Q1a: moved from ISO to first-boot)
+    log "Installing downgrade (AUR) for NVIDIA driver rollback..."
+    if command -v yay >/dev/null 2>&1; then
+      if yay -S --noconfirm downgrade >> "$LOG_FILE" 2>&1; then
+        log_success "downgrade (AUR rollback tool)"
+      else
+        log_failed "downgrade AUR install"
+      fi
+    fi
+
+    # GRUB: add nvidia_drm.modeset=1
+    log "Configuring GRUB nvidia_drm.modeset=1..."
+    if [ -f /etc/default/grub ]; then
+      if ! grep -q "nvidia_drm.modeset=1" /etc/default/grub; then
+        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nvidia_drm.modeset=1"/' /etc/default/grub
+        grub-mkconfig -o /boot/grub/grub.cfg >> "$LOG_FILE" 2>&1 && log_success "GRUB nvidia_drm.modeset=1" || log_failed "GRUB update"
+      else
+        log "  nvidia_drm.modeset=1 already set"
+        log_success "GRUB config (already configured)"
+      fi
+    fi
+
+    checkpoint 2
+  fi
+fi
+
+# ============================================================================
+# PHASE 3: Docker + Services + Model Manager
+# ============================================================================
+log ""
+log "========================================"
+log "  PHASE 3: Docker + Services"
+log "========================================"
+
+if is_checkpoint 3; then
+  log "Phase 3 already completed — skipping."
+else
+  # Start Docker
+  log "Starting Docker..."
+  if systemctl start docker >> "$LOG_FILE" 2>&1; then
+    log_success "Docker start"
+    sleep 3
+  else
+    log_failed "Docker start"
+  fi
+
+  # Load environment
+  set -a; source /etc/scarlix/.env; set +a
+
+  # Start services with logging
+  start_service() {
+    local name="$1"
+    local compose_file="$2"
+    log "Starting: $name"
+    if docker compose -f "$compose_file" up -d >> "$LOG_FILE" 2>&1; then
+      log_success "$name"
+    else
+      log_failed "$name"
+    fi
+  }
+
+  if [ "$PC_TYPE" == "ai_server" ]; then
+    log "--- Starting AI Server services ---"
+
+    # Inference tiers (v17.1: 5-tier architecture)
+    start_service "vLLM (Tier-2)"     "/opt/scarlix-src/ai/vllm/docker-compose.yml"
+    start_service "SGLang (Tier-1)"   "/opt/scarlix-src/ai/sglang/docker-compose.yml"
+    start_service "Ollama Main"       "/opt/scarlix-src/ai/ollama/docker-compose-main.yml"
+    start_service "Ollama Agent"      "/opt/scarlix-src/ai/ollama/docker-compose-agent.yml"
+    start_service "Laya (System-1)"   "/opt/scarlix-src/ai/laya/docker-compose.yml"
+    start_service "BeeLlama (Tier-4)" "/opt/scarlix-src/ai/llamacpp/docker-compose.yml"
+    start_service "Browser MCP"       "/opt/scarlix-src/ai/browser-mcp/docker-compose.yml"
+    start_service "smg Gateway"       "/opt/scarlix-src/ai/smg/docker-compose.yml"
+
+    # Infra
+    start_service "Network/Sec"        "/opt/scarlix-src/network/docker-compose.yml"
+    start_service "Voice"             "/opt/scarlix-src/voice/docker-compose.yml"
+    start_service "Buzz"              "/opt/scarlix-src/workspace/buzz/docker-compose.yml"
+
+    # Agents
+    start_service "Hermes"            "/opt/scarlix-src/agents/hermes/docker-compose.yml"
+    start_service "ScarliHQ"          "/opt/scarlix-src/scarlihq/docker-compose.yml"
+    start_service "Monitoring"        "/opt/scarlix-src/monitoring/docker-compose.yml"
+
+    # Gaming
+    log "Starting Jellyfin + Minecraft..."
+    if docker compose -f /opt/scarlix-src/gaming/docker-compose.yml up -d jellyfin minecraft >> "$LOG_FILE" 2>&1; then
+      log_success "Jellyfin + Minecraft"
+    else
+      log_failed "Jellyfin + Minecraft"
+    fi
+
+    # Set default mode
+    echo "ai" | tee /var/lib/scarlix/current-mode >/dev/null
+    log "Default mode: ai"
+
+    # Download models in background
+    log "Starting model download in background..."
+    nohup /etc/systemd/system/download-models.sh >> "$LOG_FILE" 2>&1 &
+    log_success "Model download (background)"
+  else
+    log "--- Starting Dev Workstation services ---"
+
+    start_service "Coding Pipeline"  "/opt/scarlix-src/coding-pipeline/docker-compose.yml"
+    start_service "Media Tools"       "/opt/scarlix-src/media-tools/docker-compose.yml"
+  fi
+
+  # Install oh-my-pi (replaces OpenCode)
+  log "Installing oh-my-pi (omp) coding agent..."
+  if curl -fsSL https://omp.sh/install 2>/dev/null | sh >> "$LOG_FILE" 2>&1; then
+    log_success "oh-my-pi (omp) installed"
+  else
+    log_failed "oh-my-pi install (network may be needed)"
+  fi
+
+  # Enable model-manager weekly timer
+  if [ -f /etc/systemd/system/model-manager.timer ]; then
+    systemctl enable model-manager.timer >> "$LOG_FILE" 2>&1 && log_success "model-manager.timer (weekly Mon 04:00)" || log_failed "model-manager.timer enable"
+  fi
+
+  checkpoint 3
+fi
+
+# ============================================================================
+# SUMMARY
+# ============================================================================
+log ""
+log "========================================"
+log "  SCARLIX OS v17.1 — First Boot Summary"
 log "========================================"
 log "  Base:        EndeavourOS (Arch)"
 log "  Kernel:      $(uname -r)"
 log "  LTS kernel:  $(pacman -Q linux-lts 2>/dev/null | head -1 || echo 'not installed')"
 log "  PC Type:     $PC_TYPE"
+log "  User:        $REAL_USER"
 log "  SUCCESS:     $SUCCESS_COUNT"
 log "  FAILED:      $FAIL_COUNT"
 log ""
 log "  Services:"
 echo -e "$SERVICES_STARTED" | tee -a "$LOG_FILE"
 log ""
+log "  Inference tiers:"
+log "    Tier-1: SGLang (agents, RadixAttention)"
+log "    Tier-2: vLLM (high throughput, Multi-LoRA) [NEW v17.1]"
+log "    Tier-3: Ollama (GGUF, concurrent)"
+log "    Tier-4: BeeLlama.cpp (offline, KVarN) [NEW v17.1]"
+log "    System-1: Laya (33ms router) [NEW v17.1]"
+log ""
 log "  Dashboard:   http://$(hostname -I | awk '{print $1}'):8090"
 log "  Full log:    $LOG_FILE"
 log "  Rollback:    sudo snapper -c root list"
 log "  VRAM check:  scarlix-mode vram"
+log "  Coding agent: omp (oh-my-pi)"
 log "========================================"
 
 # Mark as installed

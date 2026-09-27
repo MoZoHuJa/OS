@@ -1,5 +1,5 @@
 [Unit]
-Description=SCARLIX OS v17.0 First Boot Setup (EndeavourOS Edition)
+Description=SCARLIX OS v17.1 First Boot Setup (3-phase checkpointed)
 After=network-online.target docker.service
 Wants=network-online.target
 ConditionPathExists=!/opt/scarlix/.installed

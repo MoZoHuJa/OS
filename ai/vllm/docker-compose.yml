@@ -1,0 +1,49 @@
+# SCARLIX OS v17.1 — vLLM (Tier-2 inference engine)
+# High-throughput LLM serving: PagedAttention, continuous batching, multi-GPU TP+PP, Multi-LoRA
+# Port: 8089 (OpenAI-compatible API)
+#
+# FIX I1: New Tier-2 engine — dual-NVIDIA tensor parallelism for >24GB models (Qwen3-72B)
+#         Multi-LoRA: Hermes/OpenCode/Voice share base model with separate LoRA heads
+
+version: "3.9"
+
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vllm
+    restart: unless-stopped
+    ports:
+      - "8089:8000"
+    volumes:
+      - /models:/models:ro
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      --model /models/Qwen3-14B-Instruct-AWQ
+      --tensor-parallel-size 2
+      --gpu-memory-utilization 0.85
+      --max-model-len 32768
+      --enable-lora
+      --max-loras 4
+      --max-cpu-loras 8
+      --lora-modules
+        hermes=/models/lora/hermes
+        opencode=/models/lora/opencode
+        voice=/models/lora/voice
+      --trust-remote-code
+      --host 0.0.0.0
+      --port 8000
+    networks:
+      - scarlix-net
+
+networks:
+  scarlix-net:
+    external: true
+    name: scarlix-net

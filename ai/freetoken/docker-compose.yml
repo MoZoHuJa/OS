@@ -1,0 +1,45 @@
+# SCARLIX OS v17.1 — FreeToken (Tier-5 MoE engine — EXPERIMENTAL)
+# FIX Q12a: Edge-native MoE serving for massive models (290B+ MoE on consumer GPUs)
+# Activated via: docker compose --profile moe up -d
+#
+# Runs DeepSeek-V3/V4, Qwen3-Coder-A35B, GLM-5.2 by offloading inactive experts to RAM
+# Semantic anchor KV-caching speeds up agent loops with tool-call context edits
+#
+# Apache-2.0 | https://github.com/FlashML-org/FreeToken
+
+version: "3.9"
+
+services:
+  freetoken:
+    image: freetoken/serving:latest
+    container_name: freetoken
+    restart: unless-stopped
+    profiles: ["moe"]  # Experimental — only starts with --profile moe
+    ports:
+      - "8090:8000"
+    volumes:
+      - /models:/models:ro
+      - ./ftw-models:/app/ftw-models
+    environment:
+      - FT_MODEL_PATH=/models/Qwen3-Coder-A35B-FTW
+      - FT_GPU_MEMORY_FRACTION=0.80
+      - FT_CPU_OFFLOAD=true
+      - FT_SEMANTIC_KV_CACHE=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      --host 0.0.0.0
+      --port 8000
+      --bandwidth-adaptive
+    networks:
+      - scarlix-net
+
+networks:
+  scarlix-net:
+    external: true
+    name: scarlix-net
