@@ -1,7 +1,15 @@
+# SCARLIX OS v17.1 — BeeLlama.cpp (Tier-4 inference — replaces llama.cpp)
+# FIX I2: Drop-in upgrade — KVarN (variance-normalized KV-cache quantization)
+# ~50% VRAM reduction at near-equal quality → doubles context length on 16GB GPU
+# Reasoning-loop protection for unattended long agent runs
+#
+# MIT | https://github.com/Anbeeld/beellama.cpp
+# Same CLI/API as llama.cpp — existing scripts work unchanged
+
 services:
-  llamacpp:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda
-    container_name: llamacpp
+  beellama:
+    image: ghcr.io/anbeeld/beellama:server-cuda-latest
+    container_name: beellama
     restart: unless-stopped
     ports:
       - "127.0.0.1:11438:8080"
@@ -9,10 +17,14 @@ services:
       - /models:/models:ro
     command: >
       --model /models/qwen3.6-14b-instruct-q4_k_m.gguf
-      --ctx-size 8192
+      --ctx-size 32768
       --threads 16
       --host 0.0.0.0
       --port 8080
+      --cache-type-k kvarn4
+      --cache-type-v kvarn4
+      --kv-tail-tokens 1024
+      --reasoning-loop-protection
     networks: [scarlix_ai]
 networks:
   scarlix_ai: { external: true }

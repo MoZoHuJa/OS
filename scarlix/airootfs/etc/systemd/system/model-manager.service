@@ -1,0 +1,13 @@
+[Unit]
+Description=SCARLIX OS v17.1 Model Manager (weekly HF auto-pull + Ollama dry-run)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/model-manager.sh
+User=root
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=7200
+Restart=no

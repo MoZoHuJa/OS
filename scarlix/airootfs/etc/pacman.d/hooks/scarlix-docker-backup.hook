@@ -1,0 +1,28 @@
+# SCARLIX OS v17.1 — Pacman Hook: Docker Volume Backup
+# FIX Q7a: Pre-rollback Docker volume backup
+#
+# Before any kernel or NVIDIA driver update (which may require a Snapper
+# rollback), this hook backs up Docker volumes to /mnt/backup/restic/.
+# This ensures that after a Snapper rollback (which reverts root but NOT
+# @var_lib_docker), Docker volumes can be restored to a consistent state.
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = linux
+Target = linux-lts
+Target = nvidia
+Target = nvidia-open
+Target = nvidia-dkms
+Target = nvidia-utils
+Target = cuda
+Target = cudnn
+Target = docker
+
+[Action]
+Description = SCARLIX: Backing up Docker volumes before system update...
+When = PreTransaction
+Exec = /etc/pacman.d/hooks/scarlix-docker-backup.sh
+Depends = restic
+AbortOnFail = false
