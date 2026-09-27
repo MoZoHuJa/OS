@@ -1,9 +1,14 @@
-# SCARLIX OS v17.1 — vLLM (Tier-2 inference engine)
+# SCARLIX OS v17.2.1 — vLLM (Tier-2 inference engine)
 # High-throughput LLM serving: PagedAttention, continuous batching, multi-GPU TP+PP, Multi-LoRA
 # Port: 8089 (OpenAI-compatible API)
 #
-# FIX I1: New Tier-2 engine — dual-NVIDIA tensor parallelism for >24GB models (Qwen3-72B)
-#         Multi-LoRA: Hermes/OpenCode/Voice share base model with separate LoRA heads
+# TARGET HARDWARE: Dual NVIDIA GPU (e.g. RTX 5060 Ti 16GB + RTX 4060 Ti 16GB = 32GB total)
+#   GPU 0 (RTX 5060 Ti): vLLM TP shard 0 + SGLang
+#   GPU 1 (RTX 4060 Ti): vLLM TP shard 1 + Ollama Agent
+#   TP=2 splits model weights across both GPUs → Qwen3-72B (36GB) fits in 2×16GB
+#
+# Auto-enabled when wizard detects 2+ NVIDIA dGPUs (--profile experimental)
+# Manual: touch /etc/scarlix/.experimental + systemctl restart scarlix-first-boot
 
 version: "3.9"
 
@@ -12,7 +17,7 @@ services:
     image: vllm/vllm-openai:latest
     container_name: vllm
     restart: unless-stopped
-    profiles: ["experimental"]  # v17.2: opt-in only (needs 2+ GPU, 32GB+ VRAM)
+    profiles: ["experimental"]  # v17.2.1: auto-enabled for 2+ GPU via wizard
     ports:
       - "8089:8000"
     volumes:

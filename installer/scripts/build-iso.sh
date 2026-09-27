@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.2 — archiso ISO Builder (Minimal Working Baseline)
+# SCARLIX OS v17.2.1 — archiso ISO Builder (Minimal Baseline + auto 5-tier)
 
-VERSION="17.2.0"
+VERSION="17.2.1"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 WORK_DIR="/tmp/scarlix-iso-build"
@@ -14,7 +14,7 @@ mkdir -p "$WORK_DIR" "$OUTPUT_DIR"
 
 echo "================================================" | tee "$LOG_FILE"
 echo "  SCARLIX OS v${VERSION} — EndeavourOS ISO Builder" | tee -a "$LOG_FILE"
-echo "  (Minimal Working Baseline — 2-tier default)" | tee -a "$LOG_FILE"
+echo "  (Minimal Baseline + auto 5-tier for 2+ GPU)" | tee -a "$LOG_FILE"
 echo "================================================" | tee -a "$LOG_FILE"
 
 echo "[0/8] Version consistency check..." | tee -a "$LOG_FILE"
@@ -67,7 +67,7 @@ fi
 echo "[8/8] Done!" | tee -a "$LOG_FILE"
 echo "================================================" | tee -a "$LOG_FILE"
 echo "  ✅ SCARLIX OS v${VERSION} — BUILD COMPLETE" | tee -a "$LOG_FILE"
-echo "  2-tier default: SGLang + BeeLlama.cpp" | tee -a "$LOG_FILE"
+echo "  Auto 5-tier for 2+ NVIDIA GPU (vLLM TP=2)" | tee -a "$LOG_FILE"
 echo "  ISO: $ISO_FILE" | tee -a "$LOG_FILE"
 echo "  Size: $ISO_SIZE" | tee -a "$LOG_FILE"
 echo "================================================" | tee -a "$LOG_FILE"
