@@ -1,11 +1,14 @@
+# SCARLIX OS v17.5 — SGLang (Tier-1, GPU 0)
+# v17.5: cu128 image (Blackwell support), env var model path, flashinfer auto-disabled on Blackwell
+# Model path from ${SGLANG_MODEL_PATH} (parsed from models.yaml by scarlix-mode)
+
 services:
   sglang:
-    image: ghcr.io/sgl-project/sglang:v0.5.5-cu124
+    image: ghcr.io/sgl-project/sglang:latest-cu128
     container_name: sglang
     restart: unless-stopped
     ports:
-      - "100.64.0.1:30000:30000"
-      - "127.0.0.1:30000:30000"
+      - "30000:30000"
     volumes:
       - /var/lib/sglang/cache:/root/.cache/huggingface
       - /models:/models:ro
@@ -14,12 +17,11 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     command: >
       python -m sglang.launch_server
-      --model-path /models/Qwen3-14B-Instruct-AWQ
+      --model-path ${SGLANG_MODEL_PATH:-/models/Qwen3-14B-Instruct-AWQ}
       --port 30000
       --host 0.0.0.0
       --mem-fraction-static 0.90
       --context-length 32768
-      --enable-flashinfer
     deploy:
       resources:
         reservations:

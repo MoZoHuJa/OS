@@ -1,21 +1,14 @@
-# SCARLIX OS v17.4 — vLLM (Tier-2 inference engine)
-# v17.4: TP=1 default (single GPU) — safe for mixed GPU architectures.
-#   RTX 5060 Ti (Blackwell sm_120) + RTX 4060 Ti (Ada sm_89) = different compute_cap.
-#   vLLM TP=2 requires SAME compute_cap → use TP=1 (separate model per GPU).
-#
-# GPU assignment:
-#   GPU 0 (RTX 5060 Ti): SGLang (Tier-1, primary)
-#   GPU 1 (RTX 4060 Ti): vLLM (Tier-2, TP=1, separate model)
-# Multi-LoRA: Hermes/omp/Voice share base model with separate LoRA heads on GPU1.
-
-version: "3.9"
+# SCARLIX OS v17.5 — vLLM (Tier-2, GPU 1, TP=1)
+# v17.5: TP=1 (mixed GPU safe — RTX 5060 Ti Blackwell + RTX 4060 Ti Ada)
+#   No --profile experimental gate — starts if /etc/scarlix/.experimental flag exists
+#   LoRA paths removed (didn't exist in /models/lora/)
+#   Model path from env var ${VLLM_MODEL_PATH} (parsed from models.yaml by scarlix-mode)
 
 services:
   vllm:
     image: vllm/vllm-openai:latest
     container_name: vllm
     restart: unless-stopped
-    profiles: ["experimental"]  # opt-in (wizard auto-suggests for 2+ GPU)
     ports:
       - "8089:8000"
     volumes:
@@ -31,24 +24,14 @@ services:
               device_ids: ["1"]
               capabilities: [gpu]
     command: >
-      --model /models/Qwen3-14B-Instruct-AWQ
+      --model ${VLLM_MODEL_PATH:-/models/Qwen3-14B-Instruct-AWQ}
       --tensor-parallel-size 1
       --gpu-memory-utilization 0.85
       --max-model-len 32768
-      --enable-lora
-      --max-loras 4
-      --max-cpu-loras 8
-      --lora-modules
-        hermes=/models/lora/hermes
-        opencode=/models/lora/opencode
-        voice=/models/lora/voice
       --trust-remote-code
       --host 0.0.0.0
       --port 8000
-    networks:
-      - scarlix-net
+    networks: [scarlix-net]
 
 networks:
-  scarlix-net:
-    external: true
-    name: scarlix-net
+  scarlix-net: { external: true }

@@ -1,0 +1,91 @@
+# ============================================================================
+# SCARLIX OS v17.5 — EndeavourOS Edition
+# Package list for bootstrap installer (install.sh)
+#
+# v17.5: ISO profile removed — this list is used by install.sh (not mkarchiso)
+#   - No calamares (ISO-only)
+#   - No yay (installed via git clone + makepkg in install.sh)
+#   - No archiso (build-only, not needed)
+#   - nvidia-container-toolkit via yay (AUR) in install.sh Phase 3
+# ============================================================================
+
+# === Base system ===
+base
+base-devel
+linux
+linux-headers
+linux-lts
+linux-lts-headers
+linux-firmware
+btrfs-progs
+efibootmgr
+grub
+os-prober
+
+# === Snapper / recovery ===
+snapper
+snap-pac
+
+# === ZRAM ===
+zram-generator
+
+# === Docker ===
+docker
+docker-compose
+
+# === Network / security / time ===
+networkmanager
+ufw
+fail2ban
+chrony
+openssh
+
+# === Development tools ===
+git
+curl
+wget
+jq
+bc
+python
+python-pip
+
+# === Terminal / editors ===
+neovim
+tmux
+htop
+btop
+rsync
+restic
+unzip
+zip
+
+# === Gaming (native — optional, can remove if AI-only server) ===
+steam
+wine
+wine-gecko
+wine-mono
+lutris
+
+# === Audio (Pipewire stack) ===
+pipewire
+pipewire-pulse
+pipewire-alsa
+pipewire-jack
+wireplumber
+alsa-utils
+portaudio
+
+# === Bluetooth ===
+bluez
+bluez-utils
+blueman
+
+# === Utils ===
+nano
+whiptail
+
+# === NOT in this list (installed by install.sh) ===
+# yay — git clone + makepkg (AUR helper)
+# nvidia-container-toolkit — via yay (AUR)
+# downgrade — via yay (AUR, optional)
+# nvidia* cuda* cudnn* — install.sh Phase 2
