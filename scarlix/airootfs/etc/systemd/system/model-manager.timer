@@ -1,9 +1,9 @@
 [Unit]
-Description=SCARLIX OS v16.5 — Weekly Model Manager Timer
+Description=SCARLIX OS v17.0 — Weekly Model Manager Timer
 Requires=model-manager.service
 
 [Timer]
-# FIX 6-b: Run weekly on Monday at 04:00 (low-traffic window)
+# Run weekly on Monday at 04:00 (low-traffic window)
 OnCalendar=Mon *-*-* 04:00:00
 # If the system was off at that time, run on next boot
 Persistent=true

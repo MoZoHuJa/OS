@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v16.5 — Garuda ISO Builder (archiso-based)
+# SCARLIX OS v17.0 — EndeavourOS Edition — archiso ISO Builder
 #
-# v16.5 P0/P1 fixes:
-#   1-a: QEMU test call uses PIPESTATUS[0] (set +e around tee pipeline)
-#   4-a: README_VERSION validated against VERSION (fail build if mismatch)
+# v17.0 changes vs v16.5:
+#   - Profile dir: garuda-scarlix → scarlix
+#   - VERSION: 16.5.0 → 17.0.0
+#   - Kept: PIPESTATUS fix (v16.5 P0-1), README_VERSION validation (v16.5 P1-4)
 
-VERSION="16.5.0"
+VERSION="17.0.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 WORK_DIR="/tmp/scarlix-iso-build"
@@ -17,12 +18,12 @@ LOG_FILE="/var/log/scarlix-iso-build.log"
 mkdir -p "$WORK_DIR" "$OUTPUT_DIR"
 
 echo "================================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v${VERSION} — Garuda ISO Builder" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v${VERSION} — EndeavourOS ISO Builder" | tee -a "$LOG_FILE"
 echo "================================================" | tee -a "$LOG_FILE"
 
 # FIX 1-a + FIX 4-a: Version consistency check (build script + profiledef + README)
 echo "[0/8] Version consistency check..." | tee -a "$LOG_FILE"
-PROFILE_VERSION=$(grep 'iso_version=' "$REPO_ROOT/garuda-scarlix/profiledef.sh" | cut -d'"' -f2)
+PROFILE_VERSION=$(grep 'iso_version=' "$REPO_ROOT/scarlix/profiledef.sh" | cut -d'"' -f2)
 README_VERSION=$(grep 'Version:\*\* v' "$REPO_ROOT/README.md" | head -1 | grep -oP 'v[\d.]+' | sed 's/^v//')
 
 VERSION_MISMATCH=0
@@ -34,10 +35,9 @@ if [ "$VERSION" != "$PROFILE_VERSION" ]; then
   VERSION_MISMATCH=1
 fi
 
-# FIX 4-a: README_VERSION validation — fail build if README out of sync
 if [ -z "$README_VERSION" ]; then
   echo "ERROR: Could not extract version from README.md" | tee -a "$LOG_FILE"
-  echo "  Expected pattern: '**Version:** v16.5.0'" | tee -a "$LOG_FILE"
+  echo "  Expected pattern: '**Version:** v17.0.0'" | tee -a "$LOG_FILE"
   VERSION_MISMATCH=1
 elif [ "$VERSION" != "$README_VERSION" ]; then
   echo "ERROR: Version mismatch (build-iso.sh vs README.md)!" | tee -a "$LOG_FILE"
@@ -64,9 +64,9 @@ for cmd in mkarchiso pacman; do
 done
 echo "  ✓ Dependencies OK" | tee -a "$LOG_FILE"
 
-# Use archiso profile
-echo "[2/8] Using archiso profile: garuda-scarlix/" | tee -a "$LOG_FILE"
-PROFILE_DIR="$REPO_ROOT/garuda-scarlix"
+# Use archiso profile (v17: renamed from garuda-scarlix → scarlix)
+echo "[2/8] Using archiso profile: scarlix/" | tee -a "$LOG_FILE"
+PROFILE_DIR="$REPO_ROOT/scarlix"
 
 if [ ! -d "$PROFILE_DIR" ]; then
   echo "ERROR: Profile directory not found: $PROFILE_DIR" | tee -a "$LOG_FILE"
@@ -76,7 +76,6 @@ echo "  ✓ Profile found" | tee -a "$LOG_FILE"
 
 # Build ISO
 echo "[3/8] Building ISO with mkarchiso..." | tee -a "$LOG_FILE"
-# FIX 1-a: mkarchiso | tee pipeline — capture mkarchiso exit via PIPESTATUS[0]
 set +e
 sudo mkarchiso -v -w "$WORK_DIR" -o "$OUTPUT_DIR" "$PROFILE_DIR" 2>&1 | tee -a "$LOG_FILE"
 MKARCHISO_EXIT=${PIPESTATUS[0]}
@@ -106,7 +105,7 @@ ISO_SIZE=$(du -h "$ISO_FILE" | cut -f1)
 echo "[6/8] ISO size: $ISO_SIZE" | tee -a "$LOG_FILE"
 echo "  SHA256: $(awk '{print $1}' "$(basename "$ISO_FILE" .iso).sha256")" | tee -a "$LOG_FILE"
 
-# FIX 1-a: Unified QEMU test — capture real exit via PIPESTATUS[0] (not tee's exit)
+# FIX 1-a: Unified QEMU test — capture real exit via PIPESTATUS[0]
 echo "[7/8] Running QEMU boot test..." | tee -a "$LOG_FILE"
 if [ -f "$REPO_ROOT/tests/qemu-boot.sh" ]; then
   set +e
@@ -126,7 +125,7 @@ fi
 echo "[8/8] Done!" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 echo "================================================" | tee -a "$LOG_FILE"
-echo "  ✅ SCARLIX OS v${VERSION} ISO BUILD COMPLETE" | tee -a "$LOG_FILE"
+echo "  ✅ SCARLIX OS v${VERSION} — EndeavourOS ISO BUILD COMPLETE" | tee -a "$LOG_FILE"
 echo "================================================" | tee -a "$LOG_FILE"
 echo "  ISO:     $ISO_FILE" | tee -a "$LOG_FILE"
 echo "  Size:    $ISO_SIZE" | tee -a "$LOG_FILE"

@@ -1,0 +1,97 @@
+# ============================================================================
+# SCARLIX OS v17.0 — EndeavourOS Edition
+# archiso packages.x86_64
+#
+# v17.0 changes vs v16.5:
+#   - Removed all garuda-* packages (Garuda → EndeavourOS)
+#   - Removed linux-zen (default = vanilla linux, fallback = linux-lts)
+#   - Switched audio: pulseaudio → pipewire stack
+#   - Added: efibootmgr, grub, os-prober, openssh, btop, unzip, zip, snap-pac-grub
+#   - NVIDIA + CUDA intentionally ABSENT (post-install via first-boot.sh)
+# ============================================================================
+
+# === Base system ===
+base
+base-devel
+linux
+linux-headers
+linux-lts
+linux-lts-headers
+linux-firmware
+btrfs-progs
+efibootmgr
+grub
+os-prober
+
+# === Snapper / recovery ===
+snapper
+snap-pac
+snap-pac-grub
+
+# === ZRAM ===
+zram-generator
+
+# === Docker ===
+docker
+docker-compose
+
+# === Network / security / time ===
+networkmanager
+ufw
+fail2ban
+chrony
+openssh
+
+# === Development tools ===
+git
+curl
+wget
+jq
+bc
+python
+python-pip
+
+# === Terminal / editors ===
+neovim
+tmux
+htop
+btop
+rsync
+restic
+unzip
+zip
+
+# === Gaming (native — no Docker) ===
+steam
+wine
+wine-gecko
+wine-mono
+lutris
+
+# === Audio (Pipewire stack — replaces pulseaudio in v17) ===
+pipewire
+pipewire-pulse
+pipewire-alsa
+pipewire-jack
+wireplumber
+alsa-utils
+portaudio
+
+# === Bluetooth ===
+bluez
+bluez-utils
+blueman
+
+# === Installer ===
+calamares
+archiso
+
+# === Utils ===
+nano
+whiptail
+downgrade
+
+# === Explicitly NOT in ISO (install post-boot via first-boot.sh) ===
+# nvidia*  cuda*  cudnn*
+# garuda-*  chaotic-aur specific
+# linux-zen / linux-zen-headers (optional, install via AUR post-boot if desired)

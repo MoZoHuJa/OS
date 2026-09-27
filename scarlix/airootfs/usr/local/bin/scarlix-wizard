@@ -1,16 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
-TITLE="SCARLIX OS v16.5 Setup"
+
+# SCARLIX OS v17.0 — EndeavourOS Edition — Setup Wizard
+#
+# v17.0 changes vs v16.5:
+#   - Removed "Garuda Dr460nized" branding
+#   - Removed linux-zen assumption
+#   - Same logic: Main PC / HP Agent selection + first-boot + model-manager.timer enable
+
+TITLE="SCARLIX OS v17.0 Setup"
 
 whiptail --title "$TITLE" --msgbox \
-  "Vitaj v SCARLIX OS v16.5 (Garuda Edition)!\n\n\
-Base: Garuda Linux (Arch, Zen kernel, BTRFS)\n\
-Kernel: Zen (default) + LTS (fallback)\n\n\
-Stlac Enter pre pokracovanie." 20 70
+  "Vitaj v SCARLIX OS v17.0 (EndeavourOS Edition)!\n\n\
+Base: EndeavourOS (near-vanilla Arch)\n\
+Kernel: linux (default) + linux-lts (fallback)\n\
+Filesystem: BTRFS + Snapper (explicit layout)\n\
+Audio: Pipewire\n\
+ZRAM: 32GB zstd\n\n\
+Stlac Enter pre pokracovanie." 22 70
 
-# TUI wizard asks Main or HP Agent
+# A2-b: TUI wizard asks Main or HP Agent
 PC_TYPE=$(whiptail --title "$TITLE" --menu "Vyber typ tohto PC:" 15 60 2 \
-  "main" "Main PC (Garuda Dr460nized + AI + 2x GPU + Gaming)" \
+  "main" "Main PC (EndeavourOS + AI + 2x GPU + Gaming)" \
   "hp_agent" "HP Agent PC (Headless Worker — coding + files)" 3>&1 1>&2 2>&3)
 
 DEFAULT_IP="192.168.1.100"
@@ -26,7 +37,7 @@ TG_CHAT_ID=""
 # Save PC type
 echo "$PC_TYPE" | sudo tee /etc/scarlix/pc_type >/dev/null
 
-# Set static IP (NetworkManager — not netplan!)
+# Set static IP (NetworkManager)
 sudo nmcli connection modify "Wired connection 1" \
   ipv4.addresses "$IP/24" \
   ipv4.gateway 192.168.1.1 \
@@ -43,13 +54,13 @@ if [ -d /opt/scarlix-src ]; then
   sudo cp -r /opt/scarlix-src/* /opt/scarlix/ 2>/dev/null || true
 fi
 
-# Enable first-boot service HERE (not in profiledef or Calamares)
+# Enable first-boot service HERE
 sudo systemctl enable scarlix-first-boot.service
 
-# FIX 6-b: Enable weekly model-manager timer (if present)
+# Enable weekly model-manager timer (if present)
 if [ -f /etc/systemd/system/model-manager.timer ]; then
   sudo systemctl enable model-manager.timer 2>/dev/null || true
-  log_msg="Model manager timer: ENABLED (weekly)"
+  log_msg="Model manager timer: ENABLED (weekly Mon 04:00)"
 else
   log_msg="Model manager timer: not installed"
 fi
@@ -60,7 +71,8 @@ whiptail --title "$TITLE" --yesno \
 
 echo ""
 echo "========================================"
-echo "  SCARLIX OS v16.5 — Setup complete!"
+echo "  SCARLIX OS v17.0 — EndeavourOS Edition"
+echo "  Setup complete!"
 echo "  First-boot service: ENABLED"
 echo "  Reboot to start automatic setup."
 echo "  Dashboard: http://$IP:8090"

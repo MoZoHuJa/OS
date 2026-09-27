@@ -1,36 +1,46 @@
-# SCARLIX OS v16.5 — Garuda Edition (archiso-based)
+# SCARLIX OS v17.0 — EndeavourOS Edition
 
 > Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
-> **Base:** Garuda Linux (Arch-based, Zen kernel, BTRFS+Snapper)
+> **Base:** EndeavourOS (near-vanilla Arch) — cleaner than Garuda, easier to maintain.
 > **Model-Agnostic:** Supports any HuggingFace model.
 
-**Version:** v16.5.0 | **Base:** Garuda Linux | **License:** MIT
+**Version:** v17.0.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
-## 🐉 What's New in v16.5 (vs v16.4)
+## 🚀 What's New in v17.0 (vs v16.5)
 
-Based on 4 independent code reviews of v16.4, v16.5 fixes 10 issues (3 P0 + 7 P1):
+This is a **complete re-base** from Garuda Linux → EndeavourOS, following the
+`SCARLIX_ENDEAVOUROS_MIGRATION_GUIDE.md`.
 
-### Fixed (P0 — Critical):
-1. ✅ **`set -euo pipefail` + `tee` pipeline bug** (1-a) — QEMU/mkarchiso exit codes are now captured via `PIPESTATUS[0]` with `set +e` around tee pipelines (was being lost to tee's exit code)
-2. ✅ **OVMF fallback removed** (2-a) — qemu-boot.sh now FAILS if `OVMF_VARS.fd` template is missing instead of silently copying from `OVMF_CODE.fd` (which produces broken UEFI NVRAM)
-3. ✅ **Deterministic QEMU serial capture** (3-a) — `console=tty0 console=ttyS0,115200n8` added to both `archiso-x86_64.conf` (UEFI) and `syslinux.cfg` (BIOS) — kernel now reliably outputs to serial port
+### Structural changes
+1. ✅ **Profile renamed** — `garuda-scarlix/` → `scarlix/` (cleaner, no distro coupling)
+2. ✅ **All Garuda packages removed** — `garuda-common-settings` dropped; no more Chaotic-AUR dependency
+3. ✅ **Vanilla Arch kernel** — `linux` (default) + `linux-lts` (fallback); `linux-zen` removed from ISO (optional post-install via AUR)
+4. ✅ **Pipewire audio stack** — replaced Pulseaudio (modern, Wayland-ready)
+5. ✅ **GRUB + efibootmgr + os-prober** — explicit bootloader toolchain (was implicit via Garuda)
+6. ✅ **Snap-pac-grub** — auto-update GRUB after pacman kernel upgrades
 
-### Fixed (P1 — Recommended):
-4. ✅ **README_VERSION validation** (4-a) — `build-iso.sh` now validates VERSION against README.md in addition to profiledef.sh (build fails on any mismatch)
-5. ✅ **`linux-lts` kernel** (5-a) — Added `linux-lts` + `linux-lts-headers` to `packages.x86_64` as fallback when NVIDIA driver breaks on Zen kernel
-6. ✅ **`model-manager.sh`** (6-b) — New weekly model updater script (`/usr/local/bin/model-manager.sh`) + systemd timer (Mondays 04:00). Full scope: pulls HuggingFace GGUF + Ollama tags, captures VRAM before/after, sends Telegram summary
-7. ✅ **`downgrade` AUR tool** (7-a) — Added to `packages.x86_64` for NVIDIA driver rollback (`sudo downgrade nvidia-dkms`)
-8. ✅ **`vram` subcommand** (8-b) — Integrated into `scarlix-mode` (no separate script). Run `scarlix-mode vram` for per-GPU VRAM bars + health check (returns exit 2 if ≥90% utilization)
-9. ✅ **ZRAM tuned** (9-a) — New `/etc/systemd/zram-generator.conf`: zstd compression + 32GB allocation (caps at RAM size on smaller systems)
-10. ✅ **BTRFS CoW disabled** (10-a) — `first-boot.sh` now runs `chattr +C` on `/models`, `/mnt/games`, `/var/lib/docker`, `/var/lib/scarlix` immediately after mkdir (prevents fragmentation on large mutable stores)
+### New in first-boot.sh (was automatic on Garuda, now explicit)
+7. ✅ **BTRFS subvolume layout** — explicit creation of `@ @home @root @srv @var_log @var_lib_docker @models @snapshots`
+8. ✅ **Snapper configs** — `snapper -c root create-config /` + `snapper -c home create-config /home`
+9. ✅ **Snapper timers** — `snapper-timeline.timer` + `snapper-cleanup.timer` enabled at first-boot
+10. ✅ **NVIDIA open driver** — `nvidia-open` (Turing+) preferred over proprietary `nvidia` (with fallback)
+11. ✅ **nvidia_drm.modeset=1** — auto-added to `GRUB_CMDLINE_LINUX_DEFAULT` for clean console + Wayland
 
-### Unchanged from v16.4:
-- archiso profile structure (`garuda-scarlix/`)
-- NVIDIA + CUDA installed post-install (keeps ISO small)
-- Model-agnostic `models.yaml` with `hf_repo`/`hf_file` fields
-- 6 GPU modes (ai/game/creative/turbo/offline/tv)
-- 3-tier inference (SGLang → Ollama → llama.cpp)
-- First-boot logging to `/var/log/scarlix/first-boot.log`
+### Kept from v16.5 (all good engineering decisions preserved)
+- ✅ archiso-based ISO build (`mkarchiso`)
+- ✅ Model-agnostic `models.yaml` with `hf_repo`/`hf_file` fields
+- ✅ 6 GPU modes (ai/game/creative/turbo/offline/tv) + `vram` health check
+- ✅ 3-tier inference (SGLang → Ollama → llama.cpp)
+- ✅ `model-manager.sh` weekly updater (Mon 04:00 + VRAM + Telegram)
+- ✅ `downgrade` AUR tool for NVIDIA driver rollback
+- ✅ ZRAM 32GB zstd (`zram-generator.conf` — now uses `min(ram, 32768)`)
+- ✅ BTRFS CoW disabled via `chattr +C` on `/models`, `/mnt/games`, `/var/lib/docker`, `/var/lib/scarlix`
+- ✅ NVIDIA + CUDA post-install (keeps ISO small)
+- ✅ `set -euo pipefail` + `PIPESTATUS[0]` around tee pipelines
+- ✅ OVMF no-fallback (FAIL if `OVMF_VARS.fd` missing)
+- ✅ `console=ttyS0` in UEFI + BIOS boot configs (deterministic serial capture)
+- ✅ README_VERSION validation in build-iso.sh (build fails on mismatch)
+- ✅ First-boot logging to `/var/log/scarlix/first-boot.log`
 
 ## 🚀 Quick Start
 
@@ -44,15 +54,15 @@ bash installer/scripts/build-iso.sh
 
 ### Test ISO (UEFI + SHA256 + serial boot markers):
 ```bash
-bash tests/qemu-boot.sh output/scarlix-os-v16.5-x86_64.iso
+bash tests/qemu-boot.sh output/scarlix-os-v17.0-x86_64.iso
 ```
 
 ### Install:
-1. Write ISO to USB (Ventoy / dd)
+1. Write ISO to USB (Ventoy / `dd`)
 2. Boot from USB → Calamares → auto BTRFS → auto user
 3. TUI wizard: select "Main PC" or "HP Agent"
-4. Wizard enables first-boot service + model-manager timer
-5. Reboot → NVIDIA install + Docker services + model download (check `/var/log/scarlix/first-boot.log`)
+4. Wizard enables `scarlix-first-boot.service` + `model-manager.timer`
+5. Reboot → BTRFS subvolumes + Snapper + NVIDIA + Docker + models (check `/var/log/scarlix/first-boot.log`)
 6. Dashboard: http://192.168.1.100:8090
 
 ## 🎮 GPU Modes
@@ -68,7 +78,7 @@ bash tests/qemu-boot.sh output/scarlix-os-v16.5-x86_64.iso
 | `offline` | llama.cpp CPU only | Low power / no GPU |
 | `tv` | Docker Sunshine | Family streaming |
 | `status` | — | System summary |
-| `vram` | — | VRAM health check (NEW) |
+| `vram` | — | VRAM health check |
 
 ## 🧠 Model-Agnostic
 
@@ -77,61 +87,95 @@ Supports: Llama, Qwen, Mistral, Gemma, Phi, DeepSeek, Nemotron.
 Uses `hf_repo` field for direct GGUF downloads from HuggingFace.
 Weekly auto-update via `model-manager.sh` (Monday 04:00 + Telegram summary).
 
-## 🔧 NVIDIA Rollback (NEW in v16.5)
+## 🔧 NVIDIA Rollback
 
-If NVIDIA driver breaks on Zen kernel:
+If NVIDIA driver breaks on default kernel:
 ```bash
 # Option 1: rollback to previous driver version
-sudo downgrade nvidia-dkms
+sudo downgrade nvidia-open
 
-# Option 2: boot LTS kernel
+# Option 2: boot LTS kernel (installed by default in v17)
 sudo grub-set-default 1   # select linux-lts entry
+sudo grub-mkconfig -o /boot/grub/grub.cfg
 sudo reboot
 ```
 
-## 📊 ZRAM (NEW in v16.5)
+## 📊 ZRAM
 
 - Algorithm: zstd (3.5x typical compression)
-- Size: 32GB virtual (caps at RAM size on smaller systems)
+- Size: `min(ram, 32768)` — 32GB virtual OR system RAM, whichever is smaller
 - Config: `/etc/systemd/zram-generator.conf`
 - Result: ~3x effective RAM for mixed AI + Docker + gaming workload
 
-## 📁 File Layout (v16.5)
+## 📁 BTRFS + Snapper (explicit in v17)
+
+Subvolumes created at first-boot:
+```
+@                    # root
+@home                # /home
+@root                # /root
+@srv                 # /srv
+@var_log             # /var/log
+@var_lib_docker      # /var/lib/docker (CoW disabled)
+@models              # /models (CoW disabled)
+@snapshots           # /.snapshots
+```
+
+Snapper configs:
+- `root` → `/` (timeline + cleanup timers enabled)
+- `home` → `/home` (timeline + cleanup timers enabled)
+
+Rollback: `sudo snapper -c root list` → `sudo snapper -c root rollback <id>`
+
+## 📁 File Layout (v17.0)
 
 ```
-garuda-scarlix/
-├── profiledef.sh                          # archiso profile (v16.5.0)
-├── packages.x86_64                        # + linux-lts, downgrade, zram-generator
+scarlix/                                    # ← renamed from garuda-scarlix/
+├── profiledef.sh                          # archiso profile (v17.0.0, SCARLIX_V170)
+├── packages.x86_64                        # +linux, +linux-lts, +pipewire, +grub, +openssh
 ├── airootfs/
 │   ├── etc/
 │   │   ├── systemd/
-│   │   │   ├── zram-generator.conf        # NEW: zstd + 32GB ZRAM (9-a)
+│   │   │   ├── zram-generator.conf        # zstd + min(ram, 32768)
 │   │   │   └── system/
-│   │   │       ├── first-boot.sh          # + chattr +C BTRFS CoW disable (10-a)
-│   │   │       ├── model-manager.service  # NEW: weekly model updater (6-b)
-│   │   │       ├── model-manager.timer    # NEW: Monday 04:00 trigger (6-b)
+│   │   │       ├── first-boot.sh          # +BTRFS subvols +Snapper configs +timers +nvidia_drm.modeset
+│   │   │       ├── model-manager.service
+│   │   │       ├── model-manager.timer    # Mon 04:00 weekly
 │   │   │       └── scarlix-first-boot.service
 │   │   └── ...
 │   └── usr/local/bin/
-│       ├── scarlix-wizard                 # + enable model-manager.timer
-│       ├── scarlix-mode                   # + `vram` subcommand (8-b)
-│       └── model-manager.sh               # NEW: HF + Ollama + VRAM + Telegram (6-b)
-├── efiboot/loader/entries/archiso-x86_64.conf   # + console=ttyS0 (3-a)
-└── syslinux/syslinux.cfg                        # + console=ttyS0 (3-a)
+│       ├── scarlix-wizard                 # EndeavourOS branding
+│       ├── scarlix-mode                   # /etc/os-release (was /etc/garuda-release)
+│       └── model-manager.sh               # HF + Ollama + VRAM + Telegram
+├── efiboot/loader/entries/archiso-x86_64.conf   # console=ttyS0, vmlinuz-linux (was vmlinuz-linux-zen)
+└── syslinux/syslinux.cfg                        # console=ttyS0, vmlinuz-linux
 
-installer/scripts/build-iso.sh             # + PIPESTATUS + README_VERSION check (1-a, 4-a)
-tests/qemu-boot.sh                        # + PIPESTATUS + OVMF no-fallback (1-a, 2-a)
-models.yaml                               # v16.5 comment update
+installer/scripts/build-iso.sh             # VERSION=17.0.0, PROFILE_DIR=scarlix/
+tests/qemu-boot.sh                        # v17.0 ISO filename, EndeavourOS boot markers
+models.yaml                               # v17.0 comment update
 ```
 
 ## 📜 Version History
 
 | Version | Date | Base | Key Change |
 |---------|------|------|------------|
-| v16.5 | 2025-01 | Garuda | 10 review fixes (PIPESTATUS, OVMF no-fallback, console=ttyS0, README validation, linux-lts, model-manager.sh, downgrade, vram subcommand, ZRAM, BTRFS CoW) |
-| v16.4 | 2025-01 | Garuda | 8 review fixes (VERSION consistency, OVMF CODE/VARS split, real QEMU PASS/FAIL, unified QEMU test, first-boot logging, models.yaml hf_repo) |
-| v16.3 | 2025-01 | Garuda | 5 review fixes (wizard enables first-boot, NVIDIA post-install, garuda-common-settings only) |
-| v16.2 | 2025-01 | Garuda | archiso-based, all v16.1 review fixes |
-| v16.1 | 2025-01 | Garuda | Arch-based, BTRFS+Snapper, native gaming |
-| v15 | 2024-12 | Ubuntu | Model-Agnostic system |
-| v12 | 2024-11 | Ubuntu | Sovereign Agent Compute Edition |
+| **v17.0** | 2026-09 | **EndeavourOS** | **Garuda → EndeavourOS re-base. Profile renamed `scarlix/`. Pipewire audio. Explicit BTRFS subvols + Snapper. NVIDIA open driver. nvidia_drm.modeset=1.** |
+| v16.5 | 2026-08 | Garuda | 10 review fixes (PIPESTATUS, OVMF no-fallback, console=ttyS0, README validation, linux-lts, model-manager.sh, downgrade, vram subcommand, ZRAM, BTRFS CoW) |
+| v16.4 | 2026-08 | Garuda | 8 review fixes (VERSION consistency, OVMF CODE/VARS split, real QEMU PASS/FAIL, unified QEMU test, first-boot logging, models.yaml hf_repo) |
+| v16.3 | 2026-08 | Garuda | 5 review fixes (wizard enables first-boot, NVIDIA post-install, garuda-common-settings only) |
+| v16.2 | 2026-08 | Garuda | archiso-based, all v16.1 review fixes |
+| v16.1 | 2026-07 | Garuda | Arch-based, BTRFS+Snapper, native gaming |
+| v15 | 2026-06 | Ubuntu | Model-Agnostic system |
+| v12 | 2026-05 | Ubuntu | Sovereign Agent Compute Edition |
+
+## 🔄 Migration from v16.5 → v17.0
+
+This is a **clean rebuild**, not an in-place upgrade. To migrate an existing v16.5 install:
+
+1. Back up data (Docker volumes, `/models`, `/home`, `/etc/scarlix/.env`)
+2. Write v17.0 ISO to USB
+3. Install fresh (Calamares auto-BTRFS)
+4. Restore `/etc/scarlix/.env` + `/models/` + Docker volumes
+5. Run `scarlix-wizard` → reboot → `first-boot.sh` re-pulls everything
+
+For development reference, see `SCARLIX_ENDEAVOUROS_MIGRATION_GUIDE.md` (source of this re-base).
