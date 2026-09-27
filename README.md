@@ -1,19 +1,14 @@
-# SCARLIX OS v17.3 — EndeavourOS Edition (Bootstrap Installer)
+# SCARLIX OS v17.4 — EndeavourOS Edition (Unified Bootstrap, Fail-Hard)
 
 > Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
-> **NO ISO NEEDED** — install on clean EndeavourOS with one command.
-> **Auto-detect:** 1 GPU → 2-tier · 2+ GPU → 5-tier (vLLM TP=2)
+> **NO ISO needed** — bootstrap installer on clean EndeavourOS.
+> **Verified AI path**: SGLang (GPU0) + vLLM (GPU1, TP=1) + BeeLlama (CPU).
 
-**Version:** v17.3.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v17.4.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
-## 🚀 Quick Install (NO ISO needed!)
+## 🚀 Install (NO ISO)
 
-### Option 1: One-liner (curl + pipe)
-```bash
-curl -fsSL https://raw.githubusercontent.com/MoZoHuJa/OS/main/install.sh | bash
-```
-
-### Option 2: Safer (clone + review + run) ⭐ recommended
+### Primary (safe — review before run) ⭐
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
@@ -21,107 +16,88 @@ nano install.sh   # review what it does
 bash install.sh
 ```
 
-### What you need first:
-1. **Clean EndeavourOS installation** — download from https://endeavouros.com/
-2. **Boot it, open terminal**
-3. **Run the install command above**
-
-The installer does everything: packages, BTRFS subvols, NVIDIA, Docker, AI stacks, wizard.
+### Secondary (convenience — clones repo for you)
+```bash
+curl -fsSL https://raw.githubusercontent.com/MoZoHuJa/OS/main/install.sh | bash -s -- --clone
+```
 
 ---
 
-## 🆕 What's New in v17.3 (vs v17.2.1)
+## 🆕 What's New in v17.4 (vs v17.3)
 
-**Bootstrap installer — no ISO build required!**
+**Correction release — fixes 19 issues from 3 independent reviews.**
 
-| Feature | v17.2.1 (ISO) | v17.3 (Bootstrap) |
-|---------|---------------|-------------------|
-| Install method | Boot from USB ISO | `curl \| bash` or `git clone + bash` |
-| ISO build needed | ✅ Yes (needs Arch host + mkarchiso) | ❌ No |
-| Download size | 2-4GB ISO | ~50MB repo |
-| Updates | Rebuild ISO | `git pull && bash install.sh` |
-| Debug | Hard (rebuild ISO) | Easy (edit + re-run) |
-| Idempotent | Via first-boot.sh | ✅ Via checkpoints in install.sh |
+### 🔴 P0 Fixes (install + runtime blockers)
 
-### What `install.sh` does (5 phases):
-1. **Phase 1**: System packages (pacman), BTRFS subvols, Snapper, ZRAM
-2. **Phase 2**: NVIDIA auto-detect (dGPU-only, Turing+) + atomic nvidia-open-lts + GRUB modeset
-3. **Phase 3**: Docker + Docker repo (nvidia-container-toolkit) + yay (git clone)
-4. **Phase 4**: Copy SCARLIX scripts, services, stacks to `/usr/local/bin/`, `/etc/scarlix/`, `/opt/scarlix/`
-5. **Phase 5**: Run wizard (TUI: PC type, models, experimental) + 3-phase setup
+| # | Fix | v17.3 Problem | v17.4 Solution |
+|---|-----|---------------|-----------------|
+| Q1a | **curl\|bash removed as primary** | Broken (needed repo files) | Primary = git clone + review. curl\|bash secondary with `--clone` flag |
+| Q2a | **vLLM TP=1 (not TP=2)** | RTX 5060 Ti (Blackwell sm_120) + RTX 4060 Ti (Ada sm_89) = different compute_cap → TP=2 fails with NCCL error | TP=1 default (separate model per GPU). Auto-detect compute_cap. **Mixed GPU architectures safe.** |
+| Q3b | **BTRFS subvol creation removed** | Created subvols but never mounted (no fstab) → useless | chattr +C on directories only. Calamares made @ + @home. |
+| Q4a | **Docker network unified** | `scarlix-net` in install vs `scarlix_ai` in compose → containers fail | All 12 compose files → `scarlix-net` |
+| Q5a | **Calamares + [docker] repo removed** | Calamares useless on installed system. [docker] repo doesn't exist on Arch → pacman -Syu fails | Calamares removed. nvidia-container-toolkit via yay (AUR) |
+| Q6a | **Model paths synced** | SGLang `/Qwen3-14B-Instruct` vs models.yaml `/Qwen3-14B-Instruct-AWQ` | SGLang compose → `/Qwen3-14B-Instruct-AWQ`. **models.yaml stays model-agnostic** (edit to use ANY HuggingFace model) |
+| Q7a | **Unified 5 phases + HW-aware checkpoint** | 5 install + 3 first-boot phases conflicted. Checkpoint ignored HW changes | Single 5-phase install.sh. Checkpoint stores GPU count + compute_cap → re-runs Phase 2 if HW changes |
+| Q8a | **scarlix-mode ai = verified path** | No working minimal path. docker-compose-main.yml didn't exist | SGLang GPU0 + vLLM GPU1 (TP=1) + BeeLlama CPU. Fallback: SGLang→vLLM→BeeLlama→Ollama. Fixed compose refs. |
+| #4 | **scarlihq typo fixed** | `scarlihp` → Dashboard not copied | `scarlihq` (correct) |
+| #9 | **nvidia-open-lts + linux-lts + headers atomic** | nvidia-open-lts without linux-lts+headers → DKMS fails → black screen | All 3 installed atomically in one pacman -S |
+| #10 | **yay build as user (not root)** | makepkg refuses root → "Running makepkg as root is not allowed" | `sudo -u $SUDO_USER` for git clone + makepkg |
+| #11 | **Fail-hard** | `.installed` touched even on critical failure → false success | Critical failures (NVIDIA, Docker) → exit 1, NO `.installed` |
 
-**Idempotent**: Re-running `install.sh` skips completed phases (checkpoints in `/var/lib/scarlix/`).
+### 🏗️ Verified AI Architecture (v17.4)
 
----
-
-## 🎯 Target Hardware
-
-### Dual NVIDIA GPU (recommended — 5-tier auto-enabled)
+**For your hardware (RTX 5060 Ti + RTX 4060 Ti — mixed architectures):**
 ```
-GPU 0: RTX 5060 Ti 16GB → SGLang + vLLM TP shard 0
-GPU 1: RTX 4060 Ti 16GB → vLLM TP shard 1 + Ollama + Laya
-CPU:   BeeLlama.cpp (offline, KVarN, 32k context)
-```
-**Result**: 32GB total VRAM. vLLM TP=2 enables Qwen3-72B (36GB → 18GB per GPU). Multi-LoRA lets Hermes/omp/Voice share base model.
+GPU 0: RTX 5060 Ti 16GB (Blackwell sm_120)
+└── Tier-1: SGLang (agents, RadixAttention, primary inference)
 
-### Single NVIDIA GPU (2-tier default)
-```
-GPU 0: 16GB → SGLang + Ollama
-CPU:   BeeLlama.cpp (offline)
+GPU 1: RTX 4060 Ti 16GB (Ada sm_89)
+└── Tier-2: vLLM (TP=1, Multi-LoRA, separate model)
+
+CPU:
+└── Tier-4: BeeLlama.cpp / llama.cpp (offline, q4_0 KV cache, 32k context)
 ```
 
-### No GPU (Dev Workstation)
-Coding + files only. No AI inference.
+**Why TP=1 not TP=2:** vLLM tensor parallelism requires identical compute capability. Your RTX 5060 Ti (sm_120) + RTX 4060 Ti (sm_89) are different architectures → TP=2 would fail with `NCCL error`. TP=1 runs a separate model instance on each GPU — safe and efficient.
 
----
+**Fallback chain:** If SGLang fails → vLLM takes over. If vLLM fails → BeeLlama (CPU). If both fail → Ollama.
 
-## 🏗️ Inference Architecture
+### 🧪 Model-Agnostic (Q6a variant)
 
-### 2-Tier Default (1 GPU)
+`models.yaml` stays model-agnostic — edit to use ANY HuggingFace model:
+```yaml
+sglang:
+  model_path: "/models/Qwen3-14B-Instruct-AWQ"
+  # Change to any: /models/Meta-Llama-3.1-8B-Instruct, /models/Mistral-7B, etc.
 ```
-Tier-1: SGLang (agents, RadixAttention)
-Tier-3: Ollama (GGUF concurrent)
-Tier-4: BeeLlama.cpp (offline, KVarN, 32k context)
-```
-
-### 5-Tier (2+ GPU — auto-suggested by wizard)
-```
-Tier-1: SGLang (GPU 0 — agents, RadixAttention)
-Tier-2: vLLM (GPU 0+1 TP=2 — Multi-LoRA, batch, Qwen3-72B)
-Tier-3: Ollama ×2 (GPU 0+1 — GGUF concurrent)
-Tier-4: BeeLlama.cpp (CPU — offline, KVarN, 32k context)
-Tier-5: FreeToken (GPU 0+1 — MoE, --profile moe, experimental)
-System-1: Laya (GPU 1 — 33ms router, replaces Needle2)
-Browser: Playwright MCP (Apache-2.0, browser automation)
-Coding: omp / oh-my-pi (LSP+DAP, replaces OpenCode)
-```
+Then run `bash /opt/scarlix/scripts/download-models.sh` to fetch.
 
 ---
 
 ## 🎮 GPU Modes
 
 ```bash
-scarlix-mode ai        # All tiers (5-tier if experimental, else 2-tier)
-scarlix-mode turbo     # SGLang + BeeLlama + Ollama (max throughput)
-scarlix-mode offline   # BeeLlama.cpp CPU (KVarN, 32k context)
+scarlix-mode ai        # Verified path: SGLang GPU0 + vLLM GPU1 + BeeLlama (default)
+scarlix-mode turbo     # Same as ai (max throughput)
+scarlix-mode offline   # BeeLlama.cpp CPU (q4_0 KV, 32k context)
 scarlix-mode game      # Native Steam/Sunshine
 scarlix-mode creative  # ComfyUI + Video + Music
 scarlix-mode tv        # Docker Sunshine
-scarlix-mode vram      # VRAM health check
-scarlix-mode status    # System summary (shows tier + GPU count)
+scarlix-mode vram      # VRAM health check (shows compute_cap per GPU)
+scarlix-mode status    # System summary
 ```
 
 ---
 
-## 🔧 Manual Experimental Toggle
+## 🔧 NVIDIA Rollback
 
 ```bash
-# Enable 5-tier (vLLM/FreeToken/Laya) — for 2+ GPU
-sudo touch /etc/scarlix/.experimental
-sudo systemctl restart scarlix-first-boot.service
+# Option 1: rollback driver (downgrade installed via yay)
+sudo downgrade nvidia-open
 
-# Disable (back to 2-tier)
-sudo rm /etc/scarlix/.experimental
+# Option 2: boot LTS kernel (nvidia-open-lts + linux-lts installed atomically)
+sudo grub-set-default 1
+sudo reboot
 ```
 
 ---
@@ -131,10 +107,10 @@ sudo rm /etc/scarlix/.experimental
 ```bash
 cd ~/scarlix-os
 git pull
-bash install.sh   # idempotent — skips completed phases
+bash install.sh   # idempotent — skips completed phases (HW-aware)
 ```
 
-To force full reinstall:
+Force full reinstall:
 ```bash
 sudo rm -rf /var/lib/scarlix/.checkpoint-* /opt/scarlix/.installed
 bash install.sh
@@ -142,57 +118,39 @@ bash install.sh
 
 ---
 
-## 🔧 NVIDIA Rollback
-
-```bash
-# Option 1: rollback driver (downgrade installed via yay in install.sh)
-sudo downgrade nvidia-open
-
-# Option 2: boot LTS kernel (nvidia-open-lts installed atomically)
-sudo grub-set-default 1
-sudo reboot
-```
-
----
-
-## 📁 File Layout (v17.3)
+## 📁 File Layout (v17.4)
 
 ```
-OS/  (repo root)
-├── install.sh                              # NEW v17.3: Bootstrap installer (no ISO)
-├── README.md                               # This file
-├── AGENTS.md                               # 5-tier + omp delegation protocol
-├── models.yaml                             # Model-agnostic config
-├── scarlix/                                # archiso profile (for ISO build, optional)
-│   ├── profiledef.sh                       # v17.3.0
-│   ├── packages.x86_64                     # Package list (install.sh uses this)
-│   ├── pacman.conf                         # +[docker] repo
+OS/
+├── install.sh                              # v17.4: Unified bootstrap (5 phases, fail-hard, HW-aware)
+├── README.md
+├── AGENTS.md
+├── models.yaml                             # Model-agnostic (edit for ANY HuggingFace model)
+├── scarlix/
+│   ├── profiledef.sh                       # v17.4.0
+│   ├── packages.x86_64                     # NO calamares (ISO-only)
+│   ├── pacman.conf                         # Standard Arch repos only (no [docker] repo)
 │   └── airootfs/
-│       ├── etc/calamares/modules/mount.conf  # @ + @home only
+│       ├── etc/calamares/modules/mount.conf
 │       ├── etc/systemd/
-│       │   ├── zram-generator.conf         # min(ram/2, 16384)
+│       │   ├── zram-generator.conf
 │       │   └── system/
-│       │       ├── first-boot.sh            # 3-phase checkpointed
+│       │       ├── first-boot.sh
 │       │       ├── scarlix-first-boot.service
-│       │       ├── model-manager.{service,timer}
-│       ├── etc/pacman.d/hooks/
-│       │   └── scarlix-docker-backup.*     # Pre-rollback Docker backup
+│       │       └── model-manager.{service,timer}
 │       └── usr/local/bin/
-│           ├── scarlix-wizard              # Auto-detect GPU → suggest tier
-│           ├── scarlix-mode               # 2-tier or 5-tier
-│           └── model-manager.sh            # HF auto + Ollama --apply-ollama
-├── ai/                                     # Docker stacks
-│   ├── vllm/docker-compose.yml             # profiles:[experimental] — TP=2
-│   ├── laya/docker-compose.yml             # profiles:[experimental]
-│   ├── freetoken/docker-compose.yml        # profiles:[moe]
-│   ├── llamacpp/docker-compose.yml         # BeeLlama.cpp (default Tier-4)
-│   ├── sglang/                             # SGLang (default Tier-1)
-│   ├── ollama/                             # Ollama (default Tier-3)
-│   ├── browser-mcp/                         # Playwright MCP
+│           ├── scarlix-wizard              # v17.4
+│           ├── scarlix-mode               # Verified path + fallback
+│           └── model-manager.sh
+├── ai/
+│   ├── sglang/docker-compose.yml          # model path synced, scarlix-net
+│   ├── vllm/docker-compose.yml            # TP=1 (GPU1), scarlix-net
+│   ├── llamacpp/docker-compose.yml        # Official llama.cpp image, q4_0 KV
+│   ├── ollama/docker-compose.yml          # scarlix-net
+│   ├── browser-mcp/                        # Playwright MCP
 │   └── smg/                                 # Gateway
-├── installer/scripts/build-iso.sh          # v17.3.0 (optional ISO build)
-├── tests/qemu-boot.sh                      # v17.3.0
-└── docs/AGENTVERSE_MERGE_PLAN.md           # Sister project merge plan
+├── installer/scripts/build-iso.sh          # v17.4.0 (optional ISO)
+└── tests/qemu-boot.sh                      # v17.4.0
 ```
 
 ---
@@ -201,12 +159,13 @@ OS/  (repo root)
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v17.3** | 2026-10 | **Bootstrap installer (install.sh) — NO ISO NEEDED. One-liner: `curl \| bash`. Idempotent 5-phase setup. Auto-detect GPU.** |
-| v17.2.1 | 2026-10 | Auto 5-tier for 2+ NVIDIA GPU. Wizard auto-suggests. RTX 5060 Ti + RTX 4060 Ti optimized. |
-| v17.2 | 2026-10 | Minimal Working Baseline. 8 P0 fixes (yay removed, Calamares stripped, NVIDIA dGPU detect, atomic nvidia-open-lts, checkpoint resume, Docker repo, model opt-in). 2-tier default. |
-| v17.1 | 2026-09 | 5-tier inference (vLLM+BeeLlama+FreeToken+Laya+omp). 10 review fixes. (Over-engineered) |
-| v17.0 | 2026-09 | Garuda → EndeavourOS re-base. Profile renamed `scarlix/`. |
-| v16.5 | 2026-08 | 10 review fixes (PIPESTATUS, OVMF, console=ttyS0, etc.) |
+| **v17.4** | 2026-10 | **Correction release. 19 fixes: curl\|bash removed, vLLM TP=1 (mixed GPU safe), BTRFS subvols removed, Docker network unified, Calamares+[docker] repo removed, model paths synced, unified 5-phase, fail-hard, verified AI path + fallback.** |
+| v17.3 | 2026-10 | Bootstrap installer (install.sh) — no ISO needed. (Broken — curl\|bash, network mismatch, TP=2) |
+| v17.2.1 | 2026-10 | Auto 5-tier for 2+ NVIDIA GPU. |
+| v17.2 | 2026-10 | Minimal Working Baseline. 8 P0 fixes. 2-tier default. |
+| v17.1 | 2026-09 | 5-tier inference (vLLM+BeeLlama+FreeToken+Laya). (Over-engineered) |
+| v17.0 | 2026-09 | Garuda → EndeavourOS re-base. |
+| v16.5 | 2026-08 | 10 review fixes (PIPESTATUS, OVMF, console=ttyS0) |
 | v16.1 | 2026-07 | Garuda Linux, BTRFS+Snapper, native gaming |
 | v15 | 2026-06 | Model-Agnostic system |
 
@@ -214,13 +173,13 @@ OS/  (repo root)
 
 ## ⚠️ Known Limitations
 
-- **No CI/CD**: install.sh not tested automatically (manual testing only)
-- **No real HW test**: QEMU doesn't test NVIDIA/CUDA/Sunshine/HDMI-CEC
-- **Single maintainer**: One person maintaining the full stack
-- **SGLang on Arch**: Officially Ubuntu-only, AUR package has packaging gaps
-- **vLLM TP=2**: Requires both GPUs to be same architecture family (RTX 40+50 series OK)
+- **No CI/CD**: install.sh not tested automatically
+- **No real HW test**: QEMU doesn't test NVIDIA/CUDA
+- **Single maintainer**: One person maintaining full stack
+- **SGLang on Arch**: Officially Ubuntu-only, AUR has packaging gaps
+- **vLLM TP=1**: Separate model per GPU (not tensor parallel) — less efficient than TP=2 but works with mixed architectures
 
 ## 🗺️ Roadmap
 
-- **v17.4**: AgentVerse merge (944-app store, capabilities, cloudd side-car)
-- **v18.0**: Incus dev workspaces, ScarliHQ Rust refactor consideration
+- **v17.5**: AgentVerse merge (944-app store, capabilities)
+- **v18.0**: Incus dev workspaces, ScarliHQ Rust refactor

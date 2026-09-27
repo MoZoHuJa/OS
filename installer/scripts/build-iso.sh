@@ -3,7 +3,7 @@ set -euo pipefail
 
 # SCARLIX OS v17.2.1 — archiso ISO Builder (Minimal Baseline + auto 5-tier)
 
-VERSION="17.3.0"
+VERSION="17.4.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 WORK_DIR="/tmp/scarlix-iso-build"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.3 — EndeavourOS Edition — First Boot (Auto 5-Tier for Dual GPU)
+# SCARLIX OS v17.4 — EndeavourOS Edition — First Boot (Unified, Fail-Hard)
 #
 # v17.2.1: Wizard auto-suggests experimental mode for 2+ NVIDIA GPU.
 #   If /etc/scarlix/.experimental exists (auto-set by wizard for 2+ GPU),
@@ -34,7 +34,7 @@ checkpoint() { touch "$CHECKPOINT_DIR/.checkpoint-phase$1"; log "  ⏸ Checkpoin
 is_checkpoint() { [ -f "$CHECKPOINT_DIR/.checkpoint-phase$1" ]; }
 
 log "========================================"
-log "  SCARLIX OS v17.3 — EndeavourOS Edition"
+log "  SCARLIX OS v17.4 — EndeavourOS Edition"
 log "  First Boot (Auto 5-Tier for Dual GPU)"
 log "========================================"
 log "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"

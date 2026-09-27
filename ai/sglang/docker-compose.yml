@@ -14,7 +14,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     command: >
       python -m sglang.launch_server
-      --model-path /models/Qwen3-14B-Instruct
+      --model-path /models/Qwen3-14B-Instruct-AWQ
       --port 30000
       --host 0.0.0.0
       --mem-fraction-static 0.90
@@ -27,7 +27,7 @@ services:
             - driver: nvidia
               device_ids: ['0']
               capabilities: [gpu]
-    networks: [scarlix_ai]
+    networks: [scarlix-net]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:30000/health"]
       interval: 30s
@@ -35,4 +35,4 @@ services:
       retries: 3
       start_period: 180s
 networks:
-  scarlix_ai: { external: true }
+  scarlix-net: { external: true }

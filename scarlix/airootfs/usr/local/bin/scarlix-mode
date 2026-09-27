@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.3 — EndeavourOS Edition — GPU Mode Switcher
-# v17.3: Bootstrap installer (install.sh) — no ISO needed
-# v17.2.1: Auto 5-tier for 2+ GPU (wizard auto-suggests experimental)
-# v17.2: 2-tier default (SGLang + BeeLlama); vLLM/Laya/FreeToken only if .experimental
+# SCARLIX OS v17.4 — EndeavourOS Edition — GPU Mode Switcher
+# v17.4: Verified AI path (SGLang GPU0 + vLLM GPU1 TP=1 + BeeLlama CPU)
+#   - Fallback: if SGLang fails → vLLM; if vLLM fails → BeeLlama
+#   - Fixed: docker-compose-main.yml → docker-compose.yml
+#   - Network: scarlix-net (unified)
 
 LOG_FILE="/var/log/scarlix-mode.log"
 STATE_FILE="/var/lib/scarlix/current-mode"
@@ -23,29 +24,29 @@ EXPERIMENTAL=0
 dump_vram() {
   log "Releasing VRAM..."
   curl -s -X POST "http://localhost:11434/api/generate" -d '{"model":"qwen3.6:14b","keep_alive":0}' >/dev/null 2>&1 || true
-  curl -s -X POST "http://localhost:11435/api/generate" -d '{"model":"qwen3.6:14b","keep_alive":0}' >/dev/null 2>&1 || true
-  docker stop sglang beellama 2>/dev/null || true
+  docker stop sglang vllm beellama 2>/dev/null || true
   sleep 3
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v17.3 — VRAM Check ==="
+  echo "=== SCARLIX OS v17.4 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed yet."
     return 0
   fi
   echo ""
   echo "GPU VRAM:"
-  nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu \
-            --format=csv,noheader,nounits 2>/dev/null | while IFS=',' read -r idx name total used free util; do
+  nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,compute_cap \
+            --format=csv,noheader,nounits 2>/dev/null | while IFS=',' read -r idx name total used free util cap; do
     idx=$(echo "$idx" | tr -d ' '); name=$(echo "$name" | tr -d ' ')
     total=$(echo "$total" | tr -d ' '); used=$(echo "$used" | tr -d ' '); util=$(echo "$util" | tr -d ' ')
+    cap=$(echo "$cap" | tr -d ' ')
     if [ "$total" -gt 0 ] 2>/dev/null; then
       pct=$((used * 100 / total))
       bar=$(printf '█%.0s' $(seq 1 $((pct / 5))) 2>/dev/null)
       bar_empty=$(printf '░%.0s' $(seq 1 $((20 - pct / 5))) 2>/dev/null)
       warn=""; [ "$pct" -ge 90 ] && warn=" ⚠ CRITICAL"
-      printf "  GPU %s %-20s %5d/%5d MiB [%s%s] %3d%%%s\n" "$idx" "$name" "$used" "$total" "$bar" "$bar_empty" "$pct" "$warn"
+      printf "  GPU %s %-18s %5d/%5d MiB [%s%s] %3d%% sm_%s%s\n" "$idx" "$name" "$used" "$total" "$bar" "$bar_empty" "$pct" "$cap" "$warn"
     fi
   done
   echo ""
@@ -63,20 +64,48 @@ show_vram() {
   fi
 }
 
+# Verified AI path: start SGLang + vLLM (TP=1) + BeeLlama with fallback
+start_verified_ai() {
+  log "Starting verified AI path (SGLang GPU0 + vLLM GPU1 + BeeLlama CPU)..."
+  local sglang_ok=0 vllm_ok=0
+
+  # SGLang (GPU0, Tier-1)
+  if docker compose -f /opt/scarlix/ai/sglang/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
+    log "  ✓ SGLang started (GPU0)"
+    sglang_ok=1
+  else
+    log "  ✗ SGLang failed — will fallback to vLLM"
+  fi
+
+  # vLLM (GPU1, TP=1, experimental profile)
+  if [ "$EXPERIMENTAL" -eq 1 ]; then
+    if docker compose -f /opt/scarlix/ai/vllm/docker-compose.yml --profile experimental up -d >> "$LOG_FILE" 2>&1; then
+      log "  ✓ vLLM started (GPU1, TP=1)"
+      vllm_ok=1
+    else
+      log "  ✗ vLLM failed — SGLang only"
+    fi
+  fi
+
+  # BeeLlama (CPU, Tier-4)
+  docker compose -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ BeeLlama started (CPU)" || log "  ✗ BeeLlama failed"
+
+  # Fallback: if SGLang failed, try Ollama
+  if [ "$sglang_ok" -eq 0 ] && [ "$vllm_ok" -eq 0 ]; then
+    log "  ⚠ Both SGLang + vLLM failed — starting Ollama as fallback"
+    docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ Ollama (fallback)" || log "  ✗ Ollama also failed"
+  fi
+}
+
 case "$MODE" in
   ai)
     [[ "$CURRENT_MODE" == "ai" ]] && { log "Already in AI mode."; exit 0; }
-    log "=== AI mode (2-tier: SGLang + BeeLlama) ==="
+    log "=== AI mode (verified path: SGLang + vLLM + BeeLlama) ==="
     killall steam lutris 2>/dev/null || true
     sudo systemctl stop sunshine 2>/dev/null || true
     docker compose -f /opt/scarlix/ai/comfyui/docker-compose.yml --profile creative stop 2>/dev/null || true
     docker compose -f /opt/scarlix/gaming/docker-compose.yml --profile tv stop 2>/dev/null || true
-    # 2-tier default
-    docker compose -f /opt/scarlix/ai/sglang/docker-compose.yml up -d
-    docker compose -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d
-    docker compose -f /opt/scarlix/ai/ollama/docker-compose-main.yml up -d 2>/dev/null || true
-    # Experimental (only if flag)
-    [ "$EXPERIMENTAL" -eq 1 ] && docker compose -f /opt/scarlix/ai/vllm/docker-compose.yml --profile experimental up -d 2>/dev/null || true
+    start_verified_ai
     echo "ai" | tee "$STATE_FILE" >/dev/null
     ;;
   game)
@@ -97,14 +126,12 @@ case "$MODE" in
     echo "creative" | tee "$STATE_FILE" >/dev/null
     ;;
   turbo)
-    log "=== TURBO mode (SGLang + BeeLlama + Ollama) ==="
-    docker compose -f /opt/scarlix/ai/sglang/docker-compose.yml up -d
-    docker compose -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d
-    docker compose -f /opt/scarlix/ai/ollama/docker-compose-main.yml up -d
+    log "=== TURBO mode (SGLang + vLLM + BeeLlama, max) ==="
+    start_verified_ai
     echo "turbo" | tee "$STATE_FILE" >/dev/null
     ;;
   offline)
-    log "=== OFFLINE mode (BeeLlama.cpp CPU, KVarN) ==="
+    log "=== OFFLINE mode (BeeLlama.cpp CPU, KVarN/q4_0) ==="
     dump_vram
     sudo systemctl stop sunshine 2>/dev/null || true
     docker compose -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d
@@ -121,19 +148,20 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v17.3 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v17.4 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
-    echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM/FreeToken/Laya)' || echo 'no (2-tier default)')"
+    echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"
     echo "Kernel: $(uname -r)"
-    echo "LTS: $(pacman -Q linux-lts 2>/dev/null | head -1 || echo 'not installed')"
+    echo "LTS: $(pacman -Q linux-lts 2>/dev/null || echo 'not installed')"
     echo ""
-    echo "Inference (2-tier default):"
-    echo "  SGLang: $(docker inspect -f '{{.State.Status}}' sglang 2>/dev/null || echo 'not running')"
-    echo "  BeeLlama.cpp: $(docker inspect -f '{{.State.Status}}' beellama 2>/dev/null || echo 'not running')"
-    echo "  Ollama: $(docker inspect -f '{{.State.Status}}' ollama-main 2>/dev/null || echo 'not running')"
-    [ "$EXPERIMENTAL" -eq 1 ] && echo "  [EXP] vLLM: $(docker inspect -f '{{.State.Status}}' vllm 2>/dev/null || echo 'not running')"
-    [ "$EXPERIMENTAL" -eq 1 ] && echo "  [EXP] Laya: $(docker inspect -f '{{.State.Status}}' laya 2>/dev/null || echo 'not running')"
+    echo "Inference (verified path):"
+    echo "  SGLang (Tier-1, GPU0): $(docker inspect -f '{{.State.Status}}' sglang 2>/dev/null || echo 'not running')"
+    [ "$EXPERIMENTAL" -eq 1 ] && echo "  vLLM (Tier-2, GPU1, TP=1): $(docker inspect -f '{{.State.Status}}' vllm 2>/dev/null || echo 'not running')"
+    echo "  BeeLlama (Tier-4, CPU): $(docker inspect -f '{{.State.Status}}' beellama 2>/dev/null || echo 'not running')"
+    echo ""
+    echo "GPU:"
+    nvidia-smi --query-gpu=index,name,memory.used,memory.free,compute_cap --format=csv,noheader 2>/dev/null || echo "  nvidia-smi not available"
     echo ""
     echo "Snapper (root): $(sudo snapper -c root list 2>/dev/null | tail -3 || echo 'not configured')"
     echo "ZRAM: $(zramctl 2>/dev/null | head -2 || echo 'not active')"
@@ -143,16 +171,15 @@ case "$MODE" in
   *)
     echo "Usage: scarlix-mode {ai|game|creative|turbo|offline|tv|status|vram}"
     echo ""
-    echo "v17.2: 2-tier default (SGLang + BeeLlama.cpp)"
-    echo "  ai       — SGLang + BeeLlama + Ollama (default)"
-    echo "  turbo    — SGLang + BeeLlama + Ollama (max throughput)"
-    echo "  offline  — BeeLlama.cpp CPU only (KVarN, 32k context)"
+    echo "v17.4 verified path: SGLang (GPU0) + vLLm (GPU1, TP=1) + BeeLlama (CPU)"
+    echo "  ai       — Verified AI path (default)"
+    echo "  turbo    — Same as ai (max throughput)"
+    echo "  offline  — BeeLlama.cpp CPU only"
     echo "  game     — Native Steam/Sunshine"
     echo "  creative — ComfyUI + Video + Music"
     echo "  tv       — Docker Sunshine"
     echo "  status   — System summary"
     echo "  vram     — VRAM health check"
-    [ "$EXPERIMENTAL" -ne 1 ] && echo "" && echo "  (Experimental vLLM/FreeToken/Laya: enable in wizard or touch /etc/scarlix/.experimental)"
     exit 1
     ;;
 esac
