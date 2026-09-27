@@ -84,7 +84,8 @@ bluez-utils
 blueman
 
 # === Installer ===
-calamares
+# v17.4: Calamares REMOVED (ISO-only, not needed for bootstrap install)
+# calamares
 
 # === Utils ===
 nano

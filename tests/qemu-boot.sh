@@ -4,11 +4,11 @@ set -euo pipefail
 # SCARLIX OS v17.2.1 — QEMU Boot Test
 # Kept: PIPESTATUS, OVMF no-fallback, console=ttyS0
 
-ISO_FILE="${1:-output/scarlix-os-v17.3.0-x86_64.iso}"
+ISO_FILE="${1:-output/scarlix-os-v17.4.0-x86_64.iso}"
 TEST_TIMEOUT="${2:-90}"
 SERIAL_LOG="/tmp/scarlix-qemu-serial.log"
 
-echo "=== SCARLIX OS v17.3 — QEMU Boot Test ==="
+echo "=== SCARLIX OS v17.4 — QEMU Boot Test ==="
 echo "ISO: $ISO_FILE"
 
 [ ! -f "$ISO_FILE" ] && { echo "ERROR: ISO not found: $ISO_FILE"; exit 1; }
