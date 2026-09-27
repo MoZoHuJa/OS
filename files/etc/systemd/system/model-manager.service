@@ -1,5 +1,5 @@
 [Unit]
-Description=SCARLIX OS v17.3 Model Manager (weekly HF auto-pull + Ollama dry-run)
+Description=SCARLIX OS v17.5 Model Manager (weekly HF auto-pull + Ollama dry-run)
 After=network-online.target docker.service
 Wants=network-online.target
 

@@ -1,74 +1,58 @@
-# SCARLIX OS v17.2 — EndeavourOS Edition — Model-Agnostic Configuration
+# SCARLIX OS v17.5 — EndeavourOS Edition — Model-Agnostic Configuration
 #
-# v17.2: 2-tier default (SGLang + BeeLlama); vLLM/FreeToken/Laya = experimental opt-in
-# Edit this file to use ANY HuggingFace model.
-# Then run: bash /opt/scarlix/scripts/download-models.sh
+# v17.5: Single source of truth — scarlix-mode parses this and exports env vars
+#   to docker compose. Edit model_path to use ANY HuggingFace model.
+#
+# Verified AI path:
+#   Tier-1: SGLang (GPU0, agents, RadixAttention)
+#   Tier-2: vLLM (GPU1, TP=1, Multi-LoRA) — only if /etc/scarlix/.experimental
+#   Tier-4: BeeLlama.cpp / llama.cpp (CPU, offline, q4_0 KV cache)
+#   Fallback: Ollama (starter model qwen2.5:3b auto-downloaded by install.sh)
 
-# === Tier-1: SGLang (DEFAULT — agents, RadixAttention) ===
+# === Tier-1: SGLang (DEFAULT, GPU 0) ===
+# Edit model_path to use ANY HuggingFace safetensors model.
+# Then run: bash /etc/systemd/system/download-models.sh
 sglang:
   model_path: "/models/Qwen3-14B-Instruct-AWQ"
+  # Alternatívy (odkomentuj jednu):
+  # model_path: "/models/Meta-Llama-3.1-8B-Instruct"
+  # model_path: "/models/mistralai/Mistral-7B-Instruct-v0.3"
+  # model_path: "/models/google/gemma-2-9b-it"
   quantization: "awq"
   context_length: 32768
   mem_fraction: 0.85
-  flashinfer: true
+  flashinfer: true  # v17.5: auto-disabled on Blackwell (sm_120) by install.sh
 
-# === Tier-3: Ollama (DEFAULT — GGUF concurrent) ===
-ollama_main:
-  model: "qwen3.6:14b"
-  keep_alive: "15m"
-  num_parallel: 4
+# === Tier-2: vLLM (EXPERIMENTAL, GPU 1, TP=1) ===
+# Only starts if /etc/scarlix/.experimental flag exists (created by wizard for 2+ GPU).
+# v17.5: TP=1 (not TP=2) — safe for mixed GPU architectures (RTX 5060 Ti + RTX 4060 Ti).
+vllm:
+  model_path: "/models/Qwen3-14B-Instruct-AWQ"
+  tensor_parallel_size: 1  # v17.5: TP=1 (mixed GPU safe — not TP=2)
+  gpu_memory_utilization: 0.85
+  max_model_len: 32768
+  enable_lora: false  # v17.5: LoRA paths removed (didn't exist)
 
-ollama_agent:
-  model: "qwen3.6:14b"
-  keep_alive: "-1"
-  num_parallel: 2
-
-# === Tier-4: BeeLlama.cpp (DEFAULT — offline, KVarN KV cache) ===
-# Replaces llama.cpp — ~50% VRAM reduction at near-equal quality
+# === Tier-4: BeeLlama.cpp / llama.cpp (DEFAULT, CPU offline) ===
+# v17.5: Uses official llama.cpp image (not BeeLlama fork — was unverified).
+# KVarN flags are BeeLlama-specific; official image uses q4_0 (similar benefit).
 beellama:
   model_file: "/models/qwen3.6-14b-instruct-q4_k_m.gguf"
   hf_repo: "Qwen/Qwen3-14B-Instruct-GGUF"
   hf_file: "qwen3.6-14b-instruct-q4_k_m.gguf"
   context_size: 32768
   threads: 16
-  cache_type_k: "kvarn4"
-  cache_type_v: "kvarn4"
-  kv_tail_tokens: 1024
-  reasoning_loop_protection: true
+  cache_type_k: "q4_0"  # v17.5: q4_0 (official llama.cpp), not kvarn4 (BeeLlama fork)
+  cache_type_v: "q4_0"
 
-# ============================================================================
-# EXPERIMENTAL (opt-in via /etc/scarlix/.experimental flag)
-# These only start if user enabled experimental mode in wizard
-# ============================================================================
-
-# === Tier-2: vLLM (EXPERIMENTAL — Multi-LoRA, multi-GPU TP=2) ===
-# Needs 2+ GPU with 32GB+ VRAM total
-vllm:
-  model_path: "/models/Qwen3-14B-Instruct-AWQ"
-  tensor_parallel_size: 2
-  gpu_memory_utilization: 0.85
-  max_model_len: 32768
-  enable_lora: true
-  max_loras: 4
-  lora_adapters:
-    hermes: "/models/lora/hermes"
-    opencode: "/models/lora/opencode"
-    voice: "/models/lora/voice"
-
-# === Tier-5: FreeToken (EXPERIMENTAL — MoE, --profile moe) ===
-# For DeepSeek-V3/V4, Qwen3-Coder-A35B on consumer GPUs
-freetoken:
-  model_path: "/models/Qwen3-Coder-A35B-FTW"
-  gpu_memory_fraction: 0.80
-  cpu_offload: true
-  semantic_kv_cache: true
-
-# === System-1: Laya (EXPERIMENTAL — 33ms router, replaces Needle2) ===
-laya:
-  model_path: "/models/laya/router-v1"
-  device: "cuda:0"
-  max_batch: 32
-  enable_mcp: true
+# === Fallback: Ollama (starter model auto-downloaded by install.sh) ===
+# install.sh pulls qwen2.5:3b (~2GB) so Ollama fallback works immediately.
+# For larger models, run: ollama pull qwen3.6:14b
+ollama:
+  model: "qwen2.5:3b"  # Starter model (auto-downloaded)
+  # For production: model: "qwen3.6:14b"
+  keep_alive: "15m"
+  num_parallel: 2
 
 # === ComfyUI (creative mode, GPU 0) ===
 comfyui:

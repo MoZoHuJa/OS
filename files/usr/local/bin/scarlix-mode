@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.4 — EndeavourOS Edition — GPU Mode Switcher
-# v17.4: Verified AI path (SGLang GPU0 + vLLM GPU1 TP=1 + BeeLlama CPU)
-#   - Fallback: if SGLang fails → vLLM; if vLLM fails → BeeLlama
-#   - Fixed: docker-compose-main.yml → docker-compose.yml
-#   - Network: scarlix-net (unified)
+# SCARLIX OS v17.5 — GPU Mode Switcher (Working AI Path)
+#
+# v17.5 fixes:
+#   Q2a: Model paths from models.yaml → env vars → compose (single source of truth)
+#   Q3a: vLLM starts if .experimental flag exists (no --profile gate)
+#   Q10a: `ai` always healthchecks + restarts unhealthy (no "already ai" skip)
 
 LOG_FILE="/var/log/scarlix-mode.log"
 STATE_FILE="/var/lib/scarlix/current-mode"
 LOCK_FILE="/tmp/scarlix-mode.lock"
+MODELS_YAML="/etc/scarlix/models.yaml"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"; }
 
@@ -21,17 +23,33 @@ CURRENT_MODE=$(cat "$STATE_FILE" 2>/dev/null || echo "unknown")
 EXPERIMENTAL=0
 [ -f /etc/scarlix/.experimental ] && EXPERIMENTAL=1
 
+# Q2a: Parse model paths from models.yaml → export as env vars for docker compose
+load_model_paths() {
+  if [ ! -f "$MODELS_YAML" ]; then
+    log "WARNING: models.yaml not found at $MODELS_YAML — using defaults"
+    return
+  fi
+  if ! command -v yq >/dev/null 2>&1; then
+    log "WARNING: yq not installed — using default model paths"
+    return
+  fi
+  export SGLANG_MODEL_PATH=$(yq '.sglang.model_path' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "/models/Qwen3-14B-Instruct-AWQ")
+  export VLLM_MODEL_PATH=$(yq '.vllm.model_path' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "$SGLANG_MODEL_PATH")
+  export LLAMACPP_MODEL_PATH="/models/$(yq '.beellama.hf_file' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "qwen3.6-14b-instruct-q4_k_m.gguf")"
+  log "Model paths: SGLang=$SGLANG_MODEL_PATH, vLLM=$VLLM_MODEL_PATH, llama.cpp=$LLAMACPP_MODEL_PATH"
+}
+
 dump_vram() {
   log "Releasing VRAM..."
-  curl -s -X POST "http://localhost:11434/api/generate" -d '{"model":"qwen3.6:14b","keep_alive":0}' >/dev/null 2>&1 || true
-  docker stop sglang vllm beellama 2>/dev/null || true
+  curl -s -X POST "http://localhost:11434/api/generate" -d '{"model":"qwen2.5:3b","keep_alive":0}' >/dev/null 2>&1 || true
+  docker stop sglang vllm beellama ollama-agent 2>/dev/null || true
   sleep 3
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v17.4 — VRAM Check ==="
+  echo "=== SCARLIX OS v17.5 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
-    echo "  nvidia-smi not available — NVIDIA driver not installed yet."
+    echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
   fi
   echo ""
@@ -51,7 +69,7 @@ show_vram() {
   done
   echo ""
   echo "Docker containers:"
-  docker ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | head -15
+  docker ps -a --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | head -15
   echo ""
   TOTAL_USED=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | awk '{s+=$1} END {print s}')
   TOTAL_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | awk '{s+=$1} END {print s}')
@@ -64,9 +82,44 @@ show_vram() {
   fi
 }
 
-# Verified AI path: start SGLang + vLLM (TP=1) + BeeLlama with fallback
+# Q10a: Healthcheck + restart unhealthy containers
+healthcheck_and_restart() {
+  log "Healthchecking AI containers..."
+  local restarted=0
+
+  for container in sglang vllm beellama ollama-agent; do
+    local status
+    status=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo "not_found")
+    if [ "$status" = "not_found" ]; then
+      continue
+    fi
+    if [ "$status" != "running" ]; then
+      log "  $container: $status — restarting..."
+      docker start "$container" >> "$LOG_FILE" 2>&1 && log "  ✓ $container restarted" || log "  ✗ $container restart failed"
+      restarted=1
+    else
+      # Check health if healthcheck exists
+      local health
+      health=$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null || echo "none")
+      if [ "$health" = "unhealthy" ]; then
+        log "  $container: unhealthy — restarting..."
+        docker restart "$container" >> "$LOG_FILE" 2>&1 && log "  ✓ $container restarted" || log "  ✗ $container restart failed"
+        restarted=1
+      else
+        log "  ✓ $container: running ($health)"
+      fi
+    fi
+  done
+
+  return $restarted
+}
+
+# Start verified AI path: SGLang (GPU0) + vLLM (GPU1, TP=1) + BeeLlama (CPU)
+# Q7a: Ollama with starter model (qwen2.5:3b) as fallback
 start_verified_ai() {
-  log "Starting verified AI path (SGLang GPU0 + vLLM GPU1 + BeeLlama CPU)..."
+  load_model_paths
+
+  log "Starting verified AI path..."
   local sglang_ok=0 vllm_ok=0
 
   # SGLang (GPU0, Tier-1)
@@ -74,33 +127,52 @@ start_verified_ai() {
     log "  ✓ SGLang started (GPU0)"
     sglang_ok=1
   else
-    log "  ✗ SGLang failed — will fallback to vLLM"
+    log "  ✗ SGLang failed — will try vLLM"
   fi
 
-  # vLLM (GPU1, TP=1, experimental profile)
+  # vLLM (GPU1, TP=1) — only if .experimental flag (Q3a)
   if [ "$EXPERIMENTAL" -eq 1 ]; then
-    if docker compose -f /opt/scarlix/ai/vllm/docker-compose.yml --profile experimental up -d >> "$LOG_FILE" 2>&1; then
+    # Q3a: No --profile experimental gate — vLLM starts if flag exists
+    if docker compose -f /opt/scarlix/ai/vllm/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
       log "  ✓ vLLM started (GPU1, TP=1)"
       vllm_ok=1
     else
-      log "  ✗ vLLM failed — SGLang only"
+      log "  ✗ vLLM failed"
     fi
   fi
 
-  # BeeLlama (CPU, Tier-4)
+  # BeeLlama / llama.cpp (CPU, Tier-4)
   docker compose -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ BeeLlama started (CPU)" || log "  ✗ BeeLlama failed"
 
-  # Fallback: if SGLang failed, try Ollama
+  # Q7a: Start Ollama (has starter model qwen2.5:3b) as fallback
+  docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ Ollama started (fallback: qwen2.5:3b)" || log "  ✗ Ollama failed"
+
+  # Fallback: if SGLang failed, Ollama is already running with starter model
   if [ "$sglang_ok" -eq 0 ] && [ "$vllm_ok" -eq 0 ]; then
-    log "  ⚠ Both SGLang + vLLM failed — starting Ollama as fallback"
-    docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ Ollama (fallback)" || log "  ✗ Ollama also failed"
+    log "  ⚠ SGLang + vLLM both failed — Ollama (qwen2.5:3b) is your fallback"
   fi
 }
 
 case "$MODE" in
   ai)
-    [[ "$CURRENT_MODE" == "ai" ]] && { log "Already in AI mode."; exit 0; }
-    log "=== AI mode (verified path: SGLang + vLLM + BeeLlama) ==="
+    # Q10a: Always healthcheck — even if already in ai mode (containers may have crashed)
+    load_model_paths
+
+    # Check if containers are already running + healthy
+    log "=== AI mode (checking existing containers) ==="
+    if [ "$CURRENT_MODE" = "ai" ]; then
+      log "Already in AI mode — healthchecking containers..."
+      if healthcheck_and_restart; then
+        log "All containers healthy — nothing to do."
+        exit 0
+      else
+        log "Some containers were restarted — continuing to verify."
+        exit 0
+      fi
+    fi
+
+    # Not in ai mode — start fresh
+    log "=== AI mode (starting verified path) ==="
     killall steam lutris 2>/dev/null || true
     sudo systemctl stop sunshine 2>/dev/null || true
     docker compose -f /opt/scarlix/ai/comfyui/docker-compose.yml --profile creative stop 2>/dev/null || true
@@ -109,14 +181,14 @@ case "$MODE" in
     echo "ai" | tee "$STATE_FILE" >/dev/null
     ;;
   game)
-    [[ "$CURRENT_MODE" == "game" ]] && { log "Already in Game mode."; exit 0; }
+    [[ "$CURRENT_MODE" = "game" ]] && { log "Already in Game mode."; exit 0; }
     log "=== GAME mode (native Sunshine) ==="
     dump_vram
     sudo systemctl start sunshine
     echo "game" | tee "$STATE_FILE" >/dev/null
     ;;
   creative)
-    [[ "$CURRENT_MODE" == "creative" ]] && { log "Already in Creative mode."; exit 0; }
+    [[ "$CURRENT_MODE" = "creative" ]] && { log "Already in Creative mode."; exit 0; }
     log "=== CREATIVE mode ==="
     dump_vram
     sudo systemctl stop sunshine 2>/dev/null || true
@@ -126,14 +198,16 @@ case "$MODE" in
     echo "creative" | tee "$STATE_FILE" >/dev/null
     ;;
   turbo)
-    log "=== TURBO mode (SGLang + vLLM + BeeLlama, max) ==="
+    log "=== TURBO mode (SGLang + vLLM + BeeLlama + Ollama, max) ==="
+    load_model_paths
     start_verified_ai
     echo "turbo" | tee "$STATE_FILE" >/dev/null
     ;;
   offline)
-    log "=== OFFLINE mode (BeeLlama.cpp CPU, KVarN/q4_0) ==="
+    log "=== OFFLINE mode (BeeLlama.cpp CPU, q4_0 KV) ==="
     dump_vram
     sudo systemctl stop sunshine 2>/dev/null || true
+    load_model_paths
     docker compose -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d
     echo "offline" | tee "$STATE_FILE" >/dev/null
     ;;
@@ -148,7 +222,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v17.4 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v17.5 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"
@@ -159,9 +233,14 @@ case "$MODE" in
     echo "  SGLang (Tier-1, GPU0): $(docker inspect -f '{{.State.Status}}' sglang 2>/dev/null || echo 'not running')"
     [ "$EXPERIMENTAL" -eq 1 ] && echo "  vLLM (Tier-2, GPU1, TP=1): $(docker inspect -f '{{.State.Status}}' vllm 2>/dev/null || echo 'not running')"
     echo "  BeeLlama (Tier-4, CPU): $(docker inspect -f '{{.State.Status}}' beellama 2>/dev/null || echo 'not running')"
+    echo "  Ollama (fallback): $(docker inspect -f '{{.State.Status}}' ollama-agent 2>/dev/null || echo 'not running')"
     echo ""
     echo "GPU:"
     nvidia-smi --query-gpu=index,name,memory.used,memory.free,compute_cap --format=csv,noheader 2>/dev/null || echo "  nvidia-smi not available"
+    echo ""
+    echo "Models:"
+    [ -f "$MODELS_YAML" ] && echo "  Config: $MODELS_YAML" || echo "  Config: NOT FOUND"
+    [ -d /models ] && echo "  Dir: /models ($(ls /models 2>/dev/null | wc -l) files)" || echo "  Dir: /models NOT FOUND"
     echo ""
     echo "Snapper (root): $(sudo snapper -c root list 2>/dev/null | tail -3 || echo 'not configured')"
     echo "ZRAM: $(zramctl 2>/dev/null | head -2 || echo 'not active')"
@@ -171,7 +250,7 @@ case "$MODE" in
   *)
     echo "Usage: scarlix-mode {ai|game|creative|turbo|offline|tv|status|vram}"
     echo ""
-    echo "v17.4 verified path: SGLang (GPU0) + vLLm (GPU1, TP=1) + BeeLlama (CPU)"
+    echo "v17.5 verified path: SGLang (GPU0) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (fallback)"
     echo "  ai       — Verified AI path (default)"
     echo "  turbo    — Same as ai (max throughput)"
     echo "  offline  — BeeLlama.cpp CPU only"
@@ -180,6 +259,10 @@ case "$MODE" in
     echo "  tv       — Docker Sunshine"
     echo "  status   — System summary"
     echo "  vram     — VRAM health check"
+    echo ""
+    echo "Before first 'scarlix-mode ai':"
+    echo "  1. Reboot (activate NVIDIA driver)"
+    echo "  2. bash /etc/systemd/system/download-models.sh"
     exit 1
     ;;
 esac
