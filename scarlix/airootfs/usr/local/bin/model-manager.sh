@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v16.5 — Model Manager
-# FIX 6-b: Weekly model updater with VRAM check + Telegram notifications
+# SCARLIX OS v17.0 — EndeavourOS Edition — Model Manager
+# Weekly model updater with VRAM check + Telegram notifications
 #
-# Scope (chosen: 6-b = full):
-#   1. Pull latest model versions from HuggingFace (based on models.yaml)
-#   2. Check VRAM usage before/after update
-#   3. Send Telegram summary (success/fail + VRAM report)
+# v17.0: functionally identical to v16.5 (HF + Ollama + VRAM + Telegram)
+# Only version string updated for branding consistency.
 #
 # Invoked weekly by model-manager.timer (Mondays 04:00 — low-traffic window).
-# Can also be run manually: model-manager.sh [--dry-run]
+# Manual: model-manager.sh [--dry-run]
 
 LOG_FILE="/var/log/scarlix/model-manager.log"
 MODELS_YAML="/etc/scarlix/models.yaml"
@@ -24,10 +22,8 @@ log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
-# --- Telegram helper -------------------------------------------------------
 send_telegram() {
   local message="$1"
-  # Load .env for token + chat ID
   if [ -f "$ENV_FILE" ]; then
     # shellcheck disable=SC1090
     set -a; source "$ENV_FILE"; set +a
@@ -42,9 +38,7 @@ send_telegram() {
     -d "parse_mode=Markdown" >/dev/null 2>&1 || true
 }
 
-# --- VRAM snapshot ---------------------------------------------------------
 vram_snapshot() {
-  # Returns: "USED_MIB / TOTAL_MIB"
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "N/A (nvidia-smi missing)"
     return
@@ -55,15 +49,14 @@ vram_snapshot() {
   echo "${used} / ${total} MiB"
 }
 
-# --- Main ------------------------------------------------------------------
 log "========================================"
-log "  SCARLIX OS v16.5 — Model Manager"
+log "  SCARLIX OS v17.0 — Model Manager"
 [ "$DRY_RUN" -eq 1 ] && log "  (DRY RUN — no changes will be made)"
 log "========================================"
 
 if [ ! -f "$MODELS_YAML" ]; then
   log "ERROR: models.yaml not found at $MODELS_YAML"
-  send_telegram "🚨 *SCARLIX Model Manager* — FAILED
+  send_telegram "🚨 *SCARLIX Model Manager v17* — FAILED
 models.yaml not found: \`$MODELS_YAML\`"
   exit 1
 fi
@@ -71,7 +64,6 @@ fi
 VRAM_BEFORE=$(vram_snapshot)
 log "VRAM before update: $VRAM_BEFORE"
 
-# --- Update HuggingFace models --------------------------------------------
 UPDATED_COUNT=0
 FAILED_COUNT=0
 UPDATED_LIST=""
@@ -111,7 +103,7 @@ else
   log "⚠ yq not installed — skipping HF model updates (install: sudo pacman -S yq)"
 fi
 
-# --- Update Ollama models (pull latest tag) -------------------------------
+# Update Ollama models (pull latest tag)
 if command -v ollama >/dev/null 2>&1; then
   OLLAMA_MAIN_MODEL=$(yq '.ollama_main.model' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "")
   OLLAMA_AGENT_MODEL=$(yq '.ollama_agent.model' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "")
@@ -141,8 +133,7 @@ log "VRAM after update:  $VRAM_AFTER"
 log ""
 log "Updated: $UPDATED_COUNT  Failed: $FAILED_COUNT"
 
-# --- Telegram summary -----------------------------------------------------
-SUMMARY="🤖 *SCARLIX Model Manager* — v16.5
+SUMMARY="🤖 *SCARLIX Model Manager v17* — EndeavourOS
 📊 Updated: \`${UPDATED_COUNT}\`  |  Failed: \`${FAILED_COUNT}\`
 💾 VRAM before: \`$VRAM_BEFORE\`
 💾 VRAM after:  \`$VRAM_AFTER\`

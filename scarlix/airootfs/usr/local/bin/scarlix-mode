@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v16.5 — GPU Mode Switcher (6 modes + status + vram)
+# SCARLIX OS v17.0 — EndeavourOS Edition — GPU Mode Switcher
+# 6 modes + status + vram
 #
-# v16.5 P1 fixes:
-#   8-b: Integrated `vram` subcommand (replaces separate vram-check.sh script)
+# v17.0 changes vs v16.5:
+#   - Removed /etc/garuda-release → use /etc/os-release (PRETTY_NAME)
+#   - Removed linux-zen assumption (default = vanilla linux on EndeavourOS)
+#   - LTS kernel check uses pacman -Q (works on any Arch-based system)
 
 LOG_FILE="/var/log/scarlix-mode.log"
 STATE_FILE="/var/lib/scarlix/current-mode"
@@ -26,21 +29,19 @@ dump_vram() {
   sleep 3
 }
 
-# FIX 8-b: vram-check integrated as a subcommand (no separate script).
-# Reports VRAM usage per GPU + identifies the heaviest container, and warns
-# if VRAM utilization crosses the safety threshold (default 90%).
+# VRAM check subcommand (v16.5 P1-8b kept).
+# Reports VRAM usage per GPU + identifies heaviest container, warns if ≥90%.
 show_vram() {
-  echo "=== SCARLIX OS v16.5 — VRAM Check ==="
+  echo "=== SCARLIX OS v17.0 — VRAM Check ==="
   echo "Time: $(date '+%Y-%m-%d %H:%M:%S')"
   echo ""
 
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed yet."
-    echo "  (This is normal during first-boot, before NVIDIA install completes.)"
+    echo "  (Normal during first-boot, before NVIDIA install completes.)"
     return 0
   fi
 
-  # Per-GPU VRAM table
   echo "GPU VRAM (per-device):"
   nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu \
             --format=csv,noheader,nounits 2>/dev/null | while IFS=',' read -r idx name total used free util; do
@@ -62,7 +63,6 @@ show_vram() {
   done
   echo ""
 
-  # Heaviest GPU-consuming containers
   echo "Top GPU memory consumers (Docker):"
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}" 2>/dev/null | head -10 || echo "  (no running containers)"
@@ -71,7 +71,6 @@ show_vram() {
   fi
   echo ""
 
-  # Aggregate VRAM + recommendation
   TOTAL_USED=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | awk '{s+=$1} END {print s}')
   TOTAL_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | awk '{s+=$1} END {print s}')
   echo "Aggregate VRAM:  ${TOTAL_USED:-0} MiB used / ${TOTAL_FREE:-0} MiB free"
@@ -95,17 +94,12 @@ case "$MODE" in
   ai)
     [[ "$CURRENT_MODE" == "ai" ]] && { log "Already in AI mode."; exit 0; }
     log "=== AI mode ==="
-    # Native: stop Steam/Lutris
     killall steam lutris 2>/dev/null || true
-    # Native: stop Sunshine (game mode uses native)
     sudo systemctl stop sunshine 2>/dev/null || true
-    # Docker: stop creative
     docker compose -f /opt/scarlix/ai/comfyui/docker-compose.yml --profile creative stop 2>/dev/null || true
     docker compose -f /opt/scarlix/ai/video/docker-compose.yml --profile creative stop 2>/dev/null || true
     docker compose -f /opt/scarlix/ai/musicgen/docker-compose.yml --profile creative stop 2>/dev/null || true
-    # Docker: stop TV Sunshine
     docker compose -f /opt/scarlix/gaming/docker-compose.yml --profile tv stop 2>/dev/null || true
-    # Docker: start AI
     docker compose -f /opt/scarlix/ai/sglang/docker-compose.yml up -d
     echo "ai" | tee "$STATE_FILE" >/dev/null
     ;;
@@ -114,7 +108,6 @@ case "$MODE" in
     log "=== GAME mode (native Sunshine) ==="
     dump_vram
     docker compose -f /opt/scarlix/ai/comfyui/docker-compose.yml --profile creative stop 2>/dev/null || true
-    # Native Sunshine for game mode
     sudo systemctl start sunshine
     echo "game" | tee "$STATE_FILE" >/dev/null
     ;;
@@ -148,22 +141,26 @@ case "$MODE" in
     echo "tv" | tee "$STATE_FILE" >/dev/null
     ;;
   vram|vram-check)
-    # FIX 8-b: integrated VRAM check (was separate vram-check.sh in v16.4 review)
     show_vram
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v16.5 (Garuda) Status ==="
+    echo "=== SCARLIX OS v17.0 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
-    echo "Base: $(cat /etc/garuda-release 2>/dev/null || echo 'Garuda Linux')"
-    echo "Kernel: $(uname -r)"
-    echo "LTS kernel available: $(command -v linux-lts >/dev/null 2>&1 && echo 'yes' || (pacman -Q linux-lts 2>/dev/null | head -1 || echo 'not installed'))"
+    # FIX v17: use /etc/os-release instead of /etc/garuda-release
+    echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'Arch (EndeavourOS)')"
+    echo "Kernel (running): $(uname -r)"
+    echo "LTS kernel: $(pacman -Q linux-lts 2>/dev/null | head -1 || echo 'not installed')"
+    echo "Default kernel pkg: $(pacman -Q linux 2>/dev/null | head -1 || echo 'unknown')"
     echo ""
     echo "GPU:"
     nvidia-smi --query-gpu=index,name,memory.used,memory.free,utilization.gpu --format=csv,noheader 2>/dev/null || echo "  nvidia-smi not available"
     echo ""
-    echo "BTRFS snapshots:"
-    sudo snapper -c root list 2>/dev/null | tail -5 || echo "  Snapper not configured"
+    echo "BTRFS snapshots (root):"
+    sudo snapper -c root list 2>/dev/null | tail -5 || echo "  Snapper not configured for root"
+    echo ""
+    echo "ZRAM:"
+    zramctl 2>/dev/null | head -5 || echo "  ZRAM not active"
     echo ""
     echo "Docker containers:"
     docker ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | head -30
@@ -185,7 +182,7 @@ case "$MODE" in
     echo "  offline  — llama.cpp CPU only (low power)"
     echo "  tv       — Docker Sunshine (family streaming)"
     echo "  status   — Show current mode + system summary"
-    echo "  vram     — Detailed VRAM usage + health check (NEW in v16.5)"
+    echo "  vram     — Detailed VRAM usage + health check"
     exit 1
     ;;
 esac
