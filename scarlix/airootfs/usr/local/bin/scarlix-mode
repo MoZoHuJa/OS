@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.2.1 — EndeavourOS Edition — GPU Mode Switcher
+# SCARLIX OS v17.3 — EndeavourOS Edition — GPU Mode Switcher
+# v17.3: Bootstrap installer (install.sh) — no ISO needed
 # v17.2.1: Auto 5-tier for 2+ GPU (wizard auto-suggests experimental)
 # v17.2: 2-tier default (SGLang + BeeLlama); vLLM/Laya/FreeToken only if .experimental
 
@@ -28,7 +29,7 @@ dump_vram() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v17.2.1 — VRAM Check ==="
+  echo "=== SCARLIX OS v17.3 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed yet."
     return 0
@@ -120,7 +121,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v17.2.1 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v17.3 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM/FreeToken/Laya)' || echo 'no (2-tier default)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"
