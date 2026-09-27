@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.2.1 — EndeavourOS Edition — Setup Wizard
+# SCARLIX OS v17.3 — EndeavourOS Edition — Setup Wizard
+# v17.3: Bootstrap installer (install.sh) — no ISO needed
 # v17.2.1: Auto-detect 2+ NVIDIA GPUs → auto-suggest 5-tier (experimental) mode
 #   - 1 GPU  → 2-tier default (SGLang + BeeLlama) — stable
 #   - 2+ GPU → 5-tier recommended (vLLM TP=2, FreeToken, Laya) — full 32GB+ VRAM
 
-TITLE="SCARLIX OS v17.2.1 Setup"
+TITLE="SCARLIX OS v17.3 Setup"
 
 # Auto-detect NVIDIA dGPUs (Q5a — ignore Intel iGPU on hybrid laptops)
 NVIDIA_DGPU_COUNT=$(lspci -nn 2>/dev/null | grep -iE 'NVIDIA.*(VGA|3D)' | wc -l || echo 0)
@@ -33,8 +34,8 @@ else
 fi
 
 whiptail --title "$TITLE" --msgbox \
-  "Vitaj v SCARLIX OS v17.2.1 (EndeavourOS Edition)!\n\n\
-Minimal Working Baseline — auto-detect hardvéru.\n\
+  "Vitaj v SCARLIX OS v17.3 (EndeavourOS Edition)!\n\n\
+Bootstrap Installer — žiadny ISO needed.\n\
 Base: EndeavourOS (near-vanilla Arch)\n\
 Kernel: linux + linux-lts (fallback)\n\
 BTRFS + Snapper · Pipewire · ZRAM min(ram/2, 16GB)\n\n\
@@ -123,7 +124,7 @@ whiptail --title "$TITLE" --yesno \
 
 echo ""
 echo "========================================"
-echo "  SCARLIX OS v17.2.1 — EndeavourOS Edition"
+echo "  SCARLIX OS v17.3 — EndeavourOS Edition"
 echo "  Setup complete!"
 echo "  PC Type: $PC_TYPE"
 echo "  GPU: ${NVIDIA_DGPU_COUNT} NVIDIA dGPU(s)"

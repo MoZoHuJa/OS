@@ -1,5 +1,5 @@
 [Unit]
-Description=SCARLIX OS v17.2.1 First Boot (3-phase checkpointed, auto-resume)
+Description=SCARLIX OS v17.3 First Boot (3-phase checkpointed, auto-resume)
 After=network-online.target docker.service
 Wants=network-online.target
 [Service]
