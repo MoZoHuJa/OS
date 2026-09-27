@@ -12,6 +12,7 @@ services:
     image: vllm/vllm-openai:latest
     container_name: vllm
     restart: unless-stopped
+    profiles: ["experimental"]  # v17.2: opt-in only (needs 2+ GPU, 32GB+ VRAM)
     ports:
       - "8089:8000"
     volumes:
