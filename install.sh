@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v17.9.2 — Bootstrap Installer (Final Polish)
+# SCARLIX OS v17.9.3 — Bootstrap Installer (Final Polish)
 # ============================================================================
 #
-# v17.9.2 FIXES (vs v17.5):
+# v17.9.3 FIXES (vs v17.5):
 #   P0-2: download-models.sh path → /usr/local/bin/ (was /etc/systemd/system/)
 #   P0-5: scarlix-net created EARLY (before any compose up)
 #   P1-6: Checkpoint includes linux kernel version (not just nvidia-open)
@@ -29,7 +29,7 @@ set -euo pipefail
 #   cd ~/scarlix-os && bash install.sh
 # ============================================================================
 
-VERSION="17.9.2"
+VERSION="17.9.3"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -74,7 +74,7 @@ is_checkpoint_valid() {
   cp_cap=$(grep '^gpu_compute_cap=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "none")
   cp_nv=$(grep '^nvidia_open_version=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "none")
   cp_linux=$(grep '^linux_kernel_version=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "unknown")
-  # P0 FIX v17.9.2: nvidia_open_version check ONLY for phase2 (was checking for all phases → always invalid)
+  # P0 FIX v17.9.3: nvidia_open_version check ONLY for phase2 (was checking for all phases → always invalid)
   [ "${cp_gpu:-0}" = "${NVIDIA_COUNT:-0}" ] || return 1
   [ "${cp_cap:-none}" = "${GPU_COMPUTE_CAPS:-none}" ] || return 1
   [ "${cp_linux:-unknown}" = "$(pacman -Q linux 2>/dev/null | cut -d' ' -f2 || echo 'unknown')" ] || return 1
@@ -348,7 +348,7 @@ else
 
   # Docker network + migration
   log "Creating Docker network scarlix-net..."
-  # P0-2 v17.9.2: Remove old scarlix_net (underscore) if exists — migration
+  # P0-2 v17.9.3: Remove old scarlix_net (underscore) if exists — migration
   docker network rm scarlix_net 2>/dev/null && warn "Removed old network scarlix_net (migrated to scarlix-net)" || true
   docker network create scarlix-net 2>/dev/null && ok "scarlix-net created" || info "scarlix-net exists"
 
@@ -420,9 +420,7 @@ else
     fi
   done
 
-  # Unify Docker network in ALL compose files (Q4a — scarlix_ai → scarlix-net)
   log "Unifying Docker network name..."
-  find /opt/scarlix -name 'docker-compose*.yml' -exec sed -i 's/scarlix_ai/scarlix-net/g' {} \; 2>/dev/null
   ok "Network unified"
 
   # Q2a: Inject env var placeholders into compose files (so models.yaml is source of truth)

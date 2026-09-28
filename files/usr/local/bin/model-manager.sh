@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.2 — Model Manager
+# SCARLIX OS v17.9.3 — Model Manager
 # FIX Q8b: Split — HF model pulls = auto (safe), Ollama tag pulls = manual (--apply only)
 #
 # Weekly timer (Mon 04:00) runs with NO --apply → only HF model pulls + Telegram report.
@@ -10,7 +10,7 @@ set -euo pipefail
 
 LOG_FILE="/var/log/scarlix/model-manager.log"
 MODELS_YAML="/etc/scarlix/models.yaml"
-ENV_FILE="/etc/scarlix/.env"
+ENV_FILE="/opt/scarlix/.env"
 APPLY_OLLAMA=0
 [[ "${1:-}" == "--apply-ollama" ]] && APPLY_OLLAMA=1
 
@@ -47,7 +47,7 @@ vram_snapshot() {
 }
 
 log "========================================"
-log "  SCARLIX OS v17.9.2 — Model Manager"
+log "  SCARLIX OS v17.9.3 — Model Manager"
 [ "$APPLY_OLLAMA" -eq 1 ] && log "  (--apply-ollama: will update Ollama tags)" || log "  (HF auto-pull + Ollama dry-run report only)"
 log "========================================"
 
@@ -73,8 +73,8 @@ update_hf_model() {
   local file="$2"
   local target_dir="$3"
   log "Pulling HF: $repo / $file"
-  if command -v huggingface-cli >/dev/null 2>&1; then
-    if huggingface-cli download "$repo" "$file" --local-dir "$target_dir" >> "$LOG_FILE" 2>&1; then
+  if test -x /opt/scarlix/venv/bin/huggingface-cli >/dev/null 2>&1; then
+    if /opt/scarlix/venv/bin/huggingface-cli download "$repo" "$file" --local-dir "$target_dir" >> "$LOG_FILE" 2>&1; then
       log "  ✓ $file"
       HF_UPDATED=$((HF_UPDATED + 1))
       UPDATED_LIST="${UPDATED_LIST}\n  ✓ ${file} (HF)"
@@ -100,7 +100,7 @@ fi
 
 # === Ollama model pulls (MANUAL unless --apply-ollama) ===
 if command -v ollama >/dev/null 2>&1; then
-  # P1-10 v17.9.2: Single Ollama model (was duplicated — main + agent read same .ollama.model key)
+  # P1-10 v17.9.3: Single Ollama model (was duplicated — main + agent read same .ollama.model key)
   OLLAMA_MODEL=$(yq '.ollama.model' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "")
 
   for model in "$OLLAMA_MODEL"; do

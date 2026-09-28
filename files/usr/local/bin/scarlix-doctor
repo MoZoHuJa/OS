@@ -113,7 +113,7 @@ if [ -f "$ENV_FILE" ]; then
   [ -r "$ENV_FILE" ] && pass ".env readable" || fail ".env not readable"
 else
   fail ".env not found"
-  fix "generate .env" "scarlix-mode ai 2>/dev/null || true"
+  fix "generate .env" "printf 'SGLANG_MODEL_PATH=/models/Qwen3-14B-AWQ\nVLLM_MODEL_PATH=/models/Qwen3-14B-AWQ\nLLAMACPP_MODEL_PATH=/models/Qwen3-14B-Q4_K_M.gguf\n' > /opt/scarlix/.env && chmod 664 /opt/scarlix/.env"
 fi
 
 # === Containers + API Health ===

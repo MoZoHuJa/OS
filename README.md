@@ -1,10 +1,10 @@
-# SCARLIX OS v17.9.2 — EndeavourOS Edition (Reliability Release)
+# SCARLIX OS v17.9.3 — EndeavourOS Edition (Reliability Release)
 
 > Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 
-**Version:** v17.9.2 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v17.9.3 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,15 +30,15 @@ scarlix-mode ai
 
 ---
 
-## 🆕 What's New in v17.9.2 (vs v17.9.1)
+## 🆕 What's New in v17.9.3 (vs v17.9.1)
 
 **Reliability Release — 15 P0+P1 fixes from 4 reviews + CI + ScarliHQ.**
 
-| # | Fix | v17.9.1 Problem | v17.9.2 Solution |
+| # | Fix | v17.9.1 Problem | v17.9.3 Solution |
 |---|-----|-----------------|-------------------|
 | P0 | **4 compose files duplicate networks** | `[scarlix-net, scarlix-net]` (comfyui, litellm, smg, video) → Compose parse error | Deduplicated to `[scarlix-net]` |
 | P0 | **scarlix_net in 10+ source files** | install.sh sed didn't catch `scarlix_net` → 10+ containers fail | Fixed in SOURCE files (not just sed) + migration in install.sh |
-| P0 | **VERSION=17.9.0** | install.sh had wrong version | `VERSION="17.9.2"` + VERSION file as single source |
+| P0 | **VERSION=17.9.0** | install.sh had wrong version | `VERSION="17.9.3"` + VERSION file as single source |
 | P0 | **Default paths old in generate_env_file** | `Qwen3-14B-Instruct-AWQ` (doesn't exist) | `Qwen3-14B-AWQ` + `Qwen3-14B-Q4_K_M.gguf` |
 | P0 | **download-models.sh false "complete"** | Download fail → script continues → "complete" is lie | `FAILED=0`, exit 1 on fail |
 | P0 | **scarlix-doctor PASS for unhealthy** | `running` + `unhealthy` = PASS | `unhealthy` = FAIL; API healthcheck (curl) |
@@ -46,7 +46,7 @@ scarlix-mode ai
 | P0 | **docker start (not $DC up -d)** | Old config not picked up | `$DC up -d` for all container starts |
 | P1 | **vLLM + llama.cpp healthcheck** | No Docker healthcheck → doctor can't detect | Added `CMD-SHELL python urlopen` healthcheck |
 | P1 | **model-manager.sh dvojitý Ollama** | Same `.ollama.model` read 2x → double pull | Single read + pull |
-| P1 | **Version strings unified** | 11+ files with old versions | All v17.9.2 |
+| P1 | **Version strings unified** | 11+ files with old versions | All v17.9.3 |
 | P1 | **scarlix-wizard path fix** | `bash /etc/systemd/system/download-models.sh` | `download-models.sh` |
 | P1 | **dump_vram hardcoded model** | `qwen2.5:3b` hardcoded | Read from yaml |
 | P1 | **docs Ubuntu → Arch** | `apt`, `Ubuntu 24.04` in troubleshooting | `pacman`, `EndeavourOS (Arch)` |
@@ -302,7 +302,7 @@ OS/
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v17.9.2** | 2026-10 | **Reliability. 15 fixes: 4 duplicate networks (P0), scarlix_net→scarlix-net in source (P0), VERSION fix (P0), default paths (P0), download fail-hard (P0), doctor unhealthy=FAIL (P0), hash after recreate (P0), $DC up -d (P0), vLLM/llama.cpp healthcheck, model-manager dvojitý fix, version unified, wizard path, dump_vram yaml, docs Ubuntu→Arch, ScarliHQ placeholder. Bonus: doctor --fix, CI, VERSION file.** |
+| **v17.9.3** | 2026-10 | **Reliability. 15 fixes: 4 duplicate networks (P0), scarlix_net→scarlix-net in source (P0), VERSION fix (P0), default paths (P0), download fail-hard (P0), doctor unhealthy=FAIL (P0), hash after recreate (P0), $DC up -d (P0), vLLM/llama.cpp healthcheck, model-manager dvojitý fix, version unified, wizard path, dump_vram yaml, docs Ubuntu→Arch, ScarliHQ placeholder. Bonus: doctor --fix, CI, VERSION file.** |
 | v17.8 | 2026-10 | Stable. 6 fixes: --env-file on all compose calls, always regenerate .env, BeeLlama only on fallback, Docker restart after nvidia-ctk, Ollama chmod 700, REAL_USER without logname. |
 | v17.6 | 2026-10 | Bugfix 3. 6 fixes: sglang_ok/vllm_ok initialized, Ollama CPU fallback, chmod 775, check_model_exists for all, README path fix, version header. |
 | v17.5.2 | 2026-10 | Bugfix 2. 8 fixes: scarlix-net after Docker starts, Ollama true fallback, checkpoint pacman -Q, config.json check, chmod 777, --include, stop keeps dashboard, dead files removed. |
