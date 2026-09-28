@@ -1,10 +1,10 @@
-# SCARLIX OS v17.7 — EndeavourOS Edition (Working AI Path, Bugfix 4)
+# SCARLIX OS v17.8 — EndeavourOS Edition (Stable)
 
 > Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 
-**Version:** v17.7.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v17.8.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -27,6 +27,21 @@ download-models.sh
 # 3. Start AI inference
 scarlix-mode ai
 ```
+
+---
+
+## 🆕 What's New in v17.8 (vs v17.7)
+
+**Stable release — fixes 6 issues from 2 reviews. .env file properly passed to compose.**
+
+| # | Fix | v17.7 Problem | v17.8 Solution |
+|---|-----|---------------|-----------------|
+| P0 | **--env-file on all compose calls** | Compose didn't read /opt/scarlix/.env (looks in project dir) → `${SGLANG_MODEL_PATH}` not substituted after reboot | `DC="docker compose --env-file /opt/scarlix/.env"` on ALL calls |
+| P1 | **Always regenerate .env** | `load_model_paths` cached .env → stale after models.yaml edit | `generate_env_file()` called every time (not cached) |
+| P1 | **BeeLlama only when SGLang+vLLM fail** | Started "anyway" even when SGLang running → wasted RAM (14B GGUF) | Only starts if `sglang_ok=0 && vllm_ok=0` |
+| P1 | **Docker restart after nvidia-ctk** | nvidia-ctk configure before Docker fully loaded → GPU not visible | `systemctl restart docker` after configure + `docker info \| grep nvidia` verify |
+| P1 | **Ollama volume chmod 700** | Was 777 (anyone can write model cache) | `chmod 700 root:root` (container runs as root, 700 is sufficient) |
+| P1 | **REAL_USER without logname** | `logname` fails without TTY (ssh -T, CI) | `${SUDO_USER:-${USER:-}}` (no logname) |
 
 ---
 
@@ -242,7 +257,7 @@ OS/
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v17.7** | 2026-10 | **Bugfix 4 (last before stable). 8 fixes: REAL_USER fallback, Ollama volume root:root+777, healthcheck respects stopped, Docker start after toolkit, .env file generation, Ollama tertiary fallback + mem_limit 6g, yq null validation, README sync + SGLang healthcheck CMD-SHELL.** |
+| **v17.8** | 2026-10 | **Stable. 6 fixes: --env-file on all compose calls (P0), always regenerate .env, BeeLlama only on fallback, Docker restart after nvidia-ctk + GPU verify, Ollama volume chmod 700, REAL_USER without logname.** |
 | v17.6 | 2026-10 | Bugfix 3. 6 fixes: sglang_ok/vllm_ok initialized, Ollama CPU fallback, chmod 775, check_model_exists for all, README path fix, version header. |
 | v17.5.2 | 2026-10 | Bugfix 2. 8 fixes: scarlix-net after Docker starts, Ollama true fallback, checkpoint pacman -Q, config.json check, chmod 777, --include, stop keeps dashboard, dead files removed. |
 | v17.5.1 | 2026-10 | Bugfix release. 10 fixes: yq YAML parsing, download-models.sh rewritten, Ollama GPU0+absolute vol, scarlix-net early, linux checkpoint, model check, Ollama wait, BeeLlama CPU, scarlix-mode stop. |
