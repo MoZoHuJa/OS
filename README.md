@@ -1,10 +1,10 @@
-# SCARLIX OS v17.9.8 — EndeavourOS Edition (Host-Bridge Architecture)
+# SCARLIX OS v17.9.9 — EndeavourOS Edition (Host-Bridge Stabilization)
 
 > Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 
-**Version:** v17.9.8 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v17.9.9 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -12,7 +12,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v17.9.8   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v17.9.9   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -31,6 +31,66 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://<this-ip>:8090/?token=<SCARLIHQ_TOKEN>
 ```
+
+---
+
+## 🆕 What's New in v17.9.9 (vs v17.9.8)
+
+**Host-Bridge stabilization + state machine — 13 fixes from 3 reviews.**
+
+v17.9.8 introduced the host-bridge architecture (correct direction) but had 3 P0 bugs that prevented ScarliHQ from actually working: nonroot user didn't exist in alpine, bridge/ directory was root-owned (nonroot couldn't write), and df parsing had swapped columns.
+
+### P0 — ScarliHQ actually works now (3)
+| # | Fix | v17.9.8 Problem | v17.9.9 Solution |
+|---|-----|-----------------|-------------------|
+| P0 | **Dockerfile nonroot user** | `USER nonroot:nonroot` — alpine has no such user → container crash on start | `RUN adduser -D -u 65532 nonroot` creates the user before `USER nonroot` |
+| P0 | **bridge/ directory permissions** | `chmod 755 root:root` → nonroot container couldn't write `desired-mode` → mode switch always failed | `chown 65532:65532 + chmod 775` — nonroot can write, root bridge can read |
+| P0 | **host-bridge df parsing** | `read -r _ _ total used` — columns swapped (total=Used, free=Used-Avail) | `read -r _ size used avail _` — correct columns per `df -m` output |
+
+### P1 — reliability + security (8)
+| # | Fix | v17.9.8 Problem | v17.9.9 Solution |
+|---|-----|-----------------|-------------------|
+| P1 | **HTTP error codes** | `/api/mode` returned `200 OK` + `{"status":"error"}` on failure | `writeJSONError()` with proper codes: 400 (invalid mode), 503 (fs error), 500 (internal) |
+| P1 | **desired-mode retry on failure** | `rm -f desired-mode` always — even on failure → lost retry info | Keep on failure + retry counter (max 3); only delete on success or max-retries |
+| P1 | **host-bridge JSON via python3** | Shell heredoc `cat <<EOF` — broke on container names with quotes/backslashes | `python3 -c json.dumps()` — safe escaping for all string values |
+| P1 | **State machine fields** | `mode_applied: "ERROR: ..."` (unstructured string) | `mode_transition: {requested, state, retry_count, last_error}` — frontend renders status |
+| P1 | **MCP secureCompare** | `if token != s.authToken` (timing attack risk) | `secureCompare()` constant-time comparison (same as REST API) |
+| P1 | **WS origin CIDR check** | `strings.HasPrefix(origin, "http://10.")` — crude, rejected https, no real IP validation | `net.ParseIP + net.IPNet.Contains` with proper CIDR ranges (127.0.0.1/32, 10/8, 172.16/12, 192.168/16) |
+| P1 | **scarlix-mode: removed sudo** | 5× `sudo systemctl` — bridge runs as root, sudo is unnecessary dependency | Direct `systemctl` (bridge is already root) |
+| P1 | **scarlix-mode turbo dump_vram** | `turbo` called `start_verified_ai` without VRAM cleanup → CUDA OOM if creative/game held VRAM | `dump_vram` before `start_verified_ai` (VRAM safety gate) |
+
+### P1 — host-bridge systemd hardening
+```ini
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_NET_RAW CAP_DAC_OVERRIDE CAP_KILL
+```
+(ProtectSystem=strict NOT used — scarlix-mode writes to /var/lib/scarlix + needs docker socket)
+
+### P2 — hardening (2)
+| # | Fix | v17.9.8 Problem | v17.9.9 Solution |
+|---|-----|-----------------|-------------------|
+| P2 | **mem-fraction configurable** | SGLang/vLLM `--mem-fraction 0.85` hardcoded → OOM on 8GB GPU | `${SGLANG_MEM_FRACTION}` + `${VLLM_GPU_UTIL}` env vars from models.yaml |
+| P2 | **Version via -ldflags** | `const Version = "17.9.8"` hardcoded in 3 Go files | `-ldflags "-X main.Version=$VERSION"` in Dockerfile (single source: VERSION file) |
+
+### CI: runtime smoke test
+Added `scarlihq-docker-build` job now runs the container + tests:
+- Container starts without crash (catches nonroot/permission issues)
+- `GET /api/health` without token → `401` (auth works)
+- `GET /api/health` with token → `200` (full path works)
+
+### Review false-positives (verified already-correct in v17.9.8)
+- `internal/api/` and `internal/profiles/` packages **DO exist** (rest.go 6159B, loader.go 2619B) — reviewer 2 checked stale GitHub cache
+- `yq -r '.key'` works with python-kislyuk (it's a jq wrapper, `-r` is a jq flag) — reviewer 3 was wrong about syntax mismatch
 
 ---
 
@@ -243,7 +303,8 @@ Host-bridge architecture: dashboard reads JSON status, writes desired-mode. No p
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v17.9.8** | 2026-10 | **Host-bridge architecture + reliability. 16 fixes: ScarliHQ privilege boundary (P0), Dockerfile build order, go.mod cleaned, API auth, mode API/CLI/UI unified, Go/MCP v12→17.9.8, profiles YAML parsed, real JSON-RPC MCP, Current() TrimSpace, crit() aborts, Phase 1 crit ops, multilib scoped+synced, WS real status+origin, download-models fail-hard, model-manager Ollama via docker, alpine runtime 20MB, .env 600, CI go+docker build.** |
+| **v17.9.9** | 2026-10 | **Host-Bridge stabilization + state machine. 13 fixes: Dockerfile nonroot user (P0), bridge/ chown 65532+775 (P0), df parsing fixed (P0), HTTP error codes, desired-mode retry, JSON via python3, state machine fields, MCP secureCompare, WS CIDR origin, scarlix-mode sudo removed, turbo dump_vram, systemd hardening, mem-fraction env var, version via ldflags. CI: runtime smoke test.** |
+| v17.9.8 | 2026-10 | Host-bridge architecture + reliability. 16 fixes: ScarliHQ privilege boundary (P0), Dockerfile build order, go.mod cleaned, API auth, mode API/CLI/UI unified, Go/MCP v12→17.9.8, profiles YAML parsed, real JSON-RPC MCP, Current() TrimSpace, crit() aborts, Phase 1 crit ops, multilib scoped+synced, WS real status+origin, download-models fail-hard, model-manager Ollama via docker, alpine runtime 20MB, .env 600, CI go+docker build. |
 | v17.9.7 | 2026-10 | Reliability + real dashboard. 11 fixes: ScarliHQ image tag, Dockerfile reorder, nvidia/cuda runtime, real dashboard HTML, git tag, SGLang --disable-flashinfer, network disconnect loop, multilib, disk checks, /models 750, http_ok fallback. |
 | v17.9.6 | 2026-10 | Reliability. 15 fixes: duplicate networks, scarlix_net→scarlix-net, VERSION, default paths, download fail-hard, doctor unhealthy=FAIL, hash after recreate, $DC up -d, healthchecks, version unified, docs. |
 | v17.9.1 | 2026-10 | Hotfix. 10 fixes: MODE pred flock, hash healthcheck, HF repo IDs, checkpoint nvidia_open, schema, scarlix_net, SGLang pin, generate-env guard, version, scarlix-doctor. |
@@ -257,10 +318,10 @@ Host-bridge architecture: dashboard reads JSON status, writes desired-mode. No p
 - **CI covers syntax + build, not runtime**: `.github/workflows/ci.yml` runs shellcheck + bash -n + YAML + compose + `go build` + `docker build`. QEMU doesn't test NVIDIA/CUDA (no GPU in CI).
 - **Single maintainer**: One person maintaining full stack.
 - **vLLM TP=1**: Separate model per GPU (less efficient than TP=2 but mixed-arch safe).
-- **ScarliHQ `game`/`tv` modes**: `scarlix-mode game` calls `sudo systemctl start sunshine` on the HOST. The host-bridge runs as root, so this works via the bridge — but `sunshine.service` must exist on the host (installed separately, not in `packages.x86_64`). If sunshine isn't installed, mode switch silently no-ops (bridge logs the error to `/var/log/scarlix-host-bridge.log`).
-- **ScarliHQ auth = single shared token**: No per-user auth. Anyone with `SCARLIHQ_TOKEN` can switch modes. For multi-user, add an auth layer in front. Token is in `/etc/scarlix/.env` (chmod 600).
+- **ScarliHQ `game`/`tv` modes**: `scarlix-mode game` calls `systemctl start sunshine` on the HOST (via host-bridge, which runs as root — `sudo` removed in v17.9.9). If `sunshine.service` isn't installed, mode switch fails — dashboard now shows `✗ game failed` in mode transition field (v17.9.9 state machine). Check `/var/log/scarlix-host-bridge.log`.
+- **ScarliHQ auth = single shared token**: No per-user auth. Token in `/etc/scarlix/.env` (chmod 600). Token-in-URL (`?token=`) can leak via browser history/proxy logs — known limitation. For production, put a reverse proxy with session auth in front.
 - **First install is slow**: `pacman -Syu` + NVIDIA + CUDA + cuDNN + Steam/Wine + docker images + ScarliHQ Go build + model download (50-150GB) = hours. Reboots + re-login required for NVIDIA driver + docker group.
-- **host-status.json 5s latency**: Dashboard data is up to 5s stale (host-bridge timer interval). Acceptable for monitoring; not for real-time control.
+- **host-status.json 5s latency**: Dashboard data is up to 5s stale (host-bridge timer interval). Mode transition feedback (applied/retrying/failed) appears within 5s. Not for real-time control.
 
 ## 🗺️ Roadmap
 

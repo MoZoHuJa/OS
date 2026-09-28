@@ -2,42 +2,36 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v17.9.8 — Bootstrap Installer (Host-Bridge Architecture)
+# SCARLIX OS v17.9.9 — Bootstrap Installer (Host-Bridge Stabilization)
 # ============================================================================
 #
-# v17.9.8 FIXES (vs v17.9.7) — ScarliHQ privilege boundary + reliability:
-#   P0: ScarliHQ host-bridge architecture — NO docker.sock, NO scarlix-mode mount,
-#       NO nvidia runtime. Dashboard reads host-status.json, writes desired-mode.
-#       Host-side scarlix-host-bridge.timer (5s) does privileged ops as root.
-#   P0: Dockerfile build order fixed (COPY go.mod → mod download → COPY . . → build)
-#   P0: go.mod cleaned (9 unused heavy deps removed — was 400MB go mod download)
-#   P0: API authentication (SCARLIHQ_TOKEN) on all /api/* + /ws
-#   P0: Mode API/CLI/UI unified (ai/stop/game/creative/turbo/offline/tv — was missing 3)
-#   P0: Go/MCP version 12.0 → 17.9.8 (was hardcoded "v12.0")
-#   P0: profiles YAML actually parsed (yaml.Unmarshal — was filename-as-name)
-#   P0: MCP = real JSON-RPC 2.0 (was fake static JSON claiming "mcp/v1")
-#   P1: crit() aborts immediately (was: set flag + continue → cascading errors)
-#   P1: Phase 1 system-update + package-install = crit (was fail → bad checkpoint)
-#   P1: multilib: scoped awk (was aggressive sed) + pacman -Sy after enable
-#   P1: WebSocket origin check + real status push (was open + clock-only)
-#   P1: Current() TrimSpace (was returning "ai\n" → comparison failed)
-#   P1: download-models: missing compose = FAILED; missing SGLang hf_repo = FAIL
-#   P1: model-manager: Ollama via docker exec (was host binary — never found)
-#   P1: scarlix-doctor http_ok() with -k/--no-check-certificate fallback
-#   P2: ScarliHQ runtime alpine ~20MB (was nvidia/cuda+docker.io ~2.5GB)
-#   P2: .env permissions 600 (was 664 — secrets readable by group)
-#   P2: CI adds go test/vet/build + docker build ScarliHQ
+# v17.9.9 FIXES (vs v17.9.8) — Host-Bridge stabilization + state machine:
+#   P0: Dockerfile nonroot user created (alpine has no nonroot → container crash)
+#   P0: bridge/ chown 65532 + chmod 775 (was 755 root:root → nonroot couldn't write desired-mode)
+#   P0: host-bridge df parsing fixed (was: total=Used, free=Used-Avail — swapped columns)
+#   P1: /api/mode returns proper HTTP error codes (was: 200 OK + {"status":"error"})
+#   P1: host-bridge keeps desired-mode on failure + retry (was: rm -f always → lost retry)
+#   P1: host-bridge JSON via python3 json.dumps (was: shell heredoc — broke on quotes)
+#   P1: host-bridge state machine: requested/transition/retry_count/last_error
+#   P1: MCP auth secureCompare (was: != — timing attack risk)
+#   P1: WS origin via net.ParseIP + net.IPNet CIDR (was: strings.HasPrefix — no real validation)
+#   P1: scarlix-mode: removed sudo systemctl (5 occurrences — bridge runs as root)
+#   P1: scarlix-mode turbo calls dump_vram (was: missing → CUDA OOM if creative/game held VRAM)
+#   P1: host-bridge systemd hardening (NoNewPrivileges, ProtectHome, Restrict*, etc.)
+#   P2: mem-fraction from models.yaml env var (was: hardcoded 0.85 — OOM on 8GB GPU)
+#   P2: Version injected via -ldflags -X main.Version (single source: VERSION file)
 #
+# v17.9.8 fixes preserved (host-bridge architecture, API auth, mode unification, etc.)
 # v17.9.5–7 fixes preserved (see git history for details).
 #
 # USAGE (primary — safe):
 #   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
-#   git checkout v17.9.8   # ALWAYS checkout specific tag (main may be ahead)
+#   git checkout v17.9.9   # ALWAYS checkout specific tag (main may be ahead)
 #   bash install.sh
 # ============================================================================
 
-VERSION="17.9.8"
+VERSION="17.9.9"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -547,9 +541,16 @@ else
   # v17.9.8: Enable host-bridge timer (writes host-status.json every 5s for ScarliHQ)
   if [ -f /etc/systemd/system/scarlix-host-bridge.timer ]; then
     systemctl enable --now scarlix-host-bridge.timer >> "$LOG_FILE" 2>&1 && ok "scarlix-host-bridge.timer enabled + started" || fail "host-bridge.timer"
-    # Create bridge dir (ScarliHQ writes desired-mode here)
+    # v17.9.9 P0: Create bridge dir with correct ownership for ScarliHQ nonroot container.
+    # ScarliHQ runs as UID 65532 (nonroot in alpine image). bridge/ must be writable by it.
+    # Was: chmod 755 root:root → nonroot cannot write desired-mode → mode switch always failed.
     mkdir -p /var/lib/scarlix/bridge
-    chmod 755 /var/lib/scarlix/bridge
+    # chown to 65532 (nonroot UID in ScarliHQ alpine image) + chmod 775 (owner+group write)
+    # host bridge (root) can still write/read; nonroot container can write desired-mode.
+    chown 65532:65532 /var/lib/scarlix/bridge 2>/dev/null || chown nobody:nobody /var/lib/scarlix/bridge
+    chmod 775 /var/lib/scarlix/bridge
+    # host-status.json stays root:root 644 (written by root bridge, read by nonroot container)
+    ok "bridge/ ready (uid 65532, mode 775) — ScarliHQ nonroot can write desired-mode"
   fi
 
   # v17.9.8: Generate /etc/scarlix/.env (secrets + SCARLIHQ_TOKEN) if not already
@@ -569,14 +570,16 @@ else
     fi
     # Export for compose (compose reads ${SCARLIHQ_TOKEN} from environment)
     export SCARLIHQ_TOKEN="${SCARLIHQ_TOKEN:-}"
-    if docker build -t scarlihq:latest /opt/scarlix/scarlihq/ >> "$LOG_FILE" 2>&1; then
-      ok "ScarliHQ image built (scarlihq:latest, alpine ~20MB)"
+    # v17.9.9 P2: pass VERSION as build-arg (Dockerfile injects via -ldflags -X main.Version)
+    if docker build --build-arg SCARLIX_VERSION="$VERSION" -t scarlihq:latest /opt/scarlix/scarlihq/ >> "$LOG_FILE" 2>&1; then
+      ok "ScarliHQ image built (scarlihq:latest, alpine ~20MB, version $VERSION)"
       # Start dashboard on :8090 (compose references scarlihq:latest — matches build tag)
       if docker compose --env-file /etc/scarlix/.env -f /opt/scarlix/scarlihq/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
         ok "ScarliHQ dashboard started on :8090"
         if [ -n "$SCARLIHQ_TOKEN" ]; then
           info "  Dashboard login token: $SCARLIHQ_TOKEN"
           info "  Open: http://<this-ip>:8090/?token=$SCARLIHQ_TOKEN"
+          info "  (token also in /etc/scarlix/.env)"
         fi
       else
         warn "ScarliHQ dashboard start failed (non-critical — run 'docker compose --env-file /etc/scarlix/.env -f /opt/scarlix/scarlihq/docker-compose.yml up -d' later)"

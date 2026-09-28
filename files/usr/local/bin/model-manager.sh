@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.8 — Model Manager
-# v17.9.8 FIX: Ollama pulls via `docker exec ollama-agent` (was: host `ollama` binary — never installed)
+# SCARLIX OS v17.9.9 — Model Manager
+# v17.9.9 FIX: Ollama pulls via `docker exec ollama-agent` (was: host `ollama` binary — never installed)
 # FIX Q8b: Split — HF model pulls = auto (safe), Ollama tag pulls = manual (--apply only)
 #
 # Weekly timer (Mon 04:00) runs with NO --apply → only HF model pulls + Telegram report.
@@ -49,13 +49,13 @@ vram_snapshot() {
 }
 
 log "========================================"
-log "  SCARLIX OS v17.9.8 — Model Manager"
+log "  SCARLIX OS v17.9.9 — Model Manager"
 [ "$APPLY_OLLAMA" -eq 1 ] && log "  (--apply-ollama: will update Ollama tags)" || log "  (HF auto-pull + Ollama dry-run report only)"
 log "========================================"
 
 if [ ! -f "$MODELS_YAML" ]; then
   log "ERROR: models.yaml not found"
-  send_telegram "🚨 *SCARLIX Model Manager v17.9.8* — FAILED
+  send_telegram "🚨 *SCARLIX Model Manager v17.9.9* — FAILED
 models.yaml not found"
   exit 1
 fi
@@ -101,7 +101,7 @@ else
 fi
 
 # === Ollama model pulls (MANUAL unless --apply-ollama) ===
-# v17.9.8 P1: Ollama runs in Docker container `ollama-agent` (not as host binary).
+# v17.9.9 P1: Ollama runs in Docker container `ollama-agent` (not as host binary).
 # Use `docker exec ollama-agent ollama ...` instead of `command -v ollama`.
 if ! command -v docker >/dev/null 2>&1; then
   log "⚠ Docker not installed — skipping Ollama"
@@ -142,7 +142,7 @@ log "HF: updated=$HF_UPDATED failed=$HF_FAILED"
 log "Ollama: updated=$OLLAMA_UPDATED failed=$OLLAMA_FAILED"
 
 # === Telegram summary ===
-SUMMARY="🤖 *SCARLIX Model Manager v17.9.8*
+SUMMARY="🤖 *SCARLIX Model Manager v17.9.9*
 📊 HF: \`${HF_UPDATED}\` updated, \`${HF_FAILED}\` failed
 📊 Ollama: \`${OLLAMA_UPDATED}\` updated, \`${OLLAMA_FAILED}\` failed
 $([ "$APPLY_OLLAMA" -eq 0 ] && echo "ℹ️ Ollama tags NOT updated (dry-run). Use \`model-manager.sh --apply-ollama\` to update.")

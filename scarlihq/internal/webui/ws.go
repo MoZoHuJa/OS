@@ -1,116 +1,147 @@
 package webui
 
 import (
-	"encoding/json"
-	"log"
-	"net/http"
-	"strings"
-	"time"
+        "encoding/json"
+        "log"
+        "net"
+        "net/http"
+        "strings"
+        "time"
 
-	"github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/profiles"
-	"github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/scarlix_mode"
-	"github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/status"
-	"github.com/gorilla/websocket"
+        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/profiles"
+        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/scarlix_mode"
+        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/status"
+        "github.com/gorilla/websocket"
 )
 
-// v17.9.8 P1: origin check (was `return true` — any origin accepted).
-// Allow localhost + LAN private ranges (10.x, 172.16-31.x, 192.168.x).
+// v17.9.9 P1: proper CIDR origin check (was: strings.HasPrefix — missed https, no real IP validation).
+// Allowed networks: 127.0.0.1/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.
+// Accepts both http:// and https:// origins.
+var allowedNetworks = func() []*net.IPNet {
+        cidrs := []string{"127.0.0.1/32", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+        nets := make([]*net.IPNet, 0, len(cidrs))
+        for _, c := range cidrs {
+                if _, n, err := net.ParseCIDR(c); err == nil {
+                        nets = append(nets, n)
+                }
+        }
+        return nets
+}()
+
 var upgrader = websocket.Upgrader{
-	CheckOrigin:     checkOrigin,
-	HandshakeTimeout: 10 * time.Second,
+        CheckOrigin:      checkOrigin,
+        HandshakeTimeout: 10 * time.Second,
 }
 
+// checkOrigin validates the Origin header against allowed LAN networks.
+// Returns true for: empty origin (non-browser clients like curl), localhost, LAN private ranges.
+// v17.9.9: uses net.ParseIP + net.IPNet.Contains (was: strings.HasPrefix — crude, https rejected).
 func checkOrigin(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return true // non-browser clients (curl, scripts) — still need token
-	}
-	allowed := []string{
-		"http://localhost", "http://127.0.0.1",
-		"http://10.", "http://192.168.",
-	}
-	for _, p := range allowed {
-		if strings.HasPrefix(origin, p) {
-			return true
-		}
-	}
-	// 172.16.0.0/12 (172.16.x – 172.31.x)
-	if strings.HasPrefix(origin, "http://172.") {
-		for i := 16; i <= 31; i++ {
-			if strings.HasPrefix(origin, "http://172."+itoa(i)+".") {
-				return true
-			}
-		}
-	}
-	return false
-}
+        origin := r.Header.Get("Origin")
+        if origin == "" {
+                return true // non-browser clients (curl, scripts) — still need token
+        }
 
-// itoa is a tiny int→string helper (avoids strconv import for this simple use).
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
+        // Parse host:port from origin URL (http://host:port or https://host:port)
+        origin = strings.TrimSpace(origin)
+        host := ""
+        for _, scheme := range []string{"https://", "http://"} {
+                if strings.HasPrefix(origin, scheme) {
+                        host = strings.TrimPrefix(origin, scheme)
+                        break
+                }
+        }
+        if host == "" {
+                return false // not http/https origin → reject
+        }
+        // Strip path + port
+        if idx := strings.Index(host, "/"); idx >= 0 {
+                host = host[:idx]
+        }
+        if idx := strings.LastIndex(host, ":"); idx >= 0 {
+                host = host[:idx] // strip port
+        }
+        // Strip brackets from IPv6 [::1]
+        host = strings.Trim(host, "[]")
+
+        ip := net.ParseIP(host)
+        if ip == nil {
+                return false // not an IP (could be hostname — reject for security; LAN uses IPs)
+        }
+
+        for _, n := range allowedNetworks {
+                if n.Contains(ip) {
+                        return true
+                }
+        }
+        return false
 }
 
 // statusJSON returns the current host-status.json as JSON bytes.
-// v17.9.8: reads via status package (file-based bridge — no nvidia-smi/docker exec).
 func statusJSON() []byte {
-	s := status.Read()
-	b, err := json.Marshal(s)
-	if err != nil {
-		return []byte(`{"error":"marshal failed","stale":true}`)
-	}
-	return b
+        s := status.Read()
+        if s.Timestamp == "" {
+                return []byte(`{"error":"host-status.json not found","stale":true}`)
+        }
+        b, err := json.Marshal(s)
+        if err != nil {
+                return []byte(`{"error":"marshal failed","stale":true}`)
+        }
+        return b
 }
 
 // RegisterWS registers WebSocket route (token-authed, pushes real status every 2s).
-// v17.9.8 P1: pushes GPU + containers + mode (was: only clock).
 func RegisterWS(mux *http.ServeMux, authToken string, _ *scarlix_mode.Mode, _ *profiles.Manager) {
-	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		// Token auth (query param — browsers can't set headers on WS upgrade)
-		token := r.URL.Query().Get("token")
-		if authToken == "" {
-			http.Error(w, "SCARLIHQ_TOKEN not configured", http.StatusServiceUnavailable)
-			return
-		}
-		if token != authToken {
-			http.Error(w, "invalid token", http.StatusUnauthorized)
-			return
-		}
+        mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+                // Token auth (query param — browsers can't set headers on WS upgrade)
+                token := r.URL.Query().Get("token")
+                if authToken == "" {
+                        http.Error(w, "SCARLIHQ_TOKEN not configured", http.StatusServiceUnavailable)
+                        return
+                }
+                if !secureCompare(token, authToken) {
+                        http.Error(w, "invalid token", http.StatusUnauthorized)
+                        return
+                }
 
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			log.Printf("WS upgrade error: %v", err)
-			return
-		}
-		defer conn.Close()
+                conn, err := upgrader.Upgrade(w, r, nil)
+                if err != nil {
+                        log.Printf("WS upgrade error: %v", err)
+                        return
+                }
+                defer conn.Close()
 
-		log.Println("WS client connected")
+                log.Println("WS client connected")
 
-		// Send full status every 2s (real GPU/mode/containers, not just clock)
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
+                ticker := time.NewTicker(2 * time.Second)
+                defer ticker.Stop()
 
-		// Initial push immediately
-		if err := conn.WriteMessage(websocket.TextMessage, statusJSON()); err != nil {
-			log.Printf("WS write error: %v", err)
-			return
-		}
+                // Initial push immediately
+                if err := conn.WriteMessage(websocket.TextMessage, statusJSON()); err != nil {
+                        log.Printf("WS write error: %v", err)
+                        return
+                }
 
-		for {
-			select {
-			case <-ticker.C:
-				if err := conn.WriteMessage(websocket.TextMessage, statusJSON()); err != nil {
-					log.Printf("WS write error: %v", err)
-					return
-				}
-			}
-		}
-	})
+                for {
+                        select {
+                        case <-ticker.C:
+                                if err := conn.WriteMessage(websocket.TextMessage, statusJSON()); err != nil {
+                                        log.Printf("WS write error: %v", err)
+                                        return
+                                }
+                        }
+                }
+        })
+}
+
+// secureCompare does a constant-time string comparison (prevents timing attacks).
+func secureCompare(a, b string) bool {
+        if len(a) != len(b) {
+                return false
+        }
+        var result byte
+        for i := 0; i < len(a); i++ {
+                result |= a[i] ^ b[i]
+        }
+        return result == 0
 }

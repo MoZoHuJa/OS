@@ -19,7 +19,7 @@ services:
       --model-path ${SGLANG_MODEL_PATH:-/models/Qwen3-14B-AWQ}
       --port 30000
       --host 0.0.0.0
-      --mem-fraction-static 0.85
+      --mem-fraction-static ${SGLANG_MEM_FRACTION:-0.85}
       --context-length 32768
       --disable-flashinfer
     deploy:

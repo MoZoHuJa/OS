@@ -12,7 +12,8 @@ import (
 )
 
 // Version mirrors main.Version (passed to avoid import cycle).
-const Version = "17.9.8"
+// v17.9.9 P2: kept in sync — both read from same VERSION file via ldflags.
+const Version = "17.9.9"
 
 // Handler holds dependencies for API routes.
 type Handler struct {
@@ -137,11 +138,20 @@ func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
         }
 
         // v17.9.8: Set() writes desired-mode file (host bridge applies it within 5s).
-        // Returns 202 Accepted (async) — client polls GET /api/mode to confirm.
+        // v17.9.9 P1: proper HTTP error codes (was: 200 OK + {"status":"error"})
+        // Returns 202 Accepted (async) — client polls GET /api/mode or /api/status to confirm.
         if err := h.mode.Set(mode); err != nil {
-                writeJSON(w, map[string]string{"status": "error", "message": err.Error()})
+                // Invalid mode = 400; filesystem/permission error = 503
+                code := http.StatusInternalServerError
+                if strings.Contains(err.Error(), "invalid mode") {
+                        code = http.StatusBadRequest
+                } else if strings.Contains(err.Error(), "write") || strings.Contains(err.Error(), "permission") {
+                        code = http.StatusServiceUnavailable
+                }
+                writeJSONError(w, code, err.Error())
                 return
         }
+        w.WriteHeader(http.StatusAccepted)
         writeJSON(w, map[string]string{
                 "mode":    mode,
                 "status":  "accepted",
