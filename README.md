@@ -1,6 +1,23 @@
-# SCARLIX OS v18.0.0 — EndeavourOS Edition (Secure Host-Bridge)
+<p align="center">
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.0.0 — Sovereign AI Cloud" width="100%" />
+</p>
 
-> Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
+<h1 align="center">SCARLIX OS v18.0.0</h1>
+
+<p align="center">
+  <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
+  Architektúra Secure Host-Bridge · Token autentifikácia · State machine · Privilege boundary
+</p>
+
+<p align="center">
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.0.0"><img alt="Version" src="https://img.shields.io/badge/version-v18.0.0-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
+</p>
+
+---
+
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 
