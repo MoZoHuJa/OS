@@ -1,10 +1,10 @@
-# SCARLIX OS v17.5.2 — EndeavourOS Edition (Working AI Path, Bugfix 2)
+# SCARLIX OS v17.6 — EndeavourOS Edition (Working AI Path, Bugfix 3)
 
 > Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
-> **Verified**: SGLang (GPU0) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (fallback).
+> **Verified**: SGLang (GPU0) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU fallback).
 
-**Version:** v17.5.2 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v17.6.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -22,11 +22,26 @@ bash install.sh
 sudo reboot
 
 # 2. Download models (50-150GB, takes hours)
-bash /etc/systemd/system/download-models.sh
+download-models.sh
 
 # 3. Start AI inference
 scarlix-mode ai
 ```
+
+---
+
+## 🆕 What's New in v17.6 (vs v17.5.2)
+
+**Bugfix 3 — fixes 6 issues from 2 reviews.**
+
+| # | Fix | v17.5.2 Problem | v17.6 Solution |
+|---|-----|-----------------|-----------------|
+| P0 | **sglang_ok/vllm_ok initialized** | Unbound variable under `set -u` → `scarlix-mode ai` crash | Initialized to 0, set to 1 on success |
+| P0 | **Ollama CPU fallback** | Was GPU0 — if GPU0 driver dies, fallback also dies | No GPU allocation (CPU only) — survives GPU0 failure |
+| P1 | **chmod 775 (not 777)** | 777 = anyone can overwrite models | `chown REAL_USER + chmod 775` (owner+group only) |
+| P1 | **check_model_exists for all starts** | SGLang start used `-d` (empty dir passed) | All starts use `check_model_exists` (checks config.json) |
+| P1 | **README path fix** | Old `bash /etc/systemd/system/download-models.sh` | Corrected to `download-models.sh` (in /usr/local/bin/) |
+| P2 | **Ollama compose version header** | Said v17.5.1 | Updated to v17.6 |
 
 ---
 
@@ -147,7 +162,7 @@ sglang:
 ```
 Then:
 ```bash
-bash /etc/systemd/system/download-models.sh   # download new model
+download-models.sh   # download new model
 scarlix-mode ai                                 # restart with new model
 ```
 `scarlix-mode` parses `models.yaml` → exports `SGLANG_MODEL_PATH` → compose uses it. **One source of truth.**
@@ -208,7 +223,8 @@ OS/
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v17.5.2** | 2026-10 | **Bugfix 2. 8 fixes: scarlix-net after Docker starts, Ollama true fallback (not always started), checkpoint pacman -Q linux, check_model_exists checks config.json, Ollama volume chmod 777, download-models.sh --include, scarlix-mode stop keeps dashboard, old dead files removed (scripts/, base-os/, ISO docs).** |
+| **v17.6** | 2026-10 | **Bugfix 3. 6 fixes: sglang_ok/vllm_ok initialized (was unbound → crash), Ollama CPU fallback (was GPU0), chmod 775 (was 777 — security), check_model_exists for all starts, README path fix, version header.** |
+| v17.5.2 | 2026-10 | Bugfix 2. 8 fixes: scarlix-net after Docker starts, Ollama true fallback, checkpoint pacman -Q, config.json check, chmod 777, --include, stop keeps dashboard, dead files removed. |
 | v17.5.1 | 2026-10 | Bugfix release. 10 fixes: yq YAML parsing, download-models.sh rewritten, Ollama GPU0+absolute vol, scarlix-net early, linux checkpoint, model check, Ollama wait, BeeLlama CPU, scarlix-mode stop. |
 | v17.4 | 2026-10 | Unified bootstrap, fail-hard, TP=1 (mixed GPU). 19 fixes. |
 | v17.3 | 2026-10 | Bootstrap installer (install.sh). (Broken — curl\|bash, no models) |

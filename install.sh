@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v17.5.2 — Bootstrap Installer (Working AI Path, Bugfix 2)
+# SCARLIX OS v17.6.0 — Bootstrap Installer (Working AI Path, Bugfix 2)
 # ============================================================================
 #
 # v17.5.1 FIXES (vs v17.5):
@@ -29,7 +29,7 @@ set -euo pipefail
 #   cd ~/scarlix-os && bash install.sh
 # ============================================================================
 
-VERSION="17.5.2"
+VERSION="17.6.0"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -165,10 +165,12 @@ else
   mkdir -p /opt/scarlix /var/lib/scarlix /etc/scarlix/{profiles,secrets}
   mkdir -p /models /var/lib/docker /var/lib/scarlix/ollama /mnt/{files,games,photos,backup/restic}
   chown -R "$REAL_USER:$REAL_USER" /opt/scarlix /var/lib/scarlix /etc/scarlix /mnt 2>/dev/null || true
-  # P1-8 FIX: Ollama container may run as non-root user — chmod 777 for volume access
-  chmod 777 /var/lib/scarlix/ollama 2>/dev/null || true
-  # P1-9 FIX: /models writable by download-models.sh (may run as user or root)
-  chmod 777 /models 2>/dev/null || true
+  # P1-8 FIX v17.6: chown to REAL_USER + chmod 775 (was 777 — security hole)
+  chown -R "$REAL_USER:$REAL_USER" /var/lib/scarlix/ollama 2>/dev/null || true
+  chmod 775 /var/lib/scarlix/ollama 2>/dev/null || true
+  # P1-9 FIX v17.6: /models chown + 775 (was 777 — security hole)
+  chown -R "$REAL_USER:$REAL_USER" /models 2>/dev/null || true
+  chmod 775 /models 2>/dev/null || true
 
   # Q3b: chattr +C only if dir is empty (re-run safe)
   log "Disabling CoW on heavy stores (only if empty)..."

@@ -1,8 +1,6 @@
-# SCARLIX OS v17.5.1 — Ollama (fallback, GPU 0)
-# v17.5.1 FIXES:
-#   - Volume: absolute path /var/lib/scarlix/ollama (was ./data — relative, lost on cwd change)
-#   - GPU: device_ids ['0'] (was ['1'] — conflicted with vLLM on GPU1)
-#   - Healthcheck: uses wget (curl may not be in image)
+# SCARLIX OS v17.6 — Ollama (CPU fallback, not GPU)
+# v17.6 FIX: Ollama runs on CPU (was GPU0 — if GPU0 driver dies, fallback still works)
+# No deploy.resources.devices section = CPU only
 services:
   ollama-agent:
     image: ollama/ollama:0.5.4
@@ -17,16 +15,9 @@ services:
       - OLLAMA_HOST=0.0.0.0:11434
       - OLLAMA_NUM_PARALLEL=2
       - OLLAMA_KEEP_ALIVE=-1
-      - OLLAMA_FLASH_ATTENTION=1
-      - OLLAMA_KV_CACHE_TYPE=q4_0
+      - OLLAMA_FLASH_ATTENTION=0
       - TZ=Europe/Bratislava
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['0']
-              capabilities: [gpu]
+    # v17.6: No GPU allocation — CPU only fallback (survives GPU0 driver failure)
     networks: [scarlix-net]
     healthcheck:
       test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
