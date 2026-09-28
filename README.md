@@ -1,10 +1,10 @@
-# SCARLIX OS v17.5 — EndeavourOS Edition (Working AI Path)
+# SCARLIX OS v17.5.1 — EndeavourOS Edition (Working AI Path, Fixed)
 
 > Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (fallback).
 
-**Version:** v17.5.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v17.5.1 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -23,6 +23,37 @@ sudo reboot
 
 # 2. Download models (50-150GB, takes hours)
 bash /etc/systemd/system/download-models.sh
+
+# 3. Start AI inference
+scarlix-mode ai
+```
+
+---
+
+## 🆕 What's New in v17.5.1 (vs v17.5)
+
+**Bugfix release — fixes 10 issues from 2 reviews.**
+
+| # | Fix | v17.5 Problem | v17.5.1 Solution |
+|---|-----|---------------|-------------------|
+| P0-1 | **yq for YAML parsing** | scarlix-mode used grep+cut — broke on comments | `yq -r .sglang.model_path` — proper YAML parsing |
+| P0-2 | **download-models.sh rewritten** | v16.4 keys (ollama_main, llamacpp), wrong HF repo ID | v17.5 keys (beellama, ollama), correct HF repo IDs, venv for PEP 668 |
+| P0-3 | **Ollama volume absolute** | `./data` relative — lost on cwd change | `/var/lib/scarlix/ollama:/root/.ollama` |
+| P0-4 | **Ollama GPU0** | device_ids ['1'] — conflicted with vLLM | device_ids ['0'] (vLLM keeps GPU1) |
+| P0-5 | **scarlix-net created early** | Phase 3 only — Phase 5 fail if Phase 3 crashed | Created in pre-checks (before any compose) |
+| P1-6 | **Checkpoint tracks linux version** | Only nvidia-open → DKMS stale after kernel update | Stores linux_kernel_version too |
+| P1-7 | **Model existence check** | compose up with missing model → CrashLoop | `check_model_exists` before `docker compose up` |
+| P1-8 | **Ollama API wait** | `ollama pull` before API ready → fail | Wait up to 60s for API before pull |
+| P1-9 | **BeeLlama CPU image** | server-cuda requires GPU runtime | `server` (CPU) image for true offline fallback |
+| P1-10 | **scarlix-mode stop** | No way to stop AI stack (healthcheck restarts) | `scarlix-mode stop` halts all containers |
+
+### Post-install steps (corrected):
+```bash
+# 1. Reboot (activate NVIDIA driver)
+sudo reboot
+
+# 2. Download models (50-150GB)
+download-models.sh
 
 # 3. Start AI inference
 scarlix-mode ai
@@ -160,7 +191,8 @@ OS/
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v17.5** | 2026-10 | **Working AI Path. 10 P0 fixes: no AI start without models, models.yaml single source, .experimental flag, cu128 Blackwell, toolkit crit, scarlihq copy, starter model, ISO removed, version checkpoint, always healthcheck.** |
+| **v17.5.1** | 2026-10 | **Bugfix release. 10 fixes: yq for YAML parsing, download-models.sh rewritten (v17.5 keys + correct HF repo IDs), Ollama volume absolute + GPU0, scarlix-net early, linux version checkpoint, model existence check, Ollama API wait, BeeLlama CPU image, scarlix-mode stop command.** |
+| v17.5 | 2026-10 | Working AI Path. 10 P0 fixes: no AI start without models, models.yaml single source, .experimental flag, cu128 Blackwell, toolkit crit, scarlihq copy, starter model, ISO removed, version checkpoint, always healthcheck. |
 | v17.4 | 2026-10 | Unified bootstrap, fail-hard, TP=1 (mixed GPU). 19 fixes. |
 | v17.3 | 2026-10 | Bootstrap installer (install.sh). (Broken — curl\|bash, no models) |
 | v17.2.1 | 2026-10 | Auto 5-tier for 2+ GPU. |

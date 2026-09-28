@@ -45,9 +45,11 @@ git
 curl
 wget
 jq
+yq
 bc
 python
 python-pip
+python-virtualenv
 
 # === Terminal / editors ===
 neovim
