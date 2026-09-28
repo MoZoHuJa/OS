@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v17.5.1 — Bootstrap Installer (Working AI Path, Fixed)
+# SCARLIX OS v17.5.2 — Bootstrap Installer (Working AI Path, Bugfix 2)
 # ============================================================================
 #
 # v17.5.1 FIXES (vs v17.5):
@@ -29,7 +29,7 @@ set -euo pipefail
 #   cd ~/scarlix-os && bash install.sh
 # ============================================================================
 
-VERSION="17.5.1"
+VERSION="17.5.2"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -51,7 +51,9 @@ warn()   { echo -e "${YELLOW}  ⚠${NC} $1" | tee -a "$LOG_FILE"; }
 write_checkpoint() {
   local name="$1"
   local nvidia_ver="${2:-none}"
-  local linux_ver="$(pacman -Q linux 2>/dev/null | cut -d' ' -f2 || echo 'unknown')"
+  # P1-6 FIX: Use pacman -Q linux (not uname -r which has different format: 6.10.8-arch1-1 vs 6.10.8.arch1-1)
+  local linux_ver
+  linux_ver=$(pacman -Q linux 2>/dev/null | cut -d' ' -f2 || echo 'unknown')
   cat > "$CHECKPOINT_DIR/.checkpoint-$name" << EOF
 phase=$name
 timestamp=$(date -Iseconds)
@@ -141,9 +143,7 @@ if [ "$NVIDIA_COUNT" -ge 2 ]; then
   info ".experimental flag created (2+ GPU → vLLM enabled)"
 fi
 
-# P0-5: Create scarlix-net EARLY (before any compose up — prevents Phase 5 fail)
-log "Creating Docker network scarlix-net (early)..."
-docker network create scarlix-net 2>/dev/null && info "scarlix-net created (early)" || info "scarlix-net exists"
+# P0-5: scarlix-net created in Phase 3 (after Docker starts — not pre-checks, Docker not running yet)
 
 echo ""
 
@@ -163,8 +163,12 @@ else
   [ -n "$PKGS" ] && pacman -S --noconfirm --needed $PKGS >> "$LOG_FILE" 2>&1 && ok "Packages installed" || fail "Package install"
 
   mkdir -p /opt/scarlix /var/lib/scarlix /etc/scarlix/{profiles,secrets}
-  mkdir -p /models /var/lib/docker /mnt/{files,games,photos,backup/restic}
+  mkdir -p /models /var/lib/docker /var/lib/scarlix/ollama /mnt/{files,games,photos,backup/restic}
   chown -R "$REAL_USER:$REAL_USER" /opt/scarlix /var/lib/scarlix /etc/scarlix /mnt 2>/dev/null || true
+  # P1-8 FIX: Ollama container may run as non-root user — chmod 777 for volume access
+  chmod 777 /var/lib/scarlix/ollama 2>/dev/null || true
+  # P1-9 FIX: /models writable by download-models.sh (may run as user or root)
+  chmod 777 /models 2>/dev/null || true
 
   # Q3b: chattr +C only if dir is empty (re-run safe)
   log "Disabling CoW on heavy stores (only if empty)..."

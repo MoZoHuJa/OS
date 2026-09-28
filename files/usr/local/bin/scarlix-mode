@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.5.1 — GPU Mode Switcher
-# v17.5.1 FIXES:
+# SCARLIX OS v17.5.2 — GPU Mode Switcher
+# v17.5.2 FIXES:
 #   - Uses yq for model path parsing (was grep+cut — broke on comments)
 #   - Checks model path existence before compose up
 #   - `stop` command to halt AI stack
@@ -49,7 +49,7 @@ load_model_paths() {
   log "Model paths: SGLang=$SGLANG_MODEL_PATH, vLLM=$VLLM_MODEL_PATH, llama.cpp=$LLAMACPP_MODEL_PATH"
 }
 
-# P0-8: Check model path existence before compose up
+# P0-8 FIX: Check model existence — dir for safetensors (must have config.json), file for GGUF
 check_model_exists() {
   local engine="$1"
   local path="$2"
@@ -57,8 +57,16 @@ check_model_exists() {
     log "ERROR: $engine model path is empty — check models.yaml"
     return 1
   fi
-  # Check if it's a directory (safetensors) or file (gguf)
-  if [ -d "$path" ] || [ -f "$path" ]; then
+  if [ -d "$path" ]; then
+    # Safetensors dir — check for config.json (not just empty dir)
+    if [ -f "$path/config.json" ]; then
+      return 0
+    else
+      log "ERROR: $engine dir exists but no config.json — download incomplete?"
+      return 1
+    fi
+  elif [ -f "$path" ]; then
+    # GGUF file
     return 0
   fi
   log "ERROR: $engine model not found at $path"
@@ -74,7 +82,7 @@ dump_vram() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v17.5.1 — VRAM Check ==="
+  echo "=== SCARLIX OS v17.5.2 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
@@ -155,8 +163,14 @@ start_verified_ai() {
     log "  ⚠ BeeLlama model missing — skipping"
   fi
 
-  # Ollama (GPU0, fallback with starter model)
-  docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ Ollama (fallback)" || log "  ✗ Ollama failed"
+  # P0-3 FIX: Ollama is TRUE fallback — only start if SGLang failed
+  # (was: always started → VRAM conflict on GPU0 with SGLang)
+  if [ "$sglang_ok" -eq 0 ] && [ "$vllm_ok" -eq 0 ]; then
+    log "  ⚠ SGLang + vLLM both failed — starting Ollama (qwen2.5:3b) as fallback"
+    docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ Ollama (fallback: qwen2.5:3b)" || log "  ✗ Ollama failed"
+  else
+    log "  ℹ SGLang or vLLM running — Ollama skipped (not needed, saves VRAM)"
+  fi
 }
 
 case "$MODE" in
@@ -181,11 +195,15 @@ case "$MODE" in
     echo "ai" | tee "$STATE_FILE" >/dev/null
     ;;
   stop)
-    # P1-6: Stop command to halt AI stack without healthcheck restart
-    log "=== Stopping AI stack ==="
-    dump_vram
+    # P2-10 FIX: Stop only AI containers (NOT dashboard/infra)
+    log "=== Stopping AI stack (keeping dashboard/infra) ==="
+    docker stop sglang vllm beellama ollama-agent 2>/dev/null || true
+    docker compose -f /opt/scarlix/ai/sglang/docker-compose.yml stop >> "$LOG_FILE" 2>&1 || true
+    docker compose -f /opt/scarlix/ai/vllm/docker-compose.yml stop >> "$LOG_FILE" 2>&1 || true
+    docker compose -f /opt/scarlix/ai/llamacpp/docker-compose.yml stop >> "$LOG_FILE" 2>&1 || true
+    docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml stop >> "$LOG_FILE" 2>&1 || true
     echo "stopped" | tee "$STATE_FILE" >/dev/null
-    log "AI stack stopped. Run 'scarlix-mode ai' to restart."
+    log "AI stack stopped. Dashboard/infra still running. Run 'scarlix-mode ai' to restart."
     ;;
   game)
     [[ "$CURRENT_MODE" = "game" ]] && { log "Already in Game mode."; exit 0; }
@@ -234,7 +252,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v17.5.1 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v17.5.2 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"
