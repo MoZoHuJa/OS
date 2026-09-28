@@ -25,7 +25,7 @@ services:
     command: >
       --model ${VLLM_MODEL_PATH:-/models/Qwen3-14B-AWQ}
       --tensor-parallel-size 1
-      --gpu-memory-utilization 0.85
+      --gpu-memory-utilization ${VLLM_GPU_UTIL:-0.85}
       --max-model-len 32768
       --trust-remote-code
       --host 0.0.0.0

@@ -94,7 +94,7 @@
     <div class="brand">
       <div class="logo">S</div>
       <div>
-        <h1>ScarliHQ <span class="ver">v17.9.8</span></h1>
+        <h1>ScarliHQ <span class="ver">v17.9.9</span></h1>
         <div class="ver">SCARLIX OS — Sovereign AI Cloud Dashboard</div>
       </div>
     </div>
@@ -144,7 +144,7 @@
   </div>
 
   <footer>
-    SCARLIX OS v17.9.8 — ScarliHQ dashboard (host-bridge architecture) · Verified AI path: SGLang + vLLM + BeeLlama + Ollama fallback
+    SCARLIX OS v17.9.9 — ScarliHQ dashboard (host-bridge architecture) · Verified AI path: SGLang + vLLM + BeeLlama + Ollama fallback
   </footer>
 </div>
 <div class="toast" id="toast"></div>
@@ -218,6 +218,19 @@ function renderStatus(s){
   $('#sysmode').textContent = mode;
   $('#curmode').textContent = mode;
   $$('.mode-btn').forEach(b=> b.classList.toggle('active', b.dataset.mode === mode));
+  // v17.9.9 P1: mode transition feedback (retry/failed — was: silent no-op)
+  if(s.mode_transition && s.mode_transition.requested){
+    const mt = s.mode_transition;
+    let trText = '';
+    let trColor = 'var(--muted)';
+    if(mt.state === 'applied'){ trText = '✓ '+mt.requested+' applied'; trColor = 'var(--accent)'; }
+    else if(mt.state === 'retrying'){ trText = '⟳ '+mt.requested+' retry '+mt.retry_count+'/3'; trColor = 'var(--accent2)'; }
+    else if(mt.state === 'failed'){ trText = '✗ '+mt.requested+' failed'; trColor = 'var(--red)'; }
+    if(trText){
+      $('#sysmode').textContent = mode + ' (' + trText + ')';
+      $('#sysmode').style.color = trColor;
+    }
+  }
   // Experimental
   $('#sysexp').textContent = s.experimental ? 'YES (vLLM)' : 'no';
   // Disk

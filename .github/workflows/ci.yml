@@ -105,6 +105,7 @@ jobs:
         run: go test ./... || echo "(no tests yet — OK)"
 
   # v17.9.8 P2: Real ScarliHQ Docker build (catches Dockerfile + go.mod issues)
+  # v17.9.9 P2: Added runtime smoke test (container starts + /api/health responds)
   scarlihq-docker-build:
     runs-on: ubuntu-latest
     steps:
@@ -115,3 +116,27 @@ jobs:
           docker images scarlihq:ci
           echo "ScarliHQ image built — size:"
           docker image inspect scarlihq:ci --format '{{.Size}}' | awk '{printf "  %.1f MB\n", $1/1024/1024}'
+      - name: Runtime smoke test (container starts + port responds)
+        run: |
+          # Run container with a test token + mock status dir
+          mkdir -p /tmp/scarlix-test/bridge
+          chmod 775 /tmp/scarlix-test/bridge
+          echo '{"timestamp":"test","version":"17.9.9","mode":"unknown","gpus":[],"containers":[],"disk":{}}' > /tmp/scarlix-test/host-status.json
+          docker run -d --name scarlihq-test -p 8090:8090 \
+            -e SCARLIHQ_TOKEN=test-token \
+            -v /tmp/scarlix-test:/var/lib/scarlix:ro \
+            -v /tmp/scarlix-test/bridge:/var/lib/scarlix/bridge:rw \
+            scarlihq:ci
+          sleep 3
+          # Container should be running
+          docker ps --filter name=scarlihq-test --format '{{.Status}}'
+          # Health endpoint should respond (without token = 401, with token = 200)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health || echo "000")
+          echo "Health endpoint (no token): HTTP $HTTP_CODE (expected 401)"
+          [ "$HTTP_CODE" = "401" ] || { echo "FAIL: expected 401 without token"; docker logs scarlihq-test; exit 1; }
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer test-token" http://127.0.0.1:8090/api/health || echo "000")
+          echo "Health endpoint (with token): HTTP $HTTP_CODE (expected 200)"
+          [ "$HTTP_CODE" = "200" ] || { echo "FAIL: expected 200 with token"; docker logs scarlihq-test; exit 1; }
+          echo "Smoke test PASSED — ScarliHQ starts + auth works"
+          docker stop scarlihq-test 2>/dev/null || true
+          docker rm scarlihq-test 2>/dev/null || true
