@@ -1,0 +1,10 @@
+[Unit]
+Description=SCARLIX OS Host Bridge (privileged ops for ScarliHQ dashboard)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/scarlix-host-bridge
+# Runs as root (needs nvidia-smi, docker, scarlix-mode)
+User=root

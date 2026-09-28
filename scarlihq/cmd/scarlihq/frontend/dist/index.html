@@ -12,23 +12,11 @@
     --radius:12px;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{
-    background:var(--bg);color:var(--text);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    min-height:100vh;padding:18px;line-height:1.45;
-  }
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;min-height:100vh;padding:18px;line-height:1.45}
   .wrap{max-width:1180px;margin:0 auto}
-  header{
-    display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
-    padding:16px 20px;background:linear-gradient(135deg,#111622,#161c2c);
-    border:1px solid var(--border);border-radius:var(--radius);margin-bottom:18px;
-  }
+  header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#111622,#161c2c);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:18px}
   .brand{display:flex;align-items:center;gap:12px}
-  .logo{
-    width:42px;height:42px;border-radius:10px;
-    background:conic-gradient(from 180deg,var(--accent),var(--cyan),var(--violet),var(--accent));
-    display:flex;align-items:center;justify-content:center;font-weight:800;color:#0b0e14;font-size:20px;
-  }
+  .logo{width:42px;height:42px;border-radius:10px;background:conic-gradient(from 180deg,var(--accent),var(--cyan),var(--violet),var(--accent));display:flex;align-items:center;justify-content:center;font-weight:800;color:#0b0e14;font-size:20px}
   h1{font-size:20px;letter-spacing:.5px}
   .ver{font-size:12px;color:var(--muted);font-weight:500}
   .clock{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;color:var(--accent2)}
@@ -52,15 +40,13 @@
   .bar.util > i{background:linear-gradient(90deg,var(--accent2),var(--red))}
   .barlabel{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-family:ui-monospace,monospace}
   .modes{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
-  .mode-btn{
-    flex:1;min-width:96px;padding:11px 8px;border-radius:9px;cursor:pointer;
-    background:var(--panel2);border:1px solid var(--border);color:var(--text);
-    font-size:13px;font-weight:600;transition:.18s;
-  }
+  .mode-btn{flex:1;min-width:84px;padding:11px 8px;border-radius:9px;cursor:pointer;background:var(--panel2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:600;transition:.18s}
   .mode-btn:hover{border-color:var(--accent);transform:translateY(-1px)}
   .mode-btn.active{background:linear-gradient(135deg,var(--accent),#0c8a5e);color:#0b0e14;border-color:transparent}
   .mode-btn.danger:hover{border-color:var(--red)}
   .mode-btn.danger.active{background:linear-gradient(135deg,var(--red),#b91c1c);color:#fff}
+  .mode-btn.creative.active{background:linear-gradient(135deg,var(--violet),#6d28d9);color:#fff}
+  .mode-btn.tv.active{background:linear-gradient(135deg,var(--cyan),#0e7490);color:#0b0e14}
   .curmode{font-size:13px;color:var(--muted);text-align:center;margin-top:6px}
   .curmode b{color:var(--accent);text-transform:uppercase;font-family:ui-monospace,monospace}
   table{width:100%;border-collapse:collapse;font-size:13px}
@@ -72,28 +58,43 @@
   .pill.down{background:rgba(239,68,68,.15);color:var(--red)}
   .pill.other{background:rgba(245,158,11,.15);color:var(--accent2)}
   .empty{color:var(--muted);font-style:italic;padding:14px;text-align:center}
-  .toast{
-    position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
-    background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--accent);
-    padding:11px 18px;border-radius:9px;font-size:13px;z-index:50;
-    box-shadow:0 8px 30px rgba(0,0,0,.4);opacity:0;transition:.3s;pointer-events:none;
-  }
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--accent);padding:11px 18px;border-radius:9px;font-size:13px;z-index:50;box-shadow:0 8px 30px rgba(0,0,0,.4);opacity:0;transition:.3s;pointer-events:none}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
   .toast.err{border-left-color:var(--red)}
   .spinner{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;display:inline-block}
   @keyframes sp{to{transform:rotate(360deg)}}
   footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;padding:14px}
   footer a{color:var(--cyan);text-decoration:none}
+  /* Auth gate */
+  .auth-overlay{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100}
+  .auth-box{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:28px 32px;max-width:380px;width:90%}
+  .auth-box h2{margin-bottom:8px;font-size:18px}
+  .auth-box p{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .auth-box input{width:100%;padding:10px 12px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:ui-monospace,monospace;font-size:13px;margin-bottom:12px}
+  .auth-box button{width:100%;padding:11px;border:none;border-radius:8px;background:linear-gradient(135deg,var(--accent),#0c8a5e);color:#0b0e14;font-weight:700;cursor:pointer;font-size:14px}
+  .auth-box button:hover{filter:brightness(1.1)}
+  .auth-err{color:var(--red);font-size:12px;margin-top:8px;min-height:16px}
   @media(max-width:640px){header{flex-direction:column;align-items:flex-start}}
 </style>
 </head>
 <body>
-<div class="wrap">
+<!-- Auth gate (shown if no token) -->
+<div class="auth-overlay" id="authOverlay" style="display:none">
+  <div class="auth-box">
+    <h2>ScarliHQ Login</h2>
+    <p>Enter the SCARLIHQ_TOKEN (from <code>/etc/scarlix/.env</code>):</p>
+    <input type="password" id="tokenInput" placeholder="SCARLIHQ_TOKEN" autofocus>
+    <button id="tokenSubmit">Connect</button>
+    <div class="auth-err" id="authErr"></div>
+  </div>
+</div>
+
+<div class="wrap" id="dashboard" style="display:none">
   <header>
     <div class="brand">
       <div class="logo">S</div>
       <div>
-        <h1>ScarliHQ <span class="ver">v17.9.7</span></h1>
+        <h1>ScarliHQ <span class="ver">v17.9.8</span></h1>
         <div class="ver">SCARLIX OS — Sovereign AI Cloud Dashboard</div>
       </div>
     </div>
@@ -105,8 +106,8 @@
 
   <div class="grid">
     <div class="card">
-      <h2><span class="spinner" id="gspin"></span> GPU Status</h2>
-      <div class="gpu-grid" id="gpus"><div class="empty">Loading GPU data…</div></div>
+      <h2>GPU Status</h2>
+      <div class="gpu-grid" id="gpus"><div class="empty">Waiting for host-status…</div></div>
     </div>
 
     <div class="card">
@@ -114,8 +115,9 @@
       <div class="stat"><span class="k">Mode</span><span class="v" id="sysmode" style="color:var(--accent)">—</span></div>
       <div class="stat"><span class="k">Health</span><span class="v" id="syshealth">—</span></div>
       <div class="stat"><span class="k">Containers</span><span class="v" id="syscont">—</span></div>
-      <div class="stat"><span class="k">API version</span><span class="v" id="sysver">—</span></div>
-      <div class="stat"><span class="k">Dashboard</span><span class="v">ScarliHQ :8090</span></div>
+      <div class="stat"><span class="k">Experimental</span><span class="v" id="sysexp">—</span></div>
+      <div class="stat"><span class="k">/models free</span><span class="v" id="sysdisk">—</span></div>
+      <div class="stat"><span class="k">ScarliHQ</span><span class="v">:8090</span></div>
     </div>
 
     <div class="card">
@@ -124,6 +126,8 @@
         <button class="mode-btn" data-mode="ai">AI</button>
         <button class="mode-btn" data-mode="turbo">Turbo</button>
         <button class="mode-btn" data-mode="offline">Offline</button>
+        <button class="mode-btn creative" data-mode="creative">Creative</button>
+        <button class="mode-btn tv" data-mode="tv">TV</button>
         <button class="mode-btn" data-mode="game">Game</button>
         <button class="mode-btn danger" data-mode="stop">Stop</button>
       </div>
@@ -132,15 +136,15 @@
   </div>
 
   <div class="card">
-    <h2><span class="spinner" id="cspin"></span> Docker Containers</h2>
+    <h2>Docker Containers</h2>
     <table>
       <thead><tr><th>Name</th><th>Status</th><th>Ports</th></tr></thead>
-      <tbody id="contbody"><tr><td colspan="3" class="empty">Loading containers…</td></tr></tbody>
+      <tbody id="contbody"><tr><td colspan="3" class="empty">Waiting for host-status…</td></tr></tbody>
     </table>
   </div>
 
   <footer>
-    SCARLIX OS v17.9.7 — ScarliHQ dashboard · Verified AI path: SGLang + vLLM + BeeLlama + Ollama fallback
+    SCARLIX OS v17.9.8 — ScarliHQ dashboard (host-bridge architecture) · Verified AI path: SGLang + vLLM + BeeLlama + Ollama fallback
   </footer>
 </div>
 <div class="toast" id="toast"></div>
@@ -148,6 +152,8 @@
 <script>
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
+
+let TOKEN = sessionStorage.getItem('scarlihq_token') || new URLSearchParams(location.search).get('token') || '';
 
 function toast(msg, err){
   const t = $('#toast');
@@ -159,7 +165,11 @@ function toast(msg, err){
 
 async function api(path, opts){
   try{
-    const r = await fetch(path, opts||{});
+    const r = await fetch(path, Object.assign({headers:{'Authorization':'Bearer '+TOKEN}}, opts||{}));
+    if(r.status === 401){
+      showAuth('Token rejected — re-enter SCARLIHQ_TOKEN');
+      return null;
+    }
     if(!r.ok) throw new Error('HTTP '+r.status);
     return await r.json();
   }catch(e){
@@ -167,76 +177,98 @@ async function api(path, opts){
   }
 }
 
-async function loadHealth(){
-  const h = await api('/api/health');
-  if(h){
-    $('#syshealth').textContent = h.status || '—';
-    $('#sysver').textContent = h.version || '—';
-  }else{
-    $('#syshealth').textContent = 'API unreachable';
-    $('#syshealth').style.color = 'var(--red)';
-  }
+function showAuth(err){
+  $('#dashboard').style.display = 'none';
+  $('#authOverlay').style.display = 'flex';
+  $('#authErr').textContent = err || '';
+  $('#tokenInput').value = TOKEN;
+  $('#tokenInput').focus();
 }
 
-async function loadMode(){
-  const m = await api('/api/mode');
-  const mode = (m && m.mode) || 'unknown';
+function hideAuth(){
+  $('#authOverlay').style.display = 'none';
+  $('#dashboard').style.display = 'block';
+}
+
+$('#tokenSubmit').addEventListener('click', async ()=>{
+  TOKEN = $('#tokenInput').value.trim();
+  if(!TOKEN){ $('#authErr').textContent = 'Token cannot be empty'; return; }
+  // Verify token
+  const h = await fetch('/api/health', {headers:{'Authorization':'Bearer '+TOKEN}});
+  if(h.ok){
+    sessionStorage.setItem('scarlihq_token', TOKEN);
+    hideAuth();
+    initApp();
+  }else{
+    $('#authErr').textContent = 'Invalid token (HTTP '+(h.status)+')';
+  }
+});
+$('#tokenInput').addEventListener('keydown', e=>{ if(e.key==='Enter') $('#tokenSubmit').click(); });
+
+// Render functions
+function renderStatus(s){
+  if(!s) return;
+  // Clock
+  if(s.timestamp){
+    const t = s.timestamp.includes('T') ? s.timestamp.substr(11,8) : s.timestamp;
+    $('#clock').textContent = t;
+  }
+  // Mode
+  const mode = s.mode || 'unknown';
   $('#sysmode').textContent = mode;
   $('#curmode').textContent = mode;
-  $$('.mode-btn').forEach(b=>{
-    b.classList.toggle('active', b.dataset.mode === mode);
-  });
-}
-
-async function loadGPU(){
-  const gpus = await api('/api/gpu');
+  $$('.mode-btn').forEach(b=> b.classList.toggle('active', b.dataset.mode === mode));
+  // Experimental
+  $('#sysexp').textContent = s.experimental ? 'YES (vLLM)' : 'no';
+  // Disk
+  if(s.disk && s.disk.models_total_mb){
+    const freeGB = (s.disk.models_free_mb/1024).toFixed(1);
+    const totGB = (s.disk.models_total_mb/1024).toFixed(1);
+    $('#sysdisk').textContent = freeGB + '/' + totGB + ' GB';
+  }
+  // Health
+  $('#syshealth').textContent = s.version ? 'OK ('+s.version+')' : '—';
+  $('#syshealth').style.color = s.version ? 'var(--accent)' : 'var(--muted)';
+  // GPUs
   const el = $('#gpus');
-  $('#gspin').style.display = 'none';
-  if(!gpus || !gpus.length){
-    el.innerHTML = '<div class="empty">No NVIDIA GPUs detected (nvidia-smi unavailable in container — check mounts)</div>';
-    return;
+  if(s.gpus && s.gpus.length){
+    el.innerHTML = s.gpus.map(g=>{
+      const memPct = g.mem_total>0 ? Math.round(g.mem_used/g.mem_total*100) : 0;
+      const utilPct = Math.round(g.util||0);
+      return `<div class="gpu-card">
+        <span class="id">GPU ${g.index} · sm_${g.compute_cap}</span>
+        <div class="nm" title="${g.name}">${g.name}</div>
+        <div class="barlabel"><span>VRAM</span><span>${Math.round(g.mem_used)}/${Math.round(g.mem_total)} MiB</span></div>
+        <div class="bar mem"><i style="width:${memPct}%"></i></div>
+        <div class="barlabel"><span>Util</span><span>${utilPct}%</span></div>
+        <div class="bar util"><i style="width:${utilPct}%"></i></div>
+        <div class="barlabel" style="margin-top:6px"><span>${g.temp||0}°C</span><span>${g.power||0} W</span></div>
+      </div>`;
+    }).join('');
+  }else{
+    el.innerHTML = '<div class="empty">No GPUs in host-status (scarlix-host-bridge.timer not running, or no NVIDIA dGPU)</div>';
   }
-  el.innerHTML = gpus.map(g=>{
-    const memPct = g.mem_total>0 ? Math.round(g.mem_used/g.mem_total*100) : 0;
-    const utilPct = Math.round(g.util||0);
-    const memUsed = Math.round(g.mem_used);
-    const memTot = Math.round(g.mem_total);
-    return `<div class="gpu-card">
-      <span class="id">GPU ${g.index}</span>
-      <div class="nm" title="${g.name}">${g.name}</div>
-      <div class="barlabel"><span>VRAM</span><span>${memUsed}/${memTot} MiB</span></div>
-      <div class="bar mem"><i style="width:${memPct}%"></i></div>
-      <div class="barlabel"><span>Util</span><span>${utilPct}%</span></div>
-      <div class="bar util"><i style="width:${utilPct}%"></i></div>
-      <div class="barlabel" style="margin-top:6px"><span>${g.temp||0}°C</span><span>${g.power||0} W</span></div>
-    </div>`;
-  }).join('');
-}
-
-async function loadContainers(){
-  const list = await api('/api/containers');
+  // Containers
   const tb = $('#contbody');
-  $('#cspin').style.display = 'none';
-  if(!list || !list.length){
-    tb.innerHTML = '<tr><td colspan="3" class="empty">No containers (docker API unreachable in container — check socket mount)</td></tr>';
+  if(s.containers && s.containers.length){
+    $('#syscont').textContent = s.containers.length;
+    tb.innerHTML = s.containers.map(c=>{
+      let cls = 'other';
+      if(/Up/i.test(c.status)) cls = 'up';
+      else if(/Exit|Down|Stopped/i.test(c.status)) cls = 'down';
+      return `<tr><td>${c.name||'—'}</td><td><span class="pill ${cls}">${c.status||'—'}</span></td><td style="color:var(--muted);font-size:11px">${c.ports||'—'}</td></tr>`;
+    }).join('');
+  }else{
+    tb.innerHTML = '<tr><td colspan="3" class="empty">No containers (or host-bridge not running)</td></tr>';
     $('#syscont').textContent = '0';
-    return;
   }
-  $('#syscont').textContent = list.length;
-  tb.innerHTML = list.map(c=>{
-    let cls = 'other', txt = c.status||'—';
-    if(/Up/i.test(c.status)) cls = 'up';
-    else if(/Exit|Down|Stopped/i.test(c.status)) cls = 'down';
-    return `<tr><td>${c.name||'—'}</td><td><span class="pill ${cls}">${txt}</span></td><td style="color:var(--muted);font-size:11px">${c.ports||'—'}</td></tr>`;
-  }).join('');
 }
 
 async function setMode(mode){
-  toast('Switching to '+mode+'…');
+  toast('Requesting mode → '+mode+'…');
   const r = await api('/api/mode?set='+encodeURIComponent(mode), {method:'POST'});
-  if(r && r.status === 'ok'){
-    toast('Mode → '+mode);
-    await loadMode();
+  if(r && (r.status === 'accepted' || r.status === 'ok')){
+    toast('Mode '+mode+' requested (host bridge applies within 5s)');
   }else{
     toast('Mode switch failed: '+(r&&r.message||'API error'), true);
   }
@@ -246,50 +278,68 @@ $$('.mode-btn').forEach(b=>{
   b.addEventListener('click', ()=> setMode(b.dataset.mode));
 });
 
-// WebSocket for live clock + connectivity
+// WebSocket — pushes full host-status every 2s
+let ws = null;
 function connectWS(){
   try{
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(proto+'://'+location.host+'/ws');
+    ws = new WebSocket(proto+'://'+location.host+'/ws?token='+encodeURIComponent(TOKEN));
     ws.onopen = ()=>{
       $('#wsdot').className = 'ws-dot live';
       $('#wsstate').textContent = 'live';
     };
     ws.onmessage = (ev)=>{
       try{
-        const m = JSON.parse(ev.data);
-        if(m.type === 'status' && m.time){
-          $('#clock').textContent = m.time;
-        }
+        const s = JSON.parse(ev.data);
+        if(s.timestamp){ renderStatus(s); }
       }catch(e){}
     };
     ws.onclose = ()=>{
       $('#wsdot').className = 'ws-dot dead';
       $('#wsstate').textContent = 'reconnecting…';
-      setTimeout(connectWS, 3000);
+      setTimeout(()=>{ if(TOKEN) connectWS(); }, 3000);
     };
-    ws.onerror = ()=>{ ws.close(); };
+    ws.onerror = ()=>{ try{ws.close();}catch(e){} };
   }catch(e){
     $('#wsdot').className = 'ws-dot dead';
     $('#wsstate').textContent = 'unavailable';
   }
 }
 
-// Fallback clock if WS unavailable
+// Fallback clock (if WS not connected)
 setInterval(()=>{
   if($('#wsstate').textContent !== 'live'){
-    const d = new Date();
-    $('#clock').textContent = d.toTimeString().slice(0,8);
+    $('#clock').textContent = new Date().toTimeString().slice(0,8);
   }
 }, 1000);
 
-async function refreshAll(){
-  await Promise.all([loadHealth(), loadMode(), loadGPU(), loadContainers()]);
+// REST polling fallback (every 5s — in case WS fails)
+async function pollStatus(){
+  const s = await api('/api/status');
+  if(s) renderStatus(s);
 }
 
-connectWS();
-refreshAll();
-setInterval(refreshAll, 5000);
+function initApp(){
+  // Verify token works, then start WS + polling
+  fetch('/api/health', {headers:{'Authorization':'Bearer '+TOKEN}}).then(r=>{
+    if(!r.ok){ showAuth('Token rejected'); return; }
+    connectWS();
+    pollStatus();
+    setInterval(pollStatus, 5000);
+  }).catch(()=>{
+    // Backend down — show dashboard anyway (will show stale/empty data)
+    hideAuth();
+    connectWS();
+  });
+}
+
+// Boot: if token in URL/session, verify + init; else show auth gate
+if(TOKEN){
+  hideAuth();
+  initApp();
+}else{
+  showAuth();
+}
 </script>
 </body>
 </html>

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.7 — Self-Diagnostic (scarlix-doctor)
-# v17.9.7: http_ok helper (curl || wget fallback), version unified
+# SCARLIX OS v17.9.8 — Self-Diagnostic (scarlix-doctor)
+# v17.9.8: http_ok() with -k/--no-check-certificate fallback; host-bridge check; version unified
 # v17.9.2: unhealthy = FAIL (not PASS), --fix mode, API healthcheck, docker group check
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -14,13 +14,13 @@ pass() { echo -e "  ${GREEN}✓ PASS${NC} $1"; PASS=$((PASS+1)); }
 fail() { echo -e "  ${RED}✗ FAIL${NC} $1"; FAIL=$((FAIL+1)); }
 warn() { echo -e "  ${YELLOW}⚠ WARN${NC} $1"; WARN=$((WARN+1)); }
 
-# P1 v17.9.7: HTTP check with curl/wget fallback (minimal EOS may lack curl in some states)
+# P1 v17.9.8: HTTP check with curl -k → wget --no-check-certificate fallback (self-signed proxy safe)
 http_ok() {
   local url="$1"
   if command -v curl >/dev/null 2>&1; then
-    curl -sf "$url" >/dev/null 2>&1
+    curl -sfk "$url" >/dev/null 2>&1
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO- "$url" >/dev/null 2>&1
+    wget -qO- --no-check-certificate "$url" >/dev/null 2>&1
   else
     return 127  # no http tool
   fi
@@ -34,7 +34,7 @@ fix() {
 }
 
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║  SCARLIX OS v17.9.7 — System Diagnostic                      ║${NC}"
+echo -e "${CYAN}║  SCARLIX OS v17.9.8 — System Diagnostic                      ║${NC}"
 [ "$FIX_MODE" -eq 1 ] && echo -e "${CYAN}║  (--fix mode: will attempt automatic fixes)                  ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
@@ -122,16 +122,71 @@ echo ""
 echo "=== Environment ==="
 ENV_FILE="/opt/scarlix/.env"
 if [ -f "$ENV_FILE" ]; then
-  pass ".env exists"
+  pass ".env exists (/opt/scarlix/.env — model paths)"
   [ -r "$ENV_FILE" ] && pass ".env readable" || fail ".env not readable"
 else
   fail ".env not found"
-  fix "generate .env" "printf 'SGLANG_MODEL_PATH=/models/Qwen3-14B-AWQ\nVLLM_MODEL_PATH=/models/Qwen3-14B-AWQ\nLLAMACPP_MODEL_PATH=/models/Qwen3-14B-Q4_K_M.gguf\n' > /opt/scarlix/.env && chmod 664 /opt/scarlix/.env"
+  fix "generate .env" "printf 'SGLANG_MODEL_PATH=/models/Qwen3-14B-AWQ\nVLLM_MODEL_PATH=/models/Qwen3-14B-AWQ\nLLAMACPP_MODEL_PATH=/models/Qwen3-14B-Q4_K_M.gguf\n' > /opt/scarlix/.env && chmod 660 /opt/scarlix/.env"
+fi
+# v17.9.8: /etc/scarlix/.env (secrets + SCARLIHQ_TOKEN)
+SECRETS_ENV="/etc/scarlix/.env"
+if [ -f "$SECRETS_ENV" ]; then
+  pass "/etc/scarlix/.env exists (secrets + SCARLIHQ_TOKEN)"
+  if grep -q "^SCARLIHQ_TOKEN=" "$SECRETS_ENV" 2>/dev/null; then
+    pass "SCARLIHQ_TOKEN present (dashboard auth)"
+  else
+    fail "SCARLIHQ_TOKEN missing — dashboard will reject all API requests"
+    fix "add SCARLIHQ_TOKEN" "echo \"SCARLIHQ_TOKEN=$(openssl rand -hex 32)\" >> /etc/scarlix/.env"
+  fi
+else
+  fail "/etc/scarlix/.env not found (run generate-env.sh)"
+fi
+
+# === Host Bridge (v17.9.8) ===
+echo ""
+echo "=== Host Bridge (ScarliHQ dashboard backend) ==="
+if systemctl is-active scarlix-host-bridge.timer >/dev/null 2>&1; then
+  pass "scarlix-host-bridge.timer active"
+else
+  fail "scarlix-host-bridge.timer NOT active (dashboard will show stale/empty data)"
+  fix "enable host-bridge timer" "systemctl enable --now scarlix-host-bridge.timer"
+fi
+if [ -f /var/lib/scarlix/host-status.json ]; then
+  STATUS_AGE=$(( $(date +%s) - $(stat -c %Y /var/lib/scarlix/host-status.json 2>/dev/null || echo 0) ))
+  if [ "$STATUS_AGE" -lt 30 ]; then
+    pass "host-status.json fresh (${STATUS_AGE}s old)"
+  else
+    warn "host-status.json stale (${STATUS_AGE}s old — timer may have stopped)"
+  fi
+else
+  warn "host-status.json not found (first run may take 10s after timer start)"
+fi
+
+# === ScarliHQ Dashboard ===
+echo ""
+echo "=== ScarliHQ Dashboard ==="
+SCARLIHQ_STATUS=$(docker inspect -f '{{.State.Status}}' scarlihq 2>/dev/null || echo "not_found")
+if [ "$SCARLIHQ_STATUS" = "running" ]; then
+  pass "scarlihq container: running"
+  # Check if SCARLIHQ_TOKEN is set in the container env
+  if docker inspect scarlihq 2>/dev/null | grep -q "SCARLIHQ_TOKEN"; then
+    pass "SCARLIHQ_TOKEN configured in container"
+  else
+    fail "SCARLIHQ_TOKEN NOT in container env — API will return 503"
+  fi
+  # API health (needs token — we just check if port responds)
+  if http_ok http://127.0.0.1:8090/api/health; then
+    pass "ScarliHQ :8090 responding (will need token for /api/*)"
+  else
+    warn "ScarliHQ :8090 not responding (may still be starting)"
+  fi
+else
+  warn "scarlihq container: $SCARLIHQ_STATUS (dashboard optional — run: docker compose -f /opt/scarlix/scarlihq/docker-compose.yml up -d)"
 fi
 
 # === Containers + API Health ===
 echo ""
-echo "=== Containers + API Health ==="
+echo "=== AI Containers + API Health ==="
 for c in sglang vllm beellama ollama-agent; do
   STATUS=$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo "not_found")
   if [ "$STATUS" = "not_found" ]; then

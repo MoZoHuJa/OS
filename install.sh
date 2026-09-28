@@ -2,46 +2,42 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v17.9.7 — Bootstrap Installer (Reliability + Real Dashboard)
+# SCARLIX OS v17.9.8 — Bootstrap Installer (Host-Bridge Architecture)
 # ============================================================================
 #
-# v17.9.7 FIXES (vs v17.9.6):
-#   P0: ScarliHQ image tag unified (localhost/scarlihq:v12 → scarlihq:latest)
-#   P0: ScarliHQ Dockerfile reordered (go.sum no longer overwritten → build OK)
-#   P0: ScarliHQ runtime = debian:stable-slim + nvidia-smi/docker-cli mounts (was distroless → APIs empty)
-#   P0: git tag v17.9.7 created+pushed (README checkout worked only with existing tag)
-#   P1: multilib pre-check before Steam/Wine/lib32-* (clean EOS may lack [multilib])
-#   P1: docker network disconnect loop before rm scarlix_net (active endpoints)
-#   P1: yq functional verification after Phase 1 (fail-hard if broken)
-#   P1: disk-space check before starter model download in Phase 5
-#   P1: /models chmod 750 (was 775 — tighter, containers read as root via :ro)
-#   P1: SGLang --disable-flashinfer (Blackwell sm_120 — see ai/sglang compose)
+# v17.9.8 FIXES (vs v17.9.7) — ScarliHQ privilege boundary + reliability:
+#   P0: ScarliHQ host-bridge architecture — NO docker.sock, NO scarlix-mode mount,
+#       NO nvidia runtime. Dashboard reads host-status.json, writes desired-mode.
+#       Host-side scarlix-host-bridge.timer (5s) does privileged ops as root.
+#   P0: Dockerfile build order fixed (COPY go.mod → mod download → COPY . . → build)
+#   P0: go.mod cleaned (9 unused heavy deps removed — was 400MB go mod download)
+#   P0: API authentication (SCARLIHQ_TOKEN) on all /api/* + /ws
+#   P0: Mode API/CLI/UI unified (ai/stop/game/creative/turbo/offline/tv — was missing 3)
+#   P0: Go/MCP version 12.0 → 17.9.8 (was hardcoded "v12.0")
+#   P0: profiles YAML actually parsed (yaml.Unmarshal — was filename-as-name)
+#   P0: MCP = real JSON-RPC 2.0 (was fake static JSON claiming "mcp/v1")
+#   P1: crit() aborts immediately (was: set flag + continue → cascading errors)
+#   P1: Phase 1 system-update + package-install = crit (was fail → bad checkpoint)
+#   P1: multilib: scoped awk (was aggressive sed) + pacman -Sy after enable
+#   P1: WebSocket origin check + real status push (was open + clock-only)
+#   P1: Current() TrimSpace (was returning "ai\n" → comparison failed)
+#   P1: download-models: missing compose = FAILED; missing SGLang hf_repo = FAIL
+#   P1: model-manager: Ollama via docker exec (was host binary — never found)
+#   P1: scarlix-doctor http_ok() with -k/--no-check-certificate fallback
+#   P2: ScarliHQ runtime alpine ~20MB (was nvidia/cuda+docker.io ~2.5GB)
+#   P2: .env permissions 600 (was 664 — secrets readable by group)
+#   P2: CI adds go test/vet/build + docker build ScarliHQ
 #
-# v17.9.5/6 fixes preserved:
-#   P0-2: download-models.sh path → /usr/local/bin/ (was /etc/systemd/system/)
-#   P0-5: scarlix-net created EARLY (before any compose up)
-#   P1-6: Checkpoint includes linux kernel version (not just nvidia-open)
-#   P1-7: Model existence check before compose up
-#   P1-8: Wait for Ollama API before starter model pull
-#   Q1a: Phase 5 does NOT start AI — user runs `scarlix-mode ai` after model download
-#   Q2a: Compose uses env vars (${SGLANG_MODEL_PATH}) — models.yaml is single source of truth
-#   Q3a: Wizard creates .experimental if 2+ GPU — vLLM starts without --profile gate
-#   Q4a: SGLang cu128 image (Blackwell support) + --disable-flashinfer
-#   Q5a: nvidia-container-toolkit fail → crit (Docker can't see GPU without it)
-#   Q6a: scarlihq/ copied in Phase 4; first-boot.sh + scarlix-first-boot.service REMOVED
-#   Q7a: Starter model (qwen2.5:3b) auto-downloaded — Ollama fallback works
-#   Q8a: laya/freetoken compose fixed; ISO profile removed entirely
-#   Q9a: Checkpoint stores nvidia-open version — re-runs Phase 2 on driver update
-#   Q10a: All file copy failures → crit; scarlix-mode ai always healthchecks
+# v17.9.5–7 fixes preserved (see git history for details).
 #
 # USAGE (primary — safe):
 #   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
-#   git checkout v17.9.7   # ALWAYS checkout specific tag (main may be ahead)
+#   git checkout v17.9.8   # ALWAYS checkout specific tag (main may be ahead)
 #   bash install.sh
 # ============================================================================
 
-VERSION="17.9.7"
+VERSION="17.9.8"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -56,7 +52,17 @@ mkdir -p "$LOG_DIR" "$CHECKPOINT_DIR"
 log()   { echo -e "[$(date '+%H:%M:%S')] $1" | tee -a "$LOG_FILE"; }
 ok()     { echo -e "${GREEN}  ✓${NC} $1" | tee -a "$LOG_FILE"; SUCCESS_COUNT=$((SUCCESS_COUNT+1)); }
 fail()   { echo -e "${RED}  ✗${NC} $1" | tee -a "$LOG_FILE"; FAIL_COUNT=$((FAIL_COUNT+1)); }
-crit()   { echo -e "${RED}  ✗ CRITICAL: $1${NC}" | tee -a "$LOG_FILE"; FAIL_COUNT=$((FAIL_COUNT+1)); CRITICAL_FAIL=1; }
+# v17.9.8 P1: crit() aborts immediately (was: set flag + continue → cascading secondary errors)
+crit()   {
+  echo -e "${RED}  ✗ CRITICAL: $1${NC}" | tee -a "$LOG_FILE"
+  FAIL_COUNT=$((FAIL_COUNT+1))
+  CRITICAL_FAIL=1
+  echo -e "${RED}╔══════════════════════════════════════════════════════════════╗${NC}" | tee -a "$LOG_FILE"
+  echo -e "${RED}║  CRITICAL FAILURE — install aborted. Fix the error above       ║${NC}" | tee -a "$LOG_FILE"
+  echo -e "${RED}║  and re-run: bash install.sh                                    ║${NC}" | tee -a "$LOG_FILE"
+  echo -e "${RED}╚══════════════════════════════════════════════════════════════╝${NC}" | tee -a "$LOG_FILE"
+  exit 1
+}
 info()   { echo -e "${CYAN}  ℹ${NC} $1" | tee -a "$LOG_FILE"; }
 warn()   { echo -e "${YELLOW}  ⚠${NC} $1" | tee -a "$LOG_FILE"; }
 
@@ -176,27 +182,47 @@ if is_checkpoint_valid phase1; then
   info "Phase 1 checkpoint valid — skipping."
 else
   log "Updating system..."
-  pacman -Syu --noconfirm >> "$LOG_FILE" 2>&1 && ok "System updated" || fail "System update"
+  # v17.9.8 P1: system update + package install = crit (was fail → checkpoint written despite broken state)
+  pacman -Syu --noconfirm >> "$LOG_FILE" 2>&1 && ok "System updated" || crit "System update failed (fix pacman conflicts, re-run)"
 
   log "Installing SCARLIX packages..."
-  # P1 v17.9.7: Ensure [multilib] is enabled BEFORE installing steam/wine/lib32-*
+  # P1 v17.9.8: Ensure [multilib] is enabled BEFORE installing steam/wine/lib32-*
   # (clean EndeavourOS may have multilib commented out → lib32-nvidia-utils install fails)
+  # v17.9.8 FIX: scoped awk (was aggressive sed that uncommented EVERY Include line in pacman.conf)
+  #           + explicit pacman -Sy after enable (without it: "target not found" for lib32-*)
   log "Ensuring [multilib] repository is enabled..."
-  if ! grep -q '^\[multilib\]' /etc/pacman.conf 2>/dev/null; then
-    if grep -q '^#\s*\[multilib\]' /etc/pacman.conf 2>/dev/null; then
-      sed -i 's|^#\s*\[multilib\]|[multilib]|; s|^#\s*Include\s*=/etc/pacman.d/mirrorlist|Include = /etc/pacman.d/mirrorlist|' /etc/pacman.conf
-      pacman -Sy >> "$LOG_FILE" 2>&1 && ok "[multilib] enabled" || fail "Enable [multilib]"
+  MULTILIB_OK=false
+  if grep -q '^\[multilib\]' /etc/pacman.conf 2>/dev/null; then
+    ok "[multilib] already enabled"
+    MULTILIB_OK=true
+  elif grep -Eq '^#\s*\[multilib\]' /etc/pacman.conf 2>/dev/null; then
+    # Scoped: uncomment ONLY the [multilib] header + its Include line (the 2 lines in that section)
+    awk '
+      /^#[[:space:]]*\[multilib\][[:space:]]*$/ { sub(/^#[[:space:]]*/,""); print; in_ml=1; next }
+      in_ml && /^#[[:space:]]*Include[[:space:]]*=/ { sub(/^#[[:space:]]*/,""); print; in_ml=0; next }
+      in_ml && /^\[/ { in_ml=0; print; next }
+      { print }
+    ' /etc/pacman.conf > /tmp/pacman.conf.ml && mv /tmp/pacman.conf.ml /etc/pacman.conf
+    if grep -q '^\[multilib\]' /etc/pacman.conf 2>/dev/null; then
+      pacman -Sy >> "$LOG_FILE" 2>&1 && ok "[multilib] enabled + db synced" || fail "Enable [multilib]"
+      MULTILIB_OK=true
     else
-      # Append multilib section if not present at all
-      printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
-      pacman -Sy >> "$LOG_FILE" 2>&1 && ok "[multilib] added + enabled" || fail "Add [multilib]"
+      fail "[multilib] enable (awk)"
     fi
   else
-    ok "[multilib] already enabled"
+    # Append multilib section if not present at all
+    printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+    pacman -Sy >> "$LOG_FILE" 2>&1 && ok "[multilib] added + db synced" || fail "Add [multilib]"
+    MULTILIB_OK=true
+  fi
+  # Hard-fail if multilib still not active (Steam/Wine/lib32-* will break otherwise)
+  if [ "$MULTILIB_OK" = false ]; then
+    crit "[multilib] could not be enabled — Steam/Wine/lib32-* will fail to install"
   fi
 
   PKGS=$(grep -vE '^\s*#|^\s*$' "$REPO_DIR/packages.x86_64" | grep -v '^yay$' | grep -v '^calamares$' || true)
-  [ -n "$PKGS" ] && pacman -S --noconfirm --needed $PKGS >> "$LOG_FILE" 2>&1 && ok "Packages installed" || fail "Package install"
+  # v17.9.8 P1: package install = crit (was fail → checkpoint written despite missing yq/docker/etc.)
+  [ -n "$PKGS" ] && pacman -S --noconfirm --needed $PKGS >> "$LOG_FILE" 2>&1 && ok "Packages installed" || crit "Package install failed (check /var/log/scarlix/install.log)"
 
   mkdir -p /opt/scarlix /var/lib/scarlix /etc/scarlix/{profiles,secrets}
   mkdir -p /models /var/lib/docker /var/lib/scarlix/ollama /mnt/{files,games,photos,backup/restic}
@@ -411,8 +437,9 @@ if is_checkpoint_valid phase4; then
   info "Phase 4 checkpoint valid — skipping."
 else
   # Q10a: ALL file copy failures are crit (scarlix-mode, scarlix-wizard = core)
+  # v17.9.8: added scarlix-host-bridge (privileged ops for ScarliHQ dashboard)
   log "Installing SCARLIX scripts (CRITICAL)..."
-  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor; do
+  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge; do
     src="$REPO_DIR/files/usr/local/bin/$binfile"
     if [ -f "$src" ]; then
       cp "$src" "/usr/local/bin/$binfile" && chmod 755 "/usr/local/bin/$binfile" && ok "/usr/local/bin/$binfile" || crit "$binfile copy failed"
@@ -421,9 +448,9 @@ else
     fi
   done
 
-  # Systemd services (model-manager only — first-boot removed Q6a)
+  # Systemd services (model-manager + host-bridge — first-boot removed Q6a)
   log "Installing systemd services..."
-  for f in model-manager.service model-manager.timer generate-env.sh; do
+  for f in model-manager.service model-manager.timer generate-env.sh scarlix-host-bridge.service scarlix-host-bridge.timer; do
     src="$REPO_DIR/files/etc/systemd/system/$f"
     if [ -f "$src" ]; then
       cp "$src" "/etc/systemd/system/$f"
@@ -433,6 +460,15 @@ else
       crit "$f not found"
     fi
   done
+
+  # v17.9.8: Copy VERSION file to /etc/scarlix/ + /usr/local/share/scarlix/
+  # (host-bridge reads it for host-status.json "scarlix_version" field)
+  if [ -f "$REPO_DIR/VERSION" ]; then
+    cp "$REPO_DIR/VERSION" /etc/scarlix/VERSION 2>/dev/null || true
+    mkdir -p /usr/local/share/scarlix
+    cp "$REPO_DIR/VERSION" /usr/local/share/scarlix/VERSION 2>/dev/null || true
+    ok "VERSION file installed ($(cat "$REPO_DIR/VERSION"))"
+  fi
 
   # Pacman hooks
   log "Installing pacman hooks..."
@@ -508,21 +544,46 @@ else
     systemctl enable model-manager.timer >> "$LOG_FILE" 2>&1 && ok "model-manager.timer enabled" || fail "model-manager.timer"
   fi
 
-  # P1-6 v17.9.7: Build + start ScarliHQ dashboard (real frontend, debian runtime)
+  # v17.9.8: Enable host-bridge timer (writes host-status.json every 5s for ScarliHQ)
+  if [ -f /etc/systemd/system/scarlix-host-bridge.timer ]; then
+    systemctl enable --now scarlix-host-bridge.timer >> "$LOG_FILE" 2>&1 && ok "scarlix-host-bridge.timer enabled + started" || fail "host-bridge.timer"
+    # Create bridge dir (ScarliHQ writes desired-mode here)
+    mkdir -p /var/lib/scarlix/bridge
+    chmod 755 /var/lib/scarlix/bridge
+  fi
+
+  # v17.9.8: Generate /etc/scarlix/.env (secrets + SCARLIHQ_TOKEN) if not already
+  if [ ! -f /etc/scarlix/.env ] && [ -f /etc/systemd/system/generate-env.sh ]; then
+    log "Generating /etc/scarlix/.env (secrets + SCARLIHQ_TOKEN)..."
+    /etc/systemd/system/generate-env.sh >> "$LOG_FILE" 2>&1 && ok ".env generated" || warn ".env generation (non-critical)"
+  fi
+
+  # P1 v17.9.8: Build + start ScarliHQ dashboard (alpine image — NO nvidia needed, builds pre-reboot)
+  # Architecture: ScarliHQ reads host-status.json (written by host-bridge timer), writes desired-mode.
+  # No docker.sock, no scarlix-mode mount, no nvidia runtime → minimal privilege.
   if [ -f /opt/scarlix/scarlihq/Dockerfile ]; then
-    log "Building ScarliHQ dashboard image (scarlihq:latest)..."
-    mkdir -p /var/lib/scarlix/comfyui/{models,output} 2>/dev/null || true
-    # P0 v17.9.7: tag MUST match compose `image: scarlihq:latest` (was mismatched localhost/scarlihq:v12)
+    log "Building ScarliHQ dashboard image (scarlihq:latest, alpine)..."
+    # v17.9.8: source SCARLIHQ_TOKEN from /etc/scarlix/.env so compose can substitute it
+    if [ -f /etc/scarlix/.env ]; then
+      set -a; source /etc/scarlix/.env 2>/dev/null || true; set +a
+    fi
+    # Export for compose (compose reads ${SCARLIHQ_TOKEN} from environment)
+    export SCARLIHQ_TOKEN="${SCARLIHQ_TOKEN:-}"
     if docker build -t scarlihq:latest /opt/scarlix/scarlihq/ >> "$LOG_FILE" 2>&1; then
-      ok "ScarliHQ image built (scarlihq:latest)"
+      ok "ScarliHQ image built (scarlihq:latest, alpine ~20MB)"
       # Start dashboard on :8090 (compose references scarlihq:latest — matches build tag)
-      if docker compose -f /opt/scarlix/scarlihq/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
+      if docker compose --env-file /etc/scarlix/.env -f /opt/scarlix/scarlihq/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
         ok "ScarliHQ dashboard started on :8090"
+        if [ -n "$SCARLIHQ_TOKEN" ]; then
+          info "  Dashboard login token: $SCARLIHQ_TOKEN"
+          info "  Open: http://<this-ip>:8090/?token=$SCARLIHQ_TOKEN"
+        fi
       else
-        warn "ScarliHQ dashboard start failed (non-critical — run 'docker compose -f /opt/scarlix/scarlihq/docker-compose.yml up -d' later)"
+        warn "ScarliHQ dashboard start failed (non-critical — run 'docker compose --env-file /etc/scarlix/.env -f /opt/scarlix/scarlihq/docker-compose.yml up -d' later)"
       fi
     else
       warn "ScarliHQ build failed (non-critical — dashboard optional. Check /var/log/scarlix/install.log)"
+      warn "  Common cause: no internet for Go module download, or Go syntax error"
     fi
   else
     warn "ScarliHQ Dockerfile not found — dashboard not built"

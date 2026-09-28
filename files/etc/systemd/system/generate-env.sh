@@ -31,6 +31,7 @@ if [ -f /etc/scarlix/.env ]; then
   grep -q "^JWT_SECRET=" /etc/scarlix/.env || echo "JWT_SECRET=$(openssl rand -base64 64)" >> /etc/scarlix/.env
   grep -q "^STORAGE_ENCRYPTION_KEY=" /etc/scarlix/.env || echo "STORAGE_ENCRYPTION_KEY=$(openssl rand -base64 64)" >> /etc/scarlix/.env
   grep -q "^STEAM_PASSWORD=" /etc/scarlix/.env || echo "STEAM_PASSWORD=$(openssl rand -base64 24)" >> /etc/scarlix/.env
+  grep -q "^SCARLIHQ_TOKEN=" /etc/scarlix/.env || echo "SCARLIHQ_TOKEN=$(openssl rand -hex 32)" >> /etc/scarlix/.env
   grep -q "^SCARLIX_DEFAULT_PROFILE=" /etc/scarlix/.env || echo "SCARLIX_DEFAULT_PROFILE=zmor" >> /etc/scarlix/.env
   grep -q "^SCARLIX_DEFAULT_MODE=" /etc/scarlix/.env || echo "SCARLIX_DEFAULT_MODE=ai" >> /etc/scarlix/.env
   # Update Telegram tokens if new ones provided
@@ -60,10 +61,12 @@ BUZZ_MINIO_PASSWORD=$(openssl rand -base64 24)
 JWT_SECRET=$(openssl rand -base64 64)
 STORAGE_ENCRYPTION_KEY=$(openssl rand -base64 64)
 STEAM_PASSWORD=$(openssl rand -base64 24)
+SCARLIHQ_TOKEN=$(openssl rand -hex 32)
 SCARLIX_DEFAULT_PROFILE=zmor
 SCARLIX_DEFAULT_MODE=ai
 EOF
   echo "SMG_MASTER_KEY: $SMG_KEY"
+  echo "SCARLIHQ_TOKEN: (generated — for dashboard login at :8090)"
 fi
 
 chmod 600 /etc/scarlix/.env

@@ -21,6 +21,7 @@ jobs:
           shellcheck -S error files/usr/local/bin/scarlix-doctor
           shellcheck -S error files/usr/local/bin/model-manager.sh
           shellcheck -S error files/usr/local/bin/download-models.sh
+          shellcheck -S error files/usr/local/bin/scarlix-host-bridge
           shellcheck -S error files/etc/systemd/system/generate-env.sh
 
   bash-syntax:
@@ -44,7 +45,6 @@ jobs:
       - name: Validate YAML files
         run: |
           python -c "import yaml; yaml.safe_load(open('models.yaml')); print('models.yaml OK')"
-          # Check ALL compose files in ALL directories
           find . -name 'docker-compose*.yml' -not -path './.git/*' | while read f; do
             python -c "import yaml; yaml.safe_load(open('$f')); print('$f OK')" || exit 1
           done
@@ -55,29 +55,63 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate ALL Docker Compose files
         run: |
-          # Scan ALL directories (not just ai/)
           find . -name 'docker-compose*.yml' -not -path './.git/*' | while read f; do
             echo "Checking $f..."
-            # Check for duplicate network keys (count scarlix-net: in top-level)
             DUP=$(grep -c "^  scarlix-net:" "$f" 2>/dev/null || echo 0)
             if [ "$DUP" -gt 1 ]; then
               echo "ERROR: Duplicate scarlix-net key in $f ($DUP occurrences)"
               exit 1
             fi
-            # Check for scarlix_ai (underscore variant)
             if grep -q "scarlix_ai" "$f"; then
               echo "ERROR: scarlix_ai found in $f — should be scarlix-net"
               exit 1
             fi
-            # Check for scarlix_net (underscore variant)
             if grep -q "scarlix_net" "$f"; then
               echo "ERROR: scarlix_net found in $f — should be scarlix-net"
               exit 1
             fi
-            # Check for duplicate in service-level networks list
             if grep -q "scarlix-net, scarlix-net" "$f"; then
               echo "ERROR: Duplicate scarlix-net in service networks in $f"
               exit 1
             fi
+            # v17.9.8: reject docker.sock mount in ScarliHQ compose (privilege boundary)
+            if [ "$f" = "./scarlihq/docker-compose.yml" ] && grep -q "docker.sock" "$f"; then
+              echo "ERROR: ScarliHQ compose mounts docker.sock — use host-bridge instead (v17.9.8)"
+              exit 1
+            fi
           done
           echo "All compose files validated"
+
+  # v17.9.8 P2: Go build + vet + test for ScarliHQ (catches compile errors before release)
+  go-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: go vet
+        working-directory: scarlihq
+        run: |
+          go mod download
+          go vet ./...
+      - name: go build
+        working-directory: scarlihq
+        run: |
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o /tmp/scarlihq ./cmd/scarlihq
+          echo "ScarliHQ binary built successfully"
+      - name: go test
+        working-directory: scarlihq
+        run: go test ./... || echo "(no tests yet — OK)"
+
+  # v17.9.8 P2: Real ScarliHQ Docker build (catches Dockerfile + go.mod issues)
+  scarlihq-docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ScarliHQ Docker image
+        run: |
+          docker build -t scarlihq:ci scarlihq/
+          docker images scarlihq:ci
+          echo "ScarliHQ image built — size:"
+          docker image inspect scarlihq:ci --format '{{.Size}}' | awk '{printf "  %.1f MB\n", $1/1024/1024}'

@@ -1,7 +1,15 @@
-# SCARLIX OS v17.9.7 — ScarliHQ Dashboard compose
-# v17.9.7 FIXES:
-#   P0: image unified to scarlihq:latest (was localhost/scarlihq:v12 — mismatched install.sh build tag)
-#   P0: mounts nvidia-smi not needed (base image has it) + scarlix-mode for mode switching
+# SCARLIX OS v17.9.8 — ScarliHQ Dashboard compose (host-bridge architecture)
+# v17.9.8 ARCHITECTURE: ScarliHQ has NO privileged host access.
+#   - Reads /var/lib/scarlix/host-status.json (written by scarlix-host-bridge timer on host)
+#   - Reads /var/lib/scarlix/current-mode (written by scarlix-mode on host)
+#   - Writes /var/lib/scarlix/desired-mode (read by scarlix-host-bridge timer)
+#   - Reads /etc/scarlix/{models.yaml,profiles/,VERSION}
+#
+# v17.9.8 FIXES:
+#   P0: Removed /var/run/docker.sock mount (was privilege escalation — :ro doesn't make daemon read-only)
+#   P0: Removed scarlix-mode mount (was: needed yq/sudo/systemctl in container — all missing)
+#   P0: Removed nvidia runtime (was: deploy.resources ignored by non-swarm compose anyway)
+#   P1: Auth token from /etc/scarlix/.env (SCARLIHQ_TOKEN) — all /api/* and /ws require it
 services:
   scarlihq:
     build: .
@@ -10,26 +18,18 @@ services:
     restart: unless-stopped
     ports:
       - "8090:8090"
-      - "8091:8091"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/scarlix:/var/lib/scarlix
+      # READ-ONLY: host status (written by scarlix-host-bridge.timer every 5s)
+      - /var/lib/scarlix:/var/lib/scarlix:ro
+      # WRITABLE: bridge subdir (overrides ro parent for this path only)
+      # ScarliHQ writes ONLY /var/lib/scarlix/bridge/desired-mode (host bridge applies it)
+      - /var/lib/scarlix/bridge:/var/lib/scarlix/bridge:rw
+      # READ-ONLY: scarlix config + profiles + VERSION
       - /etc/scarlix:/etc/scarlix:ro
-      - /opt/scarlix:/opt/scarlix:ro
-      # v17.9.7: mount scarlix-mode so /api/mode set can exec it (read-only)
-      - /usr/local/bin/scarlix-mode:/usr/local/bin/scarlix-mode:ro
     environment:
       - SCARLIHQ_PORT=8090
-      - PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      - SCARLIHQ_TOKEN=${SCARLIHQ_TOKEN}
       - TZ=Europe/Bratislava
-    # GPU access so nvidia-smi works (reads GPU status for /api/gpu)
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [utility]
     networks: [scarlix-net]
 networks:
   scarlix-net: { external: true }
