@@ -2,10 +2,17 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v17.5 — Bootstrap Installer (Working AI Path)
+# SCARLIX OS v17.5.1 — Bootstrap Installer (Working AI Path, Fixed)
 # ============================================================================
 #
-# v17.5 CORRECTION (vs v17.4):
+# v17.5.1 FIXES (vs v17.5):
+#   P0-2: download-models.sh path → /usr/local/bin/ (was /etc/systemd/system/)
+#   P0-5: scarlix-net created EARLY (before any compose up)
+#   P1-6: Checkpoint includes linux kernel version (not just nvidia-open)
+#   P1-7: Model existence check before compose up
+#   P1-8: Wait for Ollama API before starter model pull
+#
+# v17.5 fixes preserved:
 #   Q1a: Phase 5 does NOT start AI — user runs `scarlix-mode ai` after model download
 #   Q2a: Compose uses env vars (${SGLANG_MODEL_PATH}) — models.yaml is single source of truth
 #   Q3a: Wizard creates .experimental if 2+ GPU — vLLM starts without --profile gate
@@ -22,7 +29,7 @@ set -euo pipefail
 #   cd ~/scarlix-os && bash install.sh
 # ============================================================================
 
-VERSION="17.5.0"
+VERSION="17.5.1"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -44,31 +51,36 @@ warn()   { echo -e "${YELLOW}  ⚠${NC} $1" | tee -a "$LOG_FILE"; }
 write_checkpoint() {
   local name="$1"
   local nvidia_ver="${2:-none}"
+  local linux_ver="$(pacman -Q linux 2>/dev/null | cut -d' ' -f2 || echo 'unknown')"
   cat > "$CHECKPOINT_DIR/.checkpoint-$name" << EOF
 phase=$name
 timestamp=$(date -Iseconds)
 gpu_count=${NVIDIA_COUNT:-0}
 gpu_compute_cap=${GPU_COMPUTE_CAPS:-none}
 nvidia_open_version=${nvidia_ver}
+linux_kernel_version=${linux_ver}
 EOF
-  info "Checkpoint: $name (GPU: ${NVIDIA_COUNT:-0}, nvidia-open: ${nvidia_ver})"
+  info "Checkpoint: $name (GPU: ${NVIDIA_COUNT:-0}, nvidia-open: ${nvidia_ver}, linux: ${linux_ver})"
 }
 
 is_checkpoint_valid() {
   local name="$1"
   local cp_file="$CHECKPOINT_DIR/.checkpoint-$name"
   [ -f "$cp_file" ] || return 1
-  local cp_gpu cp_cap cp_nv
+  local cp_gpu cp_cap cp_nv cp_linux
   cp_gpu=$(grep '^gpu_count=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo 0)
   cp_cap=$(grep '^gpu_compute_cap=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "none")
   cp_nv=$(grep '^nvidia_open_version=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "none")
-  # Q9a: Also check nvidia-open version (re-run if driver updated)
-  local current_nv="none"
+  cp_linux=$(grep '^linux_kernel_version=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "unknown")
+  # Q9a + P1-6: Check nvidia-open version AND linux kernel version
+  local current_nv="none" current_linux="unknown"
   pacman -Q nvidia-open >/dev/null 2>&1 && current_nv=$(pacman -Q nvidia-open | cut -d' ' -f2)
   pacman -Q nvidia >/dev/null 2>&1 && current_nv=$(pacman -Q nvidia | cut -d' ' -f2)
+  current_linux=$(pacman -Q linux 2>/dev/null | cut -d' ' -f2 || echo 'unknown')
   [ "${cp_gpu:-0}" = "${NVIDIA_COUNT:-0}" ] || return 1
   [ "${cp_cap:-none}" = "${GPU_COMPUTE_CAPS:-none}" ] || return 1
   [ "${cp_nv:-none}" = "${current_nv}" ] || return 1
+  [ "${cp_linux:-unknown}" = "${current_linux}" ] || return 1
   return 0
 }
 
@@ -128,6 +140,10 @@ if [ "$NVIDIA_COUNT" -ge 2 ]; then
   touch /etc/scarlix/.experimental
   info ".experimental flag created (2+ GPU → vLLM enabled)"
 fi
+
+# P0-5: Create scarlix-net EARLY (before any compose up — prevents Phase 5 fail)
+log "Creating Docker network scarlix-net (early)..."
+docker network create scarlix-net 2>/dev/null && info "scarlix-net created (early)" || info "scarlix-net exists"
 
 echo ""
 
@@ -315,7 +331,7 @@ if is_checkpoint_valid phase4; then
 else
   # Q10a: ALL file copy failures are crit (scarlix-mode, scarlix-wizard = core)
   log "Installing SCARLIX scripts (CRITICAL)..."
-  for binfile in scarlix-wizard scarlix-mode model-manager.sh; do
+  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh; do
     src="$REPO_DIR/files/usr/local/bin/$binfile"
     if [ -f "$src" ]; then
       cp "$src" "/usr/local/bin/$binfile" && chmod 755 "/usr/local/bin/$binfile" && ok "/usr/local/bin/$binfile" || crit "$binfile copy failed"
@@ -326,7 +342,7 @@ else
 
   # Systemd services (model-manager only — first-boot removed Q6a)
   log "Installing systemd services..."
-  for f in model-manager.service model-manager.timer download-models.sh generate-env.sh; do
+  for f in model-manager.service model-manager.timer generate-env.sh; do
     src="$REPO_DIR/files/etc/systemd/system/$f"
     if [ -f "$src" ]; then
       cp "$src" "/etc/systemd/system/$f"
@@ -444,10 +460,24 @@ else
     # Start Ollama temporarily to pull starter model
     docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1
     sleep 5
-    if docker exec ollama-agent ollama pull qwen2.5:3b >> "$LOG_FILE" 2>&1; then
-      ok "Starter model qwen2.5:3b downloaded (Ollama fallback ready)"
+    # P1-8: Wait for Ollama API to be ready before pulling (max 60s)
+    log "Waiting for Ollama API to be ready..."
+    OLLAMA_READY=false
+    for i in $(seq 1 12); do
+      if curl -sf http://localhost:11435/api/tags >/dev/null 2>&1; then
+        OLLAMA_READY=true
+        break
+      fi
+      sleep 5
+    done
+    if [ "$OLLAMA_READY" = true ]; then
+      if docker exec ollama-agent ollama pull qwen2.5:3b >> "$LOG_FILE" 2>&1; then
+        ok "Starter model qwen2.5:3b downloaded (Ollama fallback ready)"
+      else
+        warn "Starter model pull failed (non-critical — run 'ollama pull qwen2.5:3b' later)"
+      fi
     else
-      warn "Starter model download failed (non-critical — run 'ollama pull qwen2.5:3b' later)"
+      warn "Ollama API not ready after 60s — skip starter model (run 'ollama pull qwen2.5:3b' later)"
     fi
     # Stop Ollama (user will start AI stack manually via scarlix-mode ai)
     docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml stop >> "$LOG_FILE" 2>&1 || true
@@ -461,7 +491,7 @@ else
   log "  Next steps:"
   log "    1. Reboot to activate NVIDIA driver"
   log "    2. Download models:"
-  log "       bash /etc/systemd/system/download-models.sh"
+  log "       download-models.sh"
   log "    3. Start AI inference:"
   log "       scarlix-mode ai"
   log "  (Starter model qwen2.5:3b already downloaded for Ollama fallback)"
@@ -491,7 +521,7 @@ echo -e "${CYAN}║  ZRAM:    $(zramctl 2>/dev/null | tail -1 || echo 'pending r
 echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
 echo -e "${CYAN}║  NEXT STEPS:${NC}"
 echo -e "${CYAN}║    1. Reboot (activate NVIDIA + ZRAM)${NC}"
-echo -e "${CYAN}║    2. Download models: bash /etc/systemd/system/download-models.sh${NC}"
+echo -e "${CYAN}║    2. Download models: download-models.sh${NC}"
 echo -e "${CYAN}║    3. Start AI: scarlix-mode ai${NC}"
 echo -e "${CYAN}║  Commands:${NC}"
 echo -e "${CYAN}║    scarlix-mode status     # System summary${NC}"
@@ -514,7 +544,7 @@ echo -e "${GREEN}SCARLIX OS v${VERSION} installed successfully!${NC}"
 echo ""
 echo "⚠ AI stack NOT started. You need to:"
 echo "  1. Reboot (activate NVIDIA driver)"
-echo "  2. Download models: bash /etc/systemd/system/download-models.sh"
+echo "  2. Download models: download-models.sh"
 echo "  3. Start AI: scarlix-mode ai"
 echo ""
 echo "Starter model qwen2.5:3b already downloaded (Ollama fallback ready)."

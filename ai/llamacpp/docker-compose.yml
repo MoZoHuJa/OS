@@ -1,11 +1,11 @@
-# SCARLIX OS v17.5 — BeeLlama.cpp / llama.cpp (Tier-4, CPU offline fallback)
-# v17.5: Official llama.cpp image (BeeLlama fork was unverified)
-#   q4_0 KV cache (similar benefit to KVarN, officially supported)
-#   Model path from env var ${LLAMACPP_MODEL_PATH}
+# SCARLIX OS v17.5.1 — BeeLlama.cpp / llama.cpp (Tier-4, CPU offline fallback)
+# v17.5.1 FIX: Uses CPU image (server, not server-cuda) for true CPU offline fallback.
+#   server-cuda requires NVIDIA runtime which may not be available in offline mode.
+# Model path from env var ${LLAMACPP_MODEL_PATH}
 
 services:
   beellama:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    image: ghcr.io/ggml-org/llama.cpp:server
     container_name: beellama
     restart: unless-stopped
     ports:
