@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.5.2 — GPU Mode Switcher
-# v17.5.2 FIXES:
+# SCARLIX OS v17.6.0 — GPU Mode Switcher
+# v17.6.0 FIXES:
 #   - Uses yq for model path parsing (was grep+cut — broke on comments)
 #   - Checks model path existence before compose up
 #   - `stop` command to halt AI stack
@@ -82,7 +82,7 @@ dump_vram() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v17.5.2 — VRAM Check ==="
+  echo "=== SCARLIX OS v17.6.0 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
@@ -127,49 +127,52 @@ healthcheck_and_restart() {
 start_verified_ai() {
   load_model_paths
 
-  # P0-8: Check models exist before starting
-  local models_ok=0
-  if ! check_model_exists "SGLang" "$SGLANG_MODEL_PATH"; then
-    models_ok=1
-  fi
-  if [ "$EXPERIMENTAL" -eq 1 ]; then
-    check_model_exists "vLLM" "$VLLM_MODEL_PATH" || models_ok=1
-  fi
-  check_model_exists "llama.cpp" "$LLAMACPP_MODEL_PATH" || models_ok=1
-
-  if [ "$models_ok" -ne 0 ]; then
-    log "ERROR: Some models missing. Run 'download-models.sh' first."
-    log "Starting only containers with available models..."
-  fi
-
   log "Starting verified AI path..."
 
-  # SGLang (GPU0)
-  if [ -d "$SGLANG_MODEL_PATH" ] || [ -f "$SGLANG_MODEL_PATH" ]; then
-    docker compose -f /opt/scarlix/ai/sglang/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ SGLang (GPU0)" || log "  ✗ SGLang failed"
+  # P0 FIX v17.6: Initialize sglang_ok/vllm_ok (was unbound → crash under set -u)
+  local sglang_ok=0
+  local vllm_ok=0
+
+  # SGLang (GPU0) — use check_model_exists (not just -d/-f)
+  if check_model_exists "SGLang" "$SGLANG_MODEL_PATH"; then
+    if docker compose -f /opt/scarlix/ai/sglang/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
+      log "  ✓ SGLang (GPU0)"
+      sglang_ok=1
+    else
+      log "  ✗ SGLang failed — will try fallback"
+    fi
   else
     log "  ⚠ SGLang model missing — skipping"
   fi
 
   # vLLM (GPU1, TP=1) — only if .experimental
-  if [ "$EXPERIMENTAL" -eq 1 ] && { [ -d "$VLLM_MODEL_PATH" ] || [ -f "$VLLM_MODEL_PATH" ]; }; then
-    docker compose -f /opt/scarlix/ai/vllm/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ vLLM (GPU1, TP=1)" || log "  ✗ vLLM failed"
+  if [ "$EXPERIMENTAL" -eq 1 ]; then
+    if check_model_exists "vLLM" "$VLLM_MODEL_PATH"; then
+      if docker compose -f /opt/scarlix/ai/vllm/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
+        log "  ✓ vLLM (GPU1, TP=1)"
+        vllm_ok=1
+      else
+        log "  ✗ vLLM failed"
+      fi
+    else
+      log "  ⚠ vLLM model missing — skipping"
+    fi
   fi
 
   # BeeLlama (CPU)
-  if [ -f "$LLAMACPP_MODEL_PATH" ]; then
+  if check_model_exists "llama.cpp" "$LLAMACPP_MODEL_PATH"; then
     docker compose -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ BeeLlama (CPU)" || log "  ✗ BeeLlama failed"
   else
     log "  ⚠ BeeLlama model missing — skipping"
   fi
 
-  # P0-3 FIX: Ollama is TRUE fallback — only start if SGLang failed
-  # (was: always started → VRAM conflict on GPU0 with SGLang)
+  # P0-3 FIX v17.6: Ollama is TRUE fallback — only start if SGLang AND vLLM both failed
+  # v17.6: Ollama runs on CPU (not GPU0) — if GPU0 driver dies, fallback still works
   if [ "$sglang_ok" -eq 0 ] && [ "$vllm_ok" -eq 0 ]; then
-    log "  ⚠ SGLang + vLLM both failed — starting Ollama (qwen2.5:3b) as fallback"
-    docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ Ollama (fallback: qwen2.5:3b)" || log "  ✗ Ollama failed"
+    log "  ⚠ SGLang + vLLM both failed — starting Ollama (CPU fallback: qwen2.5:3b)"
+    docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ Ollama (CPU fallback)" || log "  ✗ Ollama failed"
   else
-    log "  ℹ SGLang or vLLM running — Ollama skipped (not needed, saves VRAM)"
+    log "  ℹ SGLang or vLLM running — Ollama skipped (saves VRAM)"
   fi
 }
 
@@ -252,7 +255,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v17.5.2 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v17.6.0 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"
