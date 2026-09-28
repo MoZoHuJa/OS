@@ -182,7 +182,8 @@ healthcheck_and_restart() {
   local models_hash_file="/var/lib/scarlix/models.sha256"
   if [ -f "$MODELS_YAML" ]; then
     local current_hash stored_hash
-    current_hash=$(sha256sum "$MODELS_YAML" 2>/dev/null | awk '{print $1}' || echo "")
+    # P1 v17.9.5: Hash only model paths (not whole file — comments caused false recreates)
+    current_hash=$(yq -r '.sglang.model_path, .vllm.model_path, .beellama.hf_file, .ollama.model' "$MODELS_YAML" 2>/dev/null | sha256sum | awk '{print $1}' || echo "")
     stored_hash=$(cat "$models_hash_file" 2>/dev/null || echo "")
     # P2-7 v17.9.2: Empty stored_hash = first run → don't recreate, just store hash
     if [ -n "$current_hash" ] && [ -n "$stored_hash" ] && [ "$current_hash" != "$stored_hash" ]; then
@@ -286,7 +287,9 @@ start_verified_ai() {
         log "  ✓ SGLang (GPU0, healthy)"
         sglang_ok=1
       else
-        log "  ✗ SGLang not healthy after 120s — will try fallback"
+        log "  ✗ SGLang not healthy after 300s — will try fallback"
+        # P1 v17.9.5: Stop SGLang to free VRAM for fallback (was running with restart:unless-stopped)
+        docker stop sglang 2>/dev/null || true
       fi
     else
       log "  ✗ SGLang failed to start — will try fallback"
@@ -303,7 +306,7 @@ start_verified_ai() {
           log "  ✓ vLLM (GPU1, TP=1, healthy)"
           vllm_ok=1
         else
-          log "  ✗ vLLM not healthy after 120s"
+          log "  ✗ vLLM not healthy after 300s"
         fi
       else
         log "  ✗ vLLM failed"

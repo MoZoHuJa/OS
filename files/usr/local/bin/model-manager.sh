@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.4 — Model Manager
+# SCARLIX OS v17.9.5 — Model Manager
 # FIX Q8b: Split — HF model pulls = auto (safe), Ollama tag pulls = manual (--apply only)
 #
 # Weekly timer (Mon 04:00) runs with NO --apply → only HF model pulls + Telegram report.
@@ -23,7 +23,8 @@ log() {
 send_telegram() {
   local message="$1"
   if [ -f "$ENV_FILE" ]; then
-    set -a; source "$ENV_FILE"; set +a
+    # P1 v17.9.5: Source both .env files — /opt for model paths, /etc for secrets/Telegram
+    set -a; source "$ENV_FILE" 2>/dev/null || true; source "/etc/scarlix/.env" 2>/dev/null || true; set +a
   fi
   if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_ZMOR_CHAT_ID:-}" ]; then
     log "  (Telegram skipped — no token/chat_id)"
@@ -47,7 +48,7 @@ vram_snapshot() {
 }
 
 log "========================================"
-log "  SCARLIX OS v17.9.4 — Model Manager"
+log "  SCARLIX OS v17.9.5 — Model Manager"
 [ "$APPLY_OLLAMA" -eq 1 ] && log "  (--apply-ollama: will update Ollama tags)" || log "  (HF auto-pull + Ollama dry-run report only)"
 log "========================================"
 
@@ -100,7 +101,7 @@ fi
 
 # === Ollama model pulls (MANUAL unless --apply-ollama) ===
 if command -v ollama >/dev/null 2>&1; then
-  # P1-10 v17.9.4: Single Ollama model (was duplicated — main + agent read same .ollama.model key)
+  # P1-10 v17.9.5: Single Ollama model (was duplicated — main + agent read same .ollama.model key)
   OLLAMA_MODEL=$(yq '.ollama.model' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "")
 
   for model in "$OLLAMA_MODEL"; do

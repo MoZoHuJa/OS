@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.4 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v17.9.5 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
-# v17.9.4 FIXES (vs v17.5):
+# v17.9.5 FIXES (vs v17.5):
 #   - Uses v17.5 keys: .beellama.* (not .llamacpp.*), .ollama.model (not .ollama_main)
 #   - SGLang: uses hf_repo field (not model_path which is local path)
 #   - Uses python venv for huggingface_hub (PEP 668 safe)
@@ -18,7 +18,7 @@ VENV_DIR="/opt/scarlix/venv"
 mkdir -p "$(dirname "$LOG_FILE")" "$MODELS_DIR" "$VENV_DIR"
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v17.9.4 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v17.9.5 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing
@@ -43,12 +43,12 @@ progress() {
 }
 
 # === Step 1: SGLang model (safetensors, GPU 0) ===
-# v17.9.4 FIX: Use hf_repo field (not model_path which is local)
+# v17.9.5 FIX: Use hf_repo field (not model_path which is local)
 progress "SGLang model (safetensors)"
 SGLANG_HF_REPO=$(yq '.sglang.hf_repo // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
 if [ -z "$SGLANG_HF_REPO" ]; then
   echo "  ⚠ No .sglang.hf_repo in models.yaml — SGLang model NOT downloaded" | tee -a "$LOG_FILE"
-  echo "  To enable: add 'hf_repo: Qwen/Qwen3-14B-Instruct-AWQ' to .sglang section" | tee -a "$LOG_FILE"
+  echo "  To enable: add 'hf_repo: Qwen/Qwen3-14B-AWQ' to .sglang section" | tee -a "$LOG_FILE"
 else
   SGLANG_LOCAL_PATH=$(yq '.sglang.model_path' "$MODELS_CONFIG" 2>/dev/null || echo "/models/$SGLANG_HF_REPO")
   echo "  Downloading: $SGLANG_HF_REPO → $SGLANG_LOCAL_PATH" | tee -a "$LOG_FILE"
@@ -61,7 +61,7 @@ else
 fi
 
 # === Step 2: BeeLlama / llama.cpp GGUF model (CPU offline) ===
-# v17.9.4 FIX: Uses .beellama.* keys (not .llamacpp.*)
+# v17.9.5 FIX: Uses .beellama.* keys (not .llamacpp.*)
 progress "BeeLlama/llama.cpp GGUF model (CPU offline)"
 BEE_HF_REPO=$(yq '.beellama.hf_repo // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
 BEE_HF_FILE=$(yq '.beellama.hf_file // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
@@ -78,7 +78,7 @@ else
 fi
 
 # === Step 3: Ollama model (GGUF, GPU) ===
-# v17.9.4 FIX: Uses .ollama.model (not .ollama_main.model), correct container name
+# v17.9.5 FIX: Uses .ollama.model (not .ollama_main.model), correct container name
 progress "Ollama model"
 OLLAMA_MODEL=$(yq '.ollama.model // "qwen2.5:3b"' "$MODELS_CONFIG" 2>/dev/null || echo "qwen2.5:3b")
 echo "  Pulling Ollama model: $OLLAMA_MODEL" | tee -a "$LOG_FILE"
