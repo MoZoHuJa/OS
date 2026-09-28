@@ -14,7 +14,7 @@ import (
 
 // Version mirrors main.Version (passed to avoid import cycle).
 // v18.0.0: injected via -ldflags "-X main.Version" in Dockerfile.
-const Version = "18.0.0"
+const Version = "18.1"
 
 // Handler holds dependencies for API routes.
 type Handler struct {

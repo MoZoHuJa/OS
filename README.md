@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.0.0 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.1 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v18.0.0</h1>
+<h1 align="center">SCARLIX OS v18.1</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.0.0"><img alt="Version" src="https://img.shields.io/badge/version-v18.0.0-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.1"><img alt="Version" src="https://img.shields.io/badge/version-v18.1-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -21,7 +21,7 @@
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 
-**Version:** v18.0.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v18.1 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -29,7 +29,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v18.0.0   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v18.1   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -48,6 +48,34 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://<this-ip>:8090/?token=<SCARLIHQ_TOKEN>
 ```
+
+---
+
+## 🆕 What's New in v18.1 (vs v18.0.0)
+
+**Correctness fixes — retry actually works now.** 6 fixes from self-audit.
+
+v18.0.0 had a **P0 logic bug**: `mode_output=$(... 2>&1) || true` masked the exit code to 0, so `mode_rc=$?` was always 0 → transition always "applied" even when scarlix-mode failed → retry mechanism never triggered.
+
+### P0 — correctness (1)
+| # | Fix | v18.0.0 Problem | v18.1 Solution |
+|---|-----|-----------------|-------------------|
+| P0 | **mode_rc exit code capture** | `|| true` after command substitution masked exit code to 0 → `mode_rc` always 0 → transition always "applied" even on failure → retry never triggered | Removed `|| true` (script uses `set -uo pipefail`, not `-e`, so assignment doesn't abort). `mode_rc=$?` now captures real exit code. Retry + failure states work correctly. |
+
+### P1 — quality (5)
+| # | Fix | v18.0.0 Problem | v18.1 Solution |
+|---|-----|-----------------|-------------------|
+| P1 | **install.sh migration rm -rf** | `rmdir /var/lib/scarlix/bridge` fails if dir has hidden files (`.retry`) → migration stuck | `rm -rf` (safe — only the bridge/ dir being migrated) |
+| P1 | **Dockerfile header comments** | Header said "v17.9.9" + "bridge/desired-mode" (stale v18.0.0 didn't update) | Updated to v18.1 + "bridge-input/desired-mode" |
+| P1 | **scarlix_mode.Set() dir check** | If `bridge-input/` dir doesn't exist, `os.CreateTemp` fails with cryptic error | Explicit `os.Stat(dir)` check → clear 503 error message |
+| P1 | **Removed unused Transition() method** | `scarlix_mode.Transition()` defined but never called → `status` import only for it | Removed method + import (cleaner, avoids go vet warning) |
+| P1 | **host-bridge last_error sanitization** | `last_error` from scarlix-mode output could contain newlines → broke env var passing to python3 | `tr '\n' ' ' + tr -d '\r'` before storing in last_error |
+
+### Verification
+- `bash -n` on all 8 scripts: OK
+- YAML validation on 26 compose + models.yaml: 0 errors
+- Go imports verified: no unused imports (removed `status` from scarlix_mode)
+- Grep verified: 0 occurrences of `|| true` masking exit codes in host-bridge
 
 ---
 
@@ -358,7 +386,8 @@ Host-bridge architecture: dashboard reads JSON status, writes desired-mode. No p
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v18.0.0** | 2026-10 | **Secure Host-Bridge. 10 fixes: bridge-input/+bridge-state/ separation (P0 symlink attack fix), single scarlix-mode execution (P0 double-run fix), concurrent Mode.Set os.CreateTemp, GET /api/mode transition state, persistent last-transition, scarlix-mode .env permission, crypto/subtle, input validation (symlink/owner/size), no hardcoded version, CI VERSION build-arg + mode integration test. Breaking: bridge/ → bridge-input/ + bridge-state/.** |
+| **v18.1** | 2026-10 | **Correctness fixes. P0: host-bridge mode_rc exit code capture (was `|| true` masking to 0 → retry never triggered). P1: install.sh migration rm -rf, Dockerfile header updated, scarlix_mode.Set() dir check, removed unused Transition(), last_error sanitization.** |
+| v18.0.0 | 2026-10 | Secure Host-Bridge. 10 fixes: bridge-input/+bridge-state/ separation (P0 symlink attack fix), single scarlix-mode execution (P0 double-run fix), concurrent Mode.Set os.CreateTemp, GET /api/mode transition state, persistent last-transition, scarlix-mode .env permission, crypto/subtle, input validation (symlink/owner/size), no hardcoded version, CI VERSION build-arg + mode integration test. Breaking: bridge/ → bridge-input/ + bridge-state/. |
 | v17.9.9 | 2026-10 | Host-Bridge stabilization + state machine. 13 fixes: Dockerfile nonroot user (P0), bridge/ chown 65532+775 (P0), df parsing fixed (P0), HTTP error codes, desired-mode retry, JSON via python3, state machine fields, MCP secureCompare, WS CIDR origin, scarlix-mode sudo removed, turbo dump_vram, systemd hardening, mem-fraction env var, version via ldflags. CI: runtime smoke test. |
 | v17.9.8 | 2026-10 | Host-bridge architecture + reliability. 16 fixes: ScarliHQ privilege boundary (P0), Dockerfile build order, go.mod cleaned, API auth, mode API/CLI/UI unified, Go/MCP v12→17.9.8, profiles YAML parsed, real JSON-RPC MCP, Current() TrimSpace, crit() aborts, Phase 1 crit ops, multilib scoped+synced, WS real status+origin, download-models fail-hard, model-manager Ollama via docker, alpine runtime 20MB, .env 600, CI go+docker build. |
 | v17.9.7 | 2026-10 | Reliability + real dashboard. 11 fixes: ScarliHQ image tag, Dockerfile reorder, nvidia/cuda runtime, real dashboard HTML, git tag, SGLang --disable-flashinfer, network disconnect loop, multilib, disk checks, /models 750, http_ok fallback. |

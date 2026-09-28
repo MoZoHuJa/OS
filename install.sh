@@ -2,32 +2,32 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v18.0.0 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v18.1 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
-# v18.0.0 FIXES (vs v17.9.9) — Security + state machine:
-#   P0: Separate bridge-input/ (65532 writable) from bridge-state/ (root 700)
-#       — was: single bridge/ dir owned by nonroot + root wrote .retry there = symlink attack
-#   P0: Single scarlix-mode execution per transition (was: ran TWICE on failure)
-#   P1: Concurrent Mode.Set() uses os.CreateTemp (was: same .tmp → race condition)
-#   P1: GET /api/mode returns transition state (was: only current-mode)
-#   P1: Persistent last-transition state (survives timer cycles — diagnostic info not lost)
-#   P1: scarlix-mode .env permission fix (chown /opt/scarlix if root, else warn)
-#   P1: crypto/subtle.ConstantTimeCompare (was: custom secureCompare)
-#   P1: Host bridge input validation (ownership + symlink + type + size checks)
-#   P1: No hardcoded version in host bridge (reads from VERSION file)
-#   P2: CI uses VERSION as build-arg + integration test mode transition (POST → desired-mode → 202/400)
+# v18.1 FIXES (vs v18.0.0) — Correctness:
+#   P0: host-bridge mode_rc capture fixed (was: `|| true` masked exit code to 0
+#       → transition always "applied" even on failure → retry never triggered)
+#   P1: install.sh migration uses rm -rf (was: rmdir failed on hidden files like .retry)
+#   P1: Dockerfile header comments updated (were stale v17.9.9 references)
+#   P1: scarlix_mode.Set() validates bridge-input/ dir exists (clear 503 error)
+#   P1: Removed unused Transition() method + status import from scarlix_mode package
+#   P1: host-bridge last_error sanitized (strip newlines + carriage returns)
 #
+# v18.0.0 fixes preserved (bridge-input/+bridge-state/ separation, single execution,
+#   concurrent Mode.Set os.CreateTemp, GET /api/mode transition state, persistent
+#   last-transition, scarlix-mode .env permission, crypto/subtle, input validation,
+#   no hardcoded version, CI VERSION build-arg + integration test)
 # v17.9.5–9 fixes preserved (see git history for details).
 #
 # USAGE (primary — safe):
 #   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
-#   git checkout v18.0.0   # ALWAYS checkout specific tag (main may be ahead)
+#   git checkout v18.1   # ALWAYS checkout specific tag (main may be ahead)
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.0.0"
+VERSION="18.1"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -545,8 +545,8 @@ else
     # Migration: remove old bridge/ dir if exists (v17.9.9 layout)
     if [ -d /var/lib/scarlix/bridge ]; then
       log "Migrating from v17.9.9 bridge/ layout → v18.0.0 bridge-input/ + bridge-state/..."
-      rm -f /var/lib/scarlix/bridge/desired-mode /var/lib/scarlix/bridge/.retry 2>/dev/null || true
-      rmdir /var/lib/scarlix/bridge 2>/dev/null || true
+      # v18.1 P1: rm -rf (was: rmdir — fails if dir has hidden files like .retry)
+      rm -rf /var/lib/scarlix/bridge 2>/dev/null || true
     fi
     # bridge-input: ScarliHQ nonroot (65532) writes desired-mode here (mode 700 — owner only)
     mkdir -p /var/lib/scarlix/bridge-input
