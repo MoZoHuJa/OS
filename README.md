@@ -1,10 +1,10 @@
-# SCARLIX OS v17.5.1 — EndeavourOS Edition (Working AI Path, Fixed)
+# SCARLIX OS v17.5.2 — EndeavourOS Edition (Working AI Path, Bugfix 2)
 
 > Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (fallback).
 
-**Version:** v17.5.1 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v17.5.2 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -27,6 +27,23 @@ bash /etc/systemd/system/download-models.sh
 # 3. Start AI inference
 scarlix-mode ai
 ```
+
+---
+
+## 🆕 What's New in v17.5.2 (vs v17.5.1)
+
+**Bugfix 2 — fixes 8 issues from 2 reviews.**
+
+| # | Fix | v17.5.1 Problem | v17.5.2 Solution |
+|---|-----|-----------------|-------------------|
+| P0-2 | **scarlix-net after Docker starts** | Created in pre-checks (Docker not running yet) → fail | Moved to Phase 3 (after `systemctl start docker`) |
+| P0-3 | **Ollama as true fallback** | Always started → VRAM conflict with SGLang on GPU0 | Only starts if SGLang AND vLLM both fail. Saves VRAM. |
+| P1-6 | **Checkpoint pacman -Q linux** | `uname -r` format mismatch (6.10.8-arch1-1 vs 6.10.8.arch1-1) → Phase 2 re-runs every boot | Uses `pacman -Q linux` (consistent format) |
+| P1-7 | **check_model_exists checks config.json** | Only checked dir existence (empty dir passed) | Checks `config.json` in dir (safetensors) or file existence (GGUF) |
+| P1-8 | **Ollama volume permissions** | `/var/lib/scarlix/ollama` root-owned → container can't write | `chmod 777` in install.sh Phase 1 |
+| P1-9 | **download-models.sh --include + /models chmod** | Positional arg broke on some HF CLI versions; /models not writable | `--include` flag + `chmod 777 /models` |
+| P2-10 | **scarlix-mode stop keeps dashboard** | Stopped ALL containers including ScarliHQ dashboard | Only stops AI containers (sglang, vllm, beellama, ollama) |
+| #6 | **Old dead files removed** | `scripts/`, `base-os/`, ISO docs confused users | Removed: scripts/, base-os/, docs/AI_AGENT_ISO_BUILD_INSTRUCTIONS.md |
 
 ---
 
@@ -191,8 +208,8 @@ OS/
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v17.5.1** | 2026-10 | **Bugfix release. 10 fixes: yq for YAML parsing, download-models.sh rewritten (v17.5 keys + correct HF repo IDs), Ollama volume absolute + GPU0, scarlix-net early, linux version checkpoint, model existence check, Ollama API wait, BeeLlama CPU image, scarlix-mode stop command.** |
-| v17.5 | 2026-10 | Working AI Path. 10 P0 fixes: no AI start without models, models.yaml single source, .experimental flag, cu128 Blackwell, toolkit crit, scarlihq copy, starter model, ISO removed, version checkpoint, always healthcheck. |
+| **v17.5.2** | 2026-10 | **Bugfix 2. 8 fixes: scarlix-net after Docker starts, Ollama true fallback (not always started), checkpoint pacman -Q linux, check_model_exists checks config.json, Ollama volume chmod 777, download-models.sh --include, scarlix-mode stop keeps dashboard, old dead files removed (scripts/, base-os/, ISO docs).** |
+| v17.5.1 | 2026-10 | Bugfix release. 10 fixes: yq YAML parsing, download-models.sh rewritten, Ollama GPU0+absolute vol, scarlix-net early, linux checkpoint, model check, Ollama wait, BeeLlama CPU, scarlix-mode stop. |
 | v17.4 | 2026-10 | Unified bootstrap, fail-hard, TP=1 (mixed GPU). 19 fixes. |
 | v17.3 | 2026-10 | Bootstrap installer (install.sh). (Broken — curl\|bash, no models) |
 | v17.2.1 | 2026-10 | Auto 5-tier for 2+ GPU. |
