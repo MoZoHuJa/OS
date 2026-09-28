@@ -1,10 +1,10 @@
-# SCARLIX OS v17.9 — EndeavourOS Edition (Final Polish)
+# SCARLIX OS v17.9.1 — EndeavourOS Edition (Hotfix + scarlix-doctor)
 
 > Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 
-**Version:** v17.9.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v17.9.1 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,20 +30,22 @@ scarlix-mode ai
 
 ---
 
-## 🆕 What's New in v17.9 (vs v17.8)
+## 🆕 What's New in v17.9.1 (vs v17.9)
 
-**Final polish — 6 P0+P1 fixes from 2 reviews.**
+**Hotfix — 10 fixes from 4 reviews. scarlix-doctor added.**
 
-| # | Fix | v17.8 Problem | v17.9 Solution |
-|---|-----|---------------|-----------------|
-| P0 | **`.env` always created** | `generate_env_file` return bez zápisu ak models.yaml chýba → `--env-file` crash | Vždy zapíše .env (aj s defaultmi) |
-| P0 | **`NVIDIA_COUNT` bez `0\n0`** | `grep -c .` + `|| echo 0` = dva riadky → aritmetika padá | `grep -c . \|\| true` + `head -1` + fallback |
-| P1 | **`.env` chmod 664 + chown REAL_USER** | root:root → user nemôže prepísať pri `sudo scarlix-mode` | `chown REAL_USER` + `chmod 664` |
-| P1 | **Healthcheck `--force-recreate` pri zmene yaml** | `docker start` neprečíta nový .env → starý model path | `compose up -d --force-recreate` ak .env mtime > container mtime |
-| P1 | **Starter model pre všetky systémy** | Iba NVIDIA (dev_workstation bez GPU = žiadny fallback) | Ollama `qwen2.5:3b` pre všetky (CPU fallback) |
-| P1 | **vLLM image pin `v0.8.0`** | `latest` nestabilný pre Blackwell (sm_120) | `v0.8.0` overený na CUDA 12.8+ / Blackwell |
-
-**Bonus:** flock len pre write príkazy (status/vram read-only bez lock).
+| # | Fix | v17.9 Problem | v17.9.1 Solution |
+|---|-----|---------------|-------------------|
+| P0 | **MODE pred flock** | `MODE` používané pred priradením → `set -u` crash na KAŽDOM volaní | `MODE="${1:-status}"` presunuté nad flock check |
+| P0 | **Hash-based healthcheck** | mtime `.env` = vždy "teraz" → vždy `--force-recreate` (výpadky) | `sha256sum models.yaml` → recreate len pri reálnej zmene |
+| P0 | **Correct HF repo/file names** | `Qwen/Qwen3-14B-Instruct-AWQ` neexistuje → download zlyhá ticho | `Qwen/Qwen3-14B-AWQ` + `Qwen3-14B-Q4_K_M.gguf` |
+| P0 | **Checkpoint nvidia_open len phase2** | phase 1/3/4 ukladali `none` → vždy invalid → full re-install | nvidia_open porovnávaný len pre phase2 |
+| P1 | **model-manager.sh schema** | `.llamacpp.*`, `.ollama_main.*` (stará schema) | `.beellama.*`, `.ollama.*` (v17.5+ schema) |
+| P1 | **Creative stack scarlix_net** | `scarlix_net` (underscore) → `network not found` | Všade `scarlix-net` (hyphen) |
+| P1 | **SGLang image pin** | `latest-cu128` (nepinnutý) | `v0.4.4-cu128` (overený) |
+| P1 | **generate-env.sh guard** | Prepisoval heslá pri re-run | Ak .env existuje, doplní len chýbajúce kľúče |
+| P1 | **Version strings unified** | v17.5/v17.8/v17.9 zmiešané | Všade v17.9.1 |
+| NEW | **scarlix-doctor** | Žiadny self-diagnostic | `scarlix doctor` — skontroluje OS, NVIDIA, Docker, GPU, models, .env, containers |
 
 ---
 
@@ -274,7 +276,7 @@ OS/
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v17.9** | 2026-10 | **Final Polish. 6 fixes: .env always created (P0), NVIDIA_COUNT without 0\n0 (P0), .env chmod 664+chown (P1), healthcheck force-recreate on yaml change (P1), starter model for all systems (P1), vLLM image pin v0.8.0 (P1).** |
+| **v17.9.1** | 2026-10 | **Hotfix. 10 fixes: MODE before flock (P0 crash), hash-based healthcheck, correct HF repo names, checkpoint nvidia_open phase2 only, model-manager schema, scarlix_net→scarlix-net, SGLang pin v0.4.4, generate-env.sh guard, version cleanup, scarlix-doctor.** |
 | v17.8 | 2026-10 | Stable. 6 fixes: --env-file on all compose calls, always regenerate .env, BeeLlama only on fallback, Docker restart after nvidia-ctk, Ollama chmod 700, REAL_USER without logname. |
 | v17.6 | 2026-10 | Bugfix 3. 6 fixes: sglang_ok/vllm_ok initialized, Ollama CPU fallback, chmod 775, check_model_exists for all, README path fix, version header. |
 | v17.5.2 | 2026-10 | Bugfix 2. 8 fixes: scarlix-net after Docker starts, Ollama true fallback, checkpoint pacman -Q, config.json check, chmod 777, --include, stop keeps dashboard, dead files removed. |

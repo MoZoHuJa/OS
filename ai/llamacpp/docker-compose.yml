@@ -13,7 +13,7 @@ services:
     volumes:
       - /models:/models:ro
     command: >
-      --model ${LLAMACPP_MODEL_PATH:-/models/qwen3.6-14b-instruct-q4_k_m.gguf}
+      --model ${LLAMACPP_MODEL_PATH:-/models/Qwen3-14B-Q4_K_M.gguf}
       --ctx-size 32768
       --threads 16
       --host 0.0.0.0

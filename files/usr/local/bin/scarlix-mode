@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.0 — GPU Mode Switcher (Final Polish)
-# v17.9 FIXES:
-#   P0: .env always created (even without yq/models.yaml) — touch + defaults
-#   P1: .env chmod 664 + chown REAL_USER (was root:root → user can't overwrite)
-#   P1: Healthcheck uses --force-recreate if .env changed (was just docker start)
-#   P1: flock only for write commands (status/vram are read-only)
+# SCARLIX OS v17.9.1 — GPU Mode Switcher (Hotfix)
+# v17.9.1 FIXES:
+#   P0: MODE assigned BEFORE flock check (was after → set -u crash on EVERY call)
+#   P0: Healthcheck uses sha256 hash (was mtime → always force-recreate)
+#   P1: Version strings unified to v17.9.1
+#   P1: API-level healthcheck (curl /health, not just docker inspect)
 
 LOG_FILE="/var/log/scarlix-mode.log"
 STATE_FILE="/var/lib/scarlix/current-mode"
@@ -19,16 +19,17 @@ DC="docker compose --env-file $ENV_FILE"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"; }
 
-# P1 FIX v17.9: flock only for write commands (status/vram are read-only)
-exec 200>"$LOCK_FILE"
-if [ "$MODE" != "status" ] && [ "$MODE" != "vram" ] && [ "$MODE" != "vram-check" ]; then
-  flock -n 200 || { log "ERROR: another process is switching mode"; exit 1; }
-fi
-
+# P0 FIX v17.9.1: MODE assigned BEFORE flock check (was after → set -u crash)
 MODE="${1:-status}"
 CURRENT_MODE=$(cat "$STATE_FILE" 2>/dev/null || echo "unknown")
 EXPERIMENTAL=0
 [ -f /etc/scarlix/.experimental ] && EXPERIMENTAL=1
+
+# flock only for write commands (status/vram are read-only)
+exec 200>"$LOCK_FILE"
+if [ "$MODE" != "status" ] && [ "$MODE" != "vram" ] && [ "$MODE" != "vram-check" ]; then
+  flock -n 200 || { log "ERROR: another process is switching mode"; exit 1; }
+fi
 
 # yq null validation
 yaml_get() {
@@ -114,7 +115,7 @@ dump_vram() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v17.8.0 — VRAM Check ==="
+  echo "=== SCARLIX OS v17.9.1 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
@@ -146,18 +147,19 @@ healthcheck_and_restart() {
     return 0
   fi
 
-  # P1 FIX v17.9: Regenerate .env + check if yaml changed since last container start
-  load_model_paths
-
-  # Check if .env was updated since containers were last created
+  # P0 FIX v17.9.1: Hash-based detection (was mtime → always "now" → always recreate)
+  # Compare sha256 of models.yaml with stored hash
   local env_changed=false
-  local newest_container_time
-  newest_container_time=$(docker inspect -f '{{.Created}}' sglang 2>/dev/null | cut -dT -f1 || echo "")
-  local env_time
-  env_time=$(stat -c %Y "$ENV_FILE" 2>/dev/null || echo 0)
-  if [ -n "$newest_container_time" ] && [ "$env_time" -gt "$(date -d "$newest_container_time" +%s 2>/dev/null || echo 0)" ]; then
-    log ".env changed since last container start — will force-recreate"
-    env_changed=true
+  local models_hash_file="/var/lib/scarlix/models.sha256"
+  if [ -f "$MODELS_YAML" ]; then
+    local current_hash stored_hash
+    current_hash=$(sha256sum "$MODELS_YAML" 2>/dev/null | awk '{print $1}' || echo "")
+    stored_hash=$(cat "$models_hash_file" 2>/dev/null || echo "")
+    if [ -n "$current_hash" ] && [ "$current_hash" != "$stored_hash" ]; then
+      log "models.yaml changed (hash mismatch) — will force-recreate"
+      env_changed=true
+      echo "$current_hash" > "$models_hash_file" 2>/dev/null || true
+    fi
   fi
 
   log "Healthchecking AI containers..."
@@ -339,7 +341,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v17.8.0 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v17.9.1 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"

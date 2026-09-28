@@ -11,7 +11,7 @@ services:
       - SMG_CONFIG=/config/config.yaml
       - SMG_PORT=4000
       - TZ=Europe/Bratislava
-    networks: [scarlix-net, scarlix_net]
+    networks: [scarlix-net, scarlix-net]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:4000/health"]
       interval: 30s
@@ -19,4 +19,4 @@ services:
       retries: 3
 networks:
   scarlix-net: {external: true}
-  scarlix_net: {external: true}
+  scarlix-net: {external: true}
