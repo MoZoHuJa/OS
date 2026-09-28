@@ -92,8 +92,12 @@ if [ -f "$DESIRED_MODE_FILE" ]; then
         case "$requested_mode" in
             ai|stop|game|creative|turbo|offline|tv)
                 if [ -x "$MODE_BIN" ]; then
-                    # v18.0.0 P0: SINGLE execution — capture output ONCE (was: ran twice on failure)
-                    mode_output=$("$MODE_BIN" "$requested_mode" 2>&1) || true
+                    # v18.1 P0: capture exit code correctly (was: `|| true` masked rc to 0
+                    # → transition always "applied" even on failure → retry never triggered)
+                    # Note: script uses `set -uo pipefail` (NOT -e), so command substitution
+                    # assignment doesn't abort — rc is captured correctly without || true.
+                    # v18.0.0: SINGLE execution (was: ran twice on failure for error capture)
+                    mode_output=$("$MODE_BIN" "$requested_mode" 2>&1)
                     mode_rc=$?
                     echo "$mode_output" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
 
@@ -104,7 +108,8 @@ if [ -f "$DESIRED_MODE_FILE" ]; then
                         retry_count=0
                     else
                         retry_count=$((retry_count + 1))
-                        last_error=$(printf '%s' "$mode_output" | tail -5 | tr '\n' ' ' | head -c 500)
+                        # v18.1: sanitize last_error — strip newlines, truncate to 500 chars
+                        last_error=$(printf '%s' "$mode_output" | tr '\n' ' ' | tr -d '\r' | head -c 500)
                         if [ "$retry_count" -ge "$MAX_RETRIES" ]; then
                             transition="failed"
                             rm -f "$DESIRED_MODE_FILE" "$RETRY_FILE" 2>/dev/null || true
