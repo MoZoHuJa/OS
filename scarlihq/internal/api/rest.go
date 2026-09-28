@@ -12,9 +12,9 @@ import (
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/status"
 )
 
-// Version mirrors main.Version (passed to avoid import cycle).
-// v18.0.0: injected via -ldflags "-X main.Version" in Dockerfile.
-const Version = "18.1"
+// Version is the fallback default for /api/health when Handler has no version passed.
+// v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
+var Version = "18.2"
 
 // Handler holds dependencies for API routes.
 type Handler struct {
@@ -22,10 +22,16 @@ type Handler struct {
         mode      *scarlix_mode.Mode
         profiles  *profiles.Manager
         authToken string
+        version   string // v18.2: passed from main (ldflags-injected)
 }
 
-func NewHandler(g *guard.Guard, m *scarlix_mode.Mode, p *profiles.Manager, authToken string) *Handler {
-        return &Handler{guard: g, mode: m, profiles: p, authToken: authToken}
+// NewHandler creates a new API handler.
+// v18.2 P1: version param added (was: separate const — ldflags couldn't override).
+func NewHandler(g *guard.Guard, m *scarlix_mode.Mode, p *profiles.Manager, authToken, version string) *Handler {
+        if version == "" {
+                version = Version // fallback to package var
+        }
+        return &Handler{guard: g, mode: m, profiles: p, authToken: authToken, version: version}
 }
 
 // RegisterRoutes registers all REST API routes (all behind auth middleware).
@@ -64,7 +70,7 @@ func (h *Handler) auth(next http.HandlerFunc) http.HandlerFunc {
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
         writeJSON(w, map[string]string{
                 "status":  "ok",
-                "version": Version,
+                "version": h.version, // v18.2: from main.Version (ldflags-injected)
         })
 }
 

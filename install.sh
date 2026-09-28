@@ -2,32 +2,34 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v18.1 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v18.2 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
-# v18.1 FIXES (vs v18.0.0) — Correctness:
-#   P0: host-bridge mode_rc capture fixed (was: `|| true` masked exit code to 0
-#       → transition always "applied" even on failure → retry never triggered)
-#   P1: install.sh migration uses rm -rf (was: rmdir failed on hidden files like .retry)
-#   P1: Dockerfile header comments updated (were stale v17.9.9 references)
-#   P1: scarlix_mode.Set() validates bridge-input/ dir exists (clear 503 error)
-#   P1: Removed unused Transition() method + status import from scarlix_mode package
-#   P1: host-bridge last_error sanitized (strip newlines + carriage returns)
+# v18.2 FIXES (vs v18.1) — Security + UX:
+#   P0: real_user detection under systemd (was: $USER=root → chown root /opt/scarlix)
+#   P1: scarlix-mode systemctl sudo fallback for user CLI (was: removed sudo → game/tv fails)
+#   P1: token only on TTY + install.log chmod 600 (was: token in 644 log)
+#   P1: FIFO/pipe/socket explicit rejection in validate_input_file
+#   P1: models.yaml schema validation in download-models.sh (fail-fast on typos)
+#   P1: const Version → var Version (ldflags -X main.Version only works on vars)
+#   P1: go.sum removed (generated at build time by Dockerfile go mod download)
+#   P2: CI smoke test chown 65532 (was: mode POST 202 failed in CI)
+#   P2: migration applies pending desired-mode before rm -rf
+#   P2: whiptail ESC/Cancel handling (was: set -e aborted whole script)
+#   P2: bridge restores retry_count + last_error from last-transition
+#   P2: creative/tv ensure .env exists before $DC
+#   P2: .env.template updated (was: v15 header)
 #
-# v18.0.0 fixes preserved (bridge-input/+bridge-state/ separation, single execution,
-#   concurrent Mode.Set os.CreateTemp, GET /api/mode transition state, persistent
-#   last-transition, scarlix-mode .env permission, crypto/subtle, input validation,
-#   no hardcoded version, CI VERSION build-arg + integration test)
-# v17.9.5–9 fixes preserved (see git history for details).
+# v18.0.0–18.1 fixes preserved (see git history for details).
 #
 # USAGE (primary — safe):
 #   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
-#   git checkout v18.1   # ALWAYS checkout specific tag (main may be ahead)
+#   git checkout v18.2   # ALWAYS checkout specific tag (main may be ahead)
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.1"
+VERSION="18.2"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -38,6 +40,8 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC
 SUCCESS_COUNT=0; FAIL_COUNT=0; CRITICAL_FAIL=0
 
 mkdir -p "$LOG_DIR" "$CHECKPOINT_DIR"
+# v18.2 P1: install.log may contain tokens (SCARLIHQ_TOKEN via info) → chmod 600
+chmod 600 "$LOG_FILE" 2>/dev/null || true
 
 log()   { echo -e "[$(date '+%H:%M:%S')] $1" | tee -a "$LOG_FILE"; }
 ok()     { echo -e "${GREEN}  ✓${NC} $1" | tee -a "$LOG_FILE"; SUCCESS_COUNT=$((SUCCESS_COUNT+1)); }
@@ -545,6 +549,15 @@ else
     # Migration: remove old bridge/ dir if exists (v17.9.9 layout)
     if [ -d /var/lib/scarlix/bridge ]; then
       log "Migrating from v17.9.9 bridge/ layout → v18.0.0 bridge-input/ + bridge-state/..."
+      # v18.2 P2: apply pending desired-mode BEFORE rm -rf (was: lost pending mode switch)
+      if [ -f /var/lib/scarlix/bridge/desired-mode ]; then
+        local pending_mode
+        pending_mode=$(tr -d '[:space:]' < /var/lib/scarlix/bridge/desired-mode 2>/dev/null || echo "")
+        if [ -n "$pending_mode" ]; then
+          log "  Found pending desired-mode '$pending_mode' — applying before migration..."
+          [ -x /usr/local/bin/scarlix-mode ] && /usr/local/bin/scarlix-mode "$pending_mode" >> "$LOG_FILE" 2>&1 || true
+        fi
+      fi
       # v18.1 P1: rm -rf (was: rmdir — fails if dir has hidden files like .retry)
       rm -rf /var/lib/scarlix/bridge 2>/dev/null || true
     fi
@@ -583,9 +596,14 @@ else
       if docker compose --env-file /etc/scarlix/.env -f /opt/scarlix/scarlihq/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
         ok "ScarliHQ dashboard started on :8090"
         if [ -n "$SCARLIHQ_TOKEN" ]; then
-          info "  Dashboard login token: $SCARLIHQ_TOKEN"
-          info "  Open: http://<this-ip>:8090/?token=$SCARLIHQ_TOKEN"
-          info "  (token also in /etc/scarlix/.env)"
+          # v18.2 P1: token only on TTY (was: info() → tee to log 644 → token leaked)
+          if [ -t 1 ]; then
+            echo -e "${CYAN}  Dashboard login token: ${GREEN}${SCARLIHQ_TOKEN}${NC}" | tee /dev/tty 2>/dev/null || true
+            echo -e "${CYAN}  Open: http://<this-ip>:8090/?token=${SCARLIHQ_TOKEN}${NC}" | tee /dev/tty 2>/dev/null || true
+            echo -e "${CYAN}  (token also in /etc/scarlix/.env — chmod 600)${NC}" | tee /dev/tty 2>/dev/null || true
+          else
+            info "  Dashboard token generated (in /etc/scarlix/.env — run 'cat /etc/scarlix/.env | grep SCARLIHQ_TOKEN')"
+          fi
         fi
       else
         warn "ScarliHQ dashboard start failed (non-critical — run 'docker compose --env-file /etc/scarlix/.env -f /opt/scarlix/scarlihq/docker-compose.yml up -d' later)"

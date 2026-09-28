@@ -93,7 +93,9 @@ jobs:
       - name: go vet
         working-directory: scarlihq
         run: |
+          # v18.2 P1: go.sum generated at build time (not committed — no local Go to generate)
           go mod download
+          go mod verify
           go vet ./...
       - name: go build
         working-directory: scarlihq
@@ -121,7 +123,9 @@ jobs:
       - name: Runtime smoke test (container starts + port responds)
         run: |
           # v18.0.0: use bridge-input/ layout (not bridge/)
+          # v18.2 P2: chown 65532 (nonroot in ScarliHQ alpine image — was missing → mode POST 202 fails)
           mkdir -p /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
+          sudo chown -R 65532:65532 /tmp/scarlix-test/bridge-input
           chmod 700 /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
           echo '{"timestamp":"test","version":"18.0.0","mode":"unknown","mode_transition":{"requested":"","state":"none","retry_count":0,"last_error":"","last_timestamp":""},"gpus":[],"containers":[],"disk":{}}' > /tmp/scarlix-test/host-status.json
           docker run -d --name scarlihq-test -p 8090:8090 \
