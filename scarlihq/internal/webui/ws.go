@@ -80,7 +80,7 @@ func checkOrigin(r *http.Request) bool {
 
 // statusJSON returns the current host-status.json as JSON bytes.
 func statusJSON() []byte {
-        s := status.Read()
+        s := status.ReadOrStale()
         if s.Timestamp == "" {
                 return []byte(`{"error":"host-status.json not found","stale":true}`)
         }

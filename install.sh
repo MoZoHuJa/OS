@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.2"
+VERSION="18.3"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -550,8 +550,8 @@ else
     if [ -d /var/lib/scarlix/bridge ]; then
       log "Migrating from v17.9.9 bridge/ layout → v18.0.0 bridge-input/ + bridge-state/..."
       # v18.2 P2: apply pending desired-mode BEFORE rm -rf (was: lost pending mode switch)
+      # v18.3 P0: removed `local` (was outside function — bash error)
       if [ -f /var/lib/scarlix/bridge/desired-mode ]; then
-        local pending_mode
         pending_mode=$(tr -d '[:space:]' < /var/lib/scarlix/bridge/desired-mode 2>/dev/null || echo "")
         if [ -n "$pending_mode" ]; then
           log "  Found pending desired-mode '$pending_mode' — applying before migration..."

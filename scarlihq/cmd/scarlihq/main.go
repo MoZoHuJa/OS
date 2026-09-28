@@ -18,7 +18,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "18.2"
+var Version = "18.3"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
