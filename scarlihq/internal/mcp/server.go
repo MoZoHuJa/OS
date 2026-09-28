@@ -1,67 +1,201 @@
 package mcp
 
 import (
-	"encoding/json"
-	"net/http"
+        "encoding/json"
+        "fmt"
+        "net/http"
 
-	"github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/guard"
-	"github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/profiles"
-	"github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/scarlix_mode"
+        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/guard"
+        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/profiles"
+        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/scarlix_mode"
+        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/status"
 )
 
-// Server is the MCP (Model Context Protocol) server
+// v17.9.8 P0: This is a REAL JSON-RPC 2.0 endpoint (was: fake MCP returning a static
+// JSON blob claiming "mcp/v1" without implementing initialize/tools/list/tools/call).
+//
+// Note: MCP (Model Context Protocol) is typically stdio-based. This HTTP endpoint
+// implements the JSON-RPC 2.0 message layer that MCP builds on, so MCP clients that
+// speak HTTP transport can use it. A full stdio MCP server would be a separate binary.
+// We expose this at /rpc (honest name) rather than /mcp (overclaim).
+
+// Server is the JSON-RPC server exposing ScarliHQ tools.
 type Server struct {
-	guard    *guard.Guard
-	mode     *scarlix_mode.Mode
-	profiles *profiles.Manager
+        guard     *guard.Guard
+        mode      *scarlix_mode.Mode
+        profiles  *profiles.Manager
+        authToken string
+        version   string
 }
 
-// NewServer creates a new MCP server
-func NewServer(g *guard.Guard, m *scarlix_mode.Mode, p *profiles.Manager) *Server {
-	return &Server{guard: g, mode: m, profiles: p}
+// NewServer creates a new JSON-RPC server.
+func NewServer(g *guard.Guard, m *scarlix_mode.Mode, p *profiles.Manager, authToken, version string) *Server {
+        return &Server{guard: g, mode: m, profiles: p, authToken: authToken, version: version}
 }
 
-// Tool represents an MCP tool definition
-type Tool struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+// JSON-RPC 2.0 types
+type rpcRequest struct {
+        JSONRPC string          `json:"jsonrpc"`
+        ID      json.RawMessage `json:"id"`
+        Method  string          `json:"method"`
+        Params  json.RawMessage `json:"params,omitempty"`
 }
 
-// RegisterRoutes registers MCP routes
+type rpcResponse struct {
+        JSONRPC string          `json:"jsonrpc"`
+        ID      json.RawMessage `json:"id"`
+        Result  interface{}     `json:"result,omitempty"`
+        Error   *rpcError       `json:"error,omitempty"`
+}
+
+type rpcError struct {
+        Code    int    `json:"code"`
+        Message string `json:"message"`
+}
+
+type toolDef struct {
+        Name        string `json:"name"`
+        Description string `json:"description"`
+}
+
+type initializeResult struct {
+        ProtocolVersion string            `json:"protocolVersion"`
+        Capabilities    map[string]any    `json:"capabilities"`
+        ServerInfo      map[string]string `json:"serverInfo"`
+}
+
+// RegisterRoutes registers JSON-RPC routes (all behind token auth).
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/mcp", s.handleMCP)
-	mux.HandleFunc("/mcp/tools", s.listTools)
+        mux.HandleFunc("/rpc", s.auth(s.handleRPC))
+        mux.HandleFunc("/mcp", s.auth(s.handleMCPInfo))
 }
 
-func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
-	// MCP protocol handler — tools listing + invocation
-	response := map[string]interface{}{
-		"protocol": "mcp/v1",
-		"server":   "scarlihq",
-		"version":  "v12.0",
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
+        return func(w http.ResponseWriter, r *http.Request) {
+                if s.authToken == "" {
+                        writeRPCError(w, http.StatusServiceUnavailable, nil, -32000, "SCARLIHQ_TOKEN not configured")
+                        return
+                }
+                token := r.Header.Get("Authorization")
+                if len(token) > 7 && token[:7] == "Bearer " {
+                        token = token[7:]
+                } else {
+                        token = r.URL.Query().Get("token")
+                }
+                if token != s.authToken {
+                        writeRPCError(w, http.StatusUnauthorized, nil, -32001, "invalid or missing token")
+                        return
+                }
+                next(w, r)
+        }
 }
 
-func (s *Server) listTools(w http.ResponseWriter, r *http.Request) {
-	tools := []Tool{
-		{Name: "scarlix_exec", Description: "Execute shell command with guard"},
-		{Name: "scarlix_read_file", Description: "Read file with permissions"},
-		{Name: "scarlix_write_file", Description: "Write file with permissions"},
-		{Name: "scarlix_git_commit", Description: "Git commit to worktree"},
-		{Name: "scarlix_post_nostr", Description: "Post Nostr event to Buzz"},
-		{Name: "scarlix_query_memory", Description: "Query agent memory"},
-		{Name: "scarlix_store_memory", Description: "Store agent memory"},
-		{Name: "scarlix_modelswap_status", Description: "Get current model status"},
-		{Name: "scarlix_mode_get", Description: "Get current scarlix-mode"},
-		{Name: "scarlix_mode_set", Description: "Set scarlix-mode (ai/game/turbo/offline)"},
-		{Name: "scarlix_agents_md_read", Description: "Read AGENTS.md rules"},
-		{Name: "scarlix_hitl_ask", Description: "Ask for HITL approval via Telegram"},
-		{Name: "scarlix_gpu_status", Description: "Get nvidia-smi GPU status"},
-		{Name: "scarlix_container_list", Description: "List Docker containers"},
-		{Name: "scarlix_voice_speak", Description: "Speak text via Piper TTS"},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"tools": tools})
+func (s *Server) handleMCPInfo(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(map[string]string{
+                "protocol":    "jsonrpc/2.0",
+                "server":       "scarlihq",
+                "version":      s.version,
+                "endpoint":     "/rpc",
+                "note":         "HTTP JSON-RPC 2.0 endpoint (initialize, tools/list, tools/call)",
+        })
+}
+
+func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodPost {
+                http.Error(w, "POST required", http.StatusMethodNotAllowed)
+                return
+        }
+        var req rpcRequest
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeRPCError(w, http.StatusBadRequest, nil, -32700, "parse error")
+                return
+        }
+        if req.JSONRPC != "2.0" {
+                writeRPCError(w, http.StatusOK, req.ID, -32600, "invalid request: jsonrpc must be 2.0")
+                return
+        }
+
+        w.Header().Set("Content-Type", "application/json")
+        var resp rpcResponse
+        resp.JSONRPC = "2.0"
+        resp.ID = req.ID
+
+        switch req.Method {
+        case "initialize":
+                resp.Result = initializeResult{
+                        ProtocolVersion: "2024-11-05",
+                        Capabilities: map[string]any{
+                                "tools": map[string]any{"listChanged": false},
+                        },
+                        ServerInfo: map[string]string{
+                                "name":    "scarlihq",
+                                "version": s.version,
+                        },
+                }
+        case "tools/list":
+                resp.Result = map[string]any{"tools": s.tools()}
+        case "tools/call":
+                resp = s.handleToolCall(req)
+        case "ping":
+                resp.Result = map[string]any{}
+        default:
+                resp.Error = &rpcError{Code: -32601, Message: "method not found: " + req.Method}
+        }
+
+        json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) tools() []toolDef {
+        return []toolDef{
+                {Name: "scarlix_mode_get", Description: "Get current scarlix-mode (ai/stop/game/creative/turbo/offline/tv)"},
+                {Name: "scarlix_mode_set", Description: "Request scarlix-mode switch (async via host bridge). Params: {mode: string}"},
+                {Name: "scarlix_gpu_status", Description: "Get GPU status from host-status.json (nvidia-smi snapshot)"},
+                {Name: "scarlix_container_list", Description: "List Docker containers from host-status.json"},
+                {Name: "scarlix_profile_list", Description: "List user profiles from /etc/scarlix/profiles/*.yaml"},
+                {Name: "scarlix_full_status", Description: "Full host status (mode, gpus, containers, disk, experimental)"},
+        }
+}
+
+type toolCallParams struct {
+        Name      string         `json:"name"`
+        Arguments map[string]any `json:"arguments,omitempty"`
+}
+
+func (s *Server) handleToolCall(req rpcRequest) rpcResponse {
+        var params toolCallParams
+        if err := json.Unmarshal(req.Params, &params); err != nil {
+                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: "invalid params"}}
+        }
+
+        switch params.Name {
+        case "scarlix_mode_get":
+                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]string{"mode": s.mode.Current()}}
+        case "scarlix_mode_set":
+                mode, _ := params.Arguments["mode"].(string)
+                if err := s.mode.Set(mode); err != nil {
+                        return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32603, Message: err.Error()}}
+                }
+                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]string{"status": "accepted", "mode": mode}}
+        case "scarlix_gpu_status":
+                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"gpus": status.Read().GPUs}}
+        case "scarlix_container_list":
+                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"containers": status.Read().Containers}}
+        case "scarlix_profile_list":
+                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"profiles": s.profiles.List()}}
+        case "scarlix_full_status":
+                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: status.Read()}
+        default:
+                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: fmt.Sprintf("unknown tool: %s", params.Name)}}
+        }
+}
+
+func writeRPCError(w http.ResponseWriter, httpCode int, id json.RawMessage, code int, msg string) {
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(httpCode)
+        json.NewEncoder(w).Encode(rpcResponse{
+                JSONRPC: "2.0",
+                ID:      id,
+                Error:   &rpcError{Code: code, Message: msg},
+        })
 }

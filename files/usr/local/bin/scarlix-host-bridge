@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# SCARLIX OS v17.9.8 — Host Bridge (privileged ops for ScarliHQ dashboard)
+#
+# ARCHITECTURE (v17.9.8): ScarliHQ container has NO docker.sock, NO nvidia runtime,
+# NO scarlix-mode mount. Instead it reads/writes status files in /var/lib/scarlix/.
+# This host-side script (run by systemd timer every 5s) does the privileged work:
+#   1. Applies desired-mode (if ScarliHQ wrote /var/lib/scarlix/desired-mode)
+#   2. Refreshes /var/lib/scarlix/host-status.json (GPU + containers + mode + disk)
+#
+# This is the privilege boundary: ScarliHQ (untrusted, LAN-facing) → file → host bridge → root ops.
+set -uo pipefail
+
+STATE_DIR="/var/lib/scarlix"
+BRIDGE_DIR="$STATE_DIR/bridge"
+DESIRED_MODE_FILE="$BRIDGE_DIR/desired-mode"
+CURRENT_MODE_FILE="$STATE_DIR/current-mode"
+STATUS_FILE="$STATE_DIR/host-status.json"
+LOCK_FILE="/var/lock/scarlix-host-bridge.lock"
+MODE_BIN="/usr/local/bin/scarlix-mode"
+
+# Prevent overlap (timer can fire every 5s; run may take longer)
+exec 200>"$LOCK_FILE"
+flock -n 200 || exit 0
+
+mkdir -p "$BRIDGE_DIR"
+
+# --- 1. Apply desired mode (if any) ---
+mode_applied=""
+if [ -f "$DESIRED_MODE_FILE" ]; then
+    desired=$(tr -d '[:space:]' < "$DESIRED_MODE_FILE" 2>/dev/null || echo "")
+    # Validate against scarlix-mode's accepted modes (must match scarlix-mode case statement)
+    case "$desired" in
+        ai|stop|game|creative|turbo|offline|tv)
+            if [ -x "$MODE_BIN" ]; then
+                if "$MODE_BIN" "$desired" >/var/log/scarlix-host-bridge.log 2>&1; then
+                    mode_applied="$desired"
+                else
+                    mode_applied="ERROR: scarlix-mode $desired failed (see /var/log/scarlix-host-bridge.log)"
+                fi
+            else
+                mode_applied="ERROR: $MODE_BIN not found"
+            fi
+            ;;
+        *)
+            mode_applied="ERROR: invalid mode '$desired'"
+            ;;
+    esac
+    # Clear desired-mode (applied or rejected — don't retry)
+    rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
+fi
+
+# --- 2. Gather host status → JSON ---
+current_mode="unknown"
+[ -f "$CURRENT_MODE_FILE" ] && current_mode=$(tr -d '[:space:]' < "$CURRENT_MODE_FILE" 2>/dev/null || echo "unknown")
+[ -z "$current_mode" ] && current_mode="unknown"
+
+# GPU status (nvidia-smi if available)
+gpu_json="[]"
+if command -v nvidia-smi >/dev/null 2>&1; then
+    gpu_json=$(nvidia-smi --query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,compute_cap \
+        --format=csv,noheader,nounits 2>/dev/null | awk -F', ' '
+        BEGIN{printf "["}
+        {
+            gsub(/^[ \t]+|[ \t]+$/,"",$1); gsub(/^[ \t]+|[ \t]+$/,"",$2)
+            for(i=3;i<=NF;i++){gsub(/^[ \t]+|[ \t]+$/,"",$i)}
+            if(NR>1){printf ","}
+            printf "{\"index\":%s,\"name\":\"%s\",\"temp\":%s,\"util\":%s,\"mem_used\":%s,\"mem_total\":%s,\"power\":%s,\"compute_cap\":\"%s\"}",
+                $1,$2,$3+0,$4+0,$5+0,$6+0,$7+0,$8
+        }
+        END{printf "]"}' 2>/dev/null || echo "[]")
+fi
+
+# Container status (docker if available + socket accessible)
+containers_json="[]"
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    containers_json=$(docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null | awk -F'\t' '
+        BEGIN{printf "["}
+        {
+            if(NR>1){printf ","}
+            gsub(/"/,"\\\"",$1); gsub(/"/,"\\\"",$2); gsub(/"/,"\\\"",$3)
+            printf "{\"name\":\"%s\",\"status\":\"%s\",\"ports\":\"%s\"}",$1,$2,$3
+        }
+        END{printf "]"}' 2>/dev/null || echo "[]")
+fi
+
+# Disk space on /models
+models_disk_free_mb=0
+models_disk_total_mb=0
+if df -m /models >/dev/null 2>&1; then
+    read -r _ _ total used _ _ < <(df -m /models | tail -1)
+    models_disk_total_mb=${total:-0}
+    models_disk_free_mb=${used:-0}
+    # recalc free = total - used
+    models_disk_free_mb=$((models_disk_total_mb - models_disk_free_mb))
+    [ "$models_disk_free_mb" -lt 0 ] && models_disk_free_mb=0
+fi
+
+# Experimental flag
+experimental=false
+[ -f /etc/scarlix/.experimental ] && experimental=true
+
+# ScarliHQ dashboard version (for /api/health consistency check)
+scarlix_version="unknown"
+[ -f /etc/scarlix/VERSION ] && scarlix_version=$(tr -d '[:space:]' < /etc/scarlix/VERSION 2>/dev/null || echo "unknown")
+# Fallback to root VERSION file (installed by install.sh Phase 4)
+[ "$scarlix_version" = "unknown" ] && [ -f /usr/local/share/scarlix/VERSION ] && scarlix_version=$(tr -d '[:space:]' < /usr/local/share/scarlix/VERSION 2>/dev/null || echo "unknown")
+
+# Write status JSON atomically (write to tmp, rename)
+tmp="${STATUS_FILE}.tmp"
+cat > "$tmp" <<EOF
+{
+  "timestamp": "$(date -Iseconds 2>/dev/null || date)",
+  "version": "17.9.8",
+  "scarlix_version": "$scarlix_version",
+  "mode": "$current_mode",
+  "experimental": $experimental,
+  "mode_applied": "$mode_applied",
+  "gpus": $gpu_json,
+  "containers": $containers_json,
+  "disk": {
+    "models_free_mb": $models_disk_free_mb,
+    "models_total_mb": $models_disk_total_mb
+  }
+}
+EOF
+mv -f "$tmp" "$STATUS_FILE" 2>/dev/null || true
+chmod 644 "$STATUS_FILE" 2>/dev/null || true
+
+exit 0

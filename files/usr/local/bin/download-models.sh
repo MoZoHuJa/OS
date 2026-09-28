@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.7 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v17.9.8 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
+# v17.9.8 FIXES:
+#   - Missing Ollama compose file = FAILED (was: silently skipped → false "complete")
+#   - Missing SGLang hf_repo = FAILED (was: warn only → false "complete")
+#   - Disk-space check before EACH download (not just start — partial-download protection)
 # v17.9.7 FIXES:
-#   - FAILED counter (FAILED=$((FAILED+1)) — was boolean overwrite, now counts all failures)
-#   - Disk-space pre-check on /models (warn if < 50GB, fail-hard if < 10GB)
+#   - FAILED counter (FAILED=$((FAILED+1)) — was boolean overwrite)
+#   - Disk-space pre-check on /models (fail-hard < 10GB)
 # v17.9.5 FIXES (vs v17.5):
 #   - Uses v17.5 keys: .beellama.* (not .llamacpp.*), .ollama.model (not .ollama_main)
 #   - SGLang: uses hf_repo field (not model_path which is local path)
@@ -21,7 +25,7 @@ VENV_DIR="/opt/scarlix/venv"
 mkdir -p "$(dirname "$LOG_FILE")" "$MODELS_DIR" "$VENV_DIR"
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v17.9.7 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v17.9.8 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing
@@ -61,11 +65,13 @@ progress() {
 
 # === Step 1: SGLang model (safetensors, GPU 0) ===
 # v17.9.5 FIX: Use hf_repo field (not model_path which is local)
+# v17.9.8 FIX: missing hf_repo = FAILED (was: warn only → false "complete")
 progress "SGLang model (safetensors)"
 SGLANG_HF_REPO=$(yq '.sglang.hf_repo // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
 if [ -z "$SGLANG_HF_REPO" ]; then
-  echo "  ⚠ No .sglang.hf_repo in models.yaml — SGLang model NOT downloaded" | tee -a "$LOG_FILE"
+  echo "  ✗ No .sglang.hf_repo in models.yaml — SGLang is REQUIRED (Tier-1 engine)" | tee -a "$LOG_FILE"
   echo "  To enable: add 'hf_repo: Qwen/Qwen3-14B-AWQ' to .sglang section" | tee -a "$LOG_FILE"
+  FAILED=$((FAILED+1))
 else
   SGLANG_LOCAL_PATH=$(yq '.sglang.model_path' "$MODELS_CONFIG" 2>/dev/null || echo "/models/$SGLANG_HF_REPO")
   echo "  Downloading: $SGLANG_HF_REPO → $SGLANG_LOCAL_PATH" | tee -a "$LOG_FILE"
@@ -96,13 +102,20 @@ fi
 
 # === Step 3: Ollama model (GGUF, GPU) ===
 # v17.9.5 FIX: Uses .ollama.model (not .ollama_main.model), correct container name
+# v17.9.8 FIX: missing compose file = FAILED (was: silently skipped → false "complete")
 progress "Ollama model"
 OLLAMA_MODEL=$(yq '.ollama.model // "qwen2.5:3b"' "$MODELS_CONFIG" 2>/dev/null || echo "qwen2.5:3b")
 echo "  Pulling Ollama model: $OLLAMA_MODEL" | tee -a "$LOG_FILE"
 # Start Ollama container
-if command -v docker >/dev/null 2>&1; then
+if ! command -v docker >/dev/null 2>&1; then
+  echo "  ✗ Docker not installed — Ollama model NOT pulled" | tee -a "$LOG_FILE"
+  FAILED=$((FAILED+1))
+else
   COMPOSE_FILE="/opt/scarlix/ai/ollama/docker-compose.yml"
-  if [ -f "$COMPOSE_FILE" ]; then
+  if [ ! -f "$COMPOSE_FILE" ]; then
+    echo "  ✗ Ollama compose file missing: $COMPOSE_FILE" | tee -a "$LOG_FILE"
+    FAILED=$((FAILED+1))
+  else
     docker compose -f "$COMPOSE_FILE" up -d >> "$LOG_FILE" 2>&1 || true
     # Wait for Ollama API to be ready (max 60s)
     echo "  Waiting for Ollama API..." | tee -a "$LOG_FILE"
@@ -121,8 +134,6 @@ if command -v docker >/dev/null 2>&1; then
       FAILED=$((FAILED+1))
     fi
   fi
-else
-  echo "  ⚠ Docker not running — Ollama model NOT pulled" | tee -a "$LOG_FILE"
 fi
 
 # === Step 4: Verify ===

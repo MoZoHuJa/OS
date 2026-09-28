@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.7 — Model Manager
+# SCARLIX OS v17.9.8 — Model Manager
+# v17.9.8 FIX: Ollama pulls via `docker exec ollama-agent` (was: host `ollama` binary — never installed)
 # FIX Q8b: Split — HF model pulls = auto (safe), Ollama tag pulls = manual (--apply only)
 #
 # Weekly timer (Mon 04:00) runs with NO --apply → only HF model pulls + Telegram report.
@@ -48,13 +49,13 @@ vram_snapshot() {
 }
 
 log "========================================"
-log "  SCARLIX OS v17.9.7 — Model Manager"
+log "  SCARLIX OS v17.9.8 — Model Manager"
 [ "$APPLY_OLLAMA" -eq 1 ] && log "  (--apply-ollama: will update Ollama tags)" || log "  (HF auto-pull + Ollama dry-run report only)"
 log "========================================"
 
 if [ ! -f "$MODELS_YAML" ]; then
   log "ERROR: models.yaml not found"
-  send_telegram "🚨 *SCARLIX Model Manager v17.9.7* — FAILED
+  send_telegram "🚨 *SCARLIX Model Manager v17.9.8* — FAILED
 models.yaml not found"
   exit 1
 fi
@@ -100,15 +101,24 @@ else
 fi
 
 # === Ollama model pulls (MANUAL unless --apply-ollama) ===
-if command -v ollama >/dev/null 2>&1; then
-  # P1-10 v17.9.5: Single Ollama model (was duplicated — main + agent read same .ollama.model key)
-  OLLAMA_MODEL=$(yq '.ollama.model' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "")
-
-  for model in "$OLLAMA_MODEL"; do
-    if [ -n "$model" ]; then
+# v17.9.8 P1: Ollama runs in Docker container `ollama-agent` (not as host binary).
+# Use `docker exec ollama-agent ollama ...` instead of `command -v ollama`.
+if ! command -v docker >/dev/null 2>&1; then
+  log "⚠ Docker not installed — skipping Ollama"
+  OLLAMA_FAILED=$((OLLAMA_FAILED + 1))
+else
+  # Check if ollama-agent container exists + is running
+  OLLAMA_STATUS=$(docker inspect -f '{{.State.Status}}' ollama-agent 2>/dev/null || echo "not_found")
+  if [ "$OLLAMA_STATUS" != "running" ]; then
+    log "⚠ ollama-agent container not running (status: $OLLAMA_STATUS) — skipping Ollama"
+    OLLAMA_FAILED=$((OLLAMA_FAILED + 1))
+  else
+    OLLAMA_MODEL=$(yq '.ollama.model' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "")
+    for model in "$OLLAMA_MODEL"; do
+      [ -n "$model" ] || continue
       if [ "$APPLY_OLLAMA" -eq 1 ]; then
-        log "Pulling Ollama: $model (--apply-ollama)"
-        if ollama pull "$model" >> "$LOG_FILE" 2>&1; then
+        log "Pulling Ollama (via docker exec): $model (--apply-ollama)"
+        if docker exec ollama-agent ollama pull "$model" >> "$LOG_FILE" 2>&1; then
           log "  ✓ $model"
           OLLAMA_UPDATED=$((OLLAMA_UPDATED + 1))
           UPDATED_LIST="${UPDATED_LIST}\n  ✓ ${model} (ollama)"
@@ -117,12 +127,12 @@ if command -v ollama >/dev/null 2>&1; then
           OLLAMA_FAILED=$((OLLAMA_FAILED + 1))
         fi
       else
-        # Dry-run: just report current vs latest
-        CURRENT=$(ollama list 2>/dev/null | grep "$model" | awk '{print $2}' | head -1 || echo "not installed")
+        # Dry-run: just report current vs latest (via docker exec)
+        CURRENT=$(docker exec ollama-agent ollama list 2>/dev/null | grep "$model" | awk '{print $2}' | head -1 || echo "not installed")
         log "  (dry-run) Ollama $model: current=$CURRENT — use --apply-ollama to update"
       fi
-    fi
-  done
+    done
+  fi
 fi
 
 VRAM_AFTER=$(vram_snapshot)
@@ -132,7 +142,7 @@ log "HF: updated=$HF_UPDATED failed=$HF_FAILED"
 log "Ollama: updated=$OLLAMA_UPDATED failed=$OLLAMA_FAILED"
 
 # === Telegram summary ===
-SUMMARY="🤖 *SCARLIX Model Manager v17.9.7*
+SUMMARY="🤖 *SCARLIX Model Manager v17.9.8*
 📊 HF: \`${HF_UPDATED}\` updated, \`${HF_FAILED}\` failed
 📊 Ollama: \`${OLLAMA_UPDATED}\` updated, \`${OLLAMA_FAILED}\` failed
 $([ "$APPLY_OLLAMA" -eq 0 ] && echo "ℹ️ Ollama tags NOT updated (dry-run). Use \`model-manager.sh --apply-ollama\` to update.")
