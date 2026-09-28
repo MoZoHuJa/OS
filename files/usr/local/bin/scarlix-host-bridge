@@ -44,9 +44,16 @@ chmod 700 "$STATE_DIR_ROOT" 2>/dev/null || true
 # --- v18.0.0 P1: Input validation (prevent symlink/ownership attacks) ---
 validate_input_file() {
     local f="$1"
-    [ -f "$f" ] || return 1
-    # Must be a regular file (not symlink — root could follow symlink to arbitrary path)
+    # v18.2 P1: explicit regular file check (was: `-f` implicit, but add explicit for clarity)
+    # `-f` already rejects FIFO/pipe/socket/device, but explicit checks make intent clear.
+    [ -f "$f" ] || { log_warn "REJECTED: $f not a regular file"; return 1; }
+    # Must NOT be a symlink (root could follow to arbitrary path)
     [ -L "$f" ] && { log_warn "REJECTED: $f is a symlink (possible attack)"; return 1; }
+    # v18.2 P1: explicit FIFO/pipe/socket/block/char device rejection
+    [ -p "$f" ] && { log_warn "REJECTED: $f is a FIFO/pipe (DoS risk)"; return 1; }
+    [ -S "$f" ] && { log_warn "REJECTED: $f is a socket"; return 1; }
+    [ -b "$f" ] && { log_warn "REJECTED: $f is a block device"; return 1; }
+    [ -c "$f" ] && { log_warn "REJECTED: $f is a char device"; return 1; }
     # Must be owned by the expected UID (65532 = nonroot in ScarliHQ container)
     local owner_uid
     owner_uid=$(stat -c %u "$f" 2>/dev/null || echo 0)
@@ -139,6 +146,7 @@ if [ -f "$DESIRED_MODE_FILE" ]; then
 fi
 
 # Read persistent last_transition (for status even when no new request)
+# v18.2 P2: also restore retry_count + last_error (was: only requested/state/timestamp)
 last_requested=""
 last_state=""
 last_timestamp=""
@@ -146,8 +154,16 @@ if [ -f "$LAST_TRANSITION_FILE" ]; then
     last_requested=$(grep '^requested=' "$LAST_TRANSITION_FILE" 2>/dev/null | cut -d= -f2 || echo "")
     last_state=$(grep '^state=' "$LAST_TRANSITION_FILE" 2>/dev/null | cut -d= -f2 || echo "")
     last_timestamp=$(grep '^timestamp=' "$LAST_TRANSITION_FILE" 2>/dev/null | cut -d= -f2- || echo "")
+    # v18.2 P2: restore retry_count + last_error from last-transition file
+    last_retry=$(grep '^retry_count=' "$LAST_TRANSITION_FILE" 2>/dev/null | cut -d= -f2 || echo "0")
+    last_error_stored=$(grep '^error=' "$LAST_TRANSITION_FILE" 2>/dev/null | cut -d= -f2- || echo "")
     # If current transition is "none", use last_transition for status
-    [ "$transition" = "none" ] && { requested_mode="$last_requested"; transition="$last_state"; }
+    if [ "$transition" = "none" ]; then
+        requested_mode="$last_requested"
+        transition="$last_state"
+        retry_count="$last_retry"
+        [ -z "$last_error" ] && last_error="$last_error_stored"
+    fi
 fi
 
 # --- 2. Gather host status ---

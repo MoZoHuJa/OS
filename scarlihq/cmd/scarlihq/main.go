@@ -15,9 +15,10 @@ import (
 )
 
 // Version is the ScarliHQ application version.
+// v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-const Version = "18.1"
+var Version = "18.2"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -53,7 +54,8 @@ func main() {
         })
 
         // REST API + MCP + WS — all behind token auth
-        apiHandler := api.NewHandler(g, mode, pf, authToken)
+        // v18.2 P1: pass Version to Handler (was: separate const — ldflags couldn't override)
+        apiHandler := api.NewHandler(g, mode, pf, authToken, Version)
         apiHandler.RegisterRoutes(mux)
 
         mcpServer := mcp.NewServer(g, mode, pf, authToken, Version)
