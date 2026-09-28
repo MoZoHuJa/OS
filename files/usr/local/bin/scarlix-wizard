@@ -4,7 +4,7 @@ set -euo pipefail
 # SCARLIX OS v17.5 — EndeavourOS Edition — Setup Wizard
 # v17.5: Creates .experimental if 2+ GPU (Q3a — vLLM starts without --profile gate)
 
-TITLE="SCARLIX OS v17.8 Setup"
+TITLE="SCARLIX OS v17.9 Setup"
 
 NVIDIA_DGPU_COUNT=$(lspci -nn 2>/dev/null | grep -iE 'NVIDIA.*(VGA|3D)' | wc -l || echo 0)
 if [ "$NVIDIA_DGPU_COUNT" -gt 0 ]; then

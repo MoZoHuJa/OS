@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v17.8.0 — Bootstrap Installer (Stable)
+# SCARLIX OS v17.9.0 — Bootstrap Installer (Final Polish)
 # ============================================================================
 #
 # v17.5.1 FIXES (vs v17.5):
@@ -29,7 +29,7 @@ set -euo pipefail
 #   cd ~/scarlix-os && bash install.sh
 # ============================================================================
 
-VERSION="17.8.0"
+VERSION="17.9.0"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -123,8 +123,13 @@ ok "Internet connection"
 ok "Repo at $REPO_DIR"
 
 # Detect NVIDIA GPUs
+# P0 FIX v17.9: NVIDIA_COUNT without double-0 (grep -c returns 0 + || echo 0 = "0\n0")
 NVIDIA_GPUS=$(lspci -nn 2>/dev/null | grep -iE 'NVIDIA.*(VGA|3D)' || true)
-NVIDIA_COUNT=$(echo "$NVIDIA_GPUS" | grep -c . 2>/dev/null || echo 0)
+NVIDIA_COUNT=$(echo "$NVIDIA_GPUS" | grep -c . 2>/dev/null || true)
+NVIDIA_COUNT=${NVIDIA_COUNT:-0}
+# Ensure it's a single integer
+NVIDIA_COUNT=$(echo "$NVIDIA_COUNT" | head -1)
+[ -z "$NVIDIA_COUNT" ] && NVIDIA_COUNT=0
 GPU_COMPUTE_CAPS=""
 GPU_NAMES=""
 
@@ -481,8 +486,9 @@ else
     systemctl enable model-manager.timer >> "$LOG_FILE" 2>&1 && ok "model-manager.timer enabled" || fail "model-manager.timer"
   fi
 
-  # Q7a: Download starter model (qwen2.5:3b ~2GB) so Ollama fallback works immediately
-  if [ "$NVIDIA_COUNT" -gt 0 ] && command -v docker >/dev/null 2>&1; then
+  # P1 FIX v17.9: Download starter model for ALL systems (was NVIDIA_COUNT > 0 only)
+  # Ollama is CPU fallback — needed even on dev_workstation without GPU
+  if command -v docker >/dev/null 2>&1; then
     log "Downloading starter model (qwen2.5:3b ~2GB) for Ollama fallback..."
     # Start Ollama temporarily to pull starter model
     docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1
