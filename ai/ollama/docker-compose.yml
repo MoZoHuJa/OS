@@ -1,6 +1,5 @@
-# SCARLIX OS v17.6 — Ollama (CPU fallback, not GPU)
-# v17.6 FIX: Ollama runs on CPU (was GPU0 — if GPU0 driver dies, fallback still works)
-# No deploy.resources.devices section = CPU only
+# SCARLIX OS v17.7 — Ollama (CPU fallback, not GPU, mem_limit 6g)
+# v17.7: mem_limit 6g (was unlimited — OOM risk), CPU only, root:root volume
 services:
   ollama-agent:
     image: ollama/ollama:0.5.4
@@ -17,7 +16,7 @@ services:
       - OLLAMA_KEEP_ALIVE=-1
       - OLLAMA_FLASH_ATTENTION=0
       - TZ=Europe/Bratislava
-    # v17.6: No GPU allocation — CPU only fallback (survives GPU0 driver failure)
+    mem_limit: 6g
     networks: [scarlix-net]
     healthcheck:
       test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v17.6.0 — Bootstrap Installer (Working AI Path, Bugfix 2)
+# SCARLIX OS v17.7.0 — Bootstrap Installer (Working AI Path, Bugfix 4)
 # ============================================================================
 #
 # v17.5.1 FIXES (vs v17.5):
@@ -29,7 +29,7 @@ set -euo pipefail
 #   cd ~/scarlix-os && bash install.sh
 # ============================================================================
 
-VERSION="17.6.0"
+VERSION="17.7.0"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -108,7 +108,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 ok "Running as root"
 
-REAL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo "")}"
+REAL_USER="${SUDO_USER:-${USER:-$(logname 2>/dev/null || echo "")}}"
 if [ -z "$REAL_USER" ] || [ "$REAL_USER" = "root" ]; then
   REAL_USER=$(grep -E '^[^:]+:x:1000:' /etc/passwd 2>/dev/null | cut -d: -f1 || echo "")
 fi
@@ -165,10 +165,10 @@ else
   mkdir -p /opt/scarlix /var/lib/scarlix /etc/scarlix/{profiles,secrets}
   mkdir -p /models /var/lib/docker /var/lib/scarlix/ollama /mnt/{files,games,photos,backup/restic}
   chown -R "$REAL_USER:$REAL_USER" /opt/scarlix /var/lib/scarlix /etc/scarlix /mnt 2>/dev/null || true
-  # P1-8 FIX v17.6: chown to REAL_USER + chmod 775 (was 777 — security hole)
-  chown -R "$REAL_USER:$REAL_USER" /var/lib/scarlix/ollama 2>/dev/null || true
-  chmod 775 /var/lib/scarlix/ollama 2>/dev/null || true
-  # P1-9 FIX v17.6: /models chown + 775 (was 777 — security hole)
+  # Q2a v17.7: Ollama volume root:root + 777 (container runs as root, writes model cache)
+  chown root:root /var/lib/scarlix/ollama 2>/dev/null || true
+  chmod 777 /var/lib/scarlix/ollama 2>/dev/null || true
+  # /models chown REAL_USER + 775 (download-models.sh runs as user)
   chown -R "$REAL_USER:$REAL_USER" /models 2>/dev/null || true
   chmod 775 /models 2>/dev/null || true
 
@@ -283,10 +283,8 @@ log "=== Phase 3: Docker + nvidia-container-toolkit + network ==="
 if is_checkpoint_valid phase3; then
   info "Phase 3 checkpoint valid — skipping."
 else
-  log "Starting Docker..."
-  systemctl start docker >> "$LOG_FILE" 2>&1 && ok "Docker started" || crit "Docker start"
-  systemctl enable docker >> "$LOG_FILE" 2>&1 && ok "Docker enabled on boot" || fail "Docker enable"
-  sleep 2
+  # Q4a v17.7: Install yay + nvidia-container-toolkit BEFORE Docker start
+  # (was: Docker start first → no GPU visibility until restart)
 
   # Yay
   log "Installing yay..."
@@ -303,13 +301,12 @@ else
     rm -rf "$YAY_BUILD"
   fi
 
-  # Q5a: nvidia-container-toolkit fail → CRIT (Docker can't see GPU without it)
+  # Q5a: nvidia-container-toolkit fail → CRIT (before Docker start)
   if [ "$NVIDIA_COUNT" -gt 0 ]; then
-    log "Installing nvidia-container-toolkit (CRITICAL)..."
+    log "Installing nvidia-container-toolkit (CRITICAL — before Docker start)..."
     if sudo -u "$REAL_USER" yay -S --noconfirm nvidia-container-toolkit >> "$LOG_FILE" 2>&1; then
       ok "nvidia-container-toolkit"
-      nvidia-ctk runtime configure --runtime=docker >> "$LOG_FILE" 2>&1 && ok "Docker NVIDIA runtime" || crit "Docker NVIDIA runtime"
-      systemctl restart docker >> "$LOG_FILE" 2>&1 || true
+      nvidia-ctk runtime configure --runtime=docker >> "$LOG_FILE" 2>&1 && ok "Docker NVIDIA runtime configured" || crit "Docker NVIDIA runtime"
     else
       crit "nvidia-container-toolkit (AUR) — Docker GPU won't work without it"
     fi
@@ -317,6 +314,17 @@ else
     log "Installing downgrade (AUR)..."
     sudo -u "$REAL_USER" yay -S --noconfirm downgrade >> "$LOG_FILE" 2>&1 && ok "downgrade" || fail "downgrade (non-critical)"
   fi
+
+  # Q4a v17.7: NOW start Docker (after nvidia-container-toolkit configured)
+  log "Starting Docker (after toolkit configured)..."
+  systemctl start docker >> "$LOG_FILE" 2>&1 && ok "Docker started (with GPU runtime)" || crit "Docker start"
+  systemctl enable docker >> "$LOG_FILE" 2>&1 && ok "Docker enabled on boot" || fail "Docker enable"
+  sleep 2
+
+  # Q3-from-R2 v17.7: Add REAL_USER to docker group (so scarlix-mode works without sudo)
+  log "Adding $REAL_USER to docker group..."
+  usermod -aG docker "$REAL_USER" >> "$LOG_FILE" 2>&1 && ok "$REAL_USER added to docker group" || fail "usermod docker group"
+  info "  (user needs to re-login or 'newgrp docker' for changes to take effect)"
 
   # Docker network
   log "Creating Docker network scarlix-net..."
