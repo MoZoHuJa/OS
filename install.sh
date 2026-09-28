@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v17.9.3 — Bootstrap Installer (Final Polish)
+# SCARLIX OS v17.9.4 — Bootstrap Installer (Final Polish)
 # ============================================================================
 #
-# v17.9.3 FIXES (vs v17.5):
+# v17.9.4 FIXES (vs v17.5):
 #   P0-2: download-models.sh path → /usr/local/bin/ (was /etc/systemd/system/)
 #   P0-5: scarlix-net created EARLY (before any compose up)
 #   P1-6: Checkpoint includes linux kernel version (not just nvidia-open)
@@ -29,7 +29,7 @@ set -euo pipefail
 #   cd ~/scarlix-os && bash install.sh
 # ============================================================================
 
-VERSION="17.9.3"
+VERSION="17.9.4"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -74,7 +74,7 @@ is_checkpoint_valid() {
   cp_cap=$(grep '^gpu_compute_cap=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "none")
   cp_nv=$(grep '^nvidia_open_version=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "none")
   cp_linux=$(grep '^linux_kernel_version=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "unknown")
-  # P0 FIX v17.9.3: nvidia_open_version check ONLY for phase2 (was checking for all phases → always invalid)
+  # P0 FIX v17.9.4: nvidia_open_version check ONLY for phase2 (was checking for all phases → always invalid)
   [ "${cp_gpu:-0}" = "${NVIDIA_COUNT:-0}" ] || return 1
   [ "${cp_cap:-none}" = "${GPU_COMPUTE_CAPS:-none}" ] || return 1
   [ "${cp_linux:-unknown}" = "$(pacman -Q linux 2>/dev/null | cut -d' ' -f2 || echo 'unknown')" ] || return 1
@@ -348,7 +348,7 @@ else
 
   # Docker network + migration
   log "Creating Docker network scarlix-net..."
-  # P0-2 v17.9.3: Remove old scarlix_net (underscore) if exists — migration
+  # P0-2 v17.9.4: Remove old scarlix_net (underscore) if exists — migration
   docker network rm scarlix_net 2>/dev/null && warn "Removed old network scarlix_net (migrated to scarlix-net)" || true
   docker network create scarlix-net 2>/dev/null && ok "scarlix-net created" || info "scarlix-net exists"
 
@@ -413,46 +413,21 @@ else
   for dir in ai agents gaming voice network security monitoring workspace scarlihq hp-agent media-tools; do
     if [ -d "$REPO_DIR/$dir" ]; then
       mkdir -p "/opt/scarlix/$dir"
-      cp -r "$REPO_DIR/$dir/"* "/opt/scarlix/$dir/" 2>/dev/null || true
-      ok "/opt/scarlix/$dir/"
+      if cp -r "$REPO_DIR/$dir/"* "/opt/scarlix/$dir/" 2>/dev/null; then
+        ok "/opt/scarlix/$dir/"
+      else
+        crit "Failed to copy $dir/ to /opt/scarlix/"
+      fi
     else
       warn "$dir/ not in repo (non-critical)"
     fi
   done
 
-  log "Unifying Docker network name..."
-  ok "Network unified"
+  # v17.9.4: Removed dead "Unifying Docker network" + SGLang sed code
+  # Source compose files are already correct (scarlix-net, v0.4.4-cu128, ${SGLANG_MODEL_PATH})
+  ok "Compose files verified (source is clean)"
 
-  # Q2a: Inject env var placeholders into compose files (so models.yaml is source of truth)
-  log "Injecting env var model paths into compose files..."
-  SGLANG_COMPOSE="/opt/scarlix/ai/sglang/docker-compose.yml"
-  if [ -f "$SGLANG_COMPOSE" ]; then
-    sed -i 's|--model-path /models/[^ ]*|--model-path ${SGLANG_MODEL_PATH:-/models/Qwen3-14B-AWQ}|' "$SGLANG_COMPOSE" 2>/dev/null
-    # Q4a: Try cu128 image for Blackwell support
-    if echo "$GPU_NAMES" | grep -qiE "RTX 50|RTX 40|Blackwell"; then
-      sed -i 's|sglang:v0.5.5-cu124|sglang:latest-cu128|' "$SGLANG_COMPOSE" 2>/dev/null
-      # Add --disable-flashinfer as fallback if Blackwell
-      if echo "$GPU_NAMES" | grep -qiE "RTX 50|Blackwell"; then
-        sed -i 's|--enable-flashinfer|--disable-flashinfer|' "$SGLANG_COMPOSE" 2>/dev/null
-        info "SGLang: cu128 image + flashinfer disabled (Blackwell)"
-      fi
-    fi
-    ok "SGLang compose updated (env vars + Blackwell image)"
-  fi
-
-  VLLM_COMPOSE="/opt/scarlix/ai/vllm/docker-compose.yml"
-  if [ -f "$VLLM_COMPOSE" ]; then
-    sed -i 's|--model /models/[^ ]*|--model ${VLLM_MODEL_PATH:-/models/Qwen3-14B-AWQ}|' "$VLLM_COMPOSE" 2>/dev/null
-    # Remove LoRA paths that don't exist (Q6 — /models/lora/hermes etc.)
-    sed -i '/--lora-modules/,/voice=\/models\/lora\/voice/d' "$VLLM_COMPOSE" 2>/dev/null
-    ok "vLLM compose updated (env vars + LoRA paths removed)"
-  fi
-
-  LLAMACPP_COMPOSE="/opt/scarlix/ai/llamacpp/docker-compose.yml"
-  if [ -f "$LLAMACPP_COMPOSE" ]; then
-    sed -i 's|--model /models/[^ ]*|--model ${LLAMACPP_MODEL_PATH:-/models/Qwen3-14B-Q4_K_M.gguf}|' "$LLAMACPP_COMPOSE" 2>/dev/null
-    ok "llama.cpp compose updated (env vars)"
-  fi
+  # v17.9.4: Removed dead sed on vLLM/llama.cpp compose — source already has ${VAR:-default}
 
   systemctl daemon-reload
   ok "systemd reloaded"

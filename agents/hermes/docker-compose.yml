@@ -16,12 +16,11 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_ZMOR_CHAT_ID}
       - TZ=Europe/Bratislava
-    networks: [scarlix-net, scarlix-net]
+    networks: [scarlix-net]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:7999/health"]
       interval: 30s
       timeout: 5s
       retries: 3
 networks:
-  scarlix-net: { external: true }
   scarlix-net: { external: true }
