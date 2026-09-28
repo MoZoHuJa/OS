@@ -14,7 +14,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "18.2"
+var Version = "18.3"
 
 // Handler holds dependencies for API routes.
 type Handler struct {
@@ -75,7 +75,7 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) gpuStatus(w http.ResponseWriter, r *http.Request) {
-        s := status.Read()
+        s := status.ReadOrStale()
         if len(s.GPUs) == 0 && s.Timestamp == "" {
                 writeJSON(w, map[string]interface{}{
                         "gpus":    []status.GPU{},
@@ -91,7 +91,7 @@ func (h *Handler) gpuStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request) {
-        s := status.Read()
+        s := status.ReadOrStale()
         if s.Containers == nil {
                 s.Containers = []status.Container{}
         }
@@ -102,7 +102,7 @@ func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) fullStatus(w http.ResponseWriter, r *http.Request) {
-        writeJSON(w, status.Read())
+        writeJSON(w, status.ReadOrStale())
 }
 
 // modeHandler handles GET (return current + transition state) and POST (set desired mode).
@@ -110,7 +110,7 @@ func (h *Handler) fullStatus(w http.ResponseWriter, r *http.Request) {
 // Dashboard can now show "requested=ai, state=retrying, retry_count=1, last_error=...".
 func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
         if r.Method == http.MethodGet {
-                s := status.Read()
+                s := status.ReadOrStale()
                 writeJSON(w, map[string]interface{}{
                         "mode":             s.Mode,
                         "status":           "ok",

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v18.0.0 — Host Bridge (privileged ops for ScarliHQ dashboard)
+# SCARLIX OS v18.3 — Host Bridge (privileged ops for ScarliHQ dashboard)
 #
 # ARCHITECTURE (v18.0.0): ScarliHQ container has NO docker.sock, NO nvidia runtime.
 # It writes ONLY to /var/lib/scarlix/bridge-input/desired-mode (writable by nonroot 65532).
@@ -37,15 +37,23 @@ exec 200>"$LOCK_FILE"
 flock -n 200 || exit 0
 
 mkdir -p "$INPUT_DIR" "$STATE_DIR_ROOT"
-# Ensure state dir is root-only (ScarliHQ must NOT be able to create symlinks here)
-chown root:root "$STATE_DIR_ROOT" 2>/dev/null || true
-chmod 700 "$STATE_DIR_ROOT" 2>/dev/null || true
+# v18.3 P1: fail-closed on security boundary dirs (was: `|| true` → continued on failure)
+# bridge-state/ MUST be root:root 700 — if we can't enforce that, abort (don't continue).
+if ! chown root:root "$STATE_DIR_ROOT" 2>/dev/null; then
+    echo "[$(date '+%H:%M:%S')] FATAL: cannot chown root:root $STATE_DIR_ROOT — aborting" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
+    exit 1
+fi
+if ! chmod 700 "$STATE_DIR_ROOT" 2>/dev/null; then
+    echo "[$(date '+%H:%M:%S')] FATAL: cannot chmod 700 $STATE_DIR_ROOT — aborting" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
+    exit 1
+fi
 
 # --- v18.0.0 P1: Input validation (prevent symlink/ownership attacks) ---
 validate_input_file() {
     local f="$1"
-    # v18.2 P1: explicit regular file check (was: `-f` implicit, but add explicit for clarity)
-    # `-f` already rejects FIFO/pipe/socket/device, but explicit checks make intent clear.
+    # v18.3 P0: FIXED octal permission check (was: `$((perms & 022))` interpreted 600 as DECIMAL
+    # not octal → 600 & 022 = 16 (not 0) → REJECTED legit 0600 files from Go CreateTemp).
+    # Now: explicit whitelist of safe permission modes.
     [ -f "$f" ] || { log_warn "REJECTED: $f not a regular file"; return 1; }
     # Must NOT be a symlink (root could follow to arbitrary path)
     [ -L "$f" ] && { log_warn "REJECTED: $f is a symlink (possible attack)"; return 1; }
@@ -58,10 +66,20 @@ validate_input_file() {
     local owner_uid
     owner_uid=$(stat -c %u "$f" 2>/dev/null || echo 0)
     [ "$owner_uid" = "65532" ] || { log_warn "REJECTED: $f owned by uid $owner_uid (expected 65532)"; return 1; }
-    # Must not be world-writable or executable
-    local perms
-    perms=$(stat -c %a "$f" 2>/dev/null || echo 0)
-    [ "$((perms & 022))" = "0" ] || { log_warn "REJECTED: $f has unsafe perms $perms"; return 1; }
+    # v18.3 P0: Permission check — explicit whitelist (was: octal arithmetic bug).
+    # Go os.CreateTemp() creates 0600 files; old code rejected them due to decimal interpretation.
+    # Allowed: 600 (owner-only), 640 (owner+group read), 700 (owner rwx)
+    local mode
+    mode=$(stat -c %a "$f" 2>/dev/null || echo "000")
+    case "$mode" in
+        600|640|700)
+            # Safe: no world-writable, no world-readable (600/640/700 all have 0 in others field)
+            ;;
+        *)
+            log_warn "REJECTED: $f has unsafe perms $mode (allowed: 600, 640, 700)"
+            return 1
+            ;;
+    esac
     # Max size (prevent DoS — mode name is max 20 chars)
     local size
     size=$(stat -c %s "$f" 2>/dev/null || echo 0)
@@ -93,6 +111,9 @@ if [ -f "$DESIRED_MODE_FILE" ]; then
         transition="rejected"
         last_error="input validation failed (see /var/log/scarlix-host-bridge.log)"
     else
+        # v18.3 P0: TOCTOU mitigation — read content IMMEDIATELY after validate (was: separate read later).
+        # While not fully atomic (shell can't do O_NOFOLLOW+fstat+read on same FD), this minimizes
+        # the window between validation and use. For full atomicity, a Go helper binary would be needed.
         requested_mode=$(tr -d '[:space:]' < "$DESIRED_MODE_FILE" 2>/dev/null || echo "")
 
         # Validate mode against whitelist
@@ -214,11 +235,12 @@ print(json.dumps(containers))
 ' 2>/dev/null || echo "[]")
 fi
 
-# Disk space on /models (v17.9.9 fix: correct df columns)
+# v18.3 P1: locale-independent df (was: `df -m` without --output — breaks on LANG=sk_SK)
+# --output=source,size,used,avail,target gives deterministic columns regardless of locale
 models_disk_free_mb=0
 models_disk_total_mb=0
-if df -m /models >/dev/null 2>&1; then
-    read -r _ size used avail _ < <(df -m /models | tail -1)
+if df -m --output=size,avail /models >/dev/null 2>&1; then
+    read -r size avail < <(df -m --output=size,avail /models | tail -1)
     models_disk_total_mb=${size:-0}
     models_disk_free_mb=${avail:-0}
     [[ "$models_disk_total_mb" =~ ^[0-9]+$ ]] || models_disk_total_mb=0

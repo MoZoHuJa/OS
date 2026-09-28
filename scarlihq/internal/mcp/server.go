@@ -180,13 +180,13 @@ func (s *Server) handleToolCall(req rpcRequest) rpcResponse {
                 }
                 return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]string{"status": "accepted", "mode": mode}}
         case "scarlix_gpu_status":
-                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"gpus": status.Read().GPUs}}
+                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"gpus": status.ReadOrStale().GPUs}}
         case "scarlix_container_list":
-                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"containers": status.Read().Containers}}
+                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"containers": status.ReadOrStale().Containers}}
         case "scarlix_profile_list":
                 return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"profiles": s.profiles.List()}}
         case "scarlix_full_status":
-                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: status.Read()}
+                return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: status.ReadOrStale()}
         default:
                 return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: fmt.Sprintf("unknown tool: %s", params.Name)}}
         }

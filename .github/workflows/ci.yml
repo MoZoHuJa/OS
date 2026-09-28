@@ -104,7 +104,14 @@ jobs:
           echo "ScarliHQ binary built successfully"
       - name: go test
         working-directory: scarlihq
-        run: go test ./... || echo "(no tests yet — OK)"
+        # v18.3 P1: removed `|| echo "(no tests yet)"` mask (was: hid test failures)
+        run: |
+          # Only run if Go packages exist (avoids "no packages" error on empty test suite)
+          if go list ./... 2>/dev/null | grep -q .; then
+            go test ./...
+          else
+            echo "(no Go test files yet — OK)"
+          fi
 
   # v17.9.8 P2: Real ScarliHQ Docker build (catches Dockerfile + go.mod issues)
   # v17.9.9 P2: Added runtime smoke test (container starts + /api/health responds)

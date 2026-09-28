@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.2 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v18.3 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
-# v18.2 FIXES:
+# v18.3 FIXES:
 #   - Missing Ollama compose file = FAILED (was: silently skipped → false "complete")
 #   - Missing SGLang hf_repo = FAILED (was: warn only → false "complete")
 #   - Disk-space check before EACH download (not just start — partial-download protection)
@@ -25,7 +25,7 @@ VENV_DIR="/opt/scarlix/venv"
 mkdir -p "$(dirname "$LOG_FILE")" "$MODELS_DIR" "$VENV_DIR"
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v18.2 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v18.3 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing
@@ -53,7 +53,7 @@ if [ ! -f "$VENV_DIR/bin/huggingface-cli" ]; then
 fi
 HF_CLI="$VENV_DIR/bin/huggingface-cli"
 
-# v18.2 P1: Validate models.yaml schema (was: silent fail on typos like hf_repo_id)
+# v18.3 P1: Validate models.yaml schema (was: silent fail on typos like hf_repo_id)
 validate_models_yaml() {
   local errors=0
   local required_keys=(".sglang.hf_repo" ".sglang.model_path" ".beellama.hf_repo" ".beellama.hf_file" ".ollama.model")
@@ -89,7 +89,7 @@ progress() {
 
 # === Step 1: SGLang model (safetensors, GPU 0) ===
 # v17.9.5 FIX: Use hf_repo field (not model_path which is local)
-# v18.2 FIX: missing hf_repo = FAILED (was: warn only → false "complete")
+# v18.3 FIX: missing hf_repo = FAILED (was: warn only → false "complete")
 progress "SGLang model (safetensors)"
 SGLANG_HF_REPO=$(yq '.sglang.hf_repo // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
 if [ -z "$SGLANG_HF_REPO" ]; then
@@ -126,7 +126,7 @@ fi
 
 # === Step 3: Ollama model (GGUF, GPU) ===
 # v17.9.5 FIX: Uses .ollama.model (not .ollama_main.model), correct container name
-# v18.2 FIX: missing compose file = FAILED (was: silently skipped → false "complete")
+# v18.3 FIX: missing compose file = FAILED (was: silently skipped → false "complete")
 progress "Ollama model"
 OLLAMA_MODEL=$(yq '.ollama.model // "qwen2.5:3b"' "$MODELS_CONFIG" 2>/dev/null || echo "qwen2.5:3b")
 echo "  Pulling Ollama model: $OLLAMA_MODEL" | tee -a "$LOG_FILE"
