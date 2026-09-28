@@ -65,7 +65,8 @@ SCARLIHQ_TOKEN=$(openssl rand -hex 32)
 SCARLIX_DEFAULT_PROFILE=zmor
 SCARLIX_DEFAULT_MODE=ai
 EOF
-  echo "SMG_MASTER_KEY: $SMG_KEY"
+  # v18.4 P0: Don't print secrets to log (was: echo "SMG_MASTER_KEY: $SMG_KEY" → install.log)
+  echo "SMG_MASTER_KEY: generated (in /etc/scarlix/.env, chmod 600)"
   echo "SCARLIHQ_TOKEN: (generated — for dashboard login at :8090)"
 fi
 

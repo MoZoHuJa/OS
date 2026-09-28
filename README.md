@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.3 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.4 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v18.3</h1>
+<h1 align="center">SCARLIX OS v18.4</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.3"><img alt="Version" src="https://img.shields.io/badge/version-v18.3-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.4"><img alt="Version" src="https://img.shields.io/badge/version-v18.4-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -21,7 +21,7 @@
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 
-**Version:** v18.3 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v18.4 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -29,7 +29,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v18.3   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v18.4   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -51,6 +51,46 @@ scarlix-mode ai
 
 ---
 
+## 🆕 What's New in v18.4 (vs v18.3)
+
+**Critical security + upgrade reliability.** 12 fixes from expert review.
+
+v18.3 had a **P0 Local Privilege Escalation**: `chown -R REAL_USER /etc/scarlix /opt/scarlix` gave user ownership of `.env` files that root services later `source`d → user writes `$(touch /root/PWNED)` into `.env` → root executes it via `source` = **full root compromise**.
+
+### P0 — local privilege escalation (5)
+| # | Fix | v18.3 Problem | v18.4 Solution |
+|---|-----|---------------|-------------------|
+| P0 | **No chown /etc/scarlix or /opt/scarlix to user** | `chown -R REAL_USER /etc/scarlix /opt/scarlix` → user owns `.env` files that root `source`s | Only chown `/var/lib/scarlix` + `/mnt` (user data). `/etc/scarlix` + `/opt/scarlix` stay `root:root 755` |
+| P0 | **`source` → `load_env_safe()` in model-manager** | `set -a; source /etc/scarlix/.env; set +a` — root executes user-controlled shell | `load_env_safe()`: parse `KEY=VALUE` via `while IFS='=' read` + `export` — NO shell evaluation |
+| P0 | **`source` → `grep` in install.sh Phase 5** | `set -a; source /etc/scarlix/.env` for SCARLIHQ_TOKEN — LPE on re-run | `grep '^SCARLIHQ_TOKEN=' \| cut -d= -f2` — safe single-key extraction |
+| P0 | **/opt/scarlix/.env root:root 600** | scarlix-mode `chown "$real_user" "$ENV_FILE"` → user-owned .env | `chown root:root "$ENV_FILE"` + `chmod 600` — root-only write |
+| P0 | **SMG_MASTER_KEY not logged** | `echo "SMG_MASTER_KEY: $SMG_KEY"` → install.log (permanent secret leak) | `echo "SMG_MASTER_KEY: generated (in /etc/scarlix/.env)"` — no value in log |
+
+### P1 — upgrade reliability (7)
+| # | Fix | v18.3 Problem | v18.4 Solution |
+|---|-----|---------------|-------------------|
+| P1 | **Checkpoint tracks VERSION** | `is_checkpoint_valid()` didn't check version → upgrade skipped phases with old scripts | Added `scarlix_version=${VERSION}` to checkpoint + comparison |
+| P1 | **Checkpoint tracks git commit hash** | Same version different commit → checkpoint valid → new files not installed | Added `repo_hash=$(git rev-parse --short HEAD)` to checkpoint + comparison |
+| P1 | **rsync --delete for /opt/scarlix** | `cp -r` left stale files from old versions (deleted compose files persisted) | `rsync -a --delete` (with `rm -rf`+`cp` fallback if rsync unavailable) |
+| P1 | **model-manager flock on /models** | No lock → race between model-manager download + scarlix-mode start | Shared flock (`flock -s`) on `/var/lock/scarlix-models.lock` |
+| P1 | **download-models flock on /models** | Same race | Same shared flock |
+| P1 | **scarlix-mode exclusive flock on /models** | No lock → start SGLang during model download → corrupt model | Exclusive flock (`flock -x`) for write ops, shared (`flock -s`) for read ops |
+| P1 | **host-status.json mktemp** | Fixed `.tmp` name — predictable path (TOCTOU risk) | `mktemp "${STATUS_FILE}.XXXXXX"` — random suffix |
+
+### Security regression test
+```bash
+# 1. As user, modify /opt/scarlix/.env (should be root:root 600 → permission denied)
+echo '$(touch /root/PWNED)' >> /opt/scarlix/.env  # → Permission denied
+
+# 2. Run model-manager as root
+systemctl start model-manager.service
+
+# 3. Verify /root/PWNED does NOT exist (LPE closed)
+ls /root/PWNED  # → No such file
+```
+
+---
+
 ## 🆕 What's New in v18.3 (vs v18.2)
 
 **Critical correctness fixes.** 11 fixes from 4 expert reviews.
@@ -58,14 +98,14 @@ scarlix-mode ai
 v18.2 had a **P0 octal permission bug**: `stat -c %a` returns "600" (string), but `$((perms & 022))` interpreted 600 as **decimal 600** → `600 & 022 = 16` (not 0) → host bridge **rejected legit 0600 files** created by Go `os.CreateTemp()` → **mode switch from dashboard was completely broken**.
 
 ### P0 — critical (3)
-| # | Fix | v18.2 Problem | v18.3 Solution |
+| # | Fix | v18.2 Problem | v18.4 Solution |
 |---|-----|---------------|-------------------|
 | P0 | **Octal permission bug** | `$((perms & 022))` interpreted "600" as decimal → `600 & 022 = 16` → REJECTED all 0600 files from Go CreateTemp → mode switch broken | Explicit `case "$mode" in 600\|640\|700)` whitelist — no arithmetic, no octal/decimal confusion |
 | P0 | **`local` outside function** | `local pending_mode` in install.sh migration block (not in a function) — bash error on `set -e` | Removed `local` — plain variable assignment |
 | P0 | **TOCTOU mitigation** | validate → then later read (window for attacker to swap file) | Read content **immediately** after validate (minimizes window; full atomicity needs Go helper) |
 
 ### P1 — correctness (5)
-| # | Fix | v18.2 Problem | v18.3 Solution |
+| # | Fix | v18.2 Problem | v18.4 Solution |
 |---|-----|---------------|-------------------|
 | P1 | **scarlix-mode ai returns failure** | `start_verified_ai` always implicit `exit 0` → host-bridge saw "applied" even with no engine → dashboard lied | Returns `1` if no engine (sglang+vllm+beellama+ollama all 0). `ai`/`turbo` write "failed" to state + `exit 1` |
 | P1 | **CI go test mask removed** | `go test ./... \|\| echo "(no tests yet — OK)"` — hid test failures | `if go list ./... \| grep -q .; then go test ./...; else echo "(no tests)"` — real failures fail CI |
@@ -74,11 +114,11 @@ v18.2 had a **P0 octal permission bug**: `stat -c %a` returns "600" (string), bu
 | P1 | **status.Read() returns error** | `_ = json.Unmarshal(data, &s)` — silent ignore → API returned zero values on corrupt JSON | `Read() (HostStatus, error)` + `ReadOrStale()` wrapper + `Stale` field in JSON |
 
 ### P1 — locale + quality (3)
-| # | Fix | v18.2 Problem | v18.3 Solution |
+| # | Fix | v18.2 Problem | v18.4 Solution |
 |---|-----|---------------|-------------------|
 | P1 | **df locale-independent** | `df -m /models` without `--output` — breaks on `LANG=sk_SK` (localized headers) | `df -m --output=size,avail /models` — deterministic columns |
-| P1 | **model-manager.service header** | `Description=SCARLIX OS v17.5 Model Manager` — stale version | Updated to v18.3 |
-| P1 | **host-bridge header comment** | Said "v18.0.0" — stale | Updated to v18.3 |
+| P1 | **model-manager.service header** | `Description=SCARLIX OS v17.5 Model Manager` — stale version | Updated to v18.4 |
+| P1 | **host-bridge header comment** | Said "v18.0.0" — stale | Updated to v18.4 |
 
 ### Verification
 - `bash -n` on 8 scripts: OK
@@ -95,12 +135,12 @@ v18.2 had a **P0 octal permission bug**: `stat -c %a` returns "600" (string), bu
 v18.1 had a **P0 real_user bug**: when systemd timer ran scarlix-mode as root, `$SUDO_USER` was empty + `$USER` was "root" → `chown root /opt/scarlix` → user CLI broke. Also `const Version` in Go couldn't be overridden by ldflags.
 
 ### P0 — security (1)
-| # | Fix | v18.1 Problem | v18.3 Solution |
+| # | Fix | v18.1 Problem | v18.4 Solution |
 |---|-----|---------------|-------------------|
 | P0 | **real_user detection under systemd** | `${SUDO_USER:-${USER:-scarlix}}` → when systemd runs as root, $USER=root → chown root /opt/scarlix → user `scarlix-mode ai` fails "Permission denied" | Detect from `/opt/scarlix` ownership (set by install.sh) or UID 1000 fallback. Works under systemd, sudo, and direct user CLI. |
 
 ### P1 — correctness + security (6)
-| # | Fix | v18.1 Problem | v18.3 Solution |
+| # | Fix | v18.1 Problem | v18.4 Solution |
 |---|-----|---------------|-------------------|
 | P1 | **const Version → var Version** | `-ldflags "-X main.Version"` doesn't work on `const` → version always "18.1" in binary even with `--build-arg SCARLIX_VERSION=18.2` | Changed to `var Version` in main.go + api/rest.go. main.go passes Version to NewHandler. ldflags now overrides correctly. |
 | P1 | **scarlix-mode systemctl sudo fallback** | v18.1 removed sudo → user `scarlix-mode game` fails silently on `systemctl start sunshine` | `if [ "$(id -u)" -eq 0 ]; then systemctl...; else sudo systemctl...; fi` — works for both root (host-bridge) and user (CLI) |
@@ -110,14 +150,14 @@ v18.1 had a **P0 real_user bug**: when systemd timer ran scarlix-mode as root, `
 | P1 | **go.sum handling** | go.sum was 0 bytes → non-deterministic build, offline install impossible | Removed go.sum from repo (generated by Dockerfile `go mod download`). CI `go mod verify` checks integrity. |
 
 ### P2 — UX + consistency (6)
-| # | Fix | v18.1 Problem | v18.3 Solution |
+| # | Fix | v18.1 Problem | v18.4 Solution |
 |---|-----|---------------|-------------------|
 | P2 | **CI smoke test chown 65532** | CI created bridge-input/ as root → nonroot container couldn't write desired-mode → mode POST 202 test failed | `sudo chown -R 65532:65532 /tmp/scarlix-test/bridge-input` before test |
 | P2 | **migration applies pending desired-mode** | `rm -rf /var/lib/scarlix/bridge` deleted pending desired-mode → lost mode switch request | Read + apply pending mode via `scarlix-mode "$pending"` BEFORE rm -rf |
 | P2 | **whiptail ESC/Cancel handling** | `IP=$(whiptail ...)` without `|| true` → ESC aborts whole wizard via `set -e` | All whiptail calls have `|| fallback` + empty validation |
 | P2 | **bridge restores retry_count + last_error** | last-transition file stored retry_count + error, but bridge didn't restore them for status | Read retry_count + error from last-transition when transition="none" |
 | P2 | **creative/tv ensure .env exists** | `creative` mode called `$DC` without .env → compose fails if no prior `scarlix-mode ai` | `[ -f "$ENV_FILE" ] || load_model_paths` before $DC |
-| P2 | **.env.template updated** | Header said "v15" + no SCARLIHQ_TOKEN | Updated to v18.3 + added SCARLIHQ_TOKEN + note that install.sh auto-generates |
+| P2 | **.env.template updated** | Header said "v15" + no SCARLIHQ_TOKEN | Updated to v18.4 + added SCARLIHQ_TOKEN + note that install.sh auto-generates |
 
 ### Review false-positives (verified already-correct in v18.1)
 - Review 2 P0-1 (|| true masking) — **already fixed in v18.1** (reviewer checked v18.0.0)
@@ -138,15 +178,15 @@ v18.1 had a **P0 real_user bug**: when systemd timer ran scarlix-mode as root, `
 v18.0.0 had a **P0 logic bug**: `mode_output=$(... 2>&1) || true` masked the exit code to 0, so `mode_rc=$?` was always 0 → transition always "applied" even when scarlix-mode failed → retry mechanism never triggered.
 
 ### P0 — correctness (1)
-| # | Fix | v18.0.0 Problem | v18.3 Solution |
+| # | Fix | v18.0.0 Problem | v18.4 Solution |
 |---|-----|-----------------|-------------------|
 | P0 | **mode_rc exit code capture** | `|| true` after command substitution masked exit code to 0 → `mode_rc` always 0 → transition always "applied" even on failure → retry never triggered | Removed `|| true` (script uses `set -uo pipefail`, not `-e`, so assignment doesn't abort). `mode_rc=$?` now captures real exit code. Retry + failure states work correctly. |
 
 ### P1 — quality (5)
-| # | Fix | v18.0.0 Problem | v18.3 Solution |
+| # | Fix | v18.0.0 Problem | v18.4 Solution |
 |---|-----|-----------------|-------------------|
 | P1 | **install.sh migration rm -rf** | `rmdir /var/lib/scarlix/bridge` fails if dir has hidden files (`.retry`) → migration stuck | `rm -rf` (safe — only the bridge/ dir being migrated) |
-| P1 | **Dockerfile header comments** | Header said "v17.9.9" + "bridge/desired-mode" (stale v18.0.0 didn't update) | Updated to v18.3 + "bridge-input/desired-mode" |
+| P1 | **Dockerfile header comments** | Header said "v17.9.9" + "bridge/desired-mode" (stale v18.0.0 didn't update) | Updated to v18.4 + "bridge-input/desired-mode" |
 | P1 | **scarlix_mode.Set() dir check** | If `bridge-input/` dir doesn't exist, `os.CreateTemp` fails with cryptic error | Explicit `os.Stat(dir)` check → clear 503 error message |
 | P1 | **Removed unused Transition() method** | `scarlix_mode.Transition()` defined but never called → `status` import only for it | Removed method + import (cleaner, avoids go vet warning) |
 | P1 | **host-bridge last_error sanitization** | `last_error` from scarlix-mode output could contain newlines → broke env var passing to python3 | `tr '\n' ' ' + tr -d '\r'` before storing in last_error |
@@ -466,7 +506,8 @@ Host-bridge architecture: dashboard reads JSON status, writes desired-mode. No p
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v18.3** | 2026-10 | **Critical correctness. P0: octal permission bug (600&022=16 → rejected all 0600 files → mode switch broken!), `local` outside function, TOCTOU mitigation. P1: scarlix-mode returns failure if no engine healthy, CI go test no mask, host bridge fail-closed, scarlix-doctor token auth, status.Read() error on corrupt JSON, df locale-independent, stale version headers. 11 fixes from 4 reviews.** |
+| **v18.4** | 2026-10 | **Security + upgrade reliability. P0: Local Privilege Escalation fixed (chown -R user /etc+opt → root:root; source .env → load_env_safe; SMG_KEY not logged). P1: checkpoint version+hash, rsync --delete stale files, flock on /models (model-manager + download-models + scarlix-mode), mktemp for host-status.json. 12 fixes.** |
+| v18.3 | 2026-10 | Critical correctness. P0: octal permission bug (600&022=16 → rejected all 0600 files → mode switch broken!), `local` outside function, TOCTOU mitigation. P1: scarlix-mode returns failure if no engine healthy, CI go test no mask, host bridge fail-closed, scarlix-doctor token auth, status.Read() error on corrupt JSON, df locale-independent, stale version headers. 11 fixes from 4 reviews. |
 | v18.2 | 2026-10 | Security + UX. P0: real_user detection under systemd (was: $USER=root → chown root). P1: const→var Version (ldflags fix), systemctl sudo fallback, token TTY-only + log 600, FIFO/pipe rejection, models.yaml schema validation, go.sum generated at build. P2: CI chown 65532, migration applies pending mode, whiptail ESC, bridge retry_count restore, creative/tv .env check, .env.template v18.2. |
 | v18.1 | 2026-10 | Correctness fixes. P0: host-bridge mode_rc exit code capture (was `|| true` masking to 0 → retry never triggered). P1: install.sh migration rm -rf, Dockerfile header updated, scarlix_mode.Set() dir check, removed unused Transition(), last_error sanitization. |
 | v18.0.0 | 2026-10 | Secure Host-Bridge. 10 fixes: bridge-input/+bridge-state/ separation (P0 symlink attack fix), single scarlix-mode execution (P0 double-run fix), concurrent Mode.Set os.CreateTemp, GET /api/mode transition state, persistent last-transition, scarlix-mode .env permission, crypto/subtle, input validation (symlink/owner/size), no hardcoded version, CI VERSION build-arg + mode integration test. Breaking: bridge/ → bridge-input/ + bridge-state/. |

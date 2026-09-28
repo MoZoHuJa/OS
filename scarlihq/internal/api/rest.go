@@ -14,7 +14,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "18.3"
+var Version = "18.4"
 
 // Handler holds dependencies for API routes.
 type Handler struct {

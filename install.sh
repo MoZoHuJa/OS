@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.3"
+VERSION="18.4"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -66,6 +66,9 @@ write_checkpoint() {
   # P1-6 FIX: Use pacman -Q linux (not uname -r which has different format: 6.10.8-arch1-1 vs 6.10.8.arch1-1)
   local linux_ver
   linux_ver=$(pacman -Q linux 2>/dev/null | cut -d' ' -f2 || echo 'unknown')
+  # v18.4 P1: Add VERSION + git commit hash to checkpoint (was: missing → upgrade skipped phases with old scripts)
+  local repo_hash
+  repo_hash=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
   cat > "$CHECKPOINT_DIR/.checkpoint-$name" << EOF
 phase=$name
 timestamp=$(date -Iseconds)
@@ -73,8 +76,10 @@ gpu_count=${NVIDIA_COUNT:-0}
 gpu_compute_cap=${GPU_COMPUTE_CAPS:-none}
 nvidia_open_version=${nvidia_ver}
 linux_kernel_version=${linux_ver}
+scarlix_version=${VERSION}
+repo_hash=${repo_hash}
 EOF
-  info "Checkpoint: $name (GPU: ${NVIDIA_COUNT:-0}, nvidia-open: ${nvidia_ver}, linux: ${linux_ver})"
+  info "Checkpoint: $name (v$VERSION, hash: $repo_hash, GPU: ${NVIDIA_COUNT:-0})"
 }
 
 is_checkpoint_valid() {
@@ -90,6 +95,15 @@ is_checkpoint_valid() {
   [ "${cp_gpu:-0}" = "${NVIDIA_COUNT:-0}" ] || return 1
   [ "${cp_cap:-none}" = "${GPU_COMPUTE_CAPS:-none}" ] || return 1
   [ "${cp_linux:-unknown}" = "$(pacman -Q linux 2>/dev/null | cut -d' ' -f2 || echo 'unknown')" ] || return 1
+  # v18.4 P1: Check SCARLIX_VERSION (was: missing → upgrade skipped phases with old scripts)
+  local cp_version
+  cp_version=$(grep '^scarlix_version=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "")
+  [ "${cp_version:-unknown}" = "$VERSION" ] || return 1
+  # v18.4 P1: Check git commit hash (was: missing → same version different commit skipped)
+  local cp_hash current_hash
+  cp_hash=$(grep '^repo_hash=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "")
+  current_hash=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  [ "${cp_hash:-unknown}" = "$current_hash" ] || return 1
   # Only check nvidia version for phase2
   if [ "$name" = "phase2" ]; then
     local current_nv="none"
@@ -220,7 +234,16 @@ else
 
   mkdir -p /opt/scarlix /var/lib/scarlix /etc/scarlix/{profiles,secrets}
   mkdir -p /models /var/lib/docker /var/lib/scarlix/ollama /mnt/{files,games,photos,backup/restic}
-  chown -R "$REAL_USER:$REAL_USER" /opt/scarlix /var/lib/scarlix /etc/scarlix /mnt 2>/dev/null || true
+  # v18.4 P0: SECURITY — do NOT chown /etc/scarlix or /opt/scarlix to user.
+  # These dirs contain .env files that root services `source` — if user can write them,
+  # they can inject shell commands → local privilege escalation.
+  # Only chown user data dirs (/var/lib/scarlix for state, /mnt for files).
+  chown -R "$REAL_USER:$REAL_USER" /var/lib/scarlix /mnt 2>/dev/null || true
+  # /etc/scarlix stays root:root (user reads models.yaml but can't modify .env)
+  # /opt/scarlix stays root:root (user reads scripts but can't modify .env)
+  # v18.4 P0: Ensure config dirs are root-owned (security boundary)
+  chown root:root /etc/scarlix /opt/scarlix 2>/dev/null || true
+  chmod 755 /etc/scarlix /opt/scarlix 2>/dev/null || true
   # Q2a v17.8: Ollama volume root:root + 700 (was 777 — unnecessary security hole)
   chown root:root /var/lib/scarlix/ollama 2>/dev/null || true
   chmod 700 /var/lib/scarlix/ollama 2>/dev/null || true
@@ -488,10 +511,22 @@ else
   for dir in ai agents gaming voice network security monitoring workspace scarlihq hp-agent media-tools; do
     if [ -d "$REPO_DIR/$dir" ]; then
       mkdir -p "/opt/scarlix/$dir"
-      if cp -r "$REPO_DIR/$dir/"* "/opt/scarlix/$dir/" 2>/dev/null; then
-        ok "/opt/scarlix/$dir/"
+      # v18.4 P1: rsync --delete (was: cp -r — left stale files from old versions)
+      if command -v rsync >/dev/null 2>&1; then
+        if rsync -a --delete "$REPO_DIR/$dir/" "/opt/scarlix/$dir/" 2>/dev/null; then
+          ok "/opt/scarlix/$dir/ (rsync --delete)"
+        else
+          crit "Failed to rsync $dir/ to /opt/scarlix/"
+        fi
       else
-        crit "Failed to copy $dir/ to /opt/scarlix/"
+        # Fallback: rm + cp if rsync not available
+        rm -rf "/opt/scarlix/$dir"
+        mkdir -p "/opt/scarlix/$dir"
+        if cp -r "$REPO_DIR/$dir/"* "/opt/scarlix/$dir/" 2>/dev/null; then
+          ok "/opt/scarlix/$dir/ (rm+cp fallback)"
+        else
+          crit "Failed to copy $dir/ to /opt/scarlix/"
+        fi
       fi
     else
       warn "$dir/ not in repo (non-critical)"
@@ -577,15 +612,18 @@ else
     log "Generating /etc/scarlix/.env (secrets + SCARLIHQ_TOKEN)..."
     /etc/systemd/system/generate-env.sh >> "$LOG_FILE" 2>&1 && ok ".env generated" || warn ".env generation (non-critical)"
   fi
+  # v18.4 P0: /etc/scarlix/.env MUST be root:root 600 (contains secrets, root services source it)
+  chown root:root /etc/scarlix/.env 2>/dev/null || true
+  chmod 600 /etc/scarlix/.env 2>/dev/null || true
 
   # P1 v17.9.8: Build + start ScarliHQ dashboard (alpine image — NO nvidia needed, builds pre-reboot)
   # Architecture: ScarliHQ reads host-status.json (written by host-bridge timer), writes desired-mode.
   # No docker.sock, no scarlix-mode mount, no nvidia runtime → minimal privilege.
   if [ -f /opt/scarlix/scarlihq/Dockerfile ]; then
     log "Building ScarliHQ dashboard image (scarlihq:latest, alpine)..."
-    # v17.9.8: source SCARLIHQ_TOKEN from /etc/scarlix/.env so compose can substitute it
+    # v18.4 P0: SAFE parse SCARLIHQ_TOKEN from /etc/scarlix/.env (was: `source` → LPE on re-run)
     if [ -f /etc/scarlix/.env ]; then
-      set -a; source /etc/scarlix/.env 2>/dev/null || true; set +a
+      SCARLIHQ_TOKEN=$(grep '^SCARLIHQ_TOKEN=' /etc/scarlix/.env 2>/dev/null | cut -d= -f2 || echo "")
     fi
     # Export for compose (compose reads ${SCARLIHQ_TOKEN} from environment)
     export SCARLIHQ_TOKEN="${SCARLIHQ_TOKEN:-}"
