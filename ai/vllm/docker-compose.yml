@@ -23,7 +23,7 @@ services:
               device_ids: ["1"]
               capabilities: [gpu]
     command: >
-      --model ${VLLM_MODEL_PATH:-/models/Qwen3-14B-Instruct-AWQ}
+      --model ${VLLM_MODEL_PATH:-/models/Qwen3-14B-AWQ}
       --tensor-parallel-size 1
       --gpu-memory-utilization 0.85
       --max-model-len 32768

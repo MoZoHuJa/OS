@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v17.9.0 — Bootstrap Installer (Final Polish)
+# SCARLIX OS v17.9.1 — Bootstrap Installer (Final Polish)
 # ============================================================================
 #
 # v17.5.1 FIXES (vs v17.5):
@@ -74,15 +74,17 @@ is_checkpoint_valid() {
   cp_cap=$(grep '^gpu_compute_cap=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "none")
   cp_nv=$(grep '^nvidia_open_version=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "none")
   cp_linux=$(grep '^linux_kernel_version=' "$cp_file" 2>/dev/null | cut -d= -f2 || echo "unknown")
-  # Q9a + P1-6: Check nvidia-open version AND linux kernel version
-  local current_nv="none" current_linux="unknown"
-  pacman -Q nvidia-open >/dev/null 2>&1 && current_nv=$(pacman -Q nvidia-open | cut -d' ' -f2)
-  pacman -Q nvidia >/dev/null 2>&1 && current_nv=$(pacman -Q nvidia | cut -d' ' -f2)
-  current_linux=$(pacman -Q linux 2>/dev/null | cut -d' ' -f2 || echo 'unknown')
+  # P0 FIX v17.9.1: nvidia_open_version check ONLY for phase2 (was checking for all phases → always invalid)
   [ "${cp_gpu:-0}" = "${NVIDIA_COUNT:-0}" ] || return 1
   [ "${cp_cap:-none}" = "${GPU_COMPUTE_CAPS:-none}" ] || return 1
-  [ "${cp_nv:-none}" = "${current_nv}" ] || return 1
-  [ "${cp_linux:-unknown}" = "${current_linux}" ] || return 1
+  [ "${cp_linux:-unknown}" = "$(pacman -Q linux 2>/dev/null | cut -d' ' -f2 || echo 'unknown')" ] || return 1
+  # Only check nvidia version for phase2
+  if [ "$name" = "phase2" ]; then
+    local current_nv="none"
+    pacman -Q nvidia-open >/dev/null 2>&1 && current_nv=$(pacman -Q nvidia-open | cut -d' ' -f2)
+    pacman -Q nvidia >/dev/null 2>&1 && current_nv=$(pacman -Q nvidia | cut -d' ' -f2)
+    [ "${cp_nv:-none}" = "${current_nv}" ] || return 1
+  fi
   return 0
 }
 
@@ -363,7 +365,7 @@ if is_checkpoint_valid phase4; then
 else
   # Q10a: ALL file copy failures are crit (scarlix-mode, scarlix-wizard = core)
   log "Installing SCARLIX scripts (CRITICAL)..."
-  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh; do
+  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor; do
     src="$REPO_DIR/files/usr/local/bin/$binfile"
     if [ -f "$src" ]; then
       cp "$src" "/usr/local/bin/$binfile" && chmod 755 "/usr/local/bin/$binfile" && ok "/usr/local/bin/$binfile" || crit "$binfile copy failed"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.0 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v17.9.1 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
 # v17.9.0 FIXES (vs v17.5):
 #   - Uses v17.5 keys: .beellama.* (not .llamacpp.*), .ollama.model (not .ollama_main)
@@ -18,7 +18,7 @@ VENV_DIR="/opt/scarlix/venv"
 mkdir -p "$(dirname "$LOG_FILE")" "$MODELS_DIR" "$VENV_DIR"
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v17.9.0 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v17.9.1 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing

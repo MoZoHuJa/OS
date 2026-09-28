@@ -1,4 +1,4 @@
-# SCARLIX OS v17.5 — EndeavourOS Edition — Model-Agnostic Configuration
+# SCARLIX OS v17.9.1 — EndeavourOS Edition — Model-Agnostic Configuration
 #
 # v17.5: Single source of truth — scarlix-mode parses this and exports env vars
 #   to docker compose. Edit model_path to use ANY HuggingFace model.
@@ -14,11 +14,11 @@
 # hf_repo: HuggingFace repo ID for download (model_path is LOCAL path)
 # Then run: download-models.sh
 sglang:
-  model_path: "/models/Qwen3-14B-Instruct-AWQ"
-  hf_repo: "Qwen/Qwen3-14B-Instruct-AWQ"  # v17.5.1: HF repo for download
+  model_path: "/models/Qwen3-14B-AWQ"
+  hf_repo: "Qwen/Qwen3-14B-AWQ"  # v17.9.1: correct repo (was Qwen3-14B-Instruct-AWQ — doesn't exist)
   # Alternatívy (odkomentuj + zmeň hf_repo):
   # model_path: "/models/Meta-Llama-3.1-8B-Instruct"
-  # hf_repo: "meta-llama/Meta-Llama-3.1-8B-Instruct"
+  # hf_repo: "meta-llama/Llama-3.1-8B-Instruct"
   # model_path: "/models/Mistral-7B-Instruct-v0.3"
   # hf_repo: "mistralai/Mistral-7B-Instruct-v0.3"
   quantization: "awq"
@@ -30,7 +30,7 @@ sglang:
 # Only starts if /etc/scarlix/.experimental flag exists (created by wizard for 2+ GPU).
 # v17.5: TP=1 (not TP=2) — safe for mixed GPU architectures (RTX 5060 Ti + RTX 4060 Ti).
 vllm:
-  model_path: "/models/Qwen3-14B-Instruct-AWQ"
+  model_path: "/models/Qwen3-14B-AWQ"
   tensor_parallel_size: 1  # v17.5: TP=1 (mixed GPU safe — not TP=2)
   gpu_memory_utilization: 0.85
   max_model_len: 32768
@@ -40,9 +40,9 @@ vllm:
 # v17.5: Uses official llama.cpp image (not BeeLlama fork — was unverified).
 # KVarN flags are BeeLlama-specific; official image uses q4_0 (similar benefit).
 beellama:
-  model_file: "/models/qwen3.6-14b-instruct-q4_k_m.gguf"
-  hf_repo: "Qwen/Qwen3-14B-Instruct-GGUF"
-  hf_file: "qwen3.6-14b-instruct-q4_k_m.gguf"
+  model_file: "/models/Qwen3-14B-Q4_K_M.gguf"
+  hf_repo: "Qwen/Qwen3-14B-GGUF"  # v17.9.1: correct repo (was Qwen3-14B-Instruct-GGUF — doesn't exist)
+  hf_file: "Qwen3-14B-Q4_K_M.gguf"  # v17.9.1: correct file (was qwen3.6-14b... — doesn't exist)
   context_size: 32768
   threads: 16
   cache_type_k: "q4_0"  # v17.5: q4_0 (official llama.cpp), not kvarn4 (BeeLlama fork)
