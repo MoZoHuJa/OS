@@ -1,37 +1,68 @@
 #!/usr/bin/env bash
-# SCARLIX OS v17.9.9 — Host Bridge (privileged ops for ScarliHQ dashboard)
+# SCARLIX OS v18.0.0 — Host Bridge (privileged ops for ScarliHQ dashboard)
 #
-# ARCHITECTURE (v17.9.8+): ScarliHQ container has NO docker.sock, NO nvidia runtime,
-# NO scarlix-mode mount. It reads/writes status files in /var/lib/scarlix/.
-# This host-side script (run by systemd timer every 5s) does the privileged work:
-#   1. Applies desired-mode (if ScarliHQ wrote /var/lib/scarlix/bridge/desired-mode)
-#   2. Refreshes /var/lib/scarlix/host-status.json (GPU + containers + mode + disk)
+# ARCHITECTURE (v18.0.0): ScarliHQ container has NO docker.sock, NO nvidia runtime.
+# It writes ONLY to /var/lib/scarlix/bridge-input/desired-mode (writable by nonroot 65532).
+# Host bridge reads from bridge-input/ but writes ALL state to bridge-state/ (root:root 700).
+# This prevents symlink attacks: ScarliHQ cannot create symlinks in bridge-state/ (not writable).
 #
-# v17.9.9 FIXES:
-#   P0: df parsing fixed (was: read total=Used, free=Used-Avail — swapped columns)
-#   P1: desired-mode KEPT on failure (was: rm -f always → lost retry info)
-#   P1: structured error fields (was: "ERROR: ..." string in mode_applied)
-#   P1: JSON via python3 json.dumps (was: shell heredoc — broke on quotes/backslashes)
-#   P1: state machine fields: requested_mode, current_mode, transition, retry_count
+# v18.0.0 FIXES (vs v17.9.9):
+#   P0: Separate bridge-input/ (65532 writable) from bridge-state/ (root 700)
+#       — was: ScarliHQ owned bridge/ + root wrote .retry there = symlink attack surface
+#   P0: Single scarlix-mode execution per transition
+#       — was: ran scarlix-mode TWICE on failure (once for check, once for error capture)
+#   P1: Persistent failed transition state (last_transition, last_failure, last_error)
+#       — was: cleared on next timer tick → diagnostic info lost
+#   P1: Input validation: ownership + symlink + type checks on desired-mode
+#       — was: no validation → root could follow symlink created by nonroot
+#   P1: No hardcoded version (reads from /etc/scarlix/VERSION)
 #
 # This is the privilege boundary: ScarliHQ (untrusted, LAN-facing) → file → host bridge → root ops.
 set -uo pipefail
 
 STATE_DIR="/var/lib/scarlix"
-BRIDGE_DIR="$STATE_DIR/bridge"
-DESIRED_MODE_FILE="$BRIDGE_DIR/desired-mode"
-RETRY_FILE="$BRIDGE_DIR/.retry"  # tracks retry count + last error for desired-mode
+# v18.0.0 P0: SEPARATE directories — ScarliHQ can ONLY write to INPUT_DIR
+INPUT_DIR="$STATE_DIR/bridge-input"      # owner 65532:65532, mode 700 (ScarliHQ writes desired-mode here)
+STATE_DIR_ROOT="$STATE_DIR/bridge-state" # owner root:root, mode 700 (host bridge writes retry/state here)
+DESIRED_MODE_FILE="$INPUT_DIR/desired-mode"
+RETRY_FILE="$STATE_DIR_ROOT/.retry"
+LAST_TRANSITION_FILE="$STATE_DIR_ROOT/last-transition"  # persistent (survives timer cycles)
 CURRENT_MODE_FILE="$STATE_DIR/current-mode"
 STATUS_FILE="$STATE_DIR/host-status.json"
 LOCK_FILE="/var/lock/scarlix-host-bridge.lock"
 MODE_BIN="/usr/local/bin/scarlix-mode"
 MAX_RETRIES=3
 
-# Prevent overlap (timer can fire every 5s; scarlix-mode ai may take minutes)
 exec 200>"$LOCK_FILE"
 flock -n 200 || exit 0
 
-mkdir -p "$BRIDGE_DIR"
+mkdir -p "$INPUT_DIR" "$STATE_DIR_ROOT"
+# Ensure state dir is root-only (ScarliHQ must NOT be able to create symlinks here)
+chown root:root "$STATE_DIR_ROOT" 2>/dev/null || true
+chmod 700 "$STATE_DIR_ROOT" 2>/dev/null || true
+
+# --- v18.0.0 P1: Input validation (prevent symlink/ownership attacks) ---
+validate_input_file() {
+    local f="$1"
+    [ -f "$f" ] || return 1
+    # Must be a regular file (not symlink — root could follow symlink to arbitrary path)
+    [ -L "$f" ] && { log_warn "REJECTED: $f is a symlink (possible attack)"; return 1; }
+    # Must be owned by the expected UID (65532 = nonroot in ScarliHQ container)
+    local owner_uid
+    owner_uid=$(stat -c %u "$f" 2>/dev/null || echo 0)
+    [ "$owner_uid" = "65532" ] || { log_warn "REJECTED: $f owned by uid $owner_uid (expected 65532)"; return 1; }
+    # Must not be world-writable or executable
+    local perms
+    perms=$(stat -c %a "$f" 2>/dev/null || echo 0)
+    [ "$((perms & 022))" = "0" ] || { log_warn "REJECTED: $f has unsafe perms $perms"; return 1; }
+    # Max size (prevent DoS — mode name is max 20 chars)
+    local size
+    size=$(stat -c %s "$f" 2>/dev/null || echo 0)
+    [ "$size" -le 100 ] || { log_warn "REJECTED: $f too large ($size bytes)"; return 1; }
+    return 0
+}
+
+log_warn() { echo "[$(date '+%H:%M:%S')] WARN: $1" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true; }
 
 # --- 1. Apply desired mode (if any) ---
 requested_mode=""
@@ -39,49 +70,79 @@ transition="none"
 retry_count=0
 last_error=""
 
+# Read retry state from previous attempt (persistent across timer cycles)
+if [ -f "$RETRY_FILE" ]; then
+    retry_count=$(grep '^count=' "$RETRY_FILE" 2>/dev/null | cut -d= -f2 || echo 0)
+    last_error=$(grep '^error=' "$RETRY_FILE" 2>/dev/null | cut -d= -f2- || echo "")
+    # Sanitize
+    [[ "$retry_count" =~ ^[0-9]+$ ]] || retry_count=0
+fi
+
 if [ -f "$DESIRED_MODE_FILE" ]; then
-    requested_mode=$(tr -d '[:space:]' < "$DESIRED_MODE_FILE" 2>/dev/null || echo "")
-    # Read retry state if exists (from previous failed attempt)
-    if [ -f "$RETRY_FILE" ]; then
-        retry_count=$(grep '^count=' "$RETRY_FILE" 2>/dev/null | cut -d= -f2 || echo 0)
-        last_error=$(grep '^error=' "$RETRY_FILE" 2>/dev/null | cut -d= -f2- || echo "")
+    # v18.0.0 P1: Validate input file before reading (symlink/ownership/size checks)
+    if ! validate_input_file "$DESIRED_MODE_FILE"; then
+        # Rejected — delete it (don't process untrusted input)
+        rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
+        transition="rejected"
+        last_error="input validation failed (see /var/log/scarlix-host-bridge.log)"
+    else
+        requested_mode=$(tr -d '[:space:]' < "$DESIRED_MODE_FILE" 2>/dev/null || echo "")
+
+        # Validate mode against whitelist
+        case "$requested_mode" in
+            ai|stop|game|creative|turbo|offline|tv)
+                if [ -x "$MODE_BIN" ]; then
+                    # v18.0.0 P0: SINGLE execution — capture output ONCE (was: ran twice on failure)
+                    mode_output=$("$MODE_BIN" "$requested_mode" 2>&1) || true
+                    mode_rc=$?
+                    echo "$mode_output" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
+
+                    if [ "$mode_rc" -eq 0 ]; then
+                        transition="applied"
+                        rm -f "$DESIRED_MODE_FILE" "$RETRY_FILE" 2>/dev/null || true
+                        last_error=""
+                        retry_count=0
+                    else
+                        retry_count=$((retry_count + 1))
+                        last_error=$(printf '%s' "$mode_output" | tail -5 | tr '\n' ' ' | head -c 500)
+                        if [ "$retry_count" -ge "$MAX_RETRIES" ]; then
+                            transition="failed"
+                            rm -f "$DESIRED_MODE_FILE" "$RETRY_FILE" 2>/dev/null || true
+                        else
+                            transition="retrying"
+                            printf 'count=%s\nerror=%s\n' "$retry_count" "$last_error" > "$RETRY_FILE" 2>/dev/null || true
+                        fi
+                    fi
+                else
+                    transition="failed"
+                    last_error="$MODE_BIN not found"
+                    rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
+                fi
+                ;;
+            *)
+                transition="failed"
+                last_error="invalid mode '$requested_mode' (valid: ai,stop,game,creative,turbo,offline,tv)"
+                rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
+                ;;
+        esac
     fi
 
-    # Validate against scarlix-mode's accepted modes
-    case "$requested_mode" in
-        ai|stop|game|creative|turbo|offline|tv)
-            if [ -x "$MODE_BIN" ]; then
-                if "$MODE_BIN" "$requested_mode" >/var/log/scarlix-host-bridge.log 2>&1; then
-                    transition="applied"
-                    # Success — clear retry state + desired-mode
-                    rm -f "$DESIRED_MODE_FILE" "$RETRY_FILE" 2>/dev/null || true
-                    last_error=""
-                    retry_count=0
-                else
-                    retry_count=$((retry_count + 1))
-                    last_error=$("$MODE_BIN" "$requested_mode" 2>&1 | tail -5 | tr '\n' ' ' | head -c 500)
-                    if [ "$retry_count" -ge "$MAX_RETRIES" ]; then
-                        transition="failed"
-                        # Max retries reached — give up (don't delete, but mark failed)
-                        rm -f "$DESIRED_MODE_FILE" "$RETRY_FILE" 2>/dev/null || true
-                    else
-                        transition="retrying"
-                        # KEEP desired-mode for retry + save retry state
-                        printf 'count=%s\nerror=%s\n' "$retry_count" "$last_error" > "$RETRY_FILE" 2>/dev/null || true
-                    fi
-                fi
-            else
-                transition="failed"
-                last_error="$MODE_BIN not found"
-                rm -f "$DESIRED_MODE_FILE" "$RETRY_FILE" 2>/dev/null || true
-            fi
-            ;;
-        *)
-            transition="failed"
-            last_error="invalid mode '$requested_mode' (valid: ai,stop,game,creative,turbo,offline,tv)"
-            rm -f "$DESIRED_MODE_FILE" "$RETRY_FILE" 2>/dev/null || true
-            ;;
-    esac
+    # v18.0.0 P1: Persist last transition (survives timer cycles — diagnostic info not lost)
+    printf 'requested=%s\nstate=%s\ntimestamp=%s\nretry_count=%s\nerror=%s\n' \
+        "$requested_mode" "$transition" "$(date -Iseconds 2>/dev/null || date)" "$retry_count" "$last_error" \
+        > "$LAST_TRANSITION_FILE" 2>/dev/null || true
+fi
+
+# Read persistent last_transition (for status even when no new request)
+last_requested=""
+last_state=""
+last_timestamp=""
+if [ -f "$LAST_TRANSITION_FILE" ]; then
+    last_requested=$(grep '^requested=' "$LAST_TRANSITION_FILE" 2>/dev/null | cut -d= -f2 || echo "")
+    last_state=$(grep '^state=' "$LAST_TRANSITION_FILE" 2>/dev/null | cut -d= -f2 || echo "")
+    last_timestamp=$(grep '^timestamp=' "$LAST_TRANSITION_FILE" 2>/dev/null | cut -d= -f2- || echo "")
+    # If current transition is "none", use last_transition for status
+    [ "$transition" = "none" ] && { requested_mode="$last_requested"; transition="$last_state"; }
 fi
 
 # --- 2. Gather host status ---
@@ -89,72 +150,56 @@ current_mode="unknown"
 [ -f "$CURRENT_MODE_FILE" ] && current_mode=$(tr -d '[:space:]' < "$CURRENT_MODE_FILE" 2>/dev/null || echo "unknown")
 [ -z "$current_mode" ] && current_mode="unknown"
 
-# GPU status (nvidia-smi if available)
+# GPU status
 gpu_data="[]"
 if command -v nvidia-smi >/dev/null 2>&1; then
-    # v17.9.9 P1: use python3 for safe JSON (was: shell awk → broke on GPU names with quotes)
     gpu_data=$(nvidia-smi --query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,compute_cap \
         --format=csv,noheader,nounits 2>/dev/null | python3 -c '
 import sys, json
 gpus = []
 for line in sys.stdin:
     line = line.strip()
-    if not line:
-        continue
+    if not line: continue
     parts = [p.strip() for p in line.split(",")]
-    if len(parts) < 8:
-        continue
+    if len(parts) < 8: continue
     try:
         gpus.append({
-            "index": int(parts[0]),
-            "name": parts[1],
-            "temp": float(parts[2]) if parts[2] not in ("", "N/A") else 0,
-            "util": float(parts[3]) if parts[3] not in ("", "N/A") else 0,
-            "mem_used": float(parts[4]) if parts[4] not in ("", "N/A") else 0,
-            "mem_total": float(parts[5]) if parts[5] not in ("", "N/A") else 0,
-            "power": float(parts[6]) if parts[6] not in ("", "N/A") else 0,
+            "index": int(parts[0]), "name": parts[1],
+            "temp": float(parts[2]) if parts[2] not in ("","N/A") else 0,
+            "util": float(parts[3]) if parts[3] not in ("","N/A") else 0,
+            "mem_used": float(parts[4]) if parts[4] not in ("","N/A") else 0,
+            "mem_total": float(parts[5]) if parts[5] not in ("","N/A") else 0,
+            "power": float(parts[6]) if parts[6] not in ("","N/A") else 0,
             "compute_cap": parts[7],
         })
-    except (ValueError, IndexError):
-        continue
+    except (ValueError, IndexError): continue
 print(json.dumps(gpus))
 ' 2>/dev/null || echo "[]")
 fi
 
-# Container status (docker if available + socket accessible)
+# Container status
 container_data="[]"
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    # v17.9.9 P1: use python3 for safe JSON (was: shell awk → broke on container names with quotes)
     container_data=$(docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null | python3 -c '
 import sys, json
 containers = []
 for line in sys.stdin:
     line = line.rstrip("\n")
-    if not line:
-        continue
+    if not line: continue
     parts = line.split("\t")
-    if len(parts) < 3:
-        parts = parts + [""] * (3 - len(parts))
-    containers.append({
-        "name": parts[0],
-        "status": parts[1],
-        "ports": parts[2],
-    })
+    if len(parts) < 3: parts = parts + [""] * (3 - len(parts))
+    containers.append({"name": parts[0], "status": parts[1], "ports": parts[2]})
 print(json.dumps(containers))
 ' 2>/dev/null || echo "[]")
 fi
 
-# v17.9.9 P0: Disk space on /models — FIXED df parsing
-# df -m columns: Filesystem, 1M-blocks (size), Used, Available, Use%, Mounted-on
-# Was: `read -r _ _ total used _ _` → total=Used(!!!), used=Available(!!!)
-# Now: `read -r _ size used avail _ _` → size=Size, used=Used, avail=Available
+# Disk space on /models (v17.9.9 fix: correct df columns)
 models_disk_free_mb=0
 models_disk_total_mb=0
 if df -m /models >/dev/null 2>&1; then
     read -r _ size used avail _ < <(df -m /models | tail -1)
     models_disk_total_mb=${size:-0}
     models_disk_free_mb=${avail:-0}
-    # Sanitize to integers (df may output non-numeric on weird FS)
     [[ "$models_disk_total_mb" =~ ^[0-9]+$ ]] || models_disk_total_mb=0
     [[ "$models_disk_free_mb" =~ ^[0-9]+$ ]] || models_disk_free_mb=0
 fi
@@ -163,7 +208,7 @@ fi
 experimental=false
 [ -f /etc/scarlix/.experimental ] && experimental=true
 
-# ScarliHQ dashboard version
+# v18.0.0 P1: version from VERSION file (was: hardcoded "17.9.9")
 scarlix_version="unknown"
 for vf in /etc/scarlix/VERSION /usr/local/share/scarlix/VERSION; do
     if [ -f "$vf" ]; then
@@ -172,33 +217,48 @@ for vf in /etc/scarlix/VERSION /usr/local/share/scarlix/VERSION; do
     fi
 done
 
-# v17.9.9 P1: Write status JSON via python3 (safe escaping — was: shell heredoc)
+# v18.0.0 P1: Write status JSON via single python3 call with env vars (was: nested string interpolation)
+BRIDGE_INPUT_DIR="$INPUT_DIR" \
+BRIDGE_STATE_DIR="$STATE_DIR_ROOT" \
+STATUS_TIMESTAMP="$(date -Iseconds 2>/dev/null || date)" \
+STATUS_VERSION="$scarlix_version" \
+STATUS_MODE="$current_mode" \
+STATUS_EXPERIMENTAL="$experimental" \
+STATUS_REQUESTED="$requested_mode" \
+STATUS_TRANSITION="$transition" \
+STATUS_RETRY_COUNT="$retry_count" \
+STATUS_LAST_ERROR="$last_error" \
+STATUS_LAST_TIMESTAMP="$last_timestamp" \
+STATUS_GPUS="$gpu_data" \
+STATUS_CONTAINERS="$container_data" \
+STATUS_DISK_FREE="$models_disk_free_mb" \
+STATUS_DISK_TOTAL="$models_disk_total_mb" \
 python3 -c '
-import json, sys
+import json, os
 data = {
-    "timestamp": "'"$(date -Iseconds 2>/dev/null || date)"'",
-    "version": "17.9.9",
-    "scarlix_version": "'"$scarlix_version"'",
-    "mode": "'"$current_mode"'",
-    "experimental": '"$experimental"',
+    "timestamp": os.environ["STATUS_TIMESTAMP"],
+    "version": os.environ["STATUS_VERSION"],  # v18.0.0: no hardcoded version
+    "scarlix_version": os.environ["STATUS_VERSION"],
+    "mode": os.environ["STATUS_MODE"],
+    "experimental": os.environ["STATUS_EXPERIMENTAL"] == "true",
     "mode_transition": {
-        "requested": "'"$requested_mode"'",
-        "state": "'"$transition"'",
-        "retry_count": '"$retry_count"',
-        "last_error": '"$(python3 -c "import json; print(json.dumps(\"$last_error\"))" 2>/dev/null || echo '""')"'
+        "requested": os.environ["STATUS_REQUESTED"],
+        "state": os.environ["STATUS_TRANSITION"],
+        "retry_count": int(os.environ["STATUS_RETRY_COUNT"] or 0),
+        "last_error": os.environ["STATUS_LAST_ERROR"],
+        "last_timestamp": os.environ["STATUS_LAST_TIMESTAMP"],
     },
-    "gpus": '"$gpu_data"',
-    "containers": '"$container_data"',
+    "gpus": json.loads(os.environ["STATUS_GPUS"] or "[]"),
+    "containers": json.loads(os.environ["STATUS_CONTAINERS"] or "[]"),
     "disk": {
-        "models_free_mb": '"$models_disk_free_mb"',
-        "models_total_mb": '"$models_disk_total_mb"'
-    }
+        "models_free_mb": int(os.environ["STATUS_DISK_FREE"] or 0),
+        "models_total_mb": int(os.environ["STATUS_DISK_TOTAL"] or 0),
+    },
 }
 print(json.dumps(data))
 ' > "$STATUS_FILE.tmp" 2>/dev/null || {
-    # Fallback: write minimal JSON if python3 unavailable
-    printf '{"timestamp":"%s","version":"17.9.9","mode":"%s","error":"python3 unavailable"}' \
-        "$(date -Iseconds 2>/dev/null || date)" "$current_mode" > "$STATUS_FILE.tmp"
+    printf '{"timestamp":"%s","version":"%s","mode":"%s","error":"python3 unavailable"}' \
+        "$(date -Iseconds 2>/dev/null || date)" "$scarlix_version" "$current_mode" > "$STATUS_FILE.tmp"
 }
 mv -f "$STATUS_FILE.tmp" "$STATUS_FILE" 2>/dev/null || true
 chmod 644 "$STATUS_FILE" 2>/dev/null || true

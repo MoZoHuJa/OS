@@ -21,9 +21,11 @@ services:
     volumes:
       # READ-ONLY: host status (written by scarlix-host-bridge.timer every 5s)
       - /var/lib/scarlix:/var/lib/scarlix:ro
-      # WRITABLE: bridge subdir (overrides ro parent for this path only)
-      # ScarliHQ writes ONLY /var/lib/scarlix/bridge/desired-mode (host bridge applies it)
-      - /var/lib/scarlix/bridge:/var/lib/scarlix/bridge:rw
+      # WRITABLE: bridge-input subdir (overrides ro parent for this path only)
+      # v18.0.0 P0: ScarliHQ writes ONLY desired-mode here. State (.retry, last-transition)
+      # is in bridge-state/ (root:root 700 — NOT mounted writable to ScarliHQ).
+      # Was (v17.9.9): single bridge/ dir = symlink attack surface.
+      - /var/lib/scarlix/bridge-input:/var/lib/scarlix/bridge-input:rw
       # READ-ONLY: scarlix config + profiles + VERSION
       - /etc/scarlix:/etc/scarlix:ro
     environment:

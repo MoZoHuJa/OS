@@ -15,9 +15,9 @@ import (
 )
 
 // Version is the ScarliHQ application version.
-// v17.9.9 P2: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
+// v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-const Version = "17.9.9"
+const Version = "18.0.0"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte

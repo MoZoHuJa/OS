@@ -17,7 +17,7 @@ RUN go mod download
 COPY . .
 
 # v17.9.9 P2: inject version from VERSION file via -ldflags (single source of truth)
-ARG SCARLIX_VERSION=17.9.9
+ARG SCARLIX_VERSION=18.0.0
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${SCARLIX_VERSION}" -o /scarlihq ./cmd/scarlihq
 
 # --- Runtime (minimal — no docker, no nvidia, no scarlix-mode) ---

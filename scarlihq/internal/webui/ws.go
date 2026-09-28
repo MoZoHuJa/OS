@@ -1,6 +1,7 @@
 package webui
 
 import (
+        "crypto/subtle"
         "encoding/json"
         "log"
         "net"
@@ -99,7 +100,8 @@ func RegisterWS(mux *http.ServeMux, authToken string, _ *scarlix_mode.Mode, _ *p
                         http.Error(w, "SCARLIHQ_TOKEN not configured", http.StatusServiceUnavailable)
                         return
                 }
-                if !secureCompare(token, authToken) {
+                // v18.0.0 P1: crypto/subtle.ConstantTimeCompare (was: custom secureCompare)
+                if subtle.ConstantTimeCompare([]byte(token), []byte(authToken)) != 1 {
                         http.Error(w, "invalid token", http.StatusUnauthorized)
                         return
                 }
@@ -116,7 +118,6 @@ func RegisterWS(mux *http.ServeMux, authToken string, _ *scarlix_mode.Mode, _ *p
                 ticker := time.NewTicker(2 * time.Second)
                 defer ticker.Stop()
 
-                // Initial push immediately
                 if err := conn.WriteMessage(websocket.TextMessage, statusJSON()); err != nil {
                         log.Printf("WS write error: %v", err)
                         return
@@ -132,16 +133,4 @@ func RegisterWS(mux *http.ServeMux, authToken string, _ *scarlix_mode.Mode, _ *p
                         }
                 }
         })
-}
-
-// secureCompare does a constant-time string comparison (prevents timing attacks).
-func secureCompare(a, b string) bool {
-        if len(a) != len(b) {
-                return false
-        }
-        var result byte
-        for i := 0; i < len(a); i++ {
-                result |= a[i] ^ b[i]
-        }
-        return result == 0
 }
