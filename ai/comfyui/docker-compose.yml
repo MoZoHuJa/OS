@@ -14,7 +14,7 @@ services:
       resources:
         reservations:
           devices: [{driver: nvidia, device_ids: ['0'], capabilities: [gpu]}]
-    networks: [scarlix-net, scarlix-net]
+    networks: [scarlix-net]
     profiles: [creative]
 networks:
   scarlix-net: {external: true}

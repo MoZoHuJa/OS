@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.1 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v17.9.2 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
-# v17.9.0 FIXES (vs v17.5):
+# v17.9.2 FIXES (vs v17.5):
 #   - Uses v17.5 keys: .beellama.* (not .llamacpp.*), .ollama.model (not .ollama_main)
 #   - SGLang: uses hf_repo field (not model_path which is local path)
 #   - Uses python venv for huggingface_hub (PEP 668 safe)
@@ -18,7 +18,7 @@ VENV_DIR="/opt/scarlix/venv"
 mkdir -p "$(dirname "$LOG_FILE")" "$MODELS_DIR" "$VENV_DIR"
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v17.9.1 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v17.9.2 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing
@@ -34,6 +34,7 @@ HF_CLI="$VENV_DIR/bin/huggingface-cli"
 
 TOTAL_STEPS=4
 CURRENT_STEP=0
+FAILED=0
 progress() {
   CURRENT_STEP=$((CURRENT_STEP + 1))
   local pct=$((CURRENT_STEP * 100 / TOTAL_STEPS))
@@ -42,7 +43,7 @@ progress() {
 }
 
 # === Step 1: SGLang model (safetensors, GPU 0) ===
-# v17.9.0 FIX: Use hf_repo field (not model_path which is local)
+# v17.9.2 FIX: Use hf_repo field (not model_path which is local)
 progress "SGLang model (safetensors)"
 SGLANG_HF_REPO=$(yq '.sglang.hf_repo // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
 if [ -z "$SGLANG_HF_REPO" ]; then
@@ -51,11 +52,16 @@ if [ -z "$SGLANG_HF_REPO" ]; then
 else
   SGLANG_LOCAL_PATH=$(yq '.sglang.model_path' "$MODELS_CONFIG" 2>/dev/null || echo "/models/$SGLANG_HF_REPO")
   echo "  Downloading: $SGLANG_HF_REPO → $SGLANG_LOCAL_PATH" | tee -a "$LOG_FILE"
-  "$HF_CLI" download "$SGLANG_HF_REPO" --local-dir "$SGLANG_LOCAL_PATH" >> "$LOG_FILE" 2>&1 && echo "  ✓ SGLang model downloaded" | tee -a "$LOG_FILE" || echo "  ✗ SGLang download failed" | tee -a "$LOG_FILE"
+  if "$HF_CLI" download "$SGLANG_HF_REPO" --local-dir "$SGLANG_LOCAL_PATH" >> "$LOG_FILE" 2>&1; then
+    echo "  ✓ SGLang model downloaded" | tee -a "$LOG_FILE"
+  else
+    echo "  ✗ SGLang download FAILED" | tee -a "$LOG_FILE"
+    FAILED=1
+  fi
 fi
 
 # === Step 2: BeeLlama / llama.cpp GGUF model (CPU offline) ===
-# v17.9.0 FIX: Uses .beellama.* keys (not .llamacpp.*)
+# v17.9.2 FIX: Uses .beellama.* keys (not .llamacpp.*)
 progress "BeeLlama/llama.cpp GGUF model (CPU offline)"
 BEE_HF_REPO=$(yq '.beellama.hf_repo // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
 BEE_HF_FILE=$(yq '.beellama.hf_file // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
@@ -63,12 +69,16 @@ if [ -z "$BEE_HF_REPO" ] || [ -z "$BEE_HF_FILE" ]; then
   echo "  ⚠ No .beellama.hf_repo/hf_file in models.yaml — GGUF NOT downloaded" | tee -a "$LOG_FILE"
 else
   echo "  Downloading: $BEE_HF_REPO / $BEE_HF_FILE → /models/" | tee -a "$LOG_FILE"
-  # P1-9 FIX: Use --include (more reliable than positional arg across HF CLI versions)
-  "$HF_CLI" download "$BEE_HF_REPO" --include "$BEE_HF_FILE" --local-dir "$MODELS_DIR" >> "$LOG_FILE" 2>&1 && echo "  ✓ GGUF model downloaded" | tee -a "$LOG_FILE" || echo "  ✗ GGUF download failed" | tee -a "$LOG_FILE"
+  if "$HF_CLI" download "$BEE_HF_REPO" --include "$BEE_HF_FILE" --local-dir "$MODELS_DIR" >> "$LOG_FILE" 2>&1; then
+    echo "  ✓ GGUF model downloaded" | tee -a "$LOG_FILE"
+  else
+    echo "  ✗ GGUF download FAILED" | tee -a "$LOG_FILE"
+    FAILED=1
+  fi
 fi
 
 # === Step 3: Ollama model (GGUF, GPU) ===
-# v17.9.0 FIX: Uses .ollama.model (not .ollama_main.model), correct container name
+# v17.9.2 FIX: Uses .ollama.model (not .ollama_main.model), correct container name
 progress "Ollama model"
 OLLAMA_MODEL=$(yq '.ollama.model // "qwen2.5:3b"' "$MODELS_CONFIG" 2>/dev/null || echo "qwen2.5:3b")
 echo "  Pulling Ollama model: $OLLAMA_MODEL" | tee -a "$LOG_FILE"
@@ -105,6 +115,11 @@ ls -d "$MODELS_DIR"/*/ 2>/dev/null | tee -a "$LOG_FILE" || echo "  (no safetenso
 
 echo "" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
+if [ "$FAILED" -ne 0 ]; then
+  echo "  ✗ MODEL DOWNLOAD FAILED — check $LOG_FILE" | tee -a "$LOG_FILE"
+  echo "  Some models may be missing. scarlix-mode ai may not start." | tee -a "$LOG_FILE"
+  exit 1
+fi
 echo "  Model download complete" | tee -a "$LOG_FILE"
 echo "  Next: scarlix-mode ai" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.1 — Model Manager
+# SCARLIX OS v17.9.2 — Model Manager
 # FIX Q8b: Split — HF model pulls = auto (safe), Ollama tag pulls = manual (--apply only)
 #
 # Weekly timer (Mon 04:00) runs with NO --apply → only HF model pulls + Telegram report.
@@ -47,7 +47,7 @@ vram_snapshot() {
 }
 
 log "========================================"
-log "  SCARLIX OS v17.9.1 — Model Manager"
+log "  SCARLIX OS v17.9.2 — Model Manager"
 [ "$APPLY_OLLAMA" -eq 1 ] && log "  (--apply-ollama: will update Ollama tags)" || log "  (HF auto-pull + Ollama dry-run report only)"
 log "========================================"
 
@@ -100,10 +100,10 @@ fi
 
 # === Ollama model pulls (MANUAL unless --apply-ollama) ===
 if command -v ollama >/dev/null 2>&1; then
-  OLLAMA_MAIN_MODEL=$(yq '.ollama.model' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "")
-  OLLAMA_AGENT_MODEL=$(yq '.ollama.model' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "")
+  # P1-10 v17.9.2: Single Ollama model (was duplicated — main + agent read same .ollama.model key)
+  OLLAMA_MODEL=$(yq '.ollama.model' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "")
 
-  for model in "$OLLAMA_MAIN_MODEL" "$OLLAMA_AGENT_MODEL"; do
+  for model in "$OLLAMA_MODEL"; do
     if [ -n "$model" ]; then
       if [ "$APPLY_OLLAMA" -eq 1 ]; then
         log "Pulling Ollama: $model (--apply-ollama)"

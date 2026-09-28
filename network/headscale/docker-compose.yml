@@ -11,6 +11,6 @@ services:
       - ./data:/var/lib/headscale
     environment:
       - HEADSCALE_LISTEN_ADDR=0.0.0.0:8080
-    networks: [scarlix_net]
+    networks: [scarlix-net]
 networks:
-  scarlix_net: { external: true }
+  scarlix-net: { external: true }

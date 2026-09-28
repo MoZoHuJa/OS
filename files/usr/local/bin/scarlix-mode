@@ -46,9 +46,9 @@ yaml_get() {
 # P1 FIX v17.9: ALWAYS regenerate .env (was cached → stale after models.yaml edit)
 # P0 FIX v17.9: Always write .env file (even without yq/models.yaml) — --env-file needs it to exist
 generate_env_file() {
-  local sglang_path="/models/Qwen3-14B-Instruct-AWQ"
-  local vllm_path="/models/Qwen3-14B-Instruct-AWQ"
-  local llamacpp_file="qwen3.6-14b-instruct-q4_k_m.gguf"
+  local sglang_path="/models/Qwen3-14B-AWQ"
+  local vllm_path="/models/Qwen3-14B-AWQ"
+  local llamacpp_file="Qwen3-14B-Q4_K_M.gguf"
 
   if [ -f "$MODELS_YAML" ] && command -v yq >/dev/null 2>&1; then
     sglang_path=$(yaml_get '.sglang.model_path' "$sglang_path")
@@ -147,31 +147,41 @@ healthcheck_and_restart() {
     return 0
   fi
 
-  # P0 FIX v17.9.1: Hash-based detection (was mtime → always "now" → always recreate)
-  # Compare sha256 of models.yaml with stored hash
+  # P0-7 v17.9.2: Hash stored AFTER successful recreate (was before → failed recreate = no retry)
   local env_changed=false
   local models_hash_file="/var/lib/scarlix/models.sha256"
   if [ -f "$MODELS_YAML" ]; then
     local current_hash stored_hash
     current_hash=$(sha256sum "$MODELS_YAML" 2>/dev/null | awk '{print $1}' || echo "")
     stored_hash=$(cat "$models_hash_file" 2>/dev/null || echo "")
-    if [ -n "$current_hash" ] && [ "$current_hash" != "$stored_hash" ]; then
+    # P2-7 v17.9.2: Empty stored_hash = first run → don't recreate, just store hash
+    if [ -n "$current_hash" ] && [ -n "$stored_hash" ] && [ "$current_hash" != "$stored_hash" ]; then
       log "models.yaml changed (hash mismatch) — will force-recreate"
       env_changed=true
+    elif [ -n "$current_hash" ] && [ -z "$stored_hash" ]; then
+      log "First run — storing models.yaml hash (no recreate)"
       echo "$current_hash" > "$models_hash_file" 2>/dev/null || true
     fi
   fi
 
   log "Healthchecking AI containers..."
+  local recreate_success=true
   for container in sglang vllm beellama; do
     local status
     status=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo "not_found")
     [ "$status" = "not_found" ] && continue
     if [ "$status" != "running" ]; then
-      log "  $container: $status — restarting..."
-      docker start "$container" >> "$LOG_FILE" 2>&1 && log "  ✓ $container restarted" || log "  ✗ $container restart failed"
+      # P0-8 v17.9.2: Use $DC up -d (not docker start) — picks up new .env
+      local compose_file
+      case "$container" in
+        sglang) compose_file="/opt/scarlix/ai/sglang/docker-compose.yml" ;;
+        vllm) compose_file="/opt/scarlix/ai/vllm/docker-compose.yml" ;;
+        beellama) compose_file="/opt/scarlix/ai/llamacpp/docker-compose.yml" ;;
+        *) continue ;;
+      esac
+      log "  $container: $status — starting with $DC..."
+      $DC -f "$compose_file" up -d >> "$LOG_FILE" 2>&1 && log "  ✓ $container started" || log "  ✗ $container start failed"
     elif [ "$env_changed" = true ]; then
-      # P1 FIX v17.9: .env changed → force-recreate to pick up new model path
       local compose_file
       case "$container" in
         sglang) compose_file="/opt/scarlix/ai/sglang/docker-compose.yml" ;;
@@ -180,11 +190,22 @@ healthcheck_and_restart() {
         *) continue ;;
       esac
       log "  $container: recreating (env changed)..."
-      $DC -f "$compose_file" up -d --force-recreate >> "$LOG_FILE" 2>&1 && log "  ✓ $container recreated" || log "  ✗ $container recreate failed"
+      if $DC -f "$compose_file" up -d --force-recreate >> "$LOG_FILE" 2>&1; then
+        log "  ✓ $container recreated"
+      else
+        log "  ✗ $container recreate failed"
+        recreate_success=false
+      fi
     else
       log "  ✓ $container: running"
     fi
   done
+
+  # P0-7 v17.9.2: Store hash only after successful recreate
+  if [ "$env_changed" = true ] && [ "$recreate_success" = true ]; then
+    echo "$current_hash" > "$models_hash_file" 2>/dev/null || true
+    log "models.yaml hash stored (recreate successful)"
+  fi
 
   # Only check Ollama if it should be running (fallback mode)
   local ollama_status

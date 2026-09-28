@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, v17.9.*]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Shellcheck
+        run: |
+          shellcheck -S error install.sh
+          shellcheck -S error files/usr/local/bin/scarlix-mode
+          shellcheck -S error files/usr/local/bin/scarlix-wizard
+          shellcheck -S error files/usr/local/bin/scarlix-doctor
+          shellcheck -S error files/usr/local/bin/model-manager.sh
+          shellcheck -S error files/usr/local/bin/download-models.sh
+          shellcheck -S error files/etc/systemd/system/generate-env.sh
+          shellcheck -S error files/etc/pacman.d/hooks/scarlix-docker-backup.sh
+
+  bash-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax check
+        run: |
+          bash -n install.sh
+          bash -n files/usr/local/bin/scarlix-mode
+          bash -n files/usr/local/bin/scarlix-wizard
+          bash -n files/usr/local/bin/scarlix-doctor
+          bash -n files/usr/local/bin/model-manager.sh
+          bash -n files/usr/local/bin/download-models.sh
+          bash -n files/etc/systemd/system/generate-env.sh
+          bash -n files/etc/pacman.d/hooks/scarlix-docker-backup.sh
+
+  yaml-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate YAML files
+        run: |
+          python -c "import yaml; yaml.safe_load(open('models.yaml')); print('models.yaml OK')"
+          for f in ai/*/docker-compose*.yml; do
+            python -c "import yaml; yaml.safe_load(open('$f')); print('$f OK')"
+          done
+
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Docker Compose files
+        run: |
+          for f in ai/*/docker-compose*.yml; do
+            echo "Checking $f..."
+            # Check for duplicate networks
+            if grep -q "scarlix-net.*scarlix-net" "$f"; then
+              echo "ERROR: Duplicate network in $f"
+              exit 1
+            fi
+            # Check for scarlix_net (underscore)
+            if grep -q "scarlix_net" "$f"; then
+              echo "ERROR: scarlix_net (underscore) in $f — should be scarlix-net"
+              exit 1
+            fi
+          done
+          echo "All compose files validated"

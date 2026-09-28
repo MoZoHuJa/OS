@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.1 — Generate .env (with guard for existing passwords)
-# v17.9.1 FIX: If .env exists, only add missing keys (don't overwrite existing passwords)
+# SCARLIX OS v17.9.2 — Generate .env (with guard for existing passwords)
+# v17.9.2 FIX: If .env exists, only add missing keys (don't overwrite existing passwords)
 
 mkdir -p /etc/scarlix/secrets
 

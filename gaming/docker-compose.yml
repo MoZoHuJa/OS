@@ -30,7 +30,7 @@ services:
       resources:
         reservations:
           devices: [{driver: nvidia, device_ids: ['0'], capabilities: [gpu]}]
-    networks: [scarlix_net]
+    networks: [scarlix-net]
 
   minecraft:
     image: ghcr.io/pumpkin-mc/pumpkin:latest
@@ -39,7 +39,7 @@ services:
     ports: ["25565:25565"]
     volumes: ["./minecraft/data:/data"]
     environment: [MAX_MEMORY=4G, TZ=Europe/Bratislava]
-    networks: [scarlix_net]
+    networks: [scarlix-net]
 
 networks:
-  scarlix_net: {external: true}
+  scarlix-net: {external: true}
