@@ -1,6 +1,7 @@
 package api
 
 import (
+        "crypto/subtle"
         "encoding/json"
         "net/http"
         "strings"
@@ -12,8 +13,8 @@ import (
 )
 
 // Version mirrors main.Version (passed to avoid import cycle).
-// v17.9.9 P2: kept in sync — both read from same VERSION file via ldflags.
-const Version = "17.9.9"
+// v18.0.0: injected via -ldflags "-X main.Version" in Dockerfile.
+const Version = "18.0.0"
 
 // Handler holds dependencies for API routes.
 type Handler struct {
@@ -23,7 +24,6 @@ type Handler struct {
         authToken string
 }
 
-// NewHandler creates a new API handler.
 func NewHandler(g *guard.Guard, m *scarlix_mode.Mode, p *profiles.Manager, authToken string) *Handler {
         return &Handler{guard: g, mode: m, profiles: p, authToken: authToken}
 }
@@ -39,11 +39,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // auth middleware: validates Bearer token or ?token= query param.
-// v17.9.8 P0: API authentication (was wide-open — POST /api/mode could change host state).
+// v18.0.0 P1: uses crypto/subtle.ConstantTimeCompare (was: custom secureCompare).
 func (h *Handler) auth(next http.HandlerFunc) http.HandlerFunc {
         return func(w http.ResponseWriter, r *http.Request) {
                 if h.authToken == "" {
-                        // No token configured → reject all (fail-closed)
                         writeJSONError(w, http.StatusServiceUnavailable, "SCARLIHQ_TOKEN not configured on server")
                         return
                 }
@@ -53,25 +52,13 @@ func (h *Handler) auth(next http.HandlerFunc) http.HandlerFunc {
                 } else {
                         token = r.URL.Query().Get("token")
                 }
-                // Constant-time comparison to prevent timing attacks
-                if !secureCompare(token, h.authToken) {
+                // v18.0.0 P1: crypto/subtle.ConstantTimeCompare (standard library, constant-time)
+                if subtle.ConstantTimeCompare([]byte(token), []byte(h.authToken)) != 1 {
                         writeJSONError(w, http.StatusUnauthorized, "invalid or missing token")
                         return
                 }
                 next(w, r)
         }
-}
-
-// secureCompare does a constant-time string comparison.
-func secureCompare(a, b string) bool {
-        if len(a) != len(b) {
-                return false
-        }
-        var result byte
-        for i := 0; i < len(a); i++ {
-                result |= a[i] ^ b[i]
-        }
-        return result == 0
 }
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
@@ -112,10 +99,21 @@ func (h *Handler) fullStatus(w http.ResponseWriter, r *http.Request) {
         writeJSON(w, status.Read())
 }
 
+// modeHandler handles GET (return current + transition state) and POST (set desired mode).
+// v18.0.0 P1: GET returns full transition state (was: only current-mode).
+// Dashboard can now show "requested=ai, state=retrying, retry_count=1, last_error=...".
 func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
         if r.Method == http.MethodGet {
-                mode := h.mode.Current()
-                writeJSON(w, map[string]string{"mode": mode, "status": "ok"})
+                s := status.Read()
+                writeJSON(w, map[string]interface{}{
+                        "mode":             s.Mode,
+                        "status":           "ok",
+                        "requested_mode":   s.ModeTransition.Requested,
+                        "transition_state": s.ModeTransition.State,
+                        "retry_count":      s.ModeTransition.RetryCount,
+                        "last_error":       s.ModeTransition.LastError,
+                        "last_timestamp":   s.ModeTransition.LastTimestamp,
+                })
                 return
         }
 
@@ -124,7 +122,6 @@ func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
                 return
         }
 
-        // Accept mode via query (?set=ai) or JSON body ({"mode":"ai"})
         mode := r.URL.Query().Get("set")
         if mode == "" {
                 var body map[string]string
@@ -137,15 +134,11 @@ func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
                 return
         }
 
-        // v17.9.8: Set() writes desired-mode file (host bridge applies it within 5s).
-        // v17.9.9 P1: proper HTTP error codes (was: 200 OK + {"status":"error"})
-        // Returns 202 Accepted (async) — client polls GET /api/mode or /api/status to confirm.
         if err := h.mode.Set(mode); err != nil {
-                // Invalid mode = 400; filesystem/permission error = 503
                 code := http.StatusInternalServerError
                 if strings.Contains(err.Error(), "invalid mode") {
                         code = http.StatusBadRequest
-                } else if strings.Contains(err.Error(), "write") || strings.Contains(err.Error(), "permission") {
+                } else if strings.Contains(err.Error(), "write") || strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "create temp") {
                         code = http.StatusServiceUnavailable
                 }
                 writeJSONError(w, code, err.Error())

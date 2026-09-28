@@ -112,31 +112,42 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build ScarliHQ Docker image
         run: |
-          docker build -t scarlihq:ci scarlihq/
+          # v18.0.0 P2: use VERSION file as build-arg (was: hardcoded default in Dockerfile)
+          SCARLIX_VERSION=$(cat VERSION)
+          docker build --build-arg SCARLIX_VERSION="$SCARLIX_VERSION" -t scarlihq:ci scarlihq/
           docker images scarlihq:ci
-          echo "ScarliHQ image built — size:"
+          echo "ScarliHQ image built (version $SCARLIX_VERSION) — size:"
           docker image inspect scarlihq:ci --format '{{.Size}}' | awk '{printf "  %.1f MB\n", $1/1024/1024}'
       - name: Runtime smoke test (container starts + port responds)
         run: |
-          # Run container with a test token + mock status dir
-          mkdir -p /tmp/scarlix-test/bridge
-          chmod 775 /tmp/scarlix-test/bridge
-          echo '{"timestamp":"test","version":"17.9.9","mode":"unknown","gpus":[],"containers":[],"disk":{}}' > /tmp/scarlix-test/host-status.json
+          # v18.0.0: use bridge-input/ layout (not bridge/)
+          mkdir -p /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
+          chmod 700 /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
+          echo '{"timestamp":"test","version":"18.0.0","mode":"unknown","mode_transition":{"requested":"","state":"none","retry_count":0,"last_error":"","last_timestamp":""},"gpus":[],"containers":[],"disk":{}}' > /tmp/scarlix-test/host-status.json
           docker run -d --name scarlihq-test -p 8090:8090 \
             -e SCARLIHQ_TOKEN=test-token \
             -v /tmp/scarlix-test:/var/lib/scarlix:ro \
-            -v /tmp/scarlix-test/bridge:/var/lib/scarlix/bridge:rw \
+            -v /tmp/scarlix-test/bridge-input:/var/lib/scarlix/bridge-input:rw \
             scarlihq:ci
           sleep 3
-          # Container should be running
           docker ps --filter name=scarlihq-test --format '{{.Status}}'
-          # Health endpoint should respond (without token = 401, with token = 200)
+          # Health: no token → 401, with token → 200
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health || echo "000")
-          echo "Health endpoint (no token): HTTP $HTTP_CODE (expected 401)"
-          [ "$HTTP_CODE" = "401" ] || { echo "FAIL: expected 401 without token"; docker logs scarlihq-test; exit 1; }
+          echo "Health (no token): HTTP $HTTP_CODE (expected 401)"
+          [ "$HTTP_CODE" = "401" ] || { echo "FAIL: expected 401"; docker logs scarlihq-test; exit 1; }
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer test-token" http://127.0.0.1:8090/api/health || echo "000")
-          echo "Health endpoint (with token): HTTP $HTTP_CODE (expected 200)"
-          [ "$HTTP_CODE" = "200" ] || { echo "FAIL: expected 200 with token"; docker logs scarlihq-test; exit 1; }
-          echo "Smoke test PASSED — ScarliHQ starts + auth works"
+          echo "Health (with token): HTTP $HTTP_CODE (expected 200)"
+          [ "$HTTP_CODE" = "200" ] || { echo "FAIL: expected 200"; docker logs scarlihq-test; exit 1; }
+          # v18.0.0 P2: mode POST writes desired-mode to bridge-input/ (test the write path)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer test-token" "http://127.0.0.1:8090/api/mode?set=ai" || echo "000")
+          echo "Mode POST (set=ai): HTTP $HTTP_CODE (expected 202)"
+          [ "$HTTP_CODE" = "202" ] || { echo "FAIL: expected 202"; docker logs scarlihq-test; exit 1; }
+          # Check desired-mode file was written (container must be able to write to bridge-input/)
+          ls -la /tmp/scarlix-test/bridge-input/desired-mode && echo "desired-mode written ✓"
+          # Invalid mode → 400
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer test-token" "http://127.0.0.1:8090/api/mode?set=invalid" || echo "000")
+          echo "Mode POST (set=invalid): HTTP $HTTP_CODE (expected 400)"
+          [ "$HTTP_CODE" = "400" ] || { echo "FAIL: expected 400"; docker logs scarlihq-test; exit 1; }
+          echo "Smoke test PASSED — ScarliHQ starts + auth + mode write + error codes"
           docker stop scarlihq-test 2>/dev/null || true
           docker rm scarlihq-test 2>/dev/null || true

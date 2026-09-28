@@ -1,10 +1,10 @@
-# SCARLIX OS v17.9.9 — EndeavourOS Edition (Host-Bridge Stabilization)
+# SCARLIX OS v18.0.0 — EndeavourOS Edition (Secure Host-Bridge)
 
 > Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 
-**Version:** v17.9.9 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v18.0.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -12,7 +12,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v17.9.9   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v18.0.0   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -31,6 +31,44 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://<this-ip>:8090/?token=<SCARLIHQ_TOKEN>
 ```
+
+---
+
+## 🆕 What's New in v18.0.0 (vs v17.9.9)
+
+**Secure Host-Bridge — privilege boundary hardened.** 10 fixes from 2 reviews.
+
+v17.9.9 had a **P0 symlink vulnerability**: ScarliHQ owned `bridge/` dir, root wrote `.retry` to it. If ScarliHQ created a symlink `bridge/.retry -> /etc/shadow`, root would write to `/etc/shadow`. v18.0.0 separates writable input dir from root-owned state dir.
+
+### P0 — privilege boundary (2)
+| # | Fix | v17.9.9 Problem | v18.0.0 Solution |
+|---|-----|-----------------|-------------------|
+| P0 | **Separate bridge-input/ from bridge-state/** | Single `bridge/` dir owned by 65532 + root wrote `.retry` there = symlink attack | `bridge-input/` (65532:65532, 700) — ScarliHQ writes ONLY desired-mode. `bridge-state/` (root:root, 700) — root writes retry/last-transition. ScarliHQ cannot create symlinks in bridge-state/. |
+| P0 | **Single scarlix-mode execution** | On failure, host bridge ran `scarlix-mode` AGAIN to capture error output → double mode transition (e.g. 2× compose up, 2× stop) | Capture output once: `output=$("$MODE_BIN" "$mode" 2>&1)` then check `$?` |
+
+### P1 — security + state machine (8)
+| # | Fix | v17.9.9 Problem | v18.0.0 Solution |
+|---|-----|-----------------|-------------------|
+| P1 | **Concurrent Mode.Set() race** | Two concurrent POST /api/mode used same `.tmp` file → race (A writes, B writes, A renames, B renames → "no such file") | `os.CreateTemp(dir, ".desired-mode-*")` — unique temp per request |
+| P1 | **GET /api/mode returns transition state** | Only returned `{"mode":"ai"}` — dashboard couldn't show retry/failed | Returns full: `mode`, `requested_mode`, `transition_state`, `retry_count`, `last_error`, `last_timestamp` |
+| P1 | **Persistent last-transition** | After max retries, state cleared on next timer tick → diagnostic info lost | `last-transition` file in bridge-state/ (root 700) — survives timer cycles |
+| P1 | **scarlix-mode .env permission** | `/opt/scarlix/.env` owned root:root → user `scarlix-mode ai` fails "Permission denied" | If root: chown `/opt/scarlix` to REAL_USER before write. If user: warn with fix command. |
+| P1 | **crypto/subtle.ConstantTimeCompare** | Custom `secureCompare()` with early `len(a) != len(b)` return — not truly constant-time | `subtle.ConstantTimeCompare()` from `crypto/subtle` (standard library, audited) |
+| P1 | **Host bridge input validation** | Read `desired-mode` without checks → root could follow symlink created by nonroot | `validate_input_file()`: rejects symlinks, checks owner=65532, no world-writable, max 100 bytes |
+| P1 | **No hardcoded version in host bridge** | `"version": "17.9.9"` hardcoded in JSON → duplicate source of truth | Reads `scarlix_version` from VERSION file (single source) |
+| P1 | **JSON via env vars + single python3** | Nested string interpolation `python3 -c "...\"$last_error\"..."` — broke on quotes/backslashes in error messages | Pass all values as env vars, single `python3 -c` reads `os.environ` — no interpolation |
+
+### P2 — CI (1)
+| # | Fix | v17.9.9 Problem | v18.0.0 Solution |
+|---|-----|-----------------|-------------------|
+| P2 | **CI uses VERSION as build-arg + integration test** | CI used Dockerfile default (hardcoded 17.9.9); smoke test only checked health endpoint | CI reads `VERSION` file as `--build-arg`; smoke test now POST /api/mode → checks `desired-mode` file written → checks 202/400 error codes |
+
+### Breaking change: bridge/ → bridge-input/ + bridge-state/
+Existing v17.9.9 installs: install.sh auto-migrates (removes old `bridge/` dir, creates new layout). ScarliHQ compose mount updated from `bridge:rw` to `bridge-input:rw`.
+
+### Review false-positives (verified already-correct in v17.9.9)
+- `internal/api/` and `internal/profiles/` packages **DO exist** on remote main + tag v17.9.9 (verified via `git ls-tree -r origin/main`). Reviewer checked stale GitHub web UI cache.
+- `yq -r '.key'` works with python-kislyuk (jq wrapper, `-r` is jq flag).
 
 ---
 
@@ -303,7 +341,8 @@ Host-bridge architecture: dashboard reads JSON status, writes desired-mode. No p
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v17.9.9** | 2026-10 | **Host-Bridge stabilization + state machine. 13 fixes: Dockerfile nonroot user (P0), bridge/ chown 65532+775 (P0), df parsing fixed (P0), HTTP error codes, desired-mode retry, JSON via python3, state machine fields, MCP secureCompare, WS CIDR origin, scarlix-mode sudo removed, turbo dump_vram, systemd hardening, mem-fraction env var, version via ldflags. CI: runtime smoke test.** |
+| **v18.0.0** | 2026-10 | **Secure Host-Bridge. 10 fixes: bridge-input/+bridge-state/ separation (P0 symlink attack fix), single scarlix-mode execution (P0 double-run fix), concurrent Mode.Set os.CreateTemp, GET /api/mode transition state, persistent last-transition, scarlix-mode .env permission, crypto/subtle, input validation (symlink/owner/size), no hardcoded version, CI VERSION build-arg + mode integration test. Breaking: bridge/ → bridge-input/ + bridge-state/.** |
+| v17.9.9 | 2026-10 | Host-Bridge stabilization + state machine. 13 fixes: Dockerfile nonroot user (P0), bridge/ chown 65532+775 (P0), df parsing fixed (P0), HTTP error codes, desired-mode retry, JSON via python3, state machine fields, MCP secureCompare, WS CIDR origin, scarlix-mode sudo removed, turbo dump_vram, systemd hardening, mem-fraction env var, version via ldflags. CI: runtime smoke test. |
 | v17.9.8 | 2026-10 | Host-bridge architecture + reliability. 16 fixes: ScarliHQ privilege boundary (P0), Dockerfile build order, go.mod cleaned, API auth, mode API/CLI/UI unified, Go/MCP v12→17.9.8, profiles YAML parsed, real JSON-RPC MCP, Current() TrimSpace, crit() aborts, Phase 1 crit ops, multilib scoped+synced, WS real status+origin, download-models fail-hard, model-manager Ollama via docker, alpine runtime 20MB, .env 600, CI go+docker build. |
 | v17.9.7 | 2026-10 | Reliability + real dashboard. 11 fixes: ScarliHQ image tag, Dockerfile reorder, nvidia/cuda runtime, real dashboard HTML, git tag, SGLang --disable-flashinfer, network disconnect loop, multilib, disk checks, /models 750, http_ok fallback. |
 | v17.9.6 | 2026-10 | Reliability. 15 fixes: duplicate networks, scarlix_net→scarlix-net, VERSION, default paths, download fail-hard, doctor unhealthy=FAIL, hash after recreate, $DC up -d, healthchecks, version unified, docs. |

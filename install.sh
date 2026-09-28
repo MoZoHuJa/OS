@@ -2,36 +2,32 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v17.9.9 — Bootstrap Installer (Host-Bridge Stabilization)
+# SCARLIX OS v18.0.0 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
-# v17.9.9 FIXES (vs v17.9.8) — Host-Bridge stabilization + state machine:
-#   P0: Dockerfile nonroot user created (alpine has no nonroot → container crash)
-#   P0: bridge/ chown 65532 + chmod 775 (was 755 root:root → nonroot couldn't write desired-mode)
-#   P0: host-bridge df parsing fixed (was: total=Used, free=Used-Avail — swapped columns)
-#   P1: /api/mode returns proper HTTP error codes (was: 200 OK + {"status":"error"})
-#   P1: host-bridge keeps desired-mode on failure + retry (was: rm -f always → lost retry)
-#   P1: host-bridge JSON via python3 json.dumps (was: shell heredoc — broke on quotes)
-#   P1: host-bridge state machine: requested/transition/retry_count/last_error
-#   P1: MCP auth secureCompare (was: != — timing attack risk)
-#   P1: WS origin via net.ParseIP + net.IPNet CIDR (was: strings.HasPrefix — no real validation)
-#   P1: scarlix-mode: removed sudo systemctl (5 occurrences — bridge runs as root)
-#   P1: scarlix-mode turbo calls dump_vram (was: missing → CUDA OOM if creative/game held VRAM)
-#   P1: host-bridge systemd hardening (NoNewPrivileges, ProtectHome, Restrict*, etc.)
-#   P2: mem-fraction from models.yaml env var (was: hardcoded 0.85 — OOM on 8GB GPU)
-#   P2: Version injected via -ldflags -X main.Version (single source: VERSION file)
+# v18.0.0 FIXES (vs v17.9.9) — Security + state machine:
+#   P0: Separate bridge-input/ (65532 writable) from bridge-state/ (root 700)
+#       — was: single bridge/ dir owned by nonroot + root wrote .retry there = symlink attack
+#   P0: Single scarlix-mode execution per transition (was: ran TWICE on failure)
+#   P1: Concurrent Mode.Set() uses os.CreateTemp (was: same .tmp → race condition)
+#   P1: GET /api/mode returns transition state (was: only current-mode)
+#   P1: Persistent last-transition state (survives timer cycles — diagnostic info not lost)
+#   P1: scarlix-mode .env permission fix (chown /opt/scarlix if root, else warn)
+#   P1: crypto/subtle.ConstantTimeCompare (was: custom secureCompare)
+#   P1: Host bridge input validation (ownership + symlink + type + size checks)
+#   P1: No hardcoded version in host bridge (reads from VERSION file)
+#   P2: CI uses VERSION as build-arg + integration test mode transition (POST → desired-mode → 202/400)
 #
-# v17.9.8 fixes preserved (host-bridge architecture, API auth, mode unification, etc.)
-# v17.9.5–7 fixes preserved (see git history for details).
+# v17.9.5–9 fixes preserved (see git history for details).
 #
 # USAGE (primary — safe):
 #   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
-#   git checkout v17.9.9   # ALWAYS checkout specific tag (main may be ahead)
+#   git checkout v18.0.0   # ALWAYS checkout specific tag (main may be ahead)
 #   bash install.sh
 # ============================================================================
 
-VERSION="17.9.9"
+VERSION="18.0.0"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -541,16 +537,26 @@ else
   # v17.9.8: Enable host-bridge timer (writes host-status.json every 5s for ScarliHQ)
   if [ -f /etc/systemd/system/scarlix-host-bridge.timer ]; then
     systemctl enable --now scarlix-host-bridge.timer >> "$LOG_FILE" 2>&1 && ok "scarlix-host-bridge.timer enabled + started" || fail "host-bridge.timer"
-    # v17.9.9 P0: Create bridge dir with correct ownership for ScarliHQ nonroot container.
-    # ScarliHQ runs as UID 65532 (nonroot in alpine image). bridge/ must be writable by it.
-    # Was: chmod 755 root:root → nonroot cannot write desired-mode → mode switch always failed.
-    mkdir -p /var/lib/scarlix/bridge
-    # chown to 65532 (nonroot UID in ScarliHQ alpine image) + chmod 775 (owner+group write)
-    # host bridge (root) can still write/read; nonroot container can write desired-mode.
-    chown 65532:65532 /var/lib/scarlix/bridge 2>/dev/null || chown nobody:nobody /var/lib/scarlix/bridge
-    chmod 775 /var/lib/scarlix/bridge
-    # host-status.json stays root:root 644 (written by root bridge, read by nonroot container)
-    ok "bridge/ ready (uid 65532, mode 775) — ScarliHQ nonroot can write desired-mode"
+    # v18.0.0 P0: SEPARATE bridge-input/ (65532 writable) from bridge-state/ (root 700)
+    # Was (v17.9.9): single bridge/ dir owned by 65532 + root wrote .retry there = symlink attack.
+    # Now: ScarliHQ can ONLY write to bridge-input/desired-mode. Root writes ALL state to
+    # bridge-state/ (root:root 700) — ScarliHQ cannot create symlinks there.
+    #
+    # Migration: remove old bridge/ dir if exists (v17.9.9 layout)
+    if [ -d /var/lib/scarlix/bridge ]; then
+      log "Migrating from v17.9.9 bridge/ layout → v18.0.0 bridge-input/ + bridge-state/..."
+      rm -f /var/lib/scarlix/bridge/desired-mode /var/lib/scarlix/bridge/.retry 2>/dev/null || true
+      rmdir /var/lib/scarlix/bridge 2>/dev/null || true
+    fi
+    # bridge-input: ScarliHQ nonroot (65532) writes desired-mode here (mode 700 — owner only)
+    mkdir -p /var/lib/scarlix/bridge-input
+    chown 65532:65532 /var/lib/scarlix/bridge-input 2>/dev/null || chown nobody:nobody /var/lib/scarlix/bridge-input
+    chmod 700 /var/lib/scarlix/bridge-input
+    # bridge-state: host bridge (root) writes retry + last-transition here (NOT writable by ScarliHQ)
+    mkdir -p /var/lib/scarlix/bridge-state
+    chown root:root /var/lib/scarlix/bridge-state
+    chmod 700 /var/lib/scarlix/bridge-state
+    ok "bridge-input/ (uid 65532, 700) + bridge-state/ (root, 700) — symlink attack prevented"
   fi
 
   # v17.9.8: Generate /etc/scarlix/.env (secrets + SCARLIHQ_TOKEN) if not already

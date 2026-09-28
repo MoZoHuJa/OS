@@ -1,7 +1,7 @@
 // Package status provides shared types + reader for /var/lib/scarlix/host-status.json
 // (written by scarlix-host-bridge systemd timer on the host).
 //
-// v17.9.8: ScarliHQ container reads this file (read-only mount) instead of running
+// v18.0.0: ScarliHQ container reads this file (read-only mount) instead of running
 // nvidia-smi / docker / scarlix-mode inside the container. This is the privilege
 // boundary between the (untrusted, LAN-facing) dashboard and the (root) host.
 package status
@@ -13,15 +13,26 @@ import (
 
 // HostStatus is the JSON shape written by scarlix-host-bridge every 5s.
 type HostStatus struct {
-	Timestamp      string      `json:"timestamp"`
-	Version        string      `json:"version"`
-	ScarlixVersion string      `json:"scarlix_version"`
-	Mode           string      `json:"mode"`
-	Experimental   bool        `json:"experimental"`
-	ModeApplied    string      `json:"mode_applied"`
-	GPUs           []GPU       `json:"gpus"`
-	Containers     []Container `json:"containers"`
-	Disk           Disk        `json:"disk"`
+	Timestamp      string          `json:"timestamp"`
+	Version        string          `json:"version"`
+	ScarlixVersion string          `json:"scarlix_version"`
+	Mode           string          `json:"mode"`
+	Experimental   bool            `json:"experimental"`
+	ModeTransition ModeTransition  `json:"mode_transition"`
+	GPUs           []GPU           `json:"gpus"`
+	Containers     []Container     `json:"containers"`
+	Disk           Disk            `json:"disk"`
+}
+
+// ModeTransition holds the state of the most recent mode switch request.
+// v18.0.0: full state machine (was: just "mode_applied" string in v17.9.8).
+// GET /api/mode now returns this so dashboard can show retry/failed state.
+type ModeTransition struct {
+	Requested    string `json:"requested"`     // mode that was requested (e.g. "ai")
+	State        string `json:"state"`        // none|applied|retrying|failed|rejected
+	RetryCount   int    `json:"retry_count"`   // 0-3 (MAX_RETRIES)
+	LastError    string `json:"last_error"`    // error message (truncated to 500 chars)
+	LastTimestamp string `json:"last_timestamp"` // when the last transition was attempted
 }
 
 // GPU is one nvidia-smi entry.
@@ -49,7 +60,6 @@ type Disk struct {
 	ModelsTotalMB int `json:"models_total_mb"`
 }
 
-// statusFile is the path scarlix-host-bridge writes to (mounted read-only in ScarliHQ).
 const statusFile = "/var/lib/scarlix/host-status.json"
 
 // Read loads host-status.json. Returns zero-value HostStatus if missing/unparseable.

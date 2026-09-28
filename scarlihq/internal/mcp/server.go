@@ -1,6 +1,7 @@
 package mcp
 
 import (
+        "crypto/subtle"
         "encoding/json"
         "fmt"
         "net/http"
@@ -82,25 +83,13 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
                 } else {
                         token = r.URL.Query().Get("token")
                 }
-                // v17.9.9 P2: constant-time comparison (was: != — timing attack risk)
-                if !secureCompare(token, s.authToken) {
+                // v18.0.0 P1: crypto/subtle.ConstantTimeCompare (was: custom secureCompare with !=)
+                if subtle.ConstantTimeCompare([]byte(token), []byte(s.authToken)) != 1 {
                         writeRPCError(w, http.StatusUnauthorized, nil, -32001, "invalid or missing token")
                         return
                 }
                 next(w, r)
         }
-}
-
-// secureCompare does a constant-time string comparison (prevents timing attacks).
-func secureCompare(a, b string) bool {
-        if len(a) != len(b) {
-                return false
-        }
-        var result byte
-        for i := 0; i < len(a); i++ {
-                result |= a[i] ^ b[i]
-        }
-        return result == 0
 }
 
 func (s *Server) handleMCPInfo(w http.ResponseWriter, r *http.Request) {
