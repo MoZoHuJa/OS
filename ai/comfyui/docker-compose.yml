@@ -5,8 +5,8 @@ services:
     restart: unless-stopped
     ports: ["8188:8188"]
     volumes:
-      - ./data/models:/ComfyUI/models
-      - ./data/output:/ComfyUI/output
+      - /var/lib/scarlix/comfyui/models:/ComfyUI/models
+      - /var/lib/scarlix/comfyui/output:/ComfyUI/output
     environment:
       - CLI_ARGS=--listen 0.0.0.0 --port 8188
       - NVIDIA_VISIBLE_DEVICES=0

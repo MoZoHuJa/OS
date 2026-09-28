@@ -24,7 +24,7 @@ sglang:
   quantization: "awq"
   context_length: 32768
   mem_fraction: 0.85
-  flashinfer: true  # v17.5: auto-disabled on Blackwell (sm_120) by install.sh
+  flashinfer: true  # NOTE: SGLang compose does not use this flag; set in compose if needed
 
 # === Tier-2: vLLM (EXPERIMENTAL, GPU 1, TP=1) ===
 # Only starts if /etc/scarlix/.experimental flag exists (created by wizard for 2+ GPU).
