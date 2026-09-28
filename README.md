@@ -1,10 +1,10 @@
-# SCARLIX OS v17.6 — EndeavourOS Edition (Working AI Path, Bugfix 3)
+# SCARLIX OS v17.7 — EndeavourOS Edition (Working AI Path, Bugfix 4)
 
 > Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
-> **Verified**: SGLang (GPU0) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU fallback).
+> **Verified**: SGLang (GPU0) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 
-**Version:** v17.6.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v17.7.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -27,6 +27,25 @@ download-models.sh
 # 3. Start AI inference
 scarlix-mode ai
 ```
+
+---
+
+## 🆕 What's New in v17.7 (vs v17.6)
+
+**Bugfix 4 — fixes 8 issues from 3 reviews. Last bugfix before stable.**
+
+| # | Fix | v17.6 Problem | v17.7 Solution |
+|---|-----|---------------|-----------------|
+| Q1a | **REAL_USER fallback** | `$SUDO_USER` empty when `su -` → chown crash | `${SUDO_USER:-${USER:-$(logname)}}` fallback chain |
+| Q2a | **Ollama volume root:root + 777** | 775 + REAL_USER → container (root) can't write | `chown root:root` + `chmod 777` (Ollama runs as root in container) |
+| Q3a | **Healthcheck respects stopped** | `scarlix-mode ai` reštartne Ollama aj keď SGLang beží | If `CURRENT_MODE=stopped` → no restart. Ollama only if SGLang+vLLM down |
+| Q4a | **Docker start po nvidia-container-toolkit** | Docker start pred toolkit → no GPU visibility | Toolkit inštalovaný + configured → až potom `systemctl start docker` |
+| Q5a | **.env súbor generovaný z models.yaml** | sed v compose krehký (zmena formátu = tiché zlyhanie) | `scarlix-mode` generuje `/opt/scarlix/.env` z models.yaml, compose číta .env |
+| Q6a | **Ollama tertiary fallback + mem_limit** | BeeLlama + Ollama naraz (OOM riziko) | Ollama len ak BeeLlama zlyhá. `mem_limit: 6g` v compose |
+| Q7a | **yq null validation + \|\| true** | `yq -r` môže vrátiť `null` → `/models/null` | `yaml_get()` validácia + `|| true` na docker compose stop |
+| Q8a | **README sync + File Layout + healthcheck** | Fallback text klamal, download-models.sh na 2 miestach, curl v SGLang healthcheck | README sedí s kódom, File Layout zjednotený, SGLang healthcheck `CMD-SHELL` python |
+
+**Additional:** `usermod -aG docker $REAL_USER` (user can run docker without sudo)
 
 ---
 
@@ -223,7 +242,8 @@ OS/
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v17.6** | 2026-10 | **Bugfix 3. 6 fixes: sglang_ok/vllm_ok initialized (was unbound → crash), Ollama CPU fallback (was GPU0), chmod 775 (was 777 — security), check_model_exists for all starts, README path fix, version header.** |
+| **v17.7** | 2026-10 | **Bugfix 4 (last before stable). 8 fixes: REAL_USER fallback, Ollama volume root:root+777, healthcheck respects stopped, Docker start after toolkit, .env file generation, Ollama tertiary fallback + mem_limit 6g, yq null validation, README sync + SGLang healthcheck CMD-SHELL.** |
+| v17.6 | 2026-10 | Bugfix 3. 6 fixes: sglang_ok/vllm_ok initialized, Ollama CPU fallback, chmod 775, check_model_exists for all, README path fix, version header. |
 | v17.5.2 | 2026-10 | Bugfix 2. 8 fixes: scarlix-net after Docker starts, Ollama true fallback, checkpoint pacman -Q, config.json check, chmod 777, --include, stop keeps dashboard, dead files removed. |
 | v17.5.1 | 2026-10 | Bugfix release. 10 fixes: yq YAML parsing, download-models.sh rewritten, Ollama GPU0+absolute vol, scarlix-net early, linux checkpoint, model check, Ollama wait, BeeLlama CPU, scarlix-mode stop. |
 | v17.4 | 2026-10 | Unified bootstrap, fail-hard, TP=1 (mixed GPU). 19 fixes. |
