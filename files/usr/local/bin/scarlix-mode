@@ -263,7 +263,7 @@ healthcheck_and_restart() {
     vllm_st=$(docker inspect -f '{{.State.Status}}' vllm 2>/dev/null || echo "not_found")
     if [ "$sglang_st" != "running" ] && { [ "$vllm_st" != "running" ] || [ "$EXPERIMENTAL" -eq 0 ]; }; then
       log "  ollama-agent: $ollama_status — restarting (SGLang+vLLM both down)..."
-      docker start ollama-agent >> "$LOG_FILE" 2>&1 && log "  ✓ ollama-agent restarted" || log "  ✗ ollama-agent restart failed"
+      $DC -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ ollama-agent restarted" || log "  ✗ ollama-agent restart failed"
     else
       log "  ℹ ollama-agent: stopped (SGLang or vLLM running — not needed)"
     fi
@@ -282,7 +282,7 @@ start_verified_ai() {
   if check_model_exists "SGLang" "$SGLANG_MODEL_PATH"; then
     if $DC -f /opt/scarlix/ai/sglang/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
       # P0 v17.9.3: Wait for healthy (up -d exit 0 ≠ model loaded)
-      if wait_for_healthy "sglang" 120; then
+      if wait_for_healthy "sglang" 300; then
         log "  ✓ SGLang (GPU0, healthy)"
         sglang_ok=1
       else
@@ -299,7 +299,7 @@ start_verified_ai() {
   if [ "$EXPERIMENTAL" -eq 1 ]; then
     if check_model_exists "vLLM" "$VLLM_MODEL_PATH"; then
       if $DC -f /opt/scarlix/ai/vllm/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
-        if wait_for_healthy "vllm" 120; then
+        if wait_for_healthy "vllm" 300; then
           log "  ✓ vLLM (GPU1, TP=1, healthy)"
           vllm_ok=1
         else

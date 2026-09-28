@@ -15,7 +15,6 @@ services:
     environment:
       - SCARLIHQ_PORT=8090
       - TZ=Europe/Bratislava
-    networks: [scarlix-net, scarlix-net]
+    networks: [scarlix-net]
 networks:
-  scarlix-net: { external: true }
   scarlix-net: { external: true }

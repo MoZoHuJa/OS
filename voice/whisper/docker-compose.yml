@@ -19,7 +19,6 @@ services:
             - driver: nvidia
               device_ids: ['1']
               capabilities: [gpu]
-    networks: [scarlix-net, scarlix-net]
+    networks: [scarlix-net]
 networks:
-  scarlix-net: { external: true }
   scarlix-net: { external: true }
