@@ -20,4 +20,3 @@ services:
       retries: 3
 networks:
   scarlix-net: { external: true }
-  scarlix-net: { external: true }

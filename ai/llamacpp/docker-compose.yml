@@ -22,7 +22,7 @@ services:
       --cache-type-v q4_0
     networks: [scarlix-net]
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8080/health\")' 2>/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health 2>/dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

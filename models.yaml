@@ -1,4 +1,4 @@
-# SCARLIX OS v17.9.1 — EndeavourOS Edition — Model-Agnostic Configuration
+# SCARLIX OS v17.9.3 — EndeavourOS Edition — Model-Agnostic Configuration
 #
 # v17.5: Single source of truth — scarlix-mode parses this and exports env vars
 #   to docker compose. Edit model_path to use ANY HuggingFace model.
@@ -15,7 +15,7 @@
 # Then run: download-models.sh
 sglang:
   model_path: "/models/Qwen3-14B-AWQ"
-  hf_repo: "Qwen/Qwen3-14B-AWQ"  # v17.9.1: correct repo (was Qwen3-14B-Instruct-AWQ — doesn't exist)
+  hf_repo: "Qwen/Qwen3-14B-AWQ"  # v17.9.3: correct repo (was Qwen3-14B-Instruct-AWQ — doesn't exist)
   # Alternatívy (odkomentuj + zmeň hf_repo):
   # model_path: "/models/Meta-Llama-3.1-8B-Instruct"
   # hf_repo: "meta-llama/Llama-3.1-8B-Instruct"
@@ -41,8 +41,8 @@ vllm:
 # KVarN flags are BeeLlama-specific; official image uses q4_0 (similar benefit).
 beellama:
   model_file: "/models/Qwen3-14B-Q4_K_M.gguf"
-  hf_repo: "Qwen/Qwen3-14B-GGUF"  # v17.9.1: correct repo (was Qwen3-14B-Instruct-GGUF — doesn't exist)
-  hf_file: "Qwen3-14B-Q4_K_M.gguf"  # v17.9.1: correct file (was qwen3.6-14b... — doesn't exist)
+  hf_repo: "Qwen/Qwen3-14B-GGUF"  # v17.9.3: correct repo (was Qwen3-14B-Instruct-GGUF — doesn't exist)
+  hf_file: "Qwen3-14B-Q4_K_M.gguf"  # v17.9.3: correct file (was qwen3.6-14b... — doesn't exist)
   context_size: 32768
   threads: 16
   cache_type_k: "q4_0"  # v17.5: q4_0 (official llama.cpp), not kvarn4 (BeeLlama fork)

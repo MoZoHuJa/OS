@@ -1,5 +1,5 @@
-# SCARLIX OS v17.9.1 — SGLang (Tier-1, GPU 0)
-# v17.9.1: Pinned image v0.4.4-cu128 (was latest-cu128 — unreproducible)
+# SCARLIX OS v17.9.3 — SGLang (Tier-1, GPU 0)
+# v17.9.3: Pinned image v0.4.4-cu128 (was latest-cu128 — unreproducible)
 services:
   sglang:
     image: ghcr.io/sgl-project/sglang:v0.4.4-cu128

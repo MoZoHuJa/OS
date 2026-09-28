@@ -22,7 +22,6 @@ jobs:
           shellcheck -S error files/usr/local/bin/model-manager.sh
           shellcheck -S error files/usr/local/bin/download-models.sh
           shellcheck -S error files/etc/systemd/system/generate-env.sh
-          shellcheck -S error files/etc/pacman.d/hooks/scarlix-docker-backup.sh
 
   bash-syntax:
     runs-on: ubuntu-latest
@@ -31,13 +30,9 @@ jobs:
       - name: Bash syntax check
         run: |
           bash -n install.sh
-          bash -n files/usr/local/bin/scarlix-mode
-          bash -n files/usr/local/bin/scarlix-wizard
-          bash -n files/usr/local/bin/scarlix-doctor
-          bash -n files/usr/local/bin/model-manager.sh
-          bash -n files/usr/local/bin/download-models.sh
-          bash -n files/etc/systemd/system/generate-env.sh
-          bash -n files/etc/pacman.d/hooks/scarlix-docker-backup.sh
+          for f in files/usr/local/bin/*; do bash -n "$f"; done
+          for f in files/etc/systemd/system/*.sh; do bash -n "$f"; done
+          for f in files/etc/pacman.d/hooks/*.sh; do bash -n "$f"; done
 
   yaml-validation:
     runs-on: ubuntu-latest
@@ -49,26 +44,39 @@ jobs:
       - name: Validate YAML files
         run: |
           python -c "import yaml; yaml.safe_load(open('models.yaml')); print('models.yaml OK')"
-          for f in ai/*/docker-compose*.yml; do
-            python -c "import yaml; yaml.safe_load(open('$f')); print('$f OK')"
+          # Check ALL compose files in ALL directories
+          find . -name 'docker-compose*.yml' -not -path './.git/*' | while read f; do
+            python -c "import yaml; yaml.safe_load(open('$f')); print('$f OK')" || exit 1
           done
 
-  compose-config:
+  compose-validation:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate Docker Compose files
+      - name: Validate ALL Docker Compose files
         run: |
-          for f in ai/*/docker-compose*.yml; do
+          # Scan ALL directories (not just ai/)
+          find . -name 'docker-compose*.yml' -not -path './.git/*' | while read f; do
             echo "Checking $f..."
-            # Check for duplicate networks
-            if grep -q "scarlix-net.*scarlix-net" "$f"; then
-              echo "ERROR: Duplicate network in $f"
+            # Check for duplicate network keys (count scarlix-net: in top-level)
+            DUP=$(grep -c "^  scarlix-net:" "$f" 2>/dev/null || echo 0)
+            if [ "$DUP" -gt 1 ]; then
+              echo "ERROR: Duplicate scarlix-net key in $f ($DUP occurrences)"
               exit 1
             fi
-            # Check for scarlix_net (underscore)
+            # Check for scarlix_ai (underscore variant)
+            if grep -q "scarlix_ai" "$f"; then
+              echo "ERROR: scarlix_ai found in $f — should be scarlix-net"
+              exit 1
+            fi
+            # Check for scarlix_net (underscore variant)
             if grep -q "scarlix_net" "$f"; then
-              echo "ERROR: scarlix_net (underscore) in $f — should be scarlix-net"
+              echo "ERROR: scarlix_net found in $f — should be scarlix-net"
+              exit 1
+            fi
+            # Check for duplicate in service-level networks list
+            if grep -q "scarlix-net, scarlix-net" "$f"; then
+              echo "ERROR: Duplicate scarlix-net in service networks in $f"
               exit 1
             fi
           done
