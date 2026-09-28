@@ -14,6 +14,6 @@ services:
       - POST=0
       - AUTH=0
       - BUILD=0
-    networks: [scarlix_net]
+    networks: [scarlix-net]
 networks:
-  scarlix_net: { external: true }
+  scarlix-net: { external: true }

@@ -8,7 +8,7 @@ services:
       - ./data/input:/data/input
       - ./data/output:/data/output
       - ./data/templates:/data/templates
-    networks: [scarlix_net]
+    networks: [scarlix-net]
     deploy: {resources: {limits: {memory: 4G, cpus: '2'}}}
 networks:
-  scarlix_net: {external: true}
+  scarlix-net: {external: true}

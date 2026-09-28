@@ -95,7 +95,7 @@ TIER_DESC="SGLang + BeeLlama"
 [ "$EXPERIMENTAL" = "yes" ] && TIER_DESC="SGLang + vLLM (TP=1) + BeeLlama"
 
 whiptail --title "$TITLE" --yesno \
-  "PC Typ: $PC_TYPE\nIP: $IP\nGPU count: ${NVIDIA_DGPU_COUNT} NVIDIA\nModely: $DOWNLOAD_MODELS\nInference: $TIER_DESC\n\nPo inštalácii:\n  1. Reboot\n  2. bash /etc/systemd/system/download-models.sh\n  3. scarlix-mode ai" 22 65 3>&1 1>&2 2>&3
+  "PC Typ: $PC_TYPE\nIP: $IP\nGPU count: ${NVIDIA_DGPU_COUNT} NVIDIA\nModely: $DOWNLOAD_MODELS\nInference: $TIER_DESC\n\nPo inštalácii:\n  1. Reboot\n  2. download-models.sh\n  3. scarlix-mode ai" 22 65 3>&1 1>&2 2>&3
 
 echo ""
 echo "========================================"
@@ -108,6 +108,6 @@ echo "  Inference: $TIER_DESC"
 echo "========================================"
 echo "  NEXT STEPS:"
 echo "    1. Reboot (activate NVIDIA driver)"
-echo "    2. Download models: bash /etc/systemd/system/download-models.sh"
+echo "    2. Download models: download-models.sh"
 echo "    3. Start AI: scarlix-mode ai"
 echo "========================================"
