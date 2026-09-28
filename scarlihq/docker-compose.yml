@@ -1,7 +1,11 @@
+# SCARLIX OS v17.9.7 — ScarliHQ Dashboard compose
+# v17.9.7 FIXES:
+#   P0: image unified to scarlihq:latest (was localhost/scarlihq:v12 — mismatched install.sh build tag)
+#   P0: mounts nvidia-smi not needed (base image has it) + scarlix-mode for mode switching
 services:
   scarlihq:
     build: .
-    image: localhost/scarlihq:v12
+    image: scarlihq:latest
     container_name: scarlihq
     restart: unless-stopped
     ports:
@@ -12,9 +16,20 @@ services:
       - /var/lib/scarlix:/var/lib/scarlix
       - /etc/scarlix:/etc/scarlix:ro
       - /opt/scarlix:/opt/scarlix:ro
+      # v17.9.7: mount scarlix-mode so /api/mode set can exec it (read-only)
+      - /usr/local/bin/scarlix-mode:/usr/local/bin/scarlix-mode:ro
     environment:
       - SCARLIHQ_PORT=8090
+      - PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - TZ=Europe/Bratislava
+    # GPU access so nvidia-smi works (reads GPU status for /api/gpu)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [utility]
     networks: [scarlix-net]
 networks:
   scarlix-net: { external: true }
