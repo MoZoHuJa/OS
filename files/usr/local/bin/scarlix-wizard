@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.1 — EndeavourOS Edition — Setup Wizard
+# SCARLIX OS v17.9.6 — EndeavourOS Edition — Setup Wizard
 # v17.5: Creates .experimental if 2+ GPU (Q3a — vLLM starts without --profile gate)
 
-TITLE="SCARLIX OS v17.9.1 Setup"
+TITLE="SCARLIX OS v17.9.6 Setup"
 
 NVIDIA_DGPU_COUNT=$(lspci -nn 2>/dev/null | grep -iE 'NVIDIA.*(VGA|3D)' | wc -l || echo 0)
 if [ "$NVIDIA_DGPU_COUNT" -gt 0 ]; then
@@ -35,7 +35,8 @@ DEFAULT_IP="192.168.1.100"
 [ "$PC_TYPE" = "dev_workstation" ] && DEFAULT_IP="192.168.1.101"
 IP=$(whiptail --title "$TITLE" --inputbox "IP adresa:" 10 50 "$DEFAULT_IP" 3>&1 1>&2 2>&3)
 
-PASS=$(whiptail --title "$TITLE" --passwordbox "Heslo pre scarlix user:" 10 50 3>&1 1>&2 2>&3)
+# v17.9.6: PASS removed (was never applied to user — misleading input)
+# User sets password during EndeavourOS Calamares install
 
 TG_TOKEN=$(whiptail --title "$TITLE" --inputbox "Telegram Bot Token (prazdne = preskoc):" 10 60 "" 3>&1 1>&2 2>&3)
 TG_CHAT_ID=""
@@ -99,7 +100,7 @@ whiptail --title "$TITLE" --yesno \
 
 echo ""
 echo "========================================"
-echo "  SCARLIX OS v17.9.1 — EndeavourOS Edition"
+echo "  SCARLIX OS v17.9.6 — EndeavourOS Edition"
 echo "  Setup complete!"
 echo "  PC Type: $PC_TYPE"
 echo "  GPU: ${NVIDIA_DGPU_COUNT} NVIDIA dGPU(s)"

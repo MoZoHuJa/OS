@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.5 — Model Manager
+# SCARLIX OS v17.9.6 — Model Manager
 # FIX Q8b: Split — HF model pulls = auto (safe), Ollama tag pulls = manual (--apply only)
 #
 # Weekly timer (Mon 04:00) runs with NO --apply → only HF model pulls + Telegram report.
@@ -48,7 +48,7 @@ vram_snapshot() {
 }
 
 log "========================================"
-log "  SCARLIX OS v17.9.5 — Model Manager"
+log "  SCARLIX OS v17.9.6 — Model Manager"
 [ "$APPLY_OLLAMA" -eq 1 ] && log "  (--apply-ollama: will update Ollama tags)" || log "  (HF auto-pull + Ollama dry-run report only)"
 log "========================================"
 

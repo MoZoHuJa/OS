@@ -29,7 +29,7 @@ set -euo pipefail
 #   cd ~/scarlix-os && bash install.sh
 # ============================================================================
 
-VERSION="17.9.5"
+VERSION="17.9.6"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -461,6 +461,23 @@ else
   # Enable model-manager timer (weekly HF auto-pull)
   if [ -f /etc/systemd/system/model-manager.timer ]; then
     systemctl enable model-manager.timer >> "$LOG_FILE" 2>&1 && ok "model-manager.timer enabled" || fail "model-manager.timer"
+  fi
+
+  # P1-6 v17.9.6: Build + start ScarliHQ dashboard
+  if [ -f /opt/scarlix/scarlihq/Dockerfile ]; then
+    log "Building ScarliHQ dashboard image..."
+    mkdir -p /var/lib/scarlix/comfyui/{models,output} 2>/dev/null || true
+    if docker build -t scarlihq:latest /opt/scarlix/scarlihq/ >> "$LOG_FILE" 2>&1; then
+      ok "ScarliHQ image built"
+      # Start dashboard on :8090
+      if docker compose -f /opt/scarlix/scarlihq/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
+        ok "ScarliHQ dashboard started on :8090"
+      else
+        warn "ScarliHQ dashboard start failed (non-critical)"
+      fi
+    else
+      warn "ScarliHQ build failed (non-critical — dashboard optional)"
+    fi
   fi
 
   # P1 FIX v17.9: Download starter model for ALL systems (was NVIDIA_COUNT > 0 only)
