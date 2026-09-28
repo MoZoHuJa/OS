@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.6 — EndeavourOS Edition — Setup Wizard
+# SCARLIX OS v17.9.7 — EndeavourOS Edition — Setup Wizard
+# v17.9.7: gateway prompt (was hardcoded 192.168.1.1), version unified
 # v17.5: Creates .experimental if 2+ GPU (Q3a — vLLM starts without --profile gate)
 
-TITLE="SCARLIX OS v17.9.6 Setup"
+TITLE="SCARLIX OS v17.9.7 Setup"
 
 NVIDIA_DGPU_COUNT=$(lspci -nn 2>/dev/null | grep -iE 'NVIDIA.*(VGA|3D)' | wc -l || echo 0)
 if [ "$NVIDIA_DGPU_COUNT" -gt 0 ]; then
@@ -16,7 +17,7 @@ else
 fi
 
 whiptail --title "$TITLE" --msgbox \
-  "Vitaj v SCARLIX OS v17.5 (EndeavourOS Edition)!\n\n\
+  "Vitaj v SCARLIX OS v17.9.7 (EndeavourOS Edition)!\n\n\
 Working AI Path — model-aware, fail-hard.\n\
 Base: EndeavourOS (near-vanilla Arch)\n\
 Kernel: linux + linux-lts (fallback)\n\
@@ -34,6 +35,10 @@ PC_TYPE=$(whiptail --title "$TITLE" --menu \
 DEFAULT_IP="192.168.1.100"
 [ "$PC_TYPE" = "dev_workstation" ] && DEFAULT_IP="192.168.1.101"
 IP=$(whiptail --title "$TITLE" --inputbox "IP adresa:" 10 50 "$DEFAULT_IP" 3>&1 1>&2 2>&3)
+
+# P2 v17.9.7: Gateway prompt (was hardcoded 192.168.1.1)
+DEFAULT_GW=$(echo "$IP" | awk -F. '{print $1"."$2"."$3".1"}')
+GATEWAY=$(whiptail --title "$TITLE" --inputbox "Gateway (router) IP:" 10 50 "$DEFAULT_GW" 3>&1 1>&2 2>&3)
 
 # v17.9.6: PASS removed (was never applied to user — misleading input)
 # User sets password during EndeavourOS Calamares install
@@ -77,7 +82,7 @@ fi
 # Static IP
 sudo nmcli connection modify "Wired connection 1" \
   ipv4.addresses "$IP/24" \
-  ipv4.gateway 192.168.1.1 \
+  ipv4.gateway "$GATEWAY" \
   ipv4.dns "1.1.1.1 8.8.8.8" \
   ipv4.method manual 2>/dev/null || true
 
@@ -100,9 +105,10 @@ whiptail --title "$TITLE" --yesno \
 
 echo ""
 echo "========================================"
-echo "  SCARLIX OS v17.9.6 — EndeavourOS Edition"
+echo "  SCARLIX OS v17.9.7 — EndeavourOS Edition"
 echo "  Setup complete!"
 echo "  PC Type: $PC_TYPE"
+echo "  IP: $IP (gw: $GATEWAY)"
 echo "  GPU: ${NVIDIA_DGPU_COUNT} NVIDIA dGPU(s)"
 echo "  Models: $DOWNLOAD_MODELS"
 echo "  Inference: $TIER_DESC"

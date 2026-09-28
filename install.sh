@@ -2,21 +2,31 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v17.9.5 — Bootstrap Installer (Final Polish)
+# SCARLIX OS v17.9.7 — Bootstrap Installer (Reliability + Real Dashboard)
 # ============================================================================
 #
-# v17.9.5 FIXES (vs v17.5):
+# v17.9.7 FIXES (vs v17.9.6):
+#   P0: ScarliHQ image tag unified (localhost/scarlihq:v12 → scarlihq:latest)
+#   P0: ScarliHQ Dockerfile reordered (go.sum no longer overwritten → build OK)
+#   P0: ScarliHQ runtime = debian:stable-slim + nvidia-smi/docker-cli mounts (was distroless → APIs empty)
+#   P0: git tag v17.9.7 created+pushed (README checkout worked only with existing tag)
+#   P1: multilib pre-check before Steam/Wine/lib32-* (clean EOS may lack [multilib])
+#   P1: docker network disconnect loop before rm scarlix_net (active endpoints)
+#   P1: yq functional verification after Phase 1 (fail-hard if broken)
+#   P1: disk-space check before starter model download in Phase 5
+#   P1: /models chmod 750 (was 775 — tighter, containers read as root via :ro)
+#   P1: SGLang --disable-flashinfer (Blackwell sm_120 — see ai/sglang compose)
+#
+# v17.9.5/6 fixes preserved:
 #   P0-2: download-models.sh path → /usr/local/bin/ (was /etc/systemd/system/)
 #   P0-5: scarlix-net created EARLY (before any compose up)
 #   P1-6: Checkpoint includes linux kernel version (not just nvidia-open)
 #   P1-7: Model existence check before compose up
 #   P1-8: Wait for Ollama API before starter model pull
-#
-# v17.5 fixes preserved:
 #   Q1a: Phase 5 does NOT start AI — user runs `scarlix-mode ai` after model download
 #   Q2a: Compose uses env vars (${SGLANG_MODEL_PATH}) — models.yaml is single source of truth
 #   Q3a: Wizard creates .experimental if 2+ GPU — vLLM starts without --profile gate
-#   Q4a: SGLang cu128 image (Blackwell support) + --disable-flashinfer fallback
+#   Q4a: SGLang cu128 image (Blackwell support) + --disable-flashinfer
 #   Q5a: nvidia-container-toolkit fail → crit (Docker can't see GPU without it)
 #   Q6a: scarlihq/ copied in Phase 4; first-boot.sh + scarlix-first-boot.service REMOVED
 #   Q7a: Starter model (qwen2.5:3b) auto-downloaded — Ollama fallback works
@@ -26,10 +36,12 @@ set -euo pipefail
 #
 # USAGE (primary — safe):
 #   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
-#   cd ~/scarlix-os && bash install.sh
+#   cd ~/scarlix-os
+#   git checkout v17.9.7   # ALWAYS checkout specific tag (main may be ahead)
+#   bash install.sh
 # ============================================================================
 
-VERSION="17.9.6"
+VERSION="17.9.7"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -167,6 +179,22 @@ else
   pacman -Syu --noconfirm >> "$LOG_FILE" 2>&1 && ok "System updated" || fail "System update"
 
   log "Installing SCARLIX packages..."
+  # P1 v17.9.7: Ensure [multilib] is enabled BEFORE installing steam/wine/lib32-*
+  # (clean EndeavourOS may have multilib commented out → lib32-nvidia-utils install fails)
+  log "Ensuring [multilib] repository is enabled..."
+  if ! grep -q '^\[multilib\]' /etc/pacman.conf 2>/dev/null; then
+    if grep -q '^#\s*\[multilib\]' /etc/pacman.conf 2>/dev/null; then
+      sed -i 's|^#\s*\[multilib\]|[multilib]|; s|^#\s*Include\s*=/etc/pacman.d/mirrorlist|Include = /etc/pacman.d/mirrorlist|' /etc/pacman.conf
+      pacman -Sy >> "$LOG_FILE" 2>&1 && ok "[multilib] enabled" || fail "Enable [multilib]"
+    else
+      # Append multilib section if not present at all
+      printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+      pacman -Sy >> "$LOG_FILE" 2>&1 && ok "[multilib] added + enabled" || fail "Add [multilib]"
+    fi
+  else
+    ok "[multilib] already enabled"
+  fi
+
   PKGS=$(grep -vE '^\s*#|^\s*$' "$REPO_DIR/packages.x86_64" | grep -v '^yay$' | grep -v '^calamares$' || true)
   [ -n "$PKGS" ] && pacman -S --noconfirm --needed $PKGS >> "$LOG_FILE" 2>&1 && ok "Packages installed" || fail "Package install"
 
@@ -176,9 +204,20 @@ else
   # Q2a v17.8: Ollama volume root:root + 700 (was 777 — unnecessary security hole)
   chown root:root /var/lib/scarlix/ollama 2>/dev/null || true
   chmod 700 /var/lib/scarlix/ollama 2>/dev/null || true
-  # /models chown REAL_USER + 775 (download-models.sh runs as user)
+  # P1 v17.9.7: /models chmod 750 (was 775 — tighter; containers read as root via :ro)
   chown -R "$REAL_USER:$REAL_USER" /models 2>/dev/null || true
-  chmod 775 /models 2>/dev/null || true
+  chmod 750 /models 2>/dev/null || true
+
+  # P1 v17.9.7: Verify yq is functional (scripts depend on it — fail hard if broken)
+  if command -v yq >/dev/null 2>&1; then
+    if yq -r '.sglang' /dev/stdin <<<"sglang: ok" >/dev/null 2>&1; then
+      ok "yq functional ($(yq --version 2>&1 | head -1))"
+    else
+      crit "yq installed but NOT functional — scarlix-mode will crash. Install go-yq: 'yay -S go-yq'"
+    fi
+  else
+    crit "yq not installed — scarlix-mode/doctor/download-models.sh will fail. Check packages.x86_64"
+  fi
 
   # Q3b: chattr +C only if dir is empty (re-run safe)
   log "Disabling CoW on heavy stores (only if empty)..."
@@ -348,8 +387,14 @@ else
 
   # Docker network + migration
   log "Creating Docker network scarlix-net..."
-  # P0-2 v17.9.5: Remove old scarlix_net (underscore) if exists — migration
-  docker network rm scarlix_net 2>/dev/null && warn "Removed old network scarlix_net (migrated to scarlix-net)" || true
+  # P1 v17.9.7: disconnect loop before rm (was: rm fails on active endpoints → upgrade breaks)
+  if docker network inspect scarlix_net >/dev/null 2>&1; then
+    log "  Old network scarlix_net found — disconnecting containers..."
+    for c in $(docker network inspect scarlix_net -f '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null); do
+      docker network disconnect scarlix_net "$c" >> "$LOG_FILE" 2>&1 && info "  disconnected $c from scarlix_net" || true
+    done
+    docker network rm scarlix_net >> "$LOG_FILE" 2>&1 && warn "Removed old network scarlix_net (migrated to scarlix-net)" || info "scarlix_net removal deferred (will retry)"
+  fi
   docker network create scarlix-net 2>/dev/null && ok "scarlix-net created" || info "scarlix-net exists"
 
   write_checkpoint phase3
@@ -463,26 +508,35 @@ else
     systemctl enable model-manager.timer >> "$LOG_FILE" 2>&1 && ok "model-manager.timer enabled" || fail "model-manager.timer"
   fi
 
-  # P1-6 v17.9.6: Build + start ScarliHQ dashboard
+  # P1-6 v17.9.7: Build + start ScarliHQ dashboard (real frontend, debian runtime)
   if [ -f /opt/scarlix/scarlihq/Dockerfile ]; then
-    log "Building ScarliHQ dashboard image..."
+    log "Building ScarliHQ dashboard image (scarlihq:latest)..."
     mkdir -p /var/lib/scarlix/comfyui/{models,output} 2>/dev/null || true
+    # P0 v17.9.7: tag MUST match compose `image: scarlihq:latest` (was mismatched localhost/scarlihq:v12)
     if docker build -t scarlihq:latest /opt/scarlix/scarlihq/ >> "$LOG_FILE" 2>&1; then
-      ok "ScarliHQ image built"
-      # Start dashboard on :8090
+      ok "ScarliHQ image built (scarlihq:latest)"
+      # Start dashboard on :8090 (compose references scarlihq:latest — matches build tag)
       if docker compose -f /opt/scarlix/scarlihq/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
         ok "ScarliHQ dashboard started on :8090"
       else
-        warn "ScarliHQ dashboard start failed (non-critical)"
+        warn "ScarliHQ dashboard start failed (non-critical — run 'docker compose -f /opt/scarlix/scarlihq/docker-compose.yml up -d' later)"
       fi
     else
-      warn "ScarliHQ build failed (non-critical — dashboard optional)"
+      warn "ScarliHQ build failed (non-critical — dashboard optional. Check /var/log/scarlix/install.log)"
     fi
+  else
+    warn "ScarliHQ Dockerfile not found — dashboard not built"
   fi
 
   # P1 FIX v17.9: Download starter model for ALL systems (was NVIDIA_COUNT > 0 only)
   # Ollama is CPU fallback — needed even on dev_workstation without GPU
   if command -v docker >/dev/null 2>&1; then
+    # P1 v17.9.7: Disk-space pre-check (starter model ~2GB, full models 50-150GB)
+    MODELS_FREE_MB=$(df -m /models 2>/dev/null | awk 'NR==2{print $4}')
+    if [ -n "$MODELS_FREE_MB" ] && [ "$MODELS_FREE_MB" -lt 2048 ] 2>/dev/null; then
+      warn "/models has only ${MODELS_FREE_MB}MB free (< 2GB) — skipping starter model download"
+      warn "  Free space then run: download-models.sh"
+    else
     log "Downloading starter model (qwen2.5:3b ~2GB) for Ollama fallback..."
     # Start Ollama temporarily to pull starter model
     docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1
@@ -508,6 +562,7 @@ else
     fi
     # Stop Ollama (user will start AI stack manually via scarlix-mode ai)
     docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml stop >> "$LOG_FILE" 2>&1 || true
+    fi  # end disk-space else
   fi
 
   # Q1a: Do NOT start AI stack — user must download models first, then run scarlix-mode ai

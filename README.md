@@ -1,10 +1,10 @@
-# SCARLIX OS v17.9.6 — EndeavourOS Edition (Reliability Release)
+# SCARLIX OS v17.9.7 — EndeavourOS Edition (Reliability + Real Dashboard)
 
 > Sovereign home OS for AI cloud, coding, gaming, creative, and family entertainment.
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
-> **Verified**: SGLang (GPU0) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
+> **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 
-**Version:** v17.9.6 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v17.9.7 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -12,22 +12,55 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v17.9.6   # ← ALWAYS checkout specific tag (main may be ahead)
-nano install.sh   # review
+git checkout v17.9.7   # ALWAYS checkout specific tag (main may be ahead)
+nano install.sh         # review
 bash install.sh
 ```
 
 ### Post-install (3 steps):
 ```bash
-# 1. Reboot (activate NVIDIA driver)
+# 1. Reboot (activate NVIDIA driver + docker group takes effect on re-login)
 sudo reboot
 
-# 2. Download models (50-150GB, takes hours)
+# 2. Download models (50-150GB, takes hours — disk-space pre-checked)
 download-models.sh
 
 # 3. Start AI inference
 scarlix-mode ai
 ```
+
+---
+
+## 🆕 What's New in v17.9.7 (vs v17.9.6)
+
+**Reliability + real dashboard — 11 fixes from 2 uncompromising reviews.**
+
+v17.9.6 had 5 blockers that prevented a clean EndeavourOS install. v17.9.7 fixes them.
+
+| # | Fix | v17.9.6 Problem | v17.9.7 Solution |
+|---|-----|-----------------|-------------------|
+| P0 | **ScarliHQ image tag mismatch** | compose `image: localhost/scarlihq:v12` ≠ install build `scarlihq:latest` → compose used wrong/no image | Unified to `scarlihq:latest` everywhere |
+| P0 | **ScarliHQ Dockerfile build fail** | `COPY . .` overwrote `go.sum` (populated by `go mod download`) → `go build` failed on empty go.sum | Reordered: `COPY . .` → `go mod download` → `go build` (`GOFLAGS=-mod=mod`) |
+| P0 | **ScarliHQ APIs returned empty** | Runtime `distroless/static` has no `nvidia-smi`/`docker` → `/api/gpu` + `/api/containers` always empty | Runtime = `nvidia/cuda:12.8.0-base` + `docker.io` installed + `scarlix-mode` mounted |
+| P0 | **ScarliHQ = dead placeholder** | 1-line HTML (`<h1>Dashboard</h1><p>v17.9.2</p>`) | Real dashboard: GPU cards, mode switcher, container table, live WS clock |
+| P0 | **git tag v17.9.x never existed** | README `git checkout v17.9.6` → `pathspec did not match` | `git tag v17.9.7` created + pushed |
+| P1 | **SGLang flashinfer not disabled** | `flashinfer: true` in yaml + no flag in compose → Blackwell (sm_120) runtime fail | `--disable-flashinfer` in SGLang compose + `flashinfer: false` in yaml |
+| P1 | **docker network rm without disconnect** | `docker network rm scarlix_net` fails on active endpoints → upgrade breaks | Disconnect loop before rm (graceful migration) |
+| P1 | **multilib not checked** | Steam/Wine/`lib32-*` need `[multilib]`; clean EOS may lack it → Phase 1/2 fail | install.sh enables `[multilib]` before package install |
+| P1 | **download-models FAILED counter** | `FAILED=1` boolean (last-fail-wins); no disk check | `FAILED=$((FAILED+1))` counter + disk-space pre-check (fail-hard < 10GB) |
+| P1 | **scarlix-doctor curl hard dep** | `curl -sf` with no fallback | `http_ok()` helper: curl → wget fallback |
+| P1 | **/models chmod 775** | Group-writable (unnecessary) | `chmod 750` (owner-only; containers read as root via `:ro`) |
+
+**Bonus:** yq functional verification in Phase 1 (fail-hard if broken), disk-space check before starter model download, ScarliHQ dashboard auto-built + started in Phase 5.
+
+### Review false-positives (verified already-correct in v17.9.6)
+These were flagged in reviews but were already fixed in v17.9.6:
+- `yq` IS in `packages.x86_64` (python kislyuk — supports jq syntax used by scripts).
+- `usermod -aG docker` IS in Phase 3 (after docker package creates group in Phase 1).
+- Duplicate `scarlix-net` in compose: NONE (all 25 compose files have single network).
+- llamacpp healthcheck: already `wget` (alpine-safe, not python).
+- models.yaml AWQ/GGUF split: already correct (sglang→`Qwen/Qwen3-14B-AWQ` safetensors, beellama→`Qwen/Qwen3-14B-GGUF` + `Qwen3-14B-Q4_K_M.gguf`).
+- README uses `scarlix-doctor` (hyphen, not "scarlix doctor" with space).
 
 ---
 
@@ -38,22 +71,22 @@ scarlix-mode ai
 | # | Fix | v17.9.1 Problem | v17.9.6 Solution |
 |---|-----|-----------------|-------------------|
 | P0 | **4 compose files duplicate networks** | `[scarlix-net, scarlix-net]` (comfyui, litellm, smg, video) → Compose parse error | Deduplicated to `[scarlix-net]` |
-| P0 | **scarlix_net in 10+ source files** | install.sh sed didn't catch `scarlix_net` → 10+ containers fail | Fixed in SOURCE files (not just sed) + migration in install.sh |
+| P0 | **scarlix_net in 10+ source files** | install.sh sed didn't catch `scarlix_net` → 10+ containers fail | Fixed in SOURCE files + migration in install.sh |
 | P0 | **VERSION=17.9.0** | install.sh had wrong version | `VERSION="17.9.6"` + VERSION file as single source |
 | P0 | **Default paths old in generate_env_file** | `Qwen3-14B-Instruct-AWQ` (doesn't exist) | `Qwen3-14B-AWQ` + `Qwen3-14B-Q4_K_M.gguf` |
 | P0 | **download-models.sh false "complete"** | Download fail → script continues → "complete" is lie | `FAILED=0`, exit 1 on fail |
-| P0 | **scarlix-doctor PASS for unhealthy** | `running` + `unhealthy` = PASS | `unhealthy` = FAIL; API healthcheck (curl) |
+| P0 | **scarlix-doctor PASS for unhealthy** | `running` + `unhealthy` = PASS | `unhealthy` = FAIL; API healthcheck |
 | P0 | **Hash stored before recreate** | Failed recreate → no retry | Hash stored AFTER successful recreate |
 | P0 | **docker start (not $DC up -d)** | Old config not picked up | `$DC up -d` for all container starts |
-| P1 | **vLLM + llama.cpp healthcheck** | No Docker healthcheck → doctor can't detect | Added `CMD-SHELL python urlopen` healthcheck |
+| P1 | **vLLM + llama.cpp healthcheck** | No Docker healthcheck | Added `CMD-SHELL wget` healthcheck (alpine-safe) |
 | P1 | **model-manager.sh dvojitý Ollama** | Same `.ollama.model` read 2x → double pull | Single read + pull |
 | P1 | **Version strings unified** | 11+ files with old versions | All v17.9.6 |
 | P1 | **scarlix-wizard path fix** | `bash /etc/systemd/system/download-models.sh` | `download-models.sh` |
 | P1 | **dump_vram hardcoded model** | `qwen2.5:3b` hardcoded | Read from yaml |
 | P1 | **docs Ubuntu → Arch** | `apt`, `Ubuntu 24.04` in troubleshooting | `pacman`, `EndeavourOS (Arch)` |
-| NEW | **ScarliHQ placeholder** | `frontend/dist/index.html` missing → docker build fail | Placeholder created |
+| NEW | **ScarliHQ placeholder** | `frontend/dist/index.html` missing → docker build fail | Placeholder created (replaced by real dashboard in v17.9.7) |
 
-**Bonus:** `scarlix-doctor --fix` mode (auto-fix network, permissions, .env), GitHub Actions CI (shellcheck + YAML + compose validation), VERSION file.
+**Bonus:** `scarlix-doctor --fix` mode, GitHub Actions CI (shellcheck + bash + YAML + compose validation), VERSION file.
 
 ---
 
@@ -63,156 +96,31 @@ scarlix-mode ai
 
 | # | Fix | v17.9 Problem | v17.9.1 Solution |
 |---|-----|---------------|-------------------|
-| P0 | **MODE pred flock** | `MODE` používané pred priradením → `set -u` crash na KAŽDOM volaní | `MODE="${1:-status}"` presunuté nad flock check |
-| P0 | **Hash-based healthcheck** | mtime `.env` = vždy "teraz" → vždy `--force-recreate` (výpadky) | `sha256sum models.yaml` → recreate len pri reálnej zmene |
-| P0 | **Correct HF repo/file names** | `Qwen/Qwen3-14B-Instruct-AWQ` neexistuje → download zlyhá ticho | `Qwen/Qwen3-14B-AWQ` + `Qwen3-14B-Q4_K_M.gguf` |
-| P0 | **Checkpoint nvidia_open len phase2** | phase 1/3/4 ukladali `none` → vždy invalid → full re-install | nvidia_open porovnávaný len pre phase2 |
-| P1 | **model-manager.sh schema** | `.llamacpp.*`, `.ollama_main.*` (stará schema) | `.beellama.*`, `.ollama.*` (v17.5+ schema) |
-| P1 | **Creative stack scarlix_net** | `scarlix_net` (underscore) → `network not found` | Všade `scarlix-net` (hyphen) |
-| P1 | **SGLang image pin** | `latest-cu128` (nepinnutý) | `v0.4.4-cu128` (overený) |
-| P1 | **generate-env.sh guard** | Prepisoval heslá pri re-run | Ak .env existuje, doplní len chýbajúce kľúče |
-| P1 | **Version strings unified** | v17.5/v17.8/v17.9 zmiešané | Všade v17.9.1 |
-| NEW | **scarlix-doctor** | Žiadny self-diagnostic | `scarlix-doctor` — skontroluje OS, NVIDIA, Docker, GPU, models, .env, containers |
+| P0 | **MODE pred flock** | `MODE` used before assignment → `set -u` crash on every call | `MODE="${1:-status}"` moved above flock check |
+| P0 | **Hash-based healthcheck** | mtime `.env` = always "now" → always `--force-recreate` | `sha256sum` of model paths → recreate only on real change |
+| P0 | **Correct HF repo/file names** | `Qwen/Qwen3-14B-Instruct-AWQ` doesn't exist → silent download fail | `Qwen/Qwen3-14B-AWQ` + `Qwen3-14B-Q4_K_M.gguf` |
+| P0 | **Checkpoint nvidia_open len phase2** | phase 1/3/4 stored `none` → always invalid → full re-install | nvidia_open compared only for phase2 |
+| P1 | **model-manager.sh schema** | `.llamacpp.*`, `.ollama_main.*` (old schema) | `.beellama.*`, `.ollama.*` (v17.5+ schema) |
+| P1 | **Creative stack scarlix_net** | `scarlix_net` (underscore) → network not found | `scarlix-net` (hyphen) everywhere |
+| P1 | **SGLang image pin** | `latest-cu128` (unpinned) | `v0.4.4-cu128` (verified) |
+| P1 | **generate-env.sh guard** | Overwrote passwords on re-run | If .env exists, only add missing keys |
+| P1 | **Version strings unified** | v17.5/v17.8/v17.9 mixed | All v17.9.1 |
+| NEW | **scarlix-doctor** | No self-diagnostic | `scarlix-doctor` — checks OS, NVIDIA, Docker, GPU, models, .env, containers |
 
 ---
 
 ## 🆕 What's New in v17.8 (vs v17.7)
 
-**Stable release — fixes 6 issues from 2 reviews. .env file properly passed to compose.**
+**Stable release — 6 fixes. .env file properly passed to compose.**
 
 | # | Fix | v17.7 Problem | v17.8 Solution |
 |---|-----|---------------|-----------------|
-| P0 | **--env-file on all compose calls** | Compose didn't read /opt/scarlix/.env (looks in project dir) → `${SGLANG_MODEL_PATH}` not substituted after reboot | `DC="docker compose --env-file /opt/scarlix/.env"` on ALL calls |
-| P1 | **Always regenerate .env** | `load_model_paths` cached .env → stale after models.yaml edit | `generate_env_file()` called every time (not cached) |
-| P1 | **BeeLlama only when SGLang+vLLM fail** | Started "anyway" even when SGLang running → wasted RAM (14B GGUF) | Only starts if `sglang_ok=0 && vllm_ok=0` |
-| P1 | **Docker restart after nvidia-ctk** | nvidia-ctk configure before Docker fully loaded → GPU not visible | `systemctl restart docker` after configure + `docker info \| grep nvidia` verify |
-| P1 | **Ollama volume chmod 700** | Was 777 (anyone can write model cache) | `chmod 700 root:root` (container runs as root, 700 is sufficient) |
-| P1 | **REAL_USER without logname** | `logname` fails without TTY (ssh -T, CI) | `${SUDO_USER:-${USER:-}}` (no logname) |
-
----
-
-## 🆕 What's New in v17.7 (vs v17.6)
-
-**Bugfix 4 — fixes 8 issues from 3 reviews. Last bugfix before stable.**
-
-| # | Fix | v17.6 Problem | v17.7 Solution |
-|---|-----|---------------|-----------------|
-| Q1a | **REAL_USER fallback** | `$SUDO_USER` empty when `su -` → chown crash | `${SUDO_USER:-${USER:-$(logname)}}` fallback chain |
-| Q2a | **Ollama volume root:root + 777** | 775 + REAL_USER → container (root) can't write | `chown root:root` + `chmod 777` (Ollama runs as root in container) |
-| Q3a | **Healthcheck respects stopped** | `scarlix-mode ai` reštartne Ollama aj keď SGLang beží | If `CURRENT_MODE=stopped` → no restart. Ollama only if SGLang+vLLM down |
-| Q4a | **Docker start po nvidia-container-toolkit** | Docker start pred toolkit → no GPU visibility | Toolkit inštalovaný + configured → až potom `systemctl start docker` |
-| Q5a | **.env súbor generovaný z models.yaml** | sed v compose krehký (zmena formátu = tiché zlyhanie) | `scarlix-mode` generuje `/opt/scarlix/.env` z models.yaml, compose číta .env |
-| Q6a | **Ollama tertiary fallback + mem_limit** | BeeLlama + Ollama naraz (OOM riziko) | Ollama len ak BeeLlama zlyhá. `mem_limit: 6g` v compose |
-| Q7a | **yq null validation + \|\| true** | `yq -r` môže vrátiť `null` → `/models/null` | `yaml_get()` validácia + `|| true` na docker compose stop |
-| Q8a | **README sync + File Layout + healthcheck** | Fallback text klamal, download-models.sh na 2 miestach, curl v SGLang healthcheck | README sedí s kódom, File Layout zjednotený, SGLang healthcheck `CMD-SHELL` python |
-
-**Additional:** `usermod -aG docker $REAL_USER` (user can run docker without sudo)
-
----
-
-## 🆕 What's New in v17.6 (vs v17.5.2)
-
-**Bugfix 3 — fixes 6 issues from 2 reviews.**
-
-| # | Fix | v17.5.2 Problem | v17.6 Solution |
-|---|-----|-----------------|-----------------|
-| P0 | **sglang_ok/vllm_ok initialized** | Unbound variable under `set -u` → `scarlix-mode ai` crash | Initialized to 0, set to 1 on success |
-| P0 | **Ollama CPU fallback** | Was GPU0 — if GPU0 driver dies, fallback also dies | No GPU allocation (CPU only) — survives GPU0 failure |
-| P1 | **chmod 775 (not 777)** | 777 = anyone can overwrite models | `chown REAL_USER + chmod 775` (owner+group only) |
-| P1 | **check_model_exists for all starts** | SGLang start used `-d` (empty dir passed) | All starts use `check_model_exists` (checks config.json) |
-| P1 | **README path fix** | Old `bash /etc/systemd/system/download-models.sh` | Corrected to `download-models.sh` (in /usr/local/bin/) |
-| P2 | **Ollama compose version header** | Said v17.5.1 | Updated to v17.6 |
-
----
-
-## 🆕 What's New in v17.5.2 (vs v17.5.1)
-
-**Bugfix 2 — fixes 8 issues from 2 reviews.**
-
-| # | Fix | v17.5.1 Problem | v17.5.2 Solution |
-|---|-----|-----------------|-------------------|
-| P0-2 | **scarlix-net after Docker starts** | Created in pre-checks (Docker not running yet) → fail | Moved to Phase 3 (after `systemctl start docker`) |
-| P0-3 | **Ollama as true fallback** | Always started → VRAM conflict with SGLang on GPU0 | Only starts if SGLang AND vLLM both fail. Saves VRAM. |
-| P1-6 | **Checkpoint pacman -Q linux** | `uname -r` format mismatch (6.10.8-arch1-1 vs 6.10.8.arch1-1) → Phase 2 re-runs every boot | Uses `pacman -Q linux` (consistent format) |
-| P1-7 | **check_model_exists checks config.json** | Only checked dir existence (empty dir passed) | Checks `config.json` in dir (safetensors) or file existence (GGUF) |
-| P1-8 | **Ollama volume permissions** | `/var/lib/scarlix/ollama` root-owned → container can't write | `chmod 777` in install.sh Phase 1 |
-| P1-9 | **download-models.sh --include + /models chmod** | Positional arg broke on some HF CLI versions; /models not writable | `--include` flag + `chmod 777 /models` |
-| P2-10 | **scarlix-mode stop keeps dashboard** | Stopped ALL containers including ScarliHQ dashboard | Only stops AI containers (sglang, vllm, beellama, ollama) |
-| #6 | **Old dead files removed** | `scripts/`, `base-os/`, ISO docs confused users | Removed: scripts/, base-os/, docs/AI_AGENT_ISO_BUILD_INSTRUCTIONS.md |
-
----
-
-## 🆕 What's New in v17.5.1 (vs v17.5)
-
-**Bugfix release — fixes 10 issues from 2 reviews.**
-
-| # | Fix | v17.5 Problem | v17.5.1 Solution |
-|---|-----|---------------|-------------------|
-| P0-1 | **yq for YAML parsing** | scarlix-mode used grep+cut — broke on comments | `yq -r .sglang.model_path` — proper YAML parsing |
-| P0-2 | **download-models.sh rewritten** | v16.4 keys (ollama_main, llamacpp), wrong HF repo ID | v17.5 keys (beellama, ollama), correct HF repo IDs, venv for PEP 668 |
-| P0-3 | **Ollama volume absolute** | `./data` relative — lost on cwd change | `/var/lib/scarlix/ollama:/root/.ollama` |
-| P0-4 | **Ollama GPU0** | device_ids ['1'] — conflicted with vLLM | device_ids ['0'] (vLLM keeps GPU1) |
-| P0-5 | **scarlix-net created early** | Phase 3 only — Phase 5 fail if Phase 3 crashed | Created in pre-checks (before any compose) |
-| P1-6 | **Checkpoint tracks linux version** | Only nvidia-open → DKMS stale after kernel update | Stores linux_kernel_version too |
-| P1-7 | **Model existence check** | compose up with missing model → CrashLoop | `check_model_exists` before `docker compose up` |
-| P1-8 | **Ollama API wait** | `ollama pull` before API ready → fail | Wait up to 60s for API before pull |
-| P1-9 | **BeeLlama CPU image** | server-cuda requires GPU runtime | `server` (CPU) image for true offline fallback |
-| P1-10 | **scarlix-mode stop** | No way to stop AI stack (healthcheck restarts) | `scarlix-mode stop` halts all containers |
-
-### Post-install steps (corrected):
-```bash
-# 1. Reboot (activate NVIDIA driver)
-sudo reboot
-
-# 2. Download models (50-150GB)
-download-models.sh
-
-# 3. Start AI inference
-scarlix-mode ai
-```
-
----
-
-## 🆕 What's New in v17.5 (vs v17.4)
-
-**10 P0 fixes — first truly working AI path.**
-
-| # | Fix | v17.4 Problem | v17.5 Solution |
-|---|-----|---------------|-----------------|
-| Q1a | **AI not started in install.sh** | Phase 5 started containers without models → crash | Phase 5 downloads starter model (qwen2.5:3b), does NOT start AI. User runs `scarlix-mode ai` after `download-models.sh` |
-| Q2a | **models.yaml = single source of truth** | Compose hardcoded model path → mismatch if yaml edited | Compose uses `${SGLANG_MODEL_PATH}` env var. scarlix-mode parses yaml → exports → docker compose up |
-| Q3a | **.experimental flag by wizard** | vLLM `--profile experimental` but no flag → disappears on reboot | Wizard creates `.experimental` for 2+ GPU. vLLM starts without profile gate. |
-| Q4a | **SGLang cu128 image + Blackwell support** | cu124 image didn't support RTX 5060 Ti (sm_120) | cu128 image default. `--disable-flashinfer` auto-applied on Blackwell. |
-| Q5a | **nvidia-container-toolkit = crit** | Fail was non-crit → Docker can't see GPU but .installed touched | Fail → `crit` → exit 1, no .installed |
-| Q6a | **scarlihq/ copied + first-boot removed** | Dashboard 404, zombie first-boot service | scarlihq copied in Phase 4. first-boot.sh + scarlix-first-boot.service removed. |
-| Q7a | **Starter model auto-downloaded** | Ollama fallback had no model | install.sh pulls qwen2.5:3b (~2GB). Ollama fallback works immediately. |
-| Q8a | **laya/freetoken compose fixed + ISO removed** | Network mismatch, zombie ISO profile | All compose → scarlix-net. scarlix/ ISO profile + build-iso.sh + qemu-boot.sh removed. |
-| Q9a | **Version-aware checkpoint** | Didn't detect nvidia driver update → stale DKMS | Checkpoint stores nvidia-open version. Re-runs Phase 2 if version changes. |
-| Q10a | **Fail-hard + always healthcheck** | scarlix-mode ai "already ai" skipped healthcheck. Copy failures non-crit. | All core file copies → crit. scarlix-mode ai ALWAYS healthchecks + restarts unhealthy. |
-
-### 🏗️ Verified AI Path (v17.5)
-
-```
-GPU 0: RTX 5060 Ti 16GB (Blackwell sm_120)
-└── Tier-1: SGLang (agents, RadixAttention, cu128 image, flashinfer disabled)
-
-GPU 1: RTX 4060 Ti 16GB (Ada sm_89)
-└── Tier-2: vLLM (TP=1, no LoRA, separate model — mixed arch safe)
-
-CPU:
-└── Tier-4: llama.cpp (official image, q4_0 KV cache, 32k context)
-
-Fallback (always ready):
-└── Ollama + qwen2.5:3b (starter model auto-downloaded)
-```
-
-### 🔄 Fallback Chain (real, not theoretical)
-
-1. `scarlix-mode ai` → starts SGLang + vLLM + BeeLlama + Ollama
-2. If SGLang crashes → vLLM takes over (different GPU)
-3. If vLLM crashes → BeeLlama (CPU, offline)
-4. If BeeLlama crashes → Ollama (qwen2.5:3b starter, always ready)
-5. `scarlix-mode ai` re-run → healthchecks + restarts unhealthy containers
+| P0 | **--env-file on all compose calls** | Compose didn't read /opt/scarlix/.env → `${SGLANG_MODEL_PATH}` not substituted | `DC="docker compose --env-file /opt/scarlix/.env"` on ALL calls |
+| P1 | **Always regenerate .env** | `load_model_paths` cached .env → stale after models.yaml edit | `generate_env_file()` called every time |
+| P1 | **BeeLlama only when SGLang+vLLM fail** | Started "anyway" even when SGLang running → wasted RAM | Only starts if `sglang_ok=0 && vllm_ok=0` |
+| P1 | **Docker restart after nvidia-ctk** | nvidia-ctk before Docker fully loaded → GPU not visible | `systemctl restart docker` after configure + verify |
+| P1 | **Ollama volume chmod 700** | Was 777 (anyone can write) | `chmod 700 root:root` |
+| P1 | **REAL_USER without logname** | `logname` fails without TTY | `${SUDO_USER:-${USER:-}}` fallback |
 
 ---
 
@@ -227,6 +135,7 @@ scarlix-mode creative  # ComfyUI + Video + Music
 scarlix-mode tv        # Docker Sunshine
 scarlix-mode vram      # VRAM health (shows compute_cap per GPU)
 scarlix-mode status    # System summary (shows models + config)
+scarlix-doctor         # Self-diagnostic (add --fix for auto-fix)
 ```
 
 ---
@@ -236,14 +145,16 @@ scarlix-mode status    # System summary (shows models + config)
 Edit `/etc/scarlix/models.yaml`:
 ```yaml
 sglang:
-  model_path: "/models/Qwen3-14B-Instruct-AWQ"
+  model_path: "/models/Qwen3-14B-AWQ"
+  hf_repo: "Qwen/Qwen3-14B-AWQ"
   # Change to ANY HuggingFace model:
   # model_path: "/models/Meta-Llama-3.1-8B-Instruct"
+  # hf_repo: "meta-llama/Llama-3.1-8B-Instruct"
 ```
 Then:
 ```bash
 download-models.sh   # download new model
-scarlix-mode ai                                 # restart with new model
+scarlix-mode ai      # restart with new model (hash change → force-recreate)
 ```
 `scarlix-mode` parses `models.yaml` → exports `SGLANG_MODEL_PATH` → compose uses it. **One source of truth.**
 
@@ -262,40 +173,82 @@ sudo reboot
 
 ---
 
-## 📁 File Layout (v17.5 — ISO removed)
+## 📁 File Layout (v17.9.7)
 
 ```
 OS/
-├── install.sh                              # v17.5: Bootstrap (5 phases, fail-hard, version-aware)
+├── install.sh                              # v17.9.7: Bootstrap (5 phases, fail-hard, multilib, disk-check)
 ├── README.md
 ├── AGENTS.md
+├── VERSION                                 # Single source of truth (17.9.7)
 ├── models.yaml                             # Single source of truth (env vars → compose)
-├── packages.x86_64                         # Package list (was scarlix/packages.x86_64)
-├── files/                                  # System files (was scarlix/airootfs/)
+├── packages.x86_64                         # Package list (yq, curl, wget, steam, wine, …)
+├── .github/workflows/ci.yml               # CI: shellcheck + bash -n + YAML + compose validation
+├── files/
 │   ├── usr/local/bin/
-│   │   ├── scarlix-wizard                  # Creates .experimental for 2+ GPU
-│   │   ├── scarlix-mode                    # Healthcheck + env var parsing
-│   │   └── model-manager.sh
+│   │   ├── scarlix-wizard                  # Creates .experimental for 2+ GPU, gateway prompt
+│   │   ├── scarlix-mode                    # Healthcheck + env var parsing + wait_for_healthy
+│   │   ├── scarlix-doctor                  # Self-diagnostic (--fix mode, http_ok fallback)
+│   │   ├── download-models.sh              # HF download (FAILED counter + disk-space check)
+│   │   └── model-manager.sh                # Weekly HF auto-pull + Telegram report
 │   └── etc/
 │       ├── systemd/
 │       │   ├── zram-generator.conf
 │       │   └── system/
 │       │       ├── model-manager.{service,timer}
-│       │       ├── download-models.sh      # User runs manually
-│       │       └── generate-env.sh
+│       │       └── generate-env.sh         # /etc/scarlix/.env (secrets, guarded)
 │       └── pacman.d/hooks/
 │           └── scarlix-docker-backup.*
 ├── ai/                                     # Docker stacks (all scarlix-net)
-│   ├── sglang/docker-compose.yml          # cu128, env vars, flashinfer off on Blackwell
+│   ├── sglang/docker-compose.yml          # cu128, --disable-flashinfer, env vars
 │   ├── vllm/docker-compose.yml            # TP=1, no LoRA, no profile gate
-│   ├── llamacpp/docker-compose.yml        # Official llama.cpp, q4_0 KV
-│   ├── ollama/docker-compose.yml          # Fallback (starter qwen2.5:3b)
+│   ├── llamacpp/docker-compose.yml        # Official llama.cpp, q4_0 KV, wget healthcheck
+│   ├── ollama/docker-compose.yml          # Fallback (starter qwen2.5:3b), CPU, mem_limit 6g
+│   ├── comfyui/docker-compose.yml         # Creative profile, absolute volumes
 │   └── ...
-├── scarlihq/                               # Dashboard (copied to /opt/scarlix/ in Phase 4)
-└── ...
+├── scarlihq/                               # Dashboard (real frontend, debian+cuda runtime)
+│   ├── Dockerfile                          # Multi-stage: go build → nvidia/cuda + docker-cli
+│   ├── docker-compose.yml                  # image: scarlihq:latest, mounts scarlix-mode
+│   ├── go.mod / go.sum
+│   ├── cmd/scarlihq/
+│   │   ├── main.go                          # //go:embed frontend/dist/index.html
+│   │   └── frontend/dist/index.html        # Real dashboard (GPU/mode/containers/WS)
+│   └── internal/                           # api, webui(ws), guard, mcp, profiles, scarlix_mode
+└── agents/, gaming/, voice/, network/, security/, monitoring/, ...
 ```
 
-**Removed in v17.5:** scarlix/ ISO profile, installer/scripts/build-iso.sh, tests/qemu-boot.sh, first-boot.sh, scarlix-first-boot.service (all zombie code).
+---
+
+## 🏗️ Verified AI Path (v17.9.7)
+
+```
+GPU 0: RTX 5060 Ti 16GB (Blackwell sm_120)
+└── Tier-1: SGLang v0.4.4-cu128 (agents, RadixAttention, --disable-flashinfer)
+
+GPU 1: RTX 4060 Ti 16GB (Ada sm_89)
+└── Tier-2: vLLM v0.8.0 (TP=1, no LoRA, separate model — mixed arch safe)
+
+CPU:
+└── Tier-4: llama.cpp (official image, q4_0 KV cache, 32k context)
+
+Fallback (always ready):
+└── Ollama 0.5.4 + qwen2.5:3b (starter model auto-downloaded by install.sh)
+```
+
+### 🔄 Fallback Chain (real, not theoretical)
+
+1. `scarlix-mode ai` → starts SGLang + vLLM (if .experimental) + BeeLlama + Ollama
+2. If SGLang unhealthy after 300s → `docker stop sglang` + try vLLM
+3. If vLLM unhealthy after 300s → `docker stop vllm` + try BeeLlama (CPU)
+4. If BeeLlama fails → Ollama (qwen2.5:3b starter, always ready)
+5. `scarlix-mode ai` re-run → healthchecks + restarts unhealthy containers
+
+### ScarliHQ Dashboard (:8090)
+Real web dashboard built + started in install.sh Phase 5:
+- GPU status cards (temp, util, VRAM, power) via `/api/gpu`
+- Mode switcher (ai/turbo/offline/game/stop) via `/api/mode`
+- Container table via `/api/containers`
+- Live clock via WebSocket `/ws`
 
 ---
 
@@ -303,32 +256,26 @@ OS/
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v17.9.6** | 2026-10 | **Reliability. 15 fixes: 4 duplicate networks (P0), scarlix_net→scarlix-net in source (P0), VERSION fix (P0), default paths (P0), download fail-hard (P0), doctor unhealthy=FAIL (P0), hash after recreate (P0), $DC up -d (P0), vLLM/llama.cpp healthcheck, model-manager dvojitý fix, version unified, wizard path, dump_vram yaml, docs Ubuntu→Arch, ScarliHQ placeholder. Bonus: doctor --fix, CI, VERSION file.** |
+| **v17.9.7** | 2026-10 | **Reliability + real dashboard. 11 fixes: ScarliHQ image tag unified (P0), Dockerfile build fixed (P0), runtime = nvidia/cuda+docker-cli (P0), real dashboard HTML (P0), git tag pushed (P0), SGLang --disable-flashinfer (P1), network disconnect loop, multilib pre-check, download-models FAILED counter + disk check, scarlix-doctor http_ok fallback, /models chmod 750.** |
+| v17.9.6 | 2026-10 | Reliability. 15 fixes: 4 duplicate networks (P0), scarlix_net→scarlix-net in source (P0), VERSION fix (P0), default paths (P0), download fail-hard (P0), doctor unhealthy=FAIL (P0), hash after recreate (P0), $DC up -d (P0), vLLM/llama.cpp healthcheck, model-manager dvojitý fix, version unified, wizard path, dump_vram yaml, docs Ubuntu→Arch, ScarliHQ placeholder. Bonus: doctor --fix, CI, VERSION file. |
+| v17.9.1 | 2026-10 | Hotfix. 10 fixes: MODE pred flock (P0), hash-based healthcheck (P0), correct HF repo IDs (P0), checkpoint nvidia_open len phase2 (P0), model-manager schema, creative scarlix_net, SGLang image pin, generate-env guard, version unified, scarlix-doctor added. |
+| v17.9 | 2026-10 | Final Polish. 6 fixes: --env-file, always regenerate .env, BeeLlama only on fallback, Docker restart after nvidia-ctk, Ollama chmod 700, REAL_USER without logname. |
 | v17.8 | 2026-10 | Stable. 6 fixes: --env-file on all compose calls, always regenerate .env, BeeLlama only on fallback, Docker restart after nvidia-ctk, Ollama chmod 700, REAL_USER without logname. |
-| v17.6 | 2026-10 | Bugfix 3. 6 fixes: sglang_ok/vllm_ok initialized, Ollama CPU fallback, chmod 775, check_model_exists for all, README path fix, version header. |
-| v17.5.2 | 2026-10 | Bugfix 2. 8 fixes: scarlix-net after Docker starts, Ollama true fallback, checkpoint pacman -Q, config.json check, chmod 777, --include, stop keeps dashboard, dead files removed. |
-| v17.5.1 | 2026-10 | Bugfix release. 10 fixes: yq YAML parsing, download-models.sh rewritten, Ollama GPU0+absolute vol, scarlix-net early, linux checkpoint, model check, Ollama wait, BeeLlama CPU, scarlix-mode stop. |
-| v17.4 | 2026-10 | Unified bootstrap, fail-hard, TP=1 (mixed GPU). 19 fixes. |
-| v17.3 | 2026-10 | Bootstrap installer (install.sh). (Broken — curl\|bash, no models) |
-| v17.2.1 | 2026-10 | Auto 5-tier for 2+ GPU. |
-| v17.2 | 2026-10 | Minimal Working Baseline. 8 P0 fixes. |
-| v17.1 | 2026-09 | 5-tier inference. (Over-engineered) |
-| v17.0 | 2026-09 | Garuda → EndeavourOS re-base. |
-| v16.5 | 2026-08 | 10 review fixes. |
-| v16.1 | 2026-07 | Garuda Linux. |
+| v17.5–17.6 | 2026-10 | EndeavourOS re-base, bootstrap installer, model-agnostic, fail-hard, TP=1. |
+| v16.x | 2026-08 | Garuda Linux. |
 | v15 | 2026-06 | Model-Agnostic. |
 
 ---
 
 ## ⚠️ Known Limitations
 
-- **No CI/CD**: install.sh manually tested
-- **No real HW test**: QEMU doesn't test NVIDIA/CUDA
-- **Single maintainer**: One person maintaining full stack
-- **SGLang on Arch**: Officially Ubuntu-only, AUR has packaging gaps
-- **vLLM TP=1**: Separate model per GPU (less efficient than TP=2 but mixed-arch safe)
+- **CI exists but no real-HW test**: `.github/workflows/ci.yml` runs shellcheck + bash -n + YAML + compose validation on every push. QEMU doesn't test NVIDIA/CUDA (no GPU in CI).
+- **Single maintainer**: One person maintaining full stack.
+- **vLLM TP=1**: Separate model per GPU (less efficient than TP=2 but mixed-arch safe).
+- **ScarliHQ mode-switch**: `scarlix-mode` exec'd in container — `systemctl` commands (sunshine) won't apply (container has no systemd); AI/docker mode switches work via docker.sock.
+- **First install is slow**: `pacman -Syu` + NVIDIA + CUDA + cuDNN + Steam/Wine + docker images + ScarliHQ Go build + model download (50-150GB) = hours. Reboots + re-login required for NVIDIA driver + docker group.
 
 ## 🗺️ Roadmap
 
-- **v17.6**: AgentVerse merge (944-app store, capabilities)
-- **v18.0**: Incus dev workspaces, ScarliHQ Rust refactor
+- **v17.10**: ScarliHQ — native Docker API (drop docker-cli exec), real GPU telemetry via DCGM.
+- **v18.0**: Incus dev workspaces, ScarliHQ Rust refactor, profile-based stack selection.

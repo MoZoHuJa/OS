@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.9.6 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v17.9.7 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
+# v17.9.7 FIXES:
+#   - FAILED counter (FAILED=$((FAILED+1)) — was boolean overwrite, now counts all failures)
+#   - Disk-space pre-check on /models (warn if < 50GB, fail-hard if < 10GB)
 # v17.9.5 FIXES (vs v17.5):
 #   - Uses v17.5 keys: .beellama.* (not .llamacpp.*), .ollama.model (not .ollama_main)
 #   - SGLang: uses hf_repo field (not model_path which is local path)
@@ -18,11 +21,25 @@ VENV_DIR="/opt/scarlix/venv"
 mkdir -p "$(dirname "$LOG_FILE")" "$MODELS_DIR" "$VENV_DIR"
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v17.9.6 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v17.9.7 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing
 command -v yq >/dev/null 2>&1 || { echo "Installing yq..."; pacman -S --noconfirm --needed yq >> "$LOG_FILE" 2>&1 || { echo "ERROR: yq install failed"; exit 1; }; }
+
+# P1 v17.9.7: Disk-space pre-check (full models = 50-150GB)
+FREE_MB=$(df -m "$MODELS_DIR" 2>/dev/null | awk 'NR==2{print $4}')
+if [ -n "$FREE_MB" ]; then
+  FREE_GB=$((FREE_MB / 1024))
+  echo "  /models free space: ${FREE_GB}GB (${FREE_MB}MB)" | tee -a "$LOG_FILE"
+  if [ "$FREE_MB" -lt 10240 ]; then
+    echo "  ✗ CRITICAL: < 10GB free on /models — cannot download models" | tee -a "$LOG_FILE"
+    exit 1
+  elif [ "$FREE_MB" -lt 51200 ]; then
+    echo "  ⚠ WARNING: < 50GB free on /models — full models may not fit (need 50-150GB)" | tee -a "$LOG_FILE"
+    echo "  Continuing anyway (SGLang AWQ ~9GB, GGUF ~9GB, Ollama qwen2.5:3b ~2GB)..." | tee -a "$LOG_FILE"
+  fi
+fi
 
 # Setup venv for huggingface_hub (PEP 668 safe)
 if [ ! -f "$VENV_DIR/bin/huggingface-cli" ]; then
@@ -56,7 +73,7 @@ else
     echo "  ✓ SGLang model downloaded" | tee -a "$LOG_FILE"
   else
     echo "  ✗ SGLang download FAILED" | tee -a "$LOG_FILE"
-    FAILED=1
+    FAILED=$((FAILED+1))
   fi
 fi
 
@@ -73,7 +90,7 @@ else
     echo "  ✓ GGUF model downloaded" | tee -a "$LOG_FILE"
   else
     echo "  ✗ GGUF download FAILED" | tee -a "$LOG_FILE"
-    FAILED=1
+    FAILED=$((FAILED+1))
   fi
 fi
 
@@ -101,7 +118,7 @@ if command -v docker >/dev/null 2>&1; then
       echo "  ✓ Ollama model pulled: $OLLAMA_MODEL" | tee -a "$LOG_FILE"
     else
       echo "  ✗ Ollama pull FAILED" | tee -a "$LOG_FILE"
-      FAILED=1
+      FAILED=$((FAILED+1))
     fi
   fi
 else
