@@ -14,7 +14,7 @@ services:
     restart: unless-stopped
     profiles: ["experimental"]  # v17.2: opt-in only (replaces Needle2)
     ports:
-      - "11440:8000"
+      - "127.0.0.1:11440:8000"  # v18.7 P1: Bind to loopback (was 0.0.0.0:11440 — LAN exposed without auth)
     volumes:
       - /models/laya:/models/laya:ro
       - ./configs:/app/configs:ro

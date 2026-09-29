@@ -9,7 +9,7 @@ services:
       - /models:/models:ro
     environment:
       - NEEDLE_MODEL_PATH=/models/needle-router-v1
-      - NEEDLE_BACKENDS=sglang:30000,ollama-main:11434,ollama-agent:11435,llamacpp:8080
+      - NEEDLE_BACKENDS=sglang:30000,ollama-agent:11435,beellama:8080
       - NEEDLE_ROUTING_STRATEGY=latency-aware
     deploy:
       resources:

@@ -5,6 +5,7 @@ import (
         "encoding/json"
         "fmt"
         "net/http"
+        "os"
         "strings"
 
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/guard"
@@ -111,9 +112,17 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
                 http.Error(w, "POST required", http.StatusMethodNotAllowed)
                 return
         }
+        // v18.7 P1: Limit RPC body size (was: no limit → DoS)
+        r.Body = http.MaxBytesReader(w, r.Body, 64<<10) // 64KB
+        // v18.7 P1: Reject trailing JSON (was: silently ignored)
+        decoder := json.NewDecoder(r.Body)
         var req rpcRequest
-        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        if err := decoder.Decode(&req); err != nil {
                 writeRPCError(w, http.StatusBadRequest, nil, -32700, "parse error")
+                return
+        }
+        if decoder.More() {
+                writeRPCError(w, http.StatusBadRequest, req.ID, -32700, "trailing data after JSON request")
                 return
         }
         if req.JSONRPC != "2.0" {
@@ -178,13 +187,22 @@ func (s *Server) handleToolCall(req rpcRequest) rpcResponse {
                 return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]string{"mode": s.mode.Current()}}
         case "scarlix_mode_set":
                 mode, _ := params.Arguments["mode"].(string)
+                // v18.7 P0: Check pending desired-mode file (same as REST)
+                if _, err := os.Stat("/var/lib/scarlix/bridge-input/desired-mode"); err == nil {
+                        return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32004, Message: "mode request pending (desired-mode exists), try again later"}}
+                }
                 // v18.6 P1: Check transition state (was: bypassed REST 409 check)
                 currentStatus := status.ReadOrStale()
                 if currentStatus.ModeTransition.State == "retrying" {
                         return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32004, Message: "mode transition in progress (retrying), try again later"}}
                 }
                 if err := s.mode.Set(mode); err != nil {
-                        return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32603, Message: err.Error()}}
+                        code := -32603 // Internal error (default)
+                        // v18.7 P1: Invalid mode = client error -32602 (was: -32603)
+                        if strings.Contains(err.Error(), "invalid mode") {
+                                code = -32602 // Invalid params
+                        }
+                        return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: code, Message: err.Error()}}
                 }
                 return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]string{"status": "accepted", "mode": mode}}
         case "scarlix_gpu_status":
