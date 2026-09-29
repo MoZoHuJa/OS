@@ -302,7 +302,8 @@ data = {
 }
 print(json.dumps(data))
 ' > "$STATUS_TMP" 2>/dev/null || {
-    printf '{"timestamp":"%s","version":"%s","mode":"%s","error":"python3 unavailable"}' \
+    # v18.5 P1: Include stale:true + empty arrays so Go HostStatus parses correctly (was: missing fields → valid-looking status)
+    printf '{"timestamp":"%s","version":"%s","mode":"%s","error":"python3 unavailable","stale":true,"gpus":[],"containers":[]}' \
         "$(date -Iseconds 2>/dev/null || date)" "$scarlix_version" "$current_mode" > "$STATUS_TMP"
 }
 mv -f "$STATUS_TMP" "$STATUS_FILE" 2>/dev/null || true

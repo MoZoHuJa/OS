@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.4 — Model Manager
-# v18.4 FIX: Ollama pulls via `docker exec ollama-agent` (was: host `ollama` binary — never installed)
+# SCARLIX OS v18.5 — Model Manager
+# v18.5 FIX: Ollama pulls via `docker exec ollama-agent` (was: host `ollama` binary — never installed)
 # FIX Q8b: Split — HF model pulls = auto (safe), Ollama tag pulls = manual (--apply only)
 #
 # Weekly timer (Mon 04:00) runs with NO --apply → only HF model pulls + Telegram report.
@@ -17,17 +17,19 @@ APPLY_OLLAMA=0
 
 mkdir -p "$(dirname "$LOG_FILE")"
 
-# v18.4 P1: Shared lock with scarlix-mode + download-models (was: race condition on /models)
-MODELS_LOCK="/var/lock/scarlix-models.lock"
+# v18.5 P1: Shared lock with scarlix-mode + download-models (was: race condition on /models)
+MODELS_LOCK="/var/lib/scarlix/.models.lock"
 mkdir -p "$(dirname "$MODELS_LOCK")" 2>/dev/null || true
 exec 9>"$MODELS_LOCK"
-flock -s 9 || { echo "ERROR: cannot acquire shared lock on $MODELS_LOCK" >&2; exit 1; }
+# v18.5 P0: Non-blocking + exclusive (was: shared -s, blocking without -n)
+# v18.5 P1: Exclusive because model-manager WRITES to /models (was: -s shared → race with download-models)
+flock -n -x 9 || { echo "ERROR: cannot acquire models lock (scarlix-mode or download-models running?)" >&2; exit 1; }
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
-# v18.4 P0: SECURITY — NEVER `source` .env files (shell execution of potentially user-modified file).
+# v18.5 P0: SECURITY — NEVER `source` .env files (shell execution of potentially user-modified file).
 # Instead, parse KEY=VALUE pairs safely with grep + export.
 # This prevents local privilege escalation via injected shell commands in .env.
 load_env_safe() {
@@ -47,7 +49,7 @@ send_telegram() {
   local message="$1"
   if [ -f "$ENV_FILE" ] || [ -f "/etc/scarlix/.env" ]; then
     # P1 v17.9.5: Source both .env files — /opt for model paths, /etc for secrets/Telegram
-    # v18.4 P0: SAFE parse (was: `source` → LPE if user modifies .env)
+    # v18.5 P0: SAFE parse (was: `source` → LPE if user modifies .env)
     load_env_safe "$ENV_FILE"
     load_env_safe "/etc/scarlix/.env"
   fi
@@ -73,13 +75,13 @@ vram_snapshot() {
 }
 
 log "========================================"
-log "  SCARLIX OS v18.4 — Model Manager"
+log "  SCARLIX OS v18.5 — Model Manager"
 [ "$APPLY_OLLAMA" -eq 1 ] && log "  (--apply-ollama: will update Ollama tags)" || log "  (HF auto-pull + Ollama dry-run report only)"
 log "========================================"
 
 if [ ! -f "$MODELS_YAML" ]; then
   log "ERROR: models.yaml not found"
-  send_telegram "🚨 *SCARLIX Model Manager v18.4* — FAILED
+  send_telegram "🚨 *SCARLIX Model Manager v18.5* — FAILED
 models.yaml not found"
   exit 1
 fi
@@ -125,7 +127,7 @@ else
 fi
 
 # === Ollama model pulls (MANUAL unless --apply-ollama) ===
-# v18.4 P1: Ollama runs in Docker container `ollama-agent` (not as host binary).
+# v18.5 P1: Ollama runs in Docker container `ollama-agent` (not as host binary).
 # Use `docker exec ollama-agent ollama ...` instead of `command -v ollama`.
 if ! command -v docker >/dev/null 2>&1; then
   log "⚠ Docker not installed — skipping Ollama"
@@ -166,7 +168,7 @@ log "HF: updated=$HF_UPDATED failed=$HF_FAILED"
 log "Ollama: updated=$OLLAMA_UPDATED failed=$OLLAMA_FAILED"
 
 # === Telegram summary ===
-SUMMARY="🤖 *SCARLIX Model Manager v18.4*
+SUMMARY="🤖 *SCARLIX Model Manager v18.5*
 📊 HF: \`${HF_UPDATED}\` updated, \`${HF_FAILED}\` failed
 📊 Ollama: \`${OLLAMA_UPDATED}\` updated, \`${OLLAMA_FAILED}\` failed
 $([ "$APPLY_OLLAMA" -eq 0 ] && echo "ℹ️ Ollama tags NOT updated (dry-run). Use \`model-manager.sh --apply-ollama\` to update.")
