@@ -107,8 +107,14 @@ func statusJSON() []byte {
 // v18.7.5 P0: Ticket is now RESERVED (atomically deleted) BEFORE upgrader.Upgrade(),
 // replacing the v18.7.4 Peek+Consume split (was: Peek didn't delete → two concurrent
 // WS connects with the same ticket could both Peek=true and both Upgrade, defeating
-// the single-use replay-resistance guarantee). On Upgrade failure, Release puts the
-// ticket back so the legitimate client can retry without re-POSTing /api/ws-ticket.
+// the single-use replay-resistance guarantee).
+//
+// v18.7.6 P0: On Upgrade failure (or wsSlots exhaustion), the ticket is NOT
+// re-added to the store (was: ReleaseWSTicket re-added it with a FRESH 30s TTL
+// → attacker could repeatedly trigger Upgrade failures to extend ticket lifetime
+// indefinitely). The ticket stays consumed and single-use is enforced
+// unconditionally; the legitimate client simply re-POSTs /api/ws-ticket to
+// obtain a new one. No client-controlled failure can refresh the TTL.
 //
 // authToken + mode + pf parameters are kept for signature stability (callers in main.go
 // pass them); they are unused here now since auth is delegated to api.ReserveWSTicket.
@@ -122,6 +128,8 @@ func RegisterWS(mux *http.ServeMux, _ string, _ *scarlix_mode.Mode, _ *profiles.
                 // v18.7.5 P0: Atomic reservation — delete BEFORE Upgrade (was: Peek didn't delete).
                 // Single-use replay-resistance guarantee: only the first concurrent caller
                 // can Reserve=true; all others see false because the entry is gone.
+                // v18.7.6 P0: Ticket is now consumed — no Release-on-failure path (was: ReleaseWSTicket
+                // re-added with fresh 30s TTL → attacker-renewable lifetime).
                 if !api.ReserveWSTicket(ticket) {
                         http.Error(w, "invalid or expired ticket", http.StatusUnauthorized)
                         return
@@ -132,8 +140,8 @@ func RegisterWS(mux *http.ServeMux, _ string, _ *scarlix_mode.Mode, _ *profiles.
                 case <-wsSlots:
                         defer func() { wsSlots <- struct{}{} }()
                 default:
-                        // v18.7.5 P0: Release ticket so client can retry without re-POSTing.
-                        api.ReleaseWSTicket(ticket)
+                        // v18.7.6 P0: Ticket is consumed — client re-POSTs /api/ws-ticket to retry
+                        // (was: ReleaseWSTicket(ticket) → TTL-refresh on each failed attempt).
                         http.Error(w, "too many WebSocket connections", http.StatusServiceUnavailable)
                         return
                 }
@@ -141,8 +149,10 @@ func RegisterWS(mux *http.ServeMux, _ string, _ *scarlix_mode.Mode, _ *profiles.
                 conn, err := upgrader.Upgrade(w, r, nil)
                 if err != nil {
                         log.Printf("WS upgrade error: %v", err)
-                        // v18.7.5 P0: Release ticket on upgrade failure (was: consumed before → wasted)
-                        api.ReleaseWSTicket(ticket)
+                        // v18.7.6 P0: Ticket is consumed — do NOT re-add it (was: ReleaseWSTicket
+                        // re-added with fresh 30s TTL → attacker could extend ticket lifetime
+                        // indefinitely by repeatedly triggering Upgrade failures). Client simply
+                        // re-POSTs /api/ws-ticket to obtain a new one and reconnects.
                         return
                 }
                 defer conn.Close()

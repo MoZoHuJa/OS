@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.7.5 — Self-Diagnostic (scarlix-doctor)
+# SCARLIX OS v18.7.6 — Self-Diagnostic (scarlix-doctor)
 # v18.5: http_ok() with -k/--no-check-certificate fallback; host-bridge check; version unified
 # v17.9.2: unhealthy = FAIL (not PASS), --fix mode, API healthcheck, docker group check
 
@@ -47,7 +47,7 @@ fix() {
 }
 
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║  SCARLIX OS v18.7.5 — System Diagnostic                      ║${NC}"
+echo -e "${CYAN}║  SCARLIX OS v18.7.6 — System Diagnostic                      ║${NC}"
 [ "$FIX_MODE" -eq 1 ] && echo -e "${CYAN}║  (--fix mode: will attempt automatic fixes)                  ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""

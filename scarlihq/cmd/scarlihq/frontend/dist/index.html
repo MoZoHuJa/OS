@@ -159,6 +159,21 @@ const $$ = s => document.querySelectorAll(s);
 // into the auth gate once per session; it is never in the URL.
 let TOKEN = sessionStorage.getItem('scarlihq_token') || '';
 
+// v18.7.6 P1: XSS prevention — escape all dynamic data from host-status before
+// interpolating into innerHTML templates (was: unescaped ${g.name} / ${c.name}
+// / ${c.status} / ${c.ports} → if any container name or GPU name contained
+// HTML like <img src=x onerror=...>, it would execute in the dashboard context,
+// which is served from the same origin as the API and holds the bearer token
+// in JS memory). String(value ?? '') safely handles null/undefined/numbers.
+function escapeHTML(value){
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
 function toast(msg, err){
   const t = $('#toast');
   t.textContent = msg;
@@ -252,14 +267,15 @@ function renderStatus(s){
     el.innerHTML = s.gpus.map(g=>{
       const memPct = g.mem_total>0 ? Math.round(g.mem_used/g.mem_total*100) : 0;
       const utilPct = Math.round(g.util||0);
+      // v18.7.6 P1: escape all dynamic GPU fields (was: raw ${g.name} → XSS via container/GPU name)
       return `<div class="gpu-card">
-        <span class="id">GPU ${g.index} · sm_${g.compute_cap}</span>
-        <div class="nm" title="${g.name}">${g.name}</div>
-        <div class="barlabel"><span>VRAM</span><span>${Math.round(g.mem_used)}/${Math.round(g.mem_total)} MiB</span></div>
-        <div class="bar mem"><i style="width:${memPct}%"></i></div>
-        <div class="barlabel"><span>Util</span><span>${utilPct}%</span></div>
-        <div class="bar util"><i style="width:${utilPct}%"></i></div>
-        <div class="barlabel" style="margin-top:6px"><span>${g.temp||0}°C</span><span>${g.power||0} W</span></div>
+        <span class="id">GPU ${escapeHTML(g.index)} · sm_${escapeHTML(g.compute_cap)}</span>
+        <div class="nm" title="${escapeHTML(g.name)}">${escapeHTML(g.name)}</div>
+        <div class="barlabel"><span>VRAM</span><span>${escapeHTML(Math.round(g.mem_used))}/${escapeHTML(Math.round(g.mem_total))} MiB</span></div>
+        <div class="bar mem"><i style="width:${escapeHTML(memPct)}%"></i></div>
+        <div class="barlabel"><span>Util</span><span>${escapeHTML(utilPct)}%</span></div>
+        <div class="bar util"><i style="width:${escapeHTML(utilPct)}%"></i></div>
+        <div class="barlabel" style="margin-top:6px"><span>${escapeHTML(g.temp||0)}°C</span><span>${escapeHTML(g.power||0)} W</span></div>
       </div>`;
     }).join('');
   }else{
@@ -273,7 +289,8 @@ function renderStatus(s){
       let cls = 'other';
       if(/Up/i.test(c.status)) cls = 'up';
       else if(/Exit|Down|Stopped/i.test(c.status)) cls = 'down';
-      return `<tr><td>${c.name||'—'}</td><td><span class="pill ${cls}">${c.status||'—'}</span></td><td style="color:var(--muted);font-size:11px">${c.ports||'—'}</td></tr>`;
+      // v18.7.6 P1: escape all dynamic container fields (was: raw ${c.name}/${c.status}/${c.ports} → XSS)
+      return `<tr><td>${escapeHTML(c.name||'—')}</td><td><span class="pill ${cls}">${escapeHTML(c.status||'—')}</span></td><td style="color:var(--muted);font-size:11px">${escapeHTML(c.ports||'—')}</td></tr>`;
     }).join('');
   }else{
     tb.innerHTML = '<tr><td colspan="3" class="empty">No containers (or host-bridge not running)</td></tr>';
@@ -297,8 +314,15 @@ $$('.mode-btn').forEach(b=>{
 
 // WebSocket — pushes full host-status every 2s
 // v18.7.3 P1: Use short-lived WS ticket (was: permanent token in URL)
+// v18.7.6 P1: wsConnecting flag prevents stacked connectWS() calls (was:
+// onclose + initApp + pollStatus could all call connectWS() concurrently,
+// stacking fetch(/api/ws-ticket) + new WebSocket() attempts → multiple
+// wasted tickets + race conditions on the `ws` variable).
 let ws = null;
+let wsConnecting = false;
 async function connectWS(){
+  if(wsConnecting) return; // v18.7.6 P1: Prevent stacking (was: multiple concurrent connectWS)
+  wsConnecting = true;
   try{
     // Step 1: Get a short-lived WS ticket via REST API (Bearer auth)
     const ticketResp = await fetch('/api/ws-ticket', {
@@ -340,6 +364,8 @@ async function connectWS(){
   }catch(e){
     $('#wsdot').className = 'ws-dot dead';
     $('#wsstate').textContent = 'unavailable';
+  }finally{
+    wsConnecting = false;
   }
 }
 

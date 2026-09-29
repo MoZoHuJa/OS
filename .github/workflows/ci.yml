@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main, 'v18.*']
+    # v18.7.6 P1: trigger on tags (was: branches only → v18.7.6 tag push skipped CI)
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -43,7 +45,8 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install PyYAML
-        run: pip install pyyaml
+        # v18.7.6 P2: pin pyyaml (was: floating dependency → non-reproducible CI)
+        run: pip install "pyyaml==6.0.2"
       - name: Validate YAML files
         run: |
           python -c "import yaml; yaml.safe_load(open('models.yaml')); print('models.yaml OK')"
@@ -131,6 +134,9 @@ jobs:
           docker image inspect scarlihq:ci --format '{{.Size}}' | awk '{printf "  %.1f MB\n", $1/1024/1024}'
       - name: Runtime smoke test (container starts + port responds)
         run: |
+          # v18.7.6 P2: trap cleanup so failures still tear down the container
+          # (was: exit 1 skipped `docker stop/rm scarlihq-test` → container stayed running)
+          trap 'docker logs scarlihq-test 2>/dev/null | tail -20; docker stop scarlihq-test 2>/dev/null || true; docker rm scarlihq-test 2>/dev/null || true' EXIT
           # v18.0.0: use bridge-input/ layout (not bridge/)
           # v18.2 P2: chown 65532 (nonroot in ScarliHQ alpine image — was missing → mode POST 202 fails)
           mkdir -p /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
@@ -139,13 +145,19 @@ jobs:
           sudo chown -R 65532:65532 /tmp/scarlix-test/bridge-input
           # v18.5.1: use valid RFC3339 timestamp (was: "test" → stale=true, but shouldn't break)
           TS=$(date -Iseconds)
-          echo "{\"timestamp\":\"$TS\",\"version\":\"18.5.1\",\"mode\":\"unknown\",\"mode_transition\":{\"requested\":\"\",\"state\":\"none\",\"retry_count\":0,\"last_error\":\"\",\"last_timestamp\":\"\"},\"gpus\":[],\"containers\":[],\"disk\":{}}" > /tmp/scarlix-test/host-status.json
+          # v18.7.6 P1: read version from VERSION file (was: hardcoded "18.5.1" → stale)
+          SCARLIX_VERSION=$(cat VERSION)
+          echo "{\"timestamp\":\"$TS\",\"version\":\"$SCARLIX_VERSION\",\"mode\":\"unknown\",\"mode_transition\":{\"requested\":\"\",\"state\":\"none\",\"retry_count\":0,\"last_error\":\"\",\"last_timestamp\":\"\"},\"gpus\":[],\"containers\":[],\"disk\":{}}" > /tmp/scarlix-test/host-status.json
           docker run -d --name scarlihq-test -p 8090:8090 \
             -e SCARLIHQ_TOKEN=test-token \
             -v /tmp/scarlix-test:/var/lib/scarlix:ro \
             -v /tmp/scarlix-test/bridge-input:/var/lib/scarlix/bridge-input:rw \
             scarlihq:ci
-          sleep 5
+          # v18.7.6 P1: Poll for readiness (was: sleep 5 → flaky on slow runners)
+          for i in $(seq 1 30); do
+              curl -sf http://127.0.0.1:8090/api/health >/dev/null 2>&1 && break
+              sleep 1
+          done
           # v18.5.1: print container status + logs for debugging
           docker ps -a --filter name=scarlihq-test --format '{{.Status}}'
           docker logs scarlihq-test 2>&1 | head -20
@@ -169,8 +181,6 @@ jobs:
           echo "Mode POST (set=invalid): HTTP $HTTP_CODE (expected 400)"
           [ "$HTTP_CODE" = "400" ] || { echo "FAIL: expected 400"; docker logs scarlihq-test; exit 1; }
           echo "Smoke test PASSED — ScarliHQ starts + auth + mode write + error codes"
-          docker stop scarlihq-test 2>/dev/null || true
-          docker rm scarlihq-test 2>/dev/null || true
 
   # v18.7.5 P2: Integration tests — real API + WS ticket + mode switch
   integration-test:
@@ -184,12 +194,17 @@ jobs:
           docker build --build-arg SCARLIX_VERSION="$SCARLIX_VERSION" -t scarlihq:ci scarlihq/
       - name: Integration tests
         run: |
+          # v18.7.6 P1: trap cleanup so any `exit 1` still tears down the container
+          # (was: exit 1 skipped `docker stop/rm scarlihq-int` → container stayed running)
+          trap 'docker logs scarlihq-int 2>/dev/null | tail -20; docker stop scarlihq-int 2>/dev/null || true; docker rm scarlihq-int 2>/dev/null || true' EXIT
           # Setup test environment
           mkdir -p /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
           chmod 700 /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
           sudo chown -R 65532:65532 /tmp/scarlix-test/bridge-input
           TS=$(date -Iseconds)
-          echo "{\"timestamp\":\"$TS\",\"version\":\"18.7.5\",\"mode\":\"unknown\",\"mode_transition\":{\"requested\":\"\",\"state\":\"none\",\"retry_count\":0,\"last_error\":\"\",\"last_timestamp\":\"\"},\"gpus\":[],\"containers\":[],\"disk\":{}}" > /tmp/scarlix-test/host-status.json
+          # v18.7.6 P1: read version from VERSION file (was: hardcoded "18.7.5" → stale)
+          SCARLIX_VERSION=$(cat VERSION)
+          echo "{\"timestamp\":\"$TS\",\"version\":\"$SCARLIX_VERSION\",\"mode\":\"unknown\",\"mode_transition\":{\"requested\":\"\",\"state\":\"none\",\"retry_count\":0,\"last_error\":\"\",\"last_timestamp\":\"\"},\"gpus\":[],\"containers\":[],\"disk\":{}}" > /tmp/scarlix-test/host-status.json
 
           # Start ScarliHQ
           docker run -d --name scarlihq-int -p 8090:8090 \
@@ -197,7 +212,11 @@ jobs:
             -v /tmp/scarlix-test:/var/lib/scarlix:ro \
             -v /tmp/scarlix-test/bridge-input:/var/lib/scarlix/bridge-input:rw \
             scarlihq:ci
-          sleep 5
+          # v18.7.6 P1: Poll for readiness (was: sleep 5 → flaky on slow runners)
+          for i in $(seq 1 30); do
+              curl -sf http://127.0.0.1:8090/api/health >/dev/null 2>&1 && break
+              sleep 1
+          done
 
           # Test 1: Health without token → 401
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health)
@@ -207,7 +226,8 @@ jobs:
           # Test 2: Health with token → 200 + version
           RESP=$(curl -sf -H "Authorization: Bearer test-token" http://127.0.0.1:8090/api/health)
           echo "Test 2 (with token): $RESP"
-          echo "$RESP" | grep -q '"status":"ok"' || { echo "FAIL: no ok status"; exit 1; }
+          # v18.7.6 P1: use python3 for JSON parsing (was: grep '"status":"ok"' → fails on whitespace)
+          echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['status']=='ok', f'status={d[\"status\"]}'; print('OK')" || { echo "FAIL: no ok status"; exit 1; }
 
           # Test 3: Mode POST → 202
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer test-token" "http://127.0.0.1:8090/api/mode?set=ai")
@@ -250,5 +270,3 @@ jobs:
           [ "$HTTP" = "400" ] || { echo "FAIL: expected 400 for trailing JSON"; exit 1; }
 
           echo "=== ALL INTEGRATION TESTS PASSED ==="
-          docker stop scarlihq-int 2>/dev/null || true
-          docker rm scarlihq-int 2>/dev/null || true

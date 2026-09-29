@@ -19,7 +19,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "18.7.5"
+var Version = "18.7.6"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -89,7 +89,7 @@ func main() {
                 ReadTimeout:       15 * time.Second,
                 WriteTimeout:      30 * time.Second,
                 IdleTimeout:       60 * time.Second,
-                MaxHeaderBytes:    1 << 20, // 1MB
+                MaxHeaderBytes:    64 << 10, // v18.7.6 P1: 64KB (was: 1MB — unnecessarily large)
         }
         if err := srv.ListenAndServe(); err != nil {
                 log.Fatalf("Server failed: %v", err)

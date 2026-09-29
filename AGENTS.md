@@ -1,78 +1,42 @@
-# SCARLIX OS v17.1 — Agent Architecture
+# SCARLIX OS v18.7.6 — Agent Architecture
 
-## 5-Tier Inference Stack
+## Inference Stack
 
 | Tier | Engine | Port | GPU | Use Case |
 |------|--------|------|-----|----------|
-| 1 | SGLang | 30000 | GPU 0 | Agents, RadixAttention, default |
-| 2 | vLLM | 8089 | GPU 0+1 (TP=2) | High throughput, Multi-LoRA, batch [NEW] |
-| 3a | Ollama Main | 11434 | GPU 0 | GGUF concurrent (4 parallel) |
-| 3b | Ollama Agent | 11435 | GPU 1 | Persistent agent inference |
-| 4 | BeeLlama.cpp | 11438 | CPU | Offline, KVarN long context [NEW] |
-| 5 | FreeToken | 8090 | GPU 0+1 | MoE (experimental --profile moe) [NEW] |
-| S1 | Laya | 11440 | GPU 1 | System-1 router, 33ms decisions [NEW] |
-| MCP | Browser MCP | 8095 | — | Playwright browser automation [NEW] |
+| 1 | SGLang v0.4.4-cu128 | 30000 | GPU 0 | Agents, RadixAttention, default |
+| 2 | vLLM v0.8.0 | 8089 | GPU 1 (TP=1) | High throughput, experimental (--profile experimental) |
+| 4 | llama.cpp (official) | 11438 | CPU | Offline fallback, q4_0 KV cache |
+| Fallback | Ollama 0.5.4 | 11435 | CPU | Starter model qwen2.5:3b (auto-downloaded) |
+
+All inference endpoints bound to 127.0.0.1 (localhost only).
 
 ## Agent Hierarchy
 
 ```
-Hermes (CEO, Python, port 7999)
-├── Laya (System-1 Triage) — 33ms yes/no/choice/score
-│   └── If safe → execute directly
-│   └── If risky → request Telegram HITL approval
-├── omp / oh-my-pi (Coding Manager, LSP+DAP)
-│   ├── Frontend specialist
-│   ├── Backend specialist
-│   ├── DevOps specialist
-│   └── Security specialist
-├── Browser MCP (web automation)
-│   └── Scraping, form filling, screenshots
-└── ScarliHQ (dashboard, guard, memory, profiles)
+User (dashboard :8090, token auth)
+└── ScarliHQ (Go binary, REST API + WebSocket + MCP)
+    ├── scarlix-mode (mode switcher: ai/stop/game/creative/turbo/offline/tv)
+    ├── scarlix-host-bridge (root timer, 5s interval: nvidia-smi + docker ps + scarlix-mode)
+    ├── scarlix-bridge-reader (Go binary, atomic O_NOFOLLOW file reader)
+    └── scarlix-doctor (self-diagnostic with --fix mode)
 ```
 
-## Hermes ↔ omp Delegation Protocol
+## Security Architecture (v18.0+)
 
-1. Hermes receives task (Telegram / cron / voice)
-2. Laya triages: is this safe? (33ms decision)
-   - Safe → Hermes delegates to omp
-   - Risky → Telegram HITL approval request
-3. If coding task → Hermes calls omp via MCP:
-   ```
-   omp --task "refactor auth module" --lsp --backend vllm
-   ```
-4. omp uses LSP (go-to-def, find-refs, rename) + DAP (debug, breakpoint)
-5. omp reports back to Hermes with diff + test results
-6. Hermes logs to Buzz (Nostr audit trail) + Kanban board (ScarliHQ)
+- **Host-Bridge**: ScarliHQ container has NO docker.sock, NO nvidia runtime, NO scarlix-mode mount
+- **bridge-input/** (UID 65532, mode 700): ScarliHQ writes desired-mode here
+- **bridge-state/** (root:root, mode 700): Host bridge writes retry/last-transition here
+- **scarlix-bridge-reader**: Go binary with O_NOFOLLOW + fstat + read(fd) — no TOCTOU
+- **WS ticket**: 30s single-use (ReserveWSTicket atomic delete, no Release on failure)
+- **REST/MCP**: Bearer token only (no ?token= in URL)
+- **load_env_safe()**: KEY=VALUE parser with `^[A-Z_][A-Z0-9_]*$` whitelist (no shell evaluation)
 
-## Backend Selection
+## Profiles
 
-```bash
-# Use SGLang (default — RadixAttention for agent loops)
-scarlix-mode ai --backend sglang
-
-# Use vLLM (high throughput, Multi-LoRA, batch)
-scarlix-mode ai --backend vllm
-
-# Turbo mode = both SGLang + vLLM + Ollama
-scarlix-mode turbo
-```
-
-## Browser Automation (Playwright MCP)
-
-Hermes can ask: "Go to Alza, find cheapest RTX 5090, screenshot to Telegram"
-
-```python
-# Hermes calls Browser MCP:
-mcp.browser.navigate("https://www.alza.sk")
-mcp.browser.fill("search", "RTX 5090")
-mcp.browser.click("search-button")
-mcp.browser.screenshot("/tmp/gpu-search.png")
-# Hermes sends screenshot to Telegram
-```
-
-## Kanban Board (ScarliHQ built-in)
-
-Issues created by Hermes, assigned to omp specialists:
-- TODO → IN_PROGRESS → REVIEW → DONE
-- Each issue has: description, assignee, branch, PR link
-- Review gates: omp cannot merge without Hermes approval
+| Profile | File | Description |
+|---------|------|-------------|
+| zmor | profiles/zmor.yaml | Admin, unlimited tokens |
+| hugo | profiles/hugo.yaml | Son, 100k tokens |
+| xox | profiles/xox.yaml | Daughter, 10k, kids-safe |
+| mon | profiles/mon.yaml | Wife, 50k tokens |

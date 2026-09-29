@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.7.5"
+VERSION="18.7.6"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -729,7 +729,10 @@ else
   # Architecture: ScarliHQ reads host-status.json (written by host-bridge timer), writes desired-mode.
   # No docker.sock, no scarlix-mode mount, no nvidia runtime → minimal privilege.
   if [ -f /opt/scarlix/scarlihq/Dockerfile ]; then
-    log "Building ScarliHQ dashboard image (scarlihq:latest, alpine)..."
+    # v18.7.6 P2: Versioned image tag (was: scarlihq:latest). Compose now references
+    # scarlihq:v18.7.6 — the literal tag here MUST match the image: line in
+    # scarlihq/docker-compose.yml, otherwise `docker compose up` re-builds as latest.
+    log "Building ScarliHQ dashboard image (scarlihq:v18.7.6, alpine)..."
     # v18.4 P0: SAFE parse SCARLIHQ_TOKEN from /etc/scarlix/.env (was: `source` → LPE on re-run)
     if [ -f /etc/scarlix/.env ]; then
       SCARLIHQ_TOKEN=$(grep '^SCARLIHQ_TOKEN=' /etc/scarlix/.env 2>/dev/null | cut -d= -f2 || echo "")
@@ -737,9 +740,13 @@ else
     # Export for compose (compose reads ${SCARLIHQ_TOKEN} from environment)
     export SCARLIHQ_TOKEN="${SCARLIHQ_TOKEN:-}"
     # v17.9.9 P2: pass VERSION as build-arg (Dockerfile injects via -ldflags -X main.Version)
-    if docker build --build-arg SCARLIX_VERSION="$VERSION" -t scarlihq:latest /opt/scarlix/scarlihq/ >> "$LOG_FILE" 2>&1; then
-      ok "ScarliHQ image built (scarlihq:latest, alpine ~20MB, version $VERSION)"
-      # Start dashboard on :8090 (compose references scarlihq:latest — matches build tag)
+    # v18.7.6 P2: image tag matches scarlihq/docker-compose.yml (was: scarlihq:latest).
+    if docker build --build-arg SCARLIX_VERSION="$VERSION" -t scarlihq:v18.7.6 /opt/scarlix/scarlihq/ >> "$LOG_FILE" 2>&1; then
+      ok "ScarliHQ image built (scarlihq:v18.7.6, alpine ~20MB, version $VERSION)"
+      # Start dashboard on :8090 (compose references scarlihq:v18.7.6 — matches build tag).
+      # v18.7.6 P2: --env-file /etc/scarlix/.env so compose picks up SCARLIHQ_TOKEN
+      # from the secrets file rather than relying on the install.sh export (was already
+      # correct — preserved here as the canonical pattern for future up -d re-runs).
       if docker compose --env-file /etc/scarlix/.env -f /opt/scarlix/scarlihq/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
         ok "ScarliHQ dashboard started on :8090"
         if [ -n "$SCARLIHQ_TOKEN" ]; then
