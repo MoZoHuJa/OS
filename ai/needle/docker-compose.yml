@@ -1,5 +1,6 @@
 services:
   needle-router:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: ghcr.io/cactus-compute/needle:latest
     container_name: needle-router
     restart: unless-stopped

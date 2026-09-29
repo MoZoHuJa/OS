@@ -94,7 +94,7 @@
     <div class="brand">
       <div class="logo">S</div>
       <div>
-        <h1>ScarliHQ <span class="ver">v17.9.9</span></h1>
+        <h1>ScarliHQ <span class="ver" id="dashboard-version">v18.7.4</span></h1>
         <div class="ver">SCARLIX OS — Sovereign AI Cloud Dashboard</div>
       </div>
     </div>
@@ -144,7 +144,7 @@
   </div>
 
   <footer>
-    SCARLIX OS v17.9.9 — ScarliHQ dashboard (host-bridge architecture) · Verified AI path: SGLang + vLLM + BeeLlama + Ollama fallback
+    SCARLIX OS <span class="ver" id="footer-version">v18.7.4</span> — ScarliHQ dashboard (host-bridge architecture) · Verified AI path: SGLang + vLLM + BeeLlama + Ollama fallback
   </footer>
 </div>
 <div class="toast" id="toast"></div>
@@ -352,10 +352,30 @@ async function pollStatus(){
   if(s) renderStatus(s);
 }
 
+// v18.7.4 P1: Dynamic version from /api/health (was: hardcoded v17.9.9 in HTML).
+// The backend's /api/health returns {"version":"v18.7.x"} with the version
+// injected via -ldflags -X main.Version from the VERSION file (single source
+// of truth). We update every .ver element with id^=dashboard-version or
+// id^=footer-version after a successful health fetch. On failure we leave
+// the static fallback (v18.7.4) in place — the dashboard still works, just
+// with a potentially-stale version label instead of a blank one.
+function refreshVersion(){
+  fetch('/api/health', {headers:{'Authorization':'Bearer '+TOKEN}})
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP '+r.status)))
+    .then(h => {
+      if(!h || !h.version) return;
+      const v = h.version.startsWith('v') ? h.version : 'v' + h.version;
+      document.querySelectorAll('.ver').forEach(el => { el.textContent = v; });
+    })
+    .catch(() => {}); // silently fail — static version is the fallback
+}
+
 function initApp(){
   // Verify token works, then start WS + polling
   fetch('/api/health', {headers:{'Authorization':'Bearer '+TOKEN}}).then(r=>{
     if(!r.ok){ showAuth('Token rejected'); return; }
+    // v18.7.4 P1: refresh version label from health response (single source of truth)
+    refreshVersion();
     connectWS();
     pollStatus();
     setInterval(pollStatus, 5000);

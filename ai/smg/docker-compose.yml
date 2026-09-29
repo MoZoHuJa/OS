@@ -1,5 +1,6 @@
 services:
   smg:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: ghcr.io/lightseekorg/smg:latest
     container_name: smg
     restart: unless-stopped

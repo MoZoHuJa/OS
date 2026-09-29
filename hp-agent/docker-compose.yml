@@ -88,6 +88,7 @@ services:
     networks: [scarlix-net]
 
   photoprism:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: photoprism/photoprism:latest
     container_name: photoprism
     restart: unless-stopped
@@ -104,6 +105,7 @@ services:
     networks: [scarlix-net]
 
   n8n:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: n8nio/n8n:latest
     container_name: n8n
     restart: unless-stopped

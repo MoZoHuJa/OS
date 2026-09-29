@@ -107,19 +107,26 @@ func statusJSON() []byte {
 // Net effect: SCARLIHQ_TOKEN no longer appears in URLs, browser history, referrer
 // headers, or reverse-proxy access logs.
 //
+// v18.7.4 P1: Ticket is now Peeked (validated WITHOUT consuming) BEFORE the
+// upgrader.Upgrade() call, and Consumed (deleted) only AFTER a successful
+// Upgrade. Was: ValidateWSTicket consumed the ticket atomically before Upgrade,
+// so any Upgrade/Origin/slots failure wasted the ticket and forced the client
+// to re-POST /api/ws-ticket — mild DoS amplifier and UX breakage on flaky WiFi.
+// The split (Peek + Consume) preserves the single-use replay-resistance guarantee:
+// Peek returns true for at most one concurrent caller because the first Consume
+// deletes the entry, and the second Peek returns false.
+//
 // authToken + mode + pf parameters are kept for signature stability (callers in main.go
-// pass them); they are unused here now since auth is delegated to api.ValidateWSTicket.
+// pass them); they are unused here now since auth is delegated to api.PeekWSTicket.
 func RegisterWS(mux *http.ServeMux, _ string, _ *scarlix_mode.Mode, _ *profiles.Manager) {
         mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-                // v18.7.3 P1: Validate short-lived WS ticket (was: permanent token in URL).
-                // Ticket is single-use: ValidateWSTicket consumes it atomically under mutex,
-                // so a replay (e.g. from a logged URL) fails with 401.
+                // v18.7.4 P1: Peek (check WITHOUT consume) before Upgrade (was: consume before Upgrade).
                 ticket := r.URL.Query().Get("ticket")
                 if ticket == "" {
                         http.Error(w, "missing ticket", http.StatusUnauthorized)
                         return
                 }
-                if !api.ValidateWSTicket(ticket) {
+                if !api.PeekWSTicket(ticket) {
                         http.Error(w, "invalid or expired ticket", http.StatusUnauthorized)
                         return
                 }
@@ -135,10 +142,16 @@ func RegisterWS(mux *http.ServeMux, _ string, _ *scarlix_mode.Mode, _ *profiles.
 
                 conn, err := upgrader.Upgrade(w, r, nil)
                 if err != nil {
-                        log.Printf("WS upgrade error: %v", err)
+                        log.Printf("WS upgrade error: %v (ticket not consumed — client may retry with same ticket)", err)
                         return
                 }
                 defer conn.Close()
+
+                // v18.7.4 P1: Consume ticket ONLY after successful Upgrade (was: consumed
+                // before Upgrade → wasted on Upgrade/Origin failure → client had to re-POST
+                // /api/ws-ticket). Single-use enforcement preserved: this is the first and
+                // only Consume; any concurrent WS connect that Peeks after this returns false.
+                api.ConsumeWSTicket(ticket)
 
                 log.Println("WS client connected")
 

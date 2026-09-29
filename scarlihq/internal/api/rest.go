@@ -6,6 +6,7 @@ import (
         "encoding/hex"
         "encoding/json"
         "net/http"
+        "os"
         "strings"
         "sync"
         "time"
@@ -18,7 +19,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "18.7.3"
+var Version = "18.7.4"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -34,13 +35,28 @@ var (
 // issueWSTicket generates a single-use WS ticket valid for wsTicketTTL.
 // Also sweeps any expired tickets so the map can't grow unboundedly under
 // repeated POST /api/ws-ticket calls without a WS connect.
+//
+// v18.7.4 P0: Returns "" on RNG failure (was: ignored → all-zeros ticket
+// "0000...0000" valid for 30s → single predictable ticket for any unauthed
+// caller who could guess the failure mode). Caller MUST treat "" as failure
+// and fail-closed (HTTP 500 — do NOT issue a predictable ticket).
+// Fallback: read 32 bytes from /dev/urandom directly. If that also fails
+// (e.g. container with no /dev/urandom mounted, chroot, seccomp block),
+// return "" so the handler returns 500 instead of issuing a weak ticket.
 func issueWSTicket() string {
         b := make([]byte, 32)
-        // v18.7.3 P1: crypto/rand.Read errors only if /dev/urandom is unavailable —
-        // in that case b is all-zeros and the resulting ticket is constant; acceptable
-        // failure mode (single predictable ticket that expires in 30s), better than
-        // blocking the request. Logged by Go runtime if /dev/urandom open fails.
-        _, _ = rand.Read(b)
+        // v18.7.4 P0: Handle RNG failure (was: `_, _ = rand.Read(b)` → b stays
+        // all-zeros → ticket = "0000...0000", constant, valid 30s, single-use
+        // enforcement defeated because anyone can predict it).
+        if _, err := rand.Read(b); err != nil {
+                // Fallback: read from /dev/urandom directly (Linux always has this;
+                // failure here means the runtime is broken in a way we can't recover).
+                urandom, ferr := os.ReadFile("/dev/urandom")
+                if ferr != nil || len(urandom) < 32 {
+                        return "" // signal failure to caller — handler returns 500
+                }
+                copy(b, urandom[:32])
+        }
         ticket := hex.EncodeToString(b)
         wsTicketsMu.Lock()
         now := time.Now()
@@ -54,10 +70,14 @@ func issueWSTicket() string {
         return ticket
 }
 
-// ValidateWSTicket validates AND consumes a single-use WS ticket.
-// Returns false if the ticket is unknown or already used (single-use guarantee).
-// Exported so the webui package can use it from /ws upgrade handler.
-func ValidateWSTicket(ticket string) bool {
+// PeekWSTicket checks if the ticket is known and not expired WITHOUT consuming it.
+// v18.7.4 P1: Split the old ValidateWSTicket (which deleted atomically) into
+// Peek + Consume so the WS handler can validate BEFORE upgrader.Upgrade() and
+// only consume AFTER a successful Upgrade. This avoids wasting tickets when
+// Upgrade/Origin/slots fail (was: ticket consumed before Upgrade → client had
+// to re-POST /api/ws-ticket on every Upgrade failure, mild DoS amplifier + UX
+// breakage for legit dashboards on flaky WiFi).
+func PeekWSTicket(ticket string) bool {
         if ticket == "" {
                 return false
         }
@@ -67,8 +87,23 @@ func ValidateWSTicket(ticket string) bool {
         if !ok {
                 return false
         }
-        delete(wsTickets, ticket) // single use — replay-resistant
         return time.Now().Before(expiry)
+}
+
+// ConsumeWSTicket deletes a ticket (single-use enforcement).
+// v18.7.4 P1: Called by the WS handler ONLY after a successful upgrader.Upgrade(),
+// so tickets are not wasted on Upgrade/Origin/slots failures.
+// Safe to call for an unknown ticket (no-op) — the only consequence is that a
+// duplicate Consume (race between concurrent WS connects with same ticket)
+// is tolerated; Peek already returned true for at most one of them since the
+// first Consume deletes the entry. The second Peek would have returned false.
+func ConsumeWSTicket(ticket string) {
+        if ticket == "" {
+                return
+        }
+        wsTicketsMu.Lock()
+        delete(wsTickets, ticket)
+        wsTicketsMu.Unlock()
 }
 
 // Handler holds dependencies for API routes.
@@ -263,12 +298,22 @@ func (h *Handler) listProfiles(w http.ResponseWriter, r *http.Request) {
 // Caller must already be authed (route is registered behind h.auth) — the bearer
 // token never appears in URLs/logs; only this 30s, single-use ticket does.
 // Returns {"ticket": "<64 hex chars>", "expires_in": 30}.
+//
+// v18.7.4 P0: Fail-closed on RNG failure (was: ignored → all-zeros ticket).
+// If issueWSTicket returns "", the runtime's RNG is unavailable and we must NOT
+// issue a predictable ticket — return HTTP 500 so the dashboard surfaces the
+// error rather than silently accepting a constant-ticket DoS vector.
 func (h *Handler) issueWSTicket(w http.ResponseWriter, r *http.Request) {
         if r.Method != http.MethodPost {
                 writeJSONError(w, http.StatusMethodNotAllowed, "use POST")
                 return
         }
         ticket := issueWSTicket()
+        if ticket == "" {
+                // v18.7.4 P0: RNG failure — fail-closed (was: all-zeros ticket valid 30s).
+                writeJSONError(w, http.StatusInternalServerError, "unable to generate secure ticket (RNG unavailable)")
+                return
+        }
         writeJSON(w, map[string]interface{}{
                 "ticket":     ticket,
                 "expires_in": int(wsTicketTTL / time.Second),

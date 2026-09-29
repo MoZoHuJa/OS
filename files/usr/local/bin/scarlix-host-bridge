@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v18.7.3 — Host Bridge (privileged ops for ScarliHQ dashboard)
+# SCARLIX OS v18.7.4 — Host Bridge (privileged ops for ScarliHQ dashboard)
 #
 # ARCHITECTURE (v18.0.0): ScarliHQ container has NO docker.sock, NO nvidia runtime.
 # It writes ONLY to /var/lib/scarlix/bridge-input/desired-mode (writable by nonroot 65532).
@@ -16,6 +16,13 @@
 #   P1: Input validation: ownership + symlink + type checks on desired-mode
 #       — was: no validation → root could follow symlink created by nonroot
 #   P1: No hardcoded version (reads from /etc/scarlix/VERSION)
+#
+# v18.7.4 P1: ATOMIC file read via scarlix-bridge-reader (Go binary).
+#   Old shell pattern (validate + cat + re-validate) had a TOCTOU window — ScarliHQ
+#   could swap the file between validate and read. New Go binary opens with
+#   O_NOFOLLOW, fstats the fd, validates UID/mode/type/size, and reads from the
+#   SAME fd — no TOCTOU window. Falls back to old shell pattern if Go binary
+#   isn't installed (install.sh Phase 4 build failure — non-fatal warn).
 #
 # This is the privilege boundary: ScarliHQ (untrusted, LAN-facing) → file → host bridge → root ops.
 set -uo pipefail
@@ -48,7 +55,7 @@ if ! chmod 700 "$STATE_DIR_ROOT" 2>/dev/null; then
     exit 1
 fi
 
-# v18.7.3 P1: Verify bridge-input integrity at every run (was: only checked at install time)
+# v18.7.4 P1: Verify bridge-input integrity at every run (was: only checked at install time)
 input_owner=$(stat -c '%u:%g' "$INPUT_DIR" 2>/dev/null || echo "?")
 input_mode=$(stat -c '%a' "$INPUT_DIR" 2>/dev/null || echo "?")
 if [ "$input_owner" != "65532:65532" ] || [ "$input_mode" != "700" ]; then
@@ -112,73 +119,100 @@ if [ -f "$RETRY_FILE" ]; then
 fi
 
 if [ -f "$DESIRED_MODE_FILE" ]; then
-    # v18.0.0 P1: Validate input file before reading (symlink/ownership/size checks)
-    if ! validate_input_file "$DESIRED_MODE_FILE"; then
-        # Rejected — delete it (don't process untrusted input)
-        rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
-        transition="rejected"
-        last_error="input validation failed (see /var/log/scarlix-host-bridge.log)"
-    else
-        # v18.7.3 P1: Read file content in ONE operation immediately after validate
-        # (was: separate stat validate + later tr read — TOCTOU window)
-        # Using cat to a variable minimizes the window — full atomicity needs Go helper
-        requested_mode=$(cat "$DESIRED_MODE_FILE" 2>/dev/null | tr -d '[:space:]' || echo "")
-        # v18.7.3 P1: Re-validate after read (detect if file was swapped between validate and read)
-        if ! validate_input_file "$DESIRED_MODE_FILE" 2>/dev/null; then
-            log_warn "REJECTED: $DESIRED_MODE_FILE changed between validate and read (TOCTOU detected)"
-            rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
-            transition="rejected"
-            last_error="TOCTOU detected: file changed between validate and read"
-            # v18.7.3 P1: Skip processing if TOCTOU detected
+    # v18.7.4 P1: Use atomic Go reader (was: cat + re-validate — shell TOCTOU).
+    # scarlix-bridge-reader opens the file with O_NOFOLLOW, fstats the fd,
+    # validates UID/mode/type/size, and reads from the SAME fd — no TOCTOU
+    # window between validate and read because the kernel holds the inode
+    # reference via the fd (rename/unlink/recreate of `path` cannot affect
+    # the read). Falls back to the v18.7.4 shell pattern if the Go binary
+    # isn't installed yet (build failure in install.sh Phase 4).
+    if [ -x /usr/local/bin/scarlix-bridge-reader ]; then
+        # Capture stderr separately so the log gets the rejection reason.
+        if requested_mode=$(/usr/local/bin/scarlix-bridge-reader "$DESIRED_MODE_FILE" 2>/tmp/sbr.err | tr -d '[:space:]'); then
+            :
+        else
             requested_mode=""
         fi
-
-        # v18.7.3 P1: Only process if not rejected by TOCTOU check
-        if [ -n "$requested_mode" ] && [ "$transition" != "rejected" ]; then
-        # Validate mode against whitelist
-        case "$requested_mode" in
-            ai|stop|game|creative|turbo|offline|tv)
-                if [ -x "$MODE_BIN" ]; then
-                    # v18.1 P0: capture exit code correctly (was: `|| true` masked rc to 0
-                    # → transition always "applied" even on failure → retry never triggered)
-                    # Note: script uses `set -uo pipefail` (NOT -e), so command substitution
-                    # assignment doesn't abort — rc is captured correctly without || true.
-                    # v18.0.0: SINGLE execution (was: ran twice on failure for error capture)
-                    mode_output=$("$MODE_BIN" "$requested_mode" 2>&1)
-                    mode_rc=$?
-                    echo "$mode_output" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
-
-                    if [ "$mode_rc" -eq 0 ]; then
-                        transition="applied"
-                        rm -f "$DESIRED_MODE_FILE" "$RETRY_FILE" 2>/dev/null || true
-                        last_error=""
-                        retry_count=0
-                    else
-                        retry_count=$((retry_count + 1))
-                        # v18.1: sanitize last_error — strip newlines, truncate to 500 chars
-                        last_error=$(printf '%s' "$mode_output" | tr '\n' ' ' | tr -d '\r' | head -c 500)
-                        if [ "$retry_count" -ge "$MAX_RETRIES" ]; then
-                            transition="failed"
-                            rm -f "$DESIRED_MODE_FILE" "$RETRY_FILE" 2>/dev/null || true
-                        else
-                            transition="retrying"
-                            printf 'count=%s\nerror=%s\n' "$retry_count" "$last_error" > "$RETRY_FILE" 2>/dev/null || true
-                        fi
-                    fi
-                else
-                    transition="failed"
-                    last_error="$MODE_BIN not found"
-                    rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
-                fi
-                ;;
-            *)
-                transition="failed"
-                last_error="invalid mode '$requested_mode' (valid: ai,stop,game,creative,turbo,offline,tv)"
+        if [ -z "$requested_mode" ]; then
+            # bridge-reader exited non-zero or output was empty — reject + log
+            sbr_err=$(tr '\n' ' ' < /tmp/sbr.err 2>/dev/null | head -c 500 || echo "unknown error")
+            log_warn "REJECTED: scarlix-bridge-reader: ${sbr_err:-file validation failed}"
+            rm -f "$DESIRED_MODE_FILE" /tmp/sbr.err 2>/dev/null || true
+            transition="rejected"
+            last_error="bridge-reader: ${sbr_err:-file validation failed (see /var/log/scarlix-host-bridge.log)}"
+        else
+            rm -f /tmp/sbr.err 2>/dev/null || true
+        fi
+    else
+        # Fallback: old validate + cat + re-validate (shell TOCTOU pattern).
+        # Used only when the Go binary isn't built yet (install.sh Phase 4
+        # failed for scarlix-bridge-reader — non-fatal warn, see install.sh).
+        if ! validate_input_file "$DESIRED_MODE_FILE"; then
+            rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
+            transition="rejected"
+            last_error="input validation failed (see /var/log/scarlix-host-bridge.log)"
+        else
+            # v18.7.4 P1: Read file content in ONE operation immediately after validate
+            # (was: separate stat validate + later tr read — TOCTOU window)
+            # Using cat to a variable minimizes the window — full atomicity needs Go helper
+            requested_mode=$(cat "$DESIRED_MODE_FILE" 2>/dev/null | tr -d '[:space:]' || echo "")
+            # v18.7.4 P1: Re-validate after read (detect if file was swapped between validate and read)
+            if ! validate_input_file "$DESIRED_MODE_FILE" 2>/dev/null; then
+                log_warn "REJECTED: $DESIRED_MODE_FILE changed between validate and read (TOCTOU detected)"
                 rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
-                ;;
-        esac
-        fi  # v18.7.3 P1: end TOCTOU guard
+                transition="rejected"
+                last_error="TOCTOU detected: file changed between validate and read (install scarlix-bridge-reader for atomic read)"
+                # v18.7.4 P1: Skip processing if TOCTOU detected
+                requested_mode=""
+            fi
+        fi
     fi
+
+    # v18.7.4 P1: Only process if not rejected by TOCTOU check / bridge-reader
+    if [ -n "$requested_mode" ] && [ "$transition" != "rejected" ]; then
+    # Validate mode against whitelist
+    case "$requested_mode" in
+        ai|stop|game|creative|turbo|offline|tv)
+            if [ -x "$MODE_BIN" ]; then
+                # v18.1 P0: capture exit code correctly (was: `|| true` masked rc to 0
+                # → transition always "applied" even on failure → retry never triggered)
+                # Note: script uses `set -uo pipefail` (NOT -e), so command substitution
+                # assignment doesn't abort — rc is captured correctly without || true.
+                # v18.0.0: SINGLE execution (was: ran twice on failure for error capture)
+                mode_output=$("$MODE_BIN" "$requested_mode" 2>&1)
+                mode_rc=$?
+                echo "$mode_output" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
+
+                if [ "$mode_rc" -eq 0 ]; then
+                    transition="applied"
+                    rm -f "$DESIRED_MODE_FILE" "$RETRY_FILE" 2>/dev/null || true
+                    last_error=""
+                    retry_count=0
+                else
+                    retry_count=$((retry_count + 1))
+                    # v18.1: sanitize last_error — strip newlines, truncate to 500 chars
+                    last_error=$(printf '%s' "$mode_output" | tr '\n' ' ' | tr -d '\r' | head -c 500)
+                    if [ "$retry_count" -ge "$MAX_RETRIES" ]; then
+                        transition="failed"
+                        rm -f "$DESIRED_MODE_FILE" "$RETRY_FILE" 2>/dev/null || true
+                    else
+                        transition="retrying"
+                        printf 'count=%s\nerror=%s\n' "$retry_count" "$last_error" > "$RETRY_FILE" 2>/dev/null || true
+                    fi
+                fi
+            else
+                transition="failed"
+                last_error="$MODE_BIN not found"
+                rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
+            fi
+            ;;
+        *)
+            transition="failed"
+            last_error="invalid mode '$requested_mode' (valid: ai,stop,game,creative,turbo,offline,tv)"
+            rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
+            ;;
+    esac
+    fi  # v18.7.4 P1: end rejection guard (TOCTOU or bridge-reader)
 
     # v18.0.0 P1: Persist last transition (survives timer cycles — diagnostic info not lost)
     printf 'requested=%s\nstate=%s\ntimestamp=%s\nretry_count=%s\nerror=%s\n' \
@@ -332,7 +366,7 @@ if ! mv -f "$STATUS_TMP" "$STATUS_FILE" 2>/dev/null; then
     rm -f "$STATUS_TMP" 2>/dev/null || true
     exit 1
 fi
-# v18.7.3 P2: chmod also fail-closed (was: || true → host-status.json stayed 600 from
+# v18.7.4 P2: chmod also fail-closed (was: || true → host-status.json stayed 600 from
 # mktemp if chmod failed, so non-root readers e.g. Caddy reverse-proxy got 403 →
 # dashboard showed stale "host-status.json not found" forever). Now log + exit 1
 # so the timer goes "failed" and scarlix-doctor surfaces it. (v18.7.2 P1 made the

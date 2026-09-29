@@ -1,5 +1,6 @@
 services:
   buzz-relay:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: ghcr.io/block/buzz-relay:latest
     container_name: buzz-relay
     restart: unless-stopped
@@ -40,6 +41,7 @@ services:
     networks: [scarlix-net]
 
   buzz-minio:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: minio/minio:latest
     container_name: buzz-minio
     restart: unless-stopped

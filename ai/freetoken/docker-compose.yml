@@ -11,6 +11,7 @@ version: "3.9"
 
 services:
   freetoken:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: freetoken/serving:latest
     container_name: freetoken
     restart: unless-stopped

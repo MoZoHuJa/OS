@@ -20,6 +20,7 @@ services:
     networks: [scarlix-net]
 
   otel-collector:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: otel/opentelemetry-collector-contrib:latest
     container_name: otel-collector
     restart: unless-stopped
@@ -28,6 +29,7 @@ services:
     networks: [scarlix-net]
 
   openlit:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: openlit/openlit:latest
     container_name: openlit
     restart: unless-stopped
@@ -37,6 +39,7 @@ services:
     profiles: [tracing]
 
   alertmanager:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: prom/alertmanager:latest
     container_name: alertmanager
     restart: unless-stopped

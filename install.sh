@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.7.3"
+VERSION="18.7.4"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -458,13 +458,60 @@ log "=== Phase 4: Copy SCARLIX files (fail-hard) ==="
 if is_checkpoint_valid phase4; then
   info "Phase 4 checkpoint valid — skipping."
 else
+  # v18.7.4 P1: Build scarlix-bridge-reader (host-side atomic Go file reader).
+  # Used by /usr/local/bin/scarlix-host-bridge to atomically read desired-mode
+  # (was: shell validate+cat+re-validate pattern with TOCTOU window). Build is
+  # non-fatal: on failure the host-bridge script falls back to the old shell
+  # pattern (with the TOCTOU window — acceptable for installs where Docker/Go
+  # are unavailable, e.g. minimal ISO rescue mode).
+  log "Building scarlix-bridge-reader (atomic Go file reader)..."
+  mkdir -p "$REPO_DIR/files/usr/local/bin"
+  SBR_SRC="$REPO_DIR/scarlihq/cmd/scarlix-bridge-reader/main.go"
+  SBR_OUT="$REPO_DIR/files/usr/local/bin/scarlix-bridge-reader"
+  if [ -f "$SBR_SRC" ]; then
+    if command -v go >/dev/null 2>&1; then
+      # Native Go build (host has Go installed — e.g. dev workstation).
+      if (cd "$REPO_DIR/scarlihq" && CGO_ENABLED=0 GOFLAGS=-mod=mod go build -o "$SBR_OUT" ./cmd/scarlix-bridge-reader) >> "$LOG_FILE" 2>&1; then
+        chmod 755 "$SBR_OUT"
+        ok "scarlix-bridge-reader built (native Go)"
+      else
+        warn "scarlix-bridge-reader native build failed — host-bridge will use shell fallback"
+      fi
+    elif command -v docker >/dev/null 2>&1; then
+      # Build via golang:1.23-alpine container (host has no Go but has Docker).
+      if docker run --rm \
+          -v "$REPO_DIR/scarlihq:/build" \
+          -w /build \
+          -e GOFLAGS=-mod=mod \
+          golang:1.23-alpine \
+          go build -o /build/files/usr/local/bin/scarlix-bridge-reader ./cmd/scarlix-bridge-reader \
+          >> "$LOG_FILE" 2>&1; then
+        chmod 755 "$SBR_OUT"
+        ok "scarlix-bridge-reader built (via golang:1.23-alpine container)"
+      else
+        warn "scarlix-bridge-reader container build failed — host-bridge will use shell fallback"
+      fi
+    else
+      warn "Neither Go nor Docker available — scarlix-bridge-reader not built (host-bridge will use shell fallback)"
+    fi
+  else
+    warn "scarlix-bridge-reader source not found ($SBR_SRC) — host-bridge will use shell fallback"
+  fi
+
   # Q10a: ALL file copy failures are crit (scarlix-mode, scarlix-wizard = core)
   # v17.9.8: added scarlix-host-bridge (privileged ops for ScarliHQ dashboard)
+  # v18.7.4 P2: added generate-sha256sums.sh (release integrity manifest generator)
+  # v18.7.4 P1: added scarlix-bridge-reader (atomic Go file reader — built above).
+  #   For scarlix-bridge-reader ONLY, missing file is warn (not crit) because the
+  #   build above may have failed and the host-bridge script has a shell fallback.
   log "Installing SCARLIX scripts (CRITICAL)..."
-  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge; do
+  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge generate-sha256sums.sh scarlix-bridge-reader; do
     src="$REPO_DIR/files/usr/local/bin/$binfile"
     if [ -f "$src" ]; then
       cp "$src" "/usr/local/bin/$binfile" && chmod 755 "/usr/local/bin/$binfile" && ok "/usr/local/bin/$binfile" || crit "$binfile copy failed"
+    elif [ "$binfile" = "scarlix-bridge-reader" ]; then
+      # v18.7.4 P1: bridge-reader build may have failed — non-fatal (shell fallback).
+      warn "scarlix-bridge-reader not built — host-bridge will use shell fallback (validate+cat+re-validate)"
     else
       crit "$binfile not found in repo"
     fi

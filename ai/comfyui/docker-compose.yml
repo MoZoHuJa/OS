@@ -1,5 +1,6 @@
 services:
   comfyui:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: ghcr.io/ai-dock/comfyui:latest
     container_name: comfyui
     restart: unless-stopped

@@ -9,6 +9,7 @@ version: "3.9"
 
 services:
   laya:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: laya/decision-engine:latest
     container_name: laya
     restart: unless-stopped

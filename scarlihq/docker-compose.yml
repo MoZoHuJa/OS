@@ -13,6 +13,7 @@
 services:
   scarlihq:
     build: .
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → locally-built, no supply-chain risk but reproducibility concern)
     image: scarlihq:latest
     container_name: scarlihq
     restart: unless-stopped
