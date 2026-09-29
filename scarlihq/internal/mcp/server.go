@@ -5,6 +5,7 @@ import (
         "encoding/json"
         "fmt"
         "net/http"
+        "strings"
 
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/guard"
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/profiles"
@@ -77,11 +78,13 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
                         writeRPCError(w, http.StatusServiceUnavailable, nil, -32000, "SCARLIHQ_TOKEN not configured")
                         return
                 }
+                // v18.6 P2: Only accept Bearer header (was: also accepted ?token= query param → leaked in logs)
                 token := r.Header.Get("Authorization")
-                if len(token) > 7 && token[:7] == "Bearer " {
-                        token = token[7:]
+                if strings.HasPrefix(token, "Bearer ") {
+                        token = strings.TrimPrefix(token, "Bearer ")
                 } else {
-                        token = r.URL.Query().Get("token")
+                        writeRPCError(w, http.StatusUnauthorized, nil, -32001, "invalid or missing token (use Authorization: Bearer)")
+                        return
                 }
                 // v18.0.0 P1: crypto/subtle.ConstantTimeCompare (was: custom secureCompare with !=)
                 if subtle.ConstantTimeCompare([]byte(token), []byte(s.authToken)) != 1 {
@@ -175,6 +178,11 @@ func (s *Server) handleToolCall(req rpcRequest) rpcResponse {
                 return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]string{"mode": s.mode.Current()}}
         case "scarlix_mode_set":
                 mode, _ := params.Arguments["mode"].(string)
+                // v18.6 P1: Check transition state (was: bypassed REST 409 check)
+                currentStatus := status.ReadOrStale()
+                if currentStatus.ModeTransition.State == "retrying" {
+                        return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32004, Message: "mode transition in progress (retrying), try again later"}}
+                }
                 if err := s.mode.Set(mode); err != nil {
                         return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32603, Message: err.Error()}}
                 }

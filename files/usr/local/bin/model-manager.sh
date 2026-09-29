@@ -40,6 +40,8 @@ load_env_safe() {
     # Skip comments, empty lines, and lines without =
     [[ "$key" =~ ^[[:space:]]*# ]] && continue
     [[ -z "$key" ]] && continue
+    # v18.6 P1: Validate key is a valid shell identifier (was: any key accepted → injection risk)
+    [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]] || continue
     # Export the value (no shell evaluation — just string assignment)
     export "$key=$value"
   done < "$envfile" 2>/dev/null || true

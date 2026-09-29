@@ -5,6 +5,7 @@ import (
         "log"
         "net/http"
         "os"
+        "time" // v18.6 P1: explicit server timeouts
 
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/api"
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/guard"
@@ -18,7 +19,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "18.5.3"
+var Version = "18.6"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -75,7 +76,17 @@ func main() {
         log.Printf("MCP (JSON-RPC): http://localhost:%s/mcp  (Bearer token)", port)
         log.Printf("WebSocket:   ws://localhost:%s/ws?token=<SCARLIHQ_TOKEN>", port)
 
-        if err := http.ListenAndServe(":"+port, mux); err != nil {
+        // v18.6 P1: Explicit HTTP server timeouts (was: ListenAndServe with no timeouts → slow-client DoS)
+        srv := &http.Server{
+                Addr:              ":" + port,
+                Handler:           mux,
+                ReadHeaderTimeout: 5 * time.Second,
+                ReadTimeout:       15 * time.Second,
+                WriteTimeout:      30 * time.Second,
+                IdleTimeout:       60 * time.Second,
+                MaxHeaderBytes:    1 << 20, // 1MB
+        }
+        if err := srv.ListenAndServe(); err != nil {
                 log.Fatalf("Server failed: %v", err)
         }
 }

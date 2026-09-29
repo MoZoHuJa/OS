@@ -3,7 +3,7 @@ services:
     image: ghcr.io/cactus-compute/needle:latest
     container_name: needle-router
     restart: unless-stopped
-    ports: ["127.0.0.1:11440:11440"]
+    ports: ["127.0.0.1:11441:11440"]
     volumes:
       - ./data:/root/.needle
       - /models:/models:ro

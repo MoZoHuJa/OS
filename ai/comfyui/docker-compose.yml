@@ -3,7 +3,7 @@ services:
     image: ghcr.io/ai-dock/comfyui:latest
     container_name: comfyui
     restart: unless-stopped
-    ports: ["8188:8188"]
+    ports: ["127.0.0.1:8188:8188"]
     volumes:
       - /var/lib/scarlix/comfyui/models:/ComfyUI/models
       - /var/lib/scarlix/comfyui/output:/ComfyUI/output

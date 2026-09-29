@@ -16,7 +16,7 @@ services:
     restart: unless-stopped
     profiles: ["moe"]  # Experimental — only starts with --profile moe
     ports:
-      - "8090:8000"
+      - "127.0.0.1:8091:8000"
     volumes:
       - /models:/models:ro
       - ./ftw-models:/app/ftw-models

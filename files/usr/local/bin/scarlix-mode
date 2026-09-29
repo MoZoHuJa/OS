@@ -343,9 +343,15 @@ healthcheck_and_restart() {
 
   # v18.5.2 P1: Return 1 if no inference engine running (was: always implicit 0)
   local any_ok=0
+  # v18.6 P1: Check healthy, not just running (was: running+unhealthy counted as OK)
   for c in sglang vllm beellama ollama-agent; do
     st=$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo "not_found")
-    [ "$st" = "running" ] && any_ok=1
+    [ "$st" = "not_found" ] && continue
+    health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null || echo "none")
+    # unhealthy → NOT ok; healthy or no healthcheck → ok if running
+    if [ "$st" = "running" ] && [ "$health" != "unhealthy" ]; then
+        any_ok=1
+    fi
   done
   if [ "$any_ok" -eq 0 ]; then
     log "ERROR: healthcheck — no inference engine running"
@@ -561,8 +567,15 @@ case "$MODE" in
       exit 1
     fi
     if $DC -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
-      log "  ✓ BeeLlama started"
-      echo "offline" | tee "$STATE_FILE" >/dev/null
+      # v18.6 P1: Wait for healthy before writing state (was: up -d → immediate "offline")
+      if wait_for_healthy "beellama" 120; then
+        log "  ✓ BeeLlama started"
+        echo "offline" | tee "$STATE_FILE" >/dev/null
+      else
+        log "ERROR: BeeLlama not healthy after 120s"
+        echo "failed" | tee "$STATE_FILE" >/dev/null
+        exit 1
+      fi
     else
       log "ERROR: BeeLlama failed to start"
       echo "failed" | tee "$STATE_FILE" >/dev/null
@@ -571,16 +584,23 @@ case "$MODE" in
     ;;
   tv)
     log "=== TV mode (Docker Sunshine) ==="
-    # v18.5 P2: ensure .env exists before $DC
     [ -f "$ENV_FILE" ] || load_model_paths
-    $DC -f /opt/scarlix/gaming/docker-compose.yml --profile tv up -d
-    # v18.5 P1: systemctl needs root — if user, try sudo
-    if [ "$(id -u)" -eq 0 ]; then
-      systemctl start scarlix-tv-mode.service 2>/dev/null || true
-    else
-      sudo systemctl start scarlix-tv-mode.service 2>/dev/null || true
+    # v18.6 P1: fail-closed (was: compose/systemctl fail → still wrote "tv")
+    tv_ok=0
+    if $DC -f /opt/scarlix/gaming/docker-compose.yml --profile tv up -d >> "$LOG_FILE" 2>&1; then
+      if [ "$(id -u)" -eq 0 ]; then
+        systemctl start scarlix-tv-mode.service 2>/dev/null && tv_ok=1
+      else
+        sudo systemctl start scarlix-tv-mode.service 2>/dev/null && tv_ok=1
+      fi
     fi
-    echo "tv" | tee "$STATE_FILE" >/dev/null
+    if [ "$tv_ok" -eq 1 ]; then
+      echo "tv" | tee "$STATE_FILE" >/dev/null
+    else
+      log "ERROR: TV mode failed to start (compose or systemctl)"
+      echo "failed" | tee "$STATE_FILE" >/dev/null
+      exit 1
+    fi
     ;;
   vram|vram-check)
     show_vram
