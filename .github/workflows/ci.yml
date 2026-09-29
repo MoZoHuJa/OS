@@ -136,14 +136,18 @@ jobs:
           mkdir -p /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
           sudo chown -R 65532:65532 /tmp/scarlix-test/bridge-input
           chmod 700 /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
-          echo '{"timestamp":"test","version":"18.0.0","mode":"unknown","mode_transition":{"requested":"","state":"none","retry_count":0,"last_error":"","last_timestamp":""},"gpus":[],"containers":[],"disk":{}}' > /tmp/scarlix-test/host-status.json
+          # v18.5.1: use valid RFC3339 timestamp (was: "test" → stale=true, but shouldn't break)
+          TS=$(date -Iseconds)
+          echo "{\"timestamp\":\"$TS\",\"version\":\"18.5.1\",\"mode\":\"unknown\",\"mode_transition\":{\"requested\":\"\",\"state\":\"none\",\"retry_count\":0,\"last_error\":\"\",\"last_timestamp\":\"\"},\"gpus\":[],\"containers\":[],\"disk\":{}}" > /tmp/scarlix-test/host-status.json
           docker run -d --name scarlihq-test -p 8090:8090 \
             -e SCARLIHQ_TOKEN=test-token \
             -v /tmp/scarlix-test:/var/lib/scarlix:ro \
             -v /tmp/scarlix-test/bridge-input:/var/lib/scarlix/bridge-input:rw \
             scarlihq:ci
-          sleep 3
-          docker ps --filter name=scarlihq-test --format '{{.Status}}'
+          sleep 5
+          # v18.5.1: print container status + logs for debugging
+          docker ps -a --filter name=scarlihq-test --format '{{.Status}}'
+          docker logs scarlihq-test 2>&1 | head -20
           # Health: no token → 401, with token → 200
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health || echo "000")
           echo "Health (no token): HTTP $HTTP_CODE (expected 401)"
