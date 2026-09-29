@@ -31,6 +31,7 @@ package main
 
 import (
         "fmt"
+        "io"
         "os"
         "syscall"
 )
@@ -129,16 +130,29 @@ func main() {
         // Read from the SAME fd — atomic with the fstat above (kernel holds
         // the inode reference via the fd; rename/unlink/recreate of `path`
         // cannot affect this read).
+        //
+        // v18.7.5 P1: Use io.ReadFull for guaranteed full read (was: single
+        // syscall.Read may return fewer bytes than requested on certain FS
+        // paths/conditions — e.g. a file written with O_DIRECT or a CIFS mount
+        // can return a short read mid-file. The previous code wrote only the
+        // first `n` bytes to stdout, silently truncating the mode string →
+        // scarlix-mode would receive a partial name → mode switch fails with
+        // "invalid mode" even though the file content was correct).
+        // io.ReadFull loops on the underlying Read until the buffer is full
+        // OR EOF/ErrUnexpectedEOF — for a regular file of size N we get exactly
+        // N bytes unless the file was truncated between fstat and read.
+        file := os.NewFile(uintptr(fd), path)
         buf := make([]byte, int(st.Size))
-        n, err := syscall.Read(fd, buf)
-        if err != nil {
+        n, err := io.ReadFull(file, buf)
+        if err != nil && err != io.ErrUnexpectedEOF {
                 fmt.Fprintf(os.Stderr, "read: %v\n", err)
                 os.Exit(1)
         }
-
-        // Print content to stdout (the mode string, e.g. "ai\n").
-        // The host-bridge script does `tr -d '[:space:]'` on our output, so
-        // a trailing newline from the file content is fine.
+        // If we got fewer bytes than expected (ErrUnexpectedEOF — file was
+        // truncated between fstat and read), use what we got. The host-bridge
+        // script trims whitespace, so a partial mode name will still be
+        // rejected downstream by the mode validator — but at least we don't
+        // silently truncate.
         if _, err := os.Stdout.Write(buf[:n]); err != nil {
                 fmt.Fprintf(os.Stderr, "stdout write: %v\n", err)
                 os.Exit(1)

@@ -19,7 +19,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "18.7.4"
+var Version = "18.7.5"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -43,7 +43,8 @@ func main() {
         mux := http.NewServeMux()
 
         // Dashboard HTML (served WITHOUT auth — it's a shell that needs a token to act).
-        // JS reads ?token= from URL; without it, shows a token-entry form.
+        // v18.7.5 P0: JS reads token from sessionStorage only (was: also from ?token= URL).
+        // Without it, shows a token-entry form (paste-once-per-session via auth gate).
         mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
                 if r.URL.Path != "/" {
                         http.NotFound(w, r)
@@ -71,7 +72,11 @@ func main() {
         }
 
         log.Printf("ScarliHQ %s listening on :%s", Version, port)
-        log.Printf("Dashboard:   http://localhost:%s/?token=<SCARLIHQ_TOKEN>", port)
+        // v18.7.5 P0: Removed ?token=<SCARLIHQ_TOKEN> from dashboard URL hint
+        // (was: permanent token in URL → leaked in browser history/referrer/proxy logs).
+        // Users now log in via the auth gate (token pasted once per browser session,
+        // stored in sessionStorage — never in URL).
+        log.Printf("Dashboard: http://localhost:%s/ (login with token from /etc/scarlix/.env)", port)
         log.Printf("REST API:    http://localhost:%s/api/*  (Bearer token)", port)
         log.Printf("MCP (JSON-RPC): http://localhost:%s/mcp  (Bearer token)", port)
         log.Printf("WebSocket:   ws://localhost:%s/ws?ticket=<one-time>  (POST /api/ws-ticket to obtain)", port)

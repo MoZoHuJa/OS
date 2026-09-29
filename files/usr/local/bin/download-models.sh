@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.7.4 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v18.7.5 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
 # v18.5 FIXES:
 #   - Missing Ollama compose file = FAILED (was: silently skipped → false "complete")
@@ -40,7 +40,7 @@ exec 9>"$MODELS_LOCK"
 flock -n -x 9 || { echo "ERROR: cannot acquire models lock (scarlix-mode or model-manager running?)" >&2; exit 1; }
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v18.7.4 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v18.7.5 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing
@@ -80,7 +80,7 @@ check_disk_space() {
 if [ ! -f "$VENV_DIR/bin/huggingface-cli" ]; then
   echo "Setting up Python venv for huggingface-cli..." | tee -a "$LOG_FILE"
   python -m venv "$VENV_DIR" >> "$LOG_FILE" 2>&1
-  # v18.7.4 P2: Exact dependency pinning (was: range >=0.25,<0.27 → not reproducible)
+  # v18.7.5 P2: Exact dependency pinning (was: range >=0.25,<0.27 → not reproducible)
   "$VENV_DIR/bin/pip" install "pip==24.3.1" "huggingface_hub[cli]==0.26.2" >> "$LOG_FILE" 2>&1 || { echo "ERROR: huggingface_hub install failed"; exit 1; }
 fi
 HF_CLI="$VENV_DIR/bin/huggingface-cli"
