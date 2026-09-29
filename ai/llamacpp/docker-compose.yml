@@ -1,4 +1,4 @@
-# SCARLIX OS v17.5.1 — BeeLlama.cpp / llama.cpp (Tier-4, CPU offline fallback)
+# SCARLIX OS v18.5.2 — BeeLlama.cpp / llama.cpp (Tier-4, CPU offline fallback)
 # v17.5.1 FIX: Uses CPU image (server, not server-cuda) for true CPU offline fallback.
 #   server-cuda requires NVIDIA runtime which may not be available in offline mode.
 # Model path from env var ${LLAMACPP_MODEL_PATH}

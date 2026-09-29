@@ -155,22 +155,27 @@ else
     echo "  ✗ Ollama compose file missing: $COMPOSE_FILE" | tee -a "$LOG_FILE"
     FAILED=$((FAILED+1))
   else
-    docker compose -f "$COMPOSE_FILE" up -d >> "$LOG_FILE" 2>&1 || true
-    # Wait for Ollama API to be ready (max 60s)
-    echo "  Waiting for Ollama API..." | tee -a "$LOG_FILE"
-    for i in $(seq 1 12); do
-      if curl -sf http://localhost:11435/api/tags >/dev/null 2>&1 || curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
-        echo "  Ollama API ready" | tee -a "$LOG_FILE"
-        break
-      fi
-      sleep 5
-    done
-    # Pull model via ollama-agent container
-    if docker exec ollama-agent ollama pull "$OLLAMA_MODEL" >> "$LOG_FILE" 2>&1; then
-      echo "  ✓ Ollama model pulled: $OLLAMA_MODEL" | tee -a "$LOG_FILE"
-    else
-      echo "  ✗ Ollama pull FAILED" | tee -a "$LOG_FILE"
+    # v18.5.2 P1: Don't mask docker compose failure (was: || true → continued → 60s wait → docker exec fail)
+    if ! docker compose -f "$COMPOSE_FILE" up -d >> "$LOG_FILE" 2>&1; then
+      echo "  ✗ Ollama container startup FAILED" | tee -a "$LOG_FILE"
       FAILED=$((FAILED+1))
+    else
+      # Wait for Ollama API to be ready (max 60s)
+      echo "  Waiting for Ollama API..." | tee -a "$LOG_FILE"
+      for i in $(seq 1 12); do
+        if curl -sf http://localhost:11435/api/tags >/dev/null 2>&1 || curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+          echo "  Ollama API ready" | tee -a "$LOG_FILE"
+          break
+        fi
+        sleep 5
+      done
+      # Pull model via ollama-agent container
+      if docker exec ollama-agent ollama pull "$OLLAMA_MODEL" >> "$LOG_FILE" 2>&1; then
+        echo "  ✓ Ollama model pulled: $OLLAMA_MODEL" | tee -a "$LOG_FILE"
+      else
+        echo "  ✗ Ollama pull FAILED" | tee -a "$LOG_FILE"
+        FAILED=$((FAILED+1))
+      fi
     fi
   fi
 fi

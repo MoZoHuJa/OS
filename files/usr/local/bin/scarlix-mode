@@ -305,7 +305,13 @@ healthcheck_and_restart() {
           beellama) compose_file="/opt/scarlix/ai/llamacpp/docker-compose.yml" ;;
           *) continue ;;
         esac
-        $DC -f "$compose_file" up -d --force-recreate >> "$LOG_FILE" 2>&1 && log "  ✓ $container recreated" || log "  ✗ $container recreate failed"
+        if $DC -f "$compose_file" up -d --force-recreate >> "$LOG_FILE" 2>&1; then
+          log "  ✓ $container recreated"
+        else
+          log "  ✗ $container recreate failed"
+          # v18.5.2 P2: Update recreate_success (was: only logged, didn't update flag)
+          recreate_success=false
+        fi
       else
         log "  ✓ $container: running ($health)"
       fi
@@ -334,6 +340,18 @@ healthcheck_and_restart() {
       log "  ℹ ollama-agent: stopped (SGLang or vLLM running — not needed)"
     fi
   fi
+
+  # v18.5.2 P1: Return 1 if no inference engine running (was: always implicit 0)
+  local any_ok=0
+  for c in sglang vllm beellama ollama-agent; do
+    st=$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo "not_found")
+    [ "$st" = "running" ] && any_ok=1
+  done
+  if [ "$any_ok" -eq 0 ]; then
+    log "ERROR: healthcheck — no inference engine running"
+    return 1
+  fi
+  return 0
 }
 
 # Start verified AI path
@@ -411,7 +429,7 @@ start_verified_ai() {
     fi
   else
     log "  ℹ Primary engine running — Ollama skipped (saves RAM)"
-    ollama_ok=1
+    # v18.5.2 P2: Don't set ollama_ok=1 (was: misleading — Ollama isn't running)
   fi
 
   # v18.5 P1: Return non-zero if NO inference engine is healthy (was: always implicit 0).
@@ -432,8 +450,13 @@ case "$MODE" in
       log "Mode was 'stopped' — starting AI fresh..."
     elif [ "$CURRENT_MODE" = "ai" ]; then
       log "Already in AI mode — healthchecking (with .env regen)..."
-      healthcheck_and_restart
-      exit 0
+      if healthcheck_and_restart; then
+        exit 0
+      else
+        log "ERROR: healthcheck failed — no engine running"
+        echo "failed" | tee "$STATE_FILE" >/dev/null
+        exit 1
+      fi
     fi
 
     log "Starting verified AI path..."
@@ -469,17 +492,20 @@ case "$MODE" in
     [[ "$CURRENT_MODE" = "game" ]] && { log "Already in Game mode."; exit 0; }
     log "=== GAME mode (native Sunshine) ==="
     dump_vram
-    # v18.5 P1: systemctl needs root — if user (non-root), try sudo with clear error.
-    # Was (v18.5): removed sudo → user `scarlix-mode game` fails silently on systemctl.
+    # v18.5.2 P1: fail-closed (was: systemctl fail → still wrote "game")
+    game_ok=0
     if [ "$(id -u)" -eq 0 ]; then
-      systemctl start sunshine
+      systemctl start sunshine 2>/dev/null && game_ok=1
     else
-      sudo systemctl start sunshine 2>/dev/null || {
-        log "WARN: systemctl start sunshine needs root. Use: sudo scarlix-mode game"
-        log "       Or run via host-bridge (dashboard button)."
-      }
+      sudo systemctl start sunshine 2>/dev/null && game_ok=1
     fi
-    echo "game" | tee "$STATE_FILE" >/dev/null
+    if [ "$game_ok" -eq 1 ]; then
+      echo "game" | tee "$STATE_FILE" >/dev/null
+    else
+      log "ERROR: sunshine start failed — is sunshine.service installed?"
+      echo "failed" | tee "$STATE_FILE" >/dev/null
+      exit 1
+    fi
     ;;
   creative)
     [[ "$CURRENT_MODE" = "creative" ]] && { log "Already in Creative mode."; exit 0; }
@@ -493,10 +519,18 @@ case "$MODE" in
     fi
     # v18.5 P2: ensure .env exists before $DC (creative may run without prior scarlix-mode ai)
     [ -f "$ENV_FILE" ] || load_model_paths
-    $DC -f /opt/scarlix/ai/comfyui/docker-compose.yml --profile creative up -d
+    # v18.5.2 P1: fail-closed — at least ComfyUI must succeed
+    creative_ok=0
+    $DC -f /opt/scarlix/ai/comfyui/docker-compose.yml --profile creative up -d >> "$LOG_FILE" 2>&1 && creative_ok=1
     $DC -f /opt/scarlix/ai/video/docker-compose.yml --profile creative up -d 2>/dev/null || true
     $DC -f /opt/scarlix/ai/musicgen/docker-compose.yml --profile creative up -d 2>/dev/null || true
-    echo "creative" | tee "$STATE_FILE" >/dev/null
+    if [ "$creative_ok" -eq 1 ]; then
+      echo "creative" | tee "$STATE_FILE" >/dev/null
+    else
+      log "ERROR: ComfyUI failed to start"
+      echo "failed" | tee "$STATE_FILE" >/dev/null
+      exit 1
+    fi
     ;;
   turbo)
     log "=== TURBO mode (SGLang + vLLM + BeeLlama, max) ==="
@@ -514,20 +548,26 @@ case "$MODE" in
   offline)
     log "=== OFFLINE mode (BeeLlama CPU, q4_0 KV) ==="
     dump_vram
-    # v18.5 P1: systemctl needs root — if user, try sudo
     if [ "$(id -u)" -eq 0 ]; then
       systemctl stop sunshine 2>/dev/null || true
     else
       sudo systemctl stop sunshine 2>/dev/null || true
     fi
     load_model_paths
-    if check_model_exists "llama.cpp" "$LLAMACPP_MODEL_PATH"; then
-      $DC -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d && log "  ✓ BeeLlama started"
-    else
+    # v18.5.2 P1: fail-closed if model missing (was: always wrote "offline")
+    if ! check_model_exists "llama.cpp" "$LLAMACPP_MODEL_PATH"; then
       log "ERROR: BeeLlama model not found: $LLAMACPP_MODEL_PATH"
-      log "  Run: download-models.sh"
+      echo "failed" | tee "$STATE_FILE" >/dev/null
+      exit 1
     fi
-    echo "offline" | tee "$STATE_FILE" >/dev/null
+    if $DC -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
+      log "  ✓ BeeLlama started"
+      echo "offline" | tee "$STATE_FILE" >/dev/null
+    else
+      log "ERROR: BeeLlama failed to start"
+      echo "failed" | tee "$STATE_FILE" >/dev/null
+      exit 1
+    fi
     ;;
   tv)
     log "=== TV mode (Docker Sunshine) ==="

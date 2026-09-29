@@ -135,9 +135,13 @@ if ! command -v docker >/dev/null 2>&1; then
 else
   # Check if ollama-agent container exists + is running
   OLLAMA_STATUS=$(docker inspect -f '{{.State.Status}}' ollama-agent 2>/dev/null || echo "not_found")
-  if [ "$OLLAMA_STATUS" != "running" ]; then
-    log "⚠ ollama-agent container not running (status: $OLLAMA_STATUS) — skipping Ollama"
+  if [ "$OLLAMA_STATUS" = "not_found" ]; then
+    log "⚠ ollama-agent container not found — skipping Ollama"
     OLLAMA_FAILED=$((OLLAMA_FAILED + 1))
+  elif [ "$OLLAMA_STATUS" != "running" ]; then
+    # v18.5.2 P1: stopped Ollama is OK (SGLang may be primary) — was: counted as FAILED
+    log "  ℹ ollama-agent stopped (status: $OLLAMA_STATUS) — skipping (SGLang primary?)"
+    # Don't increment OLLAMA_FAILED — stopped ≠ failed
   else
     OLLAMA_MODEL=$(yq '.ollama.model' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "")
     # v18.5.1: fix SC2066 (was: `for model in "$OLLAMA_MODEL"` — double-quoted = no word-split = loop runs once)
@@ -181,6 +185,8 @@ if [ "$TOTAL_FAILED" -gt 0 ]; then
   send_telegram "🚨 $SUMMARY
 
 ⚠️ $TOTAL_FAILED failed — check /var/log/scarlix/model-manager.log"
+  log "Model Manager FAILED: $TOTAL_FAILED operation(s) failed"
+  exit 1
 elif [ "$HF_UPDATED" -gt 0 ] || [ "$OLLAMA_UPDATED" -gt 0 ]; then
   send_telegram "$SUMMARY"
 else

@@ -1,4 +1,4 @@
-# SCARLIX OS v17.9.8 — ScarliHQ Dashboard compose (host-bridge architecture)
+# SCARLIX OS v18.5.2 — ScarliHQ Dashboard compose (host-bridge architecture)
 # v17.9.8 ARCHITECTURE: ScarliHQ has NO privileged host access.
 #   - Reads /var/lib/scarlix/host-status.json (written by scarlix-host-bridge timer on host)
 #   - Reads /var/lib/scarlix/current-mode (written by scarlix-mode on host)
