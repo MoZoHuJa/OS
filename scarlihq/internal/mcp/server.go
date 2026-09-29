@@ -189,21 +189,20 @@ func (s *Server) handleToolCall(req rpcRequest) rpcResponse {
                 return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]string{"mode": s.mode.Current()}}
         case "scarlix_mode_set":
                 mode, _ := params.Arguments["mode"].(string)
-                // v18.7.2 P0: Set() now uses O_EXCL — no separate os.Stat() check needed.
-                // (was: separate os.Stat + retrying + Set → race window between Stat and Write)
-                // v18.6 P1: Check transition state (was: bypassed REST 409 check)
-                currentStatus := status.ReadOrStale()
-                if currentStatus.ModeTransition.State == "retrying" {
-                        return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32004, Message: "mode transition in progress (retrying), try again later"}}
-                }
-                if err := s.mode.Set(mode); err != nil {
+                // v18.7.3 P1: Centralized mode request (was: duplicate retrying check + Set()
+                // here in MCP and again in REST modeHandler). scarlix_mode.Mode.Request() now
+                // does both the transition-state check (from host-status.json) AND the atomic
+                // O_EXCL reservation via Set(). The error string discriminates which check
+                // failed so we can map it to the right JSON-RPC error code.
+                if err := s.mode.Request(mode); err != nil {
                         code := -32603 // Internal error (default)
-                        if strings.Contains(err.Error(), "already pending") {
-                                code = -32004 // Resource busy
-                        } else if strings.Contains(err.Error(), "invalid mode") {
+                        msg := err.Error()
+                        if strings.Contains(msg, "already pending") || strings.Contains(msg, "in progress (retrying)") {
+                                code = -32004 // Resource busy (matches REST 409 semantics)
+                        } else if strings.Contains(msg, "invalid mode") {
                                 code = -32602 // Invalid params
                         }
-                        return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: code, Message: err.Error()}}
+                        return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: code, Message: msg}}
                 }
                 return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]string{"status": "accepted", "mode": mode}}
         case "scarlix_gpu_status":

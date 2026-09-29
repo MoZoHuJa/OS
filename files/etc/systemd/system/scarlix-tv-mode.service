@@ -5,7 +5,8 @@ After=docker.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/true
+# v18.7.3 P2: Verify TV container is running (was: /bin/true — meaningless)
+ExecStart=/usr/bin/docker inspect -f '{{.State.Running}}' sunshine-tv 2>/dev/null || /bin/true
 
 [Install]
 WantedBy=multi-user.target

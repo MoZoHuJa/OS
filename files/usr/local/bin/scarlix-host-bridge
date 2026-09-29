@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v18.7.2 — Host Bridge (privileged ops for ScarliHQ dashboard)
+# SCARLIX OS v18.7.3 — Host Bridge (privileged ops for ScarliHQ dashboard)
 #
 # ARCHITECTURE (v18.0.0): ScarliHQ container has NO docker.sock, NO nvidia runtime.
 # It writes ONLY to /var/lib/scarlix/bridge-input/desired-mode (writable by nonroot 65532).
@@ -45,6 +45,14 @@ if ! chown root:root "$STATE_DIR_ROOT" 2>/dev/null; then
 fi
 if ! chmod 700 "$STATE_DIR_ROOT" 2>/dev/null; then
     echo "[$(date '+%H:%M:%S')] FATAL: cannot chmod 700 $STATE_DIR_ROOT — aborting" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
+    exit 1
+fi
+
+# v18.7.3 P1: Verify bridge-input integrity at every run (was: only checked at install time)
+input_owner=$(stat -c '%u:%g' "$INPUT_DIR" 2>/dev/null || echo "?")
+input_mode=$(stat -c '%a' "$INPUT_DIR" 2>/dev/null || echo "?")
+if [ "$input_owner" != "65532:65532" ] || [ "$input_mode" != "700" ]; then
+    echo "[$(date '+%H:%M:%S')] FATAL: bridge-input integrity compromised (owner=$input_owner, mode=$input_mode, expected 65532:65532/700)" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
     exit 1
 fi
 
@@ -111,11 +119,22 @@ if [ -f "$DESIRED_MODE_FILE" ]; then
         transition="rejected"
         last_error="input validation failed (see /var/log/scarlix-host-bridge.log)"
     else
-        # v18.3 P0: TOCTOU mitigation — read content IMMEDIATELY after validate (was: separate read later).
-        # While not fully atomic (shell can't do O_NOFOLLOW+fstat+read on same FD), this minimizes
-        # the window between validation and use. For full atomicity, a Go helper binary would be needed.
-        requested_mode=$(tr -d '[:space:]' < "$DESIRED_MODE_FILE" 2>/dev/null || echo "")
+        # v18.7.3 P1: Read file content in ONE operation immediately after validate
+        # (was: separate stat validate + later tr read — TOCTOU window)
+        # Using cat to a variable minimizes the window — full atomicity needs Go helper
+        requested_mode=$(cat "$DESIRED_MODE_FILE" 2>/dev/null | tr -d '[:space:]' || echo "")
+        # v18.7.3 P1: Re-validate after read (detect if file was swapped between validate and read)
+        if ! validate_input_file "$DESIRED_MODE_FILE" 2>/dev/null; then
+            log_warn "REJECTED: $DESIRED_MODE_FILE changed between validate and read (TOCTOU detected)"
+            rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
+            transition="rejected"
+            last_error="TOCTOU detected: file changed between validate and read"
+            # v18.7.3 P1: Skip processing if TOCTOU detected
+            requested_mode=""
+        fi
 
+        # v18.7.3 P1: Only process if not rejected by TOCTOU check
+        if [ -n "$requested_mode" ] && [ "$transition" != "rejected" ]; then
         # Validate mode against whitelist
         case "$requested_mode" in
             ai|stop|game|creative|turbo|offline|tv)
@@ -158,6 +177,7 @@ if [ -f "$DESIRED_MODE_FILE" ]; then
                 rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
                 ;;
         esac
+        fi  # v18.7.3 P1: end TOCTOU guard
     fi
 
     # v18.0.0 P1: Persist last transition (survives timer cycles — diagnostic info not lost)
@@ -312,6 +332,11 @@ if ! mv -f "$STATUS_TMP" "$STATUS_FILE" 2>/dev/null; then
     rm -f "$STATUS_TMP" 2>/dev/null || true
     exit 1
 fi
-chmod 644 "$STATUS_FILE" 2>/dev/null || true
+# v18.7.3 P2: chmod also fail-closed (was: || true → host-status.json stayed 600 from
+# mktemp if chmod failed, so non-root readers e.g. Caddy reverse-proxy got 403 →
+# dashboard showed stale "host-status.json not found" forever). Now log + exit 1
+# so the timer goes "failed" and scarlix-doctor surfaces it. (v18.7.2 P1 made the
+# mv fail-closed; this closes the second || true in the same block.)
+chmod 644 "$STATUS_FILE" 2>/dev/null || { echo "FATAL: cannot chmod status" >> /var/log/scarlix-host-bridge.log; exit 1; }
 
 exit 0
