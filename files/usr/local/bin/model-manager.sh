@@ -140,7 +140,8 @@ else
     OLLAMA_FAILED=$((OLLAMA_FAILED + 1))
   else
     OLLAMA_MODEL=$(yq '.ollama.model' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "")
-    for model in "$OLLAMA_MODEL"; do
+    # v18.5.1: fix SC2066 (was: `for model in "$OLLAMA_MODEL"` — double-quoted = no word-split = loop runs once)
+    for model in $OLLAMA_MODEL; do
       [ -n "$model" ] || continue
       if [ "$APPLY_OLLAMA" -eq 1 ]; then
         log "Pulling Ollama (via docker exec): $model (--apply-ollama)"

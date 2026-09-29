@@ -6,7 +6,7 @@
 #   - Reads /etc/scarlix/{models.yaml,profiles/,VERSION}
 #
 # v17.9.8 FIXES:
-#   P0: Removed /var/run/docker.sock mount (was privilege escalation — :ro doesn't make daemon read-only)
+#   P0: Removed docker daemon socket mount (was privilege escalation)
 #   P0: Removed scarlix-mode mount (was: needed yq/sudo/systemctl in container — all missing)
 #   P0: Removed nvidia runtime (was: deploy.resources ignored by non-swarm compose anyway)
 #   P1: Auth token from /etc/scarlix/.env (SCARLIHQ_TOKEN) — all /api/* and /ws require it

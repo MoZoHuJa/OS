@@ -1,7 +1,7 @@
 package main
 
 import (
-        "embed"
+        _ "embed"  // v18.5.1: blank import for //go:embed directive (Go 1.23 requires it)
         "log"
         "net/http"
         "os"
@@ -18,7 +18,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "18.5"
+var Version = "18.5.1"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
