@@ -9,7 +9,7 @@ services:
     container_name: vllm
     restart: unless-stopped
     ports:
-      - "8089:8000"
+      - "127.0.0.1:8089:8000"
     volumes:
       - /models:/models:ro
     environment:

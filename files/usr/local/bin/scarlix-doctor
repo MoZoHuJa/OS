@@ -41,7 +41,8 @@ http_ok_with_token() {
 fix() {
   if [ "$FIX_MODE" -eq 1 ]; then
     echo -e "  ${CYAN}🔧 FIX${NC} $1"
-    eval "$2" 2>/dev/null && echo -e "  ${GREEN}  ✓ Fixed${NC}" || echo -e "  ${RED}  ✗ Fix failed${NC}"
+    # v18.6 P2: Replace eval with bash -c (was: eval "$2" → injection risk; bash -c runs in subshell)
+    bash -c "$2" 2>/dev/null && echo -e "  ${GREEN}  ✓ Fixed${NC}" || echo -e "  ${RED}  ✗ Fix failed${NC}"
   fi
 }
 

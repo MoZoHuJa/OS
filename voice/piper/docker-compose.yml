@@ -4,7 +4,7 @@ services:
     container_name: piper-sk
     restart: unless-stopped
     ports:
-      - "8003:10200"
+      - "127.0.0.1:8003:10200"
     volumes:
       - ./models:/voices:ro
     command: --voice sk_SK-lili-medium

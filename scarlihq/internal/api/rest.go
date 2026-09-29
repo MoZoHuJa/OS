@@ -14,7 +14,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "18.5.3"
+var Version = "18.6"
 
 // Handler holds dependencies for API routes.
 type Handler struct {
@@ -44,19 +44,22 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
         mux.HandleFunc("/api/status", h.auth(h.fullStatus))
 }
 
-// auth middleware: validates Bearer token or ?token= query param.
+// auth middleware: validates Bearer token header only.
 // v18.0.0 P1: uses crypto/subtle.ConstantTimeCompare (was: custom secureCompare).
+// v18.6 P2: removed ?token= query fallback (was: token leaked in URLs/logs/history).
 func (h *Handler) auth(next http.HandlerFunc) http.HandlerFunc {
         return func(w http.ResponseWriter, r *http.Request) {
                 if h.authToken == "" {
                         writeJSONError(w, http.StatusServiceUnavailable, "SCARLIHQ_TOKEN not configured on server")
                         return
                 }
+                // v18.6 P2: Only accept Bearer header now (was: also accepted ?token= query param)
                 token := r.Header.Get("Authorization")
                 if strings.HasPrefix(token, "Bearer ") {
                         token = strings.TrimPrefix(token, "Bearer ")
                 } else {
-                        token = r.URL.Query().Get("token")
+                        writeJSONError(w, http.StatusUnauthorized, "invalid or missing token (use Authorization: Bearer)")
+                        return
                 }
                 // v18.0.0 P1: crypto/subtle.ConstantTimeCompare (standard library, constant-time)
                 if subtle.ConstantTimeCompare([]byte(token), []byte(h.authToken)) != 1 {
@@ -130,6 +133,8 @@ func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
 
         mode := r.URL.Query().Get("set")
         if mode == "" {
+                // v18.6 P1: Limit request body size (was: no limit → DoS with large body)
+                r.Body = http.MaxBytesReader(w, r.Body, 4096)
                 var body map[string]string
                 if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
                         mode = body["mode"]
@@ -140,18 +145,20 @@ func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
                 return
         }
 
-        // v18.5.3 P1: 409 Conflict if a transition is already pending (was: last-writer-wins)
-        // Check host-status for active transition state
+        // v18.6 P0: Only block if transition is ACTIVELY in progress (was: "applied" blocked all future switches)
+        // "applied" = last transition succeeded → new request OK
+        // "retrying" = transition in progress → 409
+        // ("failed"/"rejected"/"none" also allow new requests)
         currentStatus := status.ReadOrStale()
-        if currentStatus.ModeTransition.State == "applied" || currentStatus.ModeTransition.State == "retrying" {
+        if currentStatus.ModeTransition.State == "retrying" {
                 // A transition is in progress — reject new request
                 w.WriteHeader(http.StatusConflict)
                 writeJSON(w, map[string]interface{}{
-                        "status":          "busy",
-                        "message":         "a mode transition is already in progress",
-                        "requested_mode": currentStatus.ModeTransition.Requested,
+                        "status":           "busy",
+                        "message":          "a mode transition is already in progress",
+                        "requested_mode":   currentStatus.ModeTransition.Requested,
                         "transition_state": currentStatus.ModeTransition.State,
-                        "retry_count":     currentStatus.ModeTransition.RetryCount,
+                        "retry_count":      currentStatus.ModeTransition.RetryCount,
                 })
                 return
         }

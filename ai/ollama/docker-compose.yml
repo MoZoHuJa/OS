@@ -6,7 +6,7 @@ services:
     container_name: ollama-agent
     restart: unless-stopped
     ports:
-      - "11435:11434"
+      - "127.0.0.1:11435:11434"
     volumes:
       - /var/lib/scarlix/ollama:/root/.ollama
       - /models:/models:ro

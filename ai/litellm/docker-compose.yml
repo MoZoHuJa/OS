@@ -4,8 +4,7 @@ services:
     container_name: litellm
     restart: unless-stopped
     ports:
-      - "100.64.0.1:4000:4000"
-      - "127.0.0.1:4000:4000"
+      - "127.0.0.1:4001:4000"
     volumes:
       - ./config.yaml:/app/config.yaml
       - ./data:/app/data
