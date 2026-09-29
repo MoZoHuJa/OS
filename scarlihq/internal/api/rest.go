@@ -4,6 +4,7 @@ import (
         "crypto/subtle"
         "encoding/json"
         "net/http"
+        "os"
         "strings"
 
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/guard"
@@ -14,7 +15,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "18.6"
+var Version = "18.7"
 
 // Handler holds dependencies for API routes.
 type Handler struct {
@@ -142,6 +143,18 @@ func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
         }
         if mode == "" {
                 writeJSONError(w, http.StatusBadRequest, "no mode specified")
+                return
+        }
+
+        // v18.7 P0: Check if a desired-mode file exists (pending request not yet processed by host-bridge)
+        // This prevents "lost update" race: POST A writes desired-mode, POST B overwrites it before bridge reads it
+        if _, err := os.Stat("/var/lib/scarlix/bridge-input/desired-mode"); err == nil {
+                // File exists = pending request not yet consumed by host-bridge
+                w.WriteHeader(http.StatusConflict)
+                writeJSON(w, map[string]interface{}{
+                        "status":  "busy",
+                        "message": "a mode request is pending (desired-mode file exists, host-bridge hasn't processed it yet)",
+                })
                 return
         }
 

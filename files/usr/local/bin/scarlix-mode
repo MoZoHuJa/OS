@@ -134,9 +134,10 @@ EOF
   # scarlix-mode runs as root (host-bridge) or user. If user, it can't write root-owned .env —
   # the host-bridge timer (root) regenerates it. docker compose runs as root anyway.
   if [ "$(id -u)" -eq 0 ]; then
-    chown root:root "$ENV_FILE" 2>/dev/null || true
+    # v18.7 P1: Fail-closed on .env perms (was: || true → security inconsistency)
+    chown root:root "$ENV_FILE" 2>/dev/null || { log "ERROR: cannot chown $ENV_FILE"; return 1; }
   fi
-  chmod 600 "$ENV_FILE" 2>/dev/null || true
+  chmod 600 "$ENV_FILE" 2>/dev/null || { log "ERROR: cannot chmod 600 $ENV_FILE"; return 1; }
 
   export SGLANG_MODEL_PATH="$sglang_path"
   export VLLM_MODEL_PATH="$vllm_path"
@@ -144,9 +145,20 @@ EOF
 }
 
 # P1 FIX v17.8: Always regenerate, then source
+# v18.7 P1: Replace source with safe env parsing (was: source → shell execution risk)
+# Even though .env is now root:root 600, this is consistent with model-manager's load_env_safe()
+# and prevents shell execution of user-modifiable file.
 load_model_paths() {
   generate_env_file
-  [ -f "$ENV_FILE" ] && source "$ENV_FILE"
+  if [ -f "$ENV_FILE" ]; then
+    # Safe KEY=VALUE parsing (same as model-manager's load_env_safe)
+    while IFS='=' read -r key value; do
+      [[ "$key" =~ ^[[:space:]]*# ]] && continue
+      [[ -z "$key" ]] && continue
+      [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]] || continue
+      export "$key=$value"
+    done < "$ENV_FILE" 2>/dev/null || true
+  fi
 }
 
 # check_model_exists — dir needs config.json, file needs to exist
@@ -412,8 +424,13 @@ start_verified_ai() {
     log "  ⚠ SGLang + vLLM both failed — trying BeeLlama (CPU)"
     if check_model_exists "llama.cpp" "$LLAMACPP_MODEL_PATH"; then
       if $DC -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
-        log "  ✓ BeeLlama (CPU, secondary fallback)"
-        beellama_ok=1
+        # v18.7 P1: Wait for healthy before setting ok (was: immediate ok=1)
+        if wait_for_healthy "beellama" 120; then
+          log "  ✓ BeeLlama (CPU, secondary fallback)"
+          beellama_ok=1
+        else
+          log "  ✗ BeeLlama not healthy after 120s"
+        fi
       else
         log "  ✗ BeeLlama failed"
       fi
@@ -428,8 +445,13 @@ start_verified_ai() {
   if [ "$sglang_ok" -eq 0 ] && [ "$vllm_ok" -eq 0 ] && [ "$beellama_ok" -eq 0 ]; then
     log "  ⚠ All engines failed — starting Ollama (qwen2.5:3b, tertiary fallback)"
     if $DC -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
-      log "  ✓ Ollama (CPU, tertiary fallback)"
-      ollama_ok=1
+      # v18.7 P1: Wait for healthy (was: immediate ok=1)
+      if wait_for_healthy "ollama-agent" 60; then
+        log "  ✓ Ollama (CPU, tertiary fallback)"
+        ollama_ok=1
+      else
+        log "  ✗ Ollama not healthy after 60s"
+      fi
     else
       log "  ✗ Ollama failed"
     fi
