@@ -292,11 +292,31 @@ $$('.mode-btn').forEach(b=>{
 });
 
 // WebSocket — pushes full host-status every 2s
+// v18.7.3 P1: Use short-lived WS ticket (was: permanent token in URL)
 let ws = null;
-function connectWS(){
+async function connectWS(){
   try{
+    // Step 1: Get a short-lived WS ticket via REST API (Bearer auth)
+    const ticketResp = await fetch('/api/ws-ticket', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + TOKEN }
+    });
+    if(!ticketResp.ok){
+      $('#wsdot').className = 'ws-dot dead';
+      $('#wsstate').textContent = 'ticket failed';
+      setTimeout(()=>{ if(TOKEN) connectWS(); }, 5000);
+      return;
+    }
+    const ticketData = await ticketResp.json();
+    const ticket = ticketData.ticket;
+    if(!ticket){
+      $('#wsdot').className = 'ws-dot dead';
+      $('#wsstate').textContent = 'no ticket';
+      return;
+    }
+    // Step 2: Connect WS with ticket (not permanent token)
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(proto+'://'+location.host+'/ws?token='+encodeURIComponent(TOKEN));
+    ws = new WebSocket(proto+'://'+location.host+'/ws?ticket='+encodeURIComponent(ticket));
     ws.onopen = ()=>{
       $('#wsdot').className = 'ws-dot live';
       $('#wsstate').textContent = 'live';

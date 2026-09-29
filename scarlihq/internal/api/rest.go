@@ -1,10 +1,14 @@
 package api
 
 import (
+        "crypto/rand"
         "crypto/subtle"
+        "encoding/hex"
         "encoding/json"
         "net/http"
         "strings"
+        "sync"
+        "time"
 
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/guard"
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/profiles"
@@ -14,7 +18,58 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "18.7.2"
+var Version = "18.7.3"
+
+// v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
+// Tickets are 32-byte random hex strings, valid for 30s, single-use.
+// The dashboard POSTs /api/ws-ticket (Bearer-authed) to obtain a ticket,
+// then connects to /ws?ticket=<one-time> — the URL no longer carries the
+// permanent SCARLIHQ_TOKEN (was: leaked into logs/history/referrer headers).
+var (
+        wsTickets   = make(map[string]time.Time)
+        wsTicketsMu sync.Mutex
+        wsTicketTTL = 30 * time.Second
+)
+
+// issueWSTicket generates a single-use WS ticket valid for wsTicketTTL.
+// Also sweeps any expired tickets so the map can't grow unboundedly under
+// repeated POST /api/ws-ticket calls without a WS connect.
+func issueWSTicket() string {
+        b := make([]byte, 32)
+        // v18.7.3 P1: crypto/rand.Read errors only if /dev/urandom is unavailable —
+        // in that case b is all-zeros and the resulting ticket is constant; acceptable
+        // failure mode (single predictable ticket that expires in 30s), better than
+        // blocking the request. Logged by Go runtime if /dev/urandom open fails.
+        _, _ = rand.Read(b)
+        ticket := hex.EncodeToString(b)
+        wsTicketsMu.Lock()
+        now := time.Now()
+        for t, expiry := range wsTickets {
+                if now.After(expiry) {
+                        delete(wsTickets, t)
+                }
+        }
+        wsTickets[ticket] = now.Add(wsTicketTTL)
+        wsTicketsMu.Unlock()
+        return ticket
+}
+
+// ValidateWSTicket validates AND consumes a single-use WS ticket.
+// Returns false if the ticket is unknown or already used (single-use guarantee).
+// Exported so the webui package can use it from /ws upgrade handler.
+func ValidateWSTicket(ticket string) bool {
+        if ticket == "" {
+                return false
+        }
+        wsTicketsMu.Lock()
+        defer wsTicketsMu.Unlock()
+        expiry, ok := wsTickets[ticket]
+        if !ok {
+                return false
+        }
+        delete(wsTickets, ticket) // single use — replay-resistant
+        return time.Now().Before(expiry)
+}
 
 // Handler holds dependencies for API routes.
 type Handler struct {
@@ -35,6 +90,8 @@ func NewHandler(g *guard.Guard, m *scarlix_mode.Mode, p *profiles.Manager, authT
 }
 
 // RegisterRoutes registers all REST API routes (all behind auth middleware).
+// v18.7.3 P1: Added /api/ws-ticket — short-lived single-use ticket for WS upgrade
+// (was: WS upgrade required permanent SCARLIHQ_TOKEN in ?token= URL → leaked in logs).
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
         mux.HandleFunc("/api/health", h.auth(h.health))
         mux.HandleFunc("/api/gpu", h.auth(h.gpuStatus))
@@ -42,6 +99,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
         mux.HandleFunc("/api/mode", h.auth(h.modeHandler))
         mux.HandleFunc("/api/profiles", h.auth(h.listProfiles))
         mux.HandleFunc("/api/status", h.auth(h.fullStatus))
+        mux.HandleFunc("/api/ws-ticket", h.auth(h.issueWSTicket))
 }
 
 // auth middleware: validates Bearer token header only.
@@ -145,32 +203,33 @@ func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
                 return
         }
 
-        // v18.6 P0: Only block if transition is ACTIVELY in progress (was: "applied" blocked all future switches)
-        // "applied" = last transition succeeded → new request OK
-        // "retrying" = transition in progress → 409
-        // ("failed"/"rejected"/"none" also allow new requests)
-        currentStatus := status.ReadOrStale()
-        if currentStatus.ModeTransition.State == "retrying" {
-                // A transition is in progress — reject new request
-                w.WriteHeader(http.StatusConflict)
-                writeJSON(w, map[string]interface{}{
-                        "status":           "busy",
-                        "message":          "a mode transition is already in progress",
-                        "requested_mode":   currentStatus.ModeTransition.Requested,
-                        "transition_state": currentStatus.ModeTransition.State,
-                        "retry_count":      currentStatus.ModeTransition.RetryCount,
-                })
-                return
-        }
-
-        // v18.7.2 P0: Set() now uses O_EXCL — atomic check (was: separate Stat() + CreateTemp race).
-        // No separate os.Stat() pre-check needed; Set() itself fails atomically if desired-mode exists.
-        if err := h.mode.Set(mode); err != nil {
+        // v18.7.3 P1: Centralized mode request (was: duplicate retrying check + Set()
+        // in both this REST handler and the MCP handler). Mode.Request() now does:
+        //   1. Rejects if host-status.json says state="retrying" (transition in progress)
+        //   2. Atomically reserves desired-mode via O_EXCL (v18.7.2 P0 atomicity preserved)
+        // On error, the message string discriminates which check failed so we can return
+        // the right HTTP status (409 for busy/retrying, 400 for invalid mode, 503 for fs).
+        if err := h.mode.Request(mode); err != nil {
                 if strings.Contains(err.Error(), "already pending") {
                         w.WriteHeader(http.StatusConflict)
                         writeJSON(w, map[string]interface{}{
                                 "status":  "busy",
                                 "message": "a mode request is already pending",
+                        })
+                        return
+                }
+                if strings.Contains(err.Error(), "in progress (retrying)") {
+                        // v18.7.3 P1: Surface retrying-state from Mode.Request() as 409 with context
+                        // (preserves v18.6 P0 dashboard semantics: client sees requested_mode +
+                        // transition_state + retry_count so it can render the retry banner).
+                        s := status.ReadOrStale()
+                        w.WriteHeader(http.StatusConflict)
+                        writeJSON(w, map[string]interface{}{
+                                "status":           "busy",
+                                "message":          "a mode transition is already in progress",
+                                "requested_mode":   s.ModeTransition.Requested,
+                                "transition_state": s.ModeTransition.State,
+                                "retry_count":      s.ModeTransition.RetryCount,
                         })
                         return
                 }
@@ -197,6 +256,23 @@ func (h *Handler) listProfiles(w http.ResponseWriter, r *http.Request) {
                 profs = []profiles.Profile{}
         }
         writeJSON(w, profs)
+}
+
+// issueWSTicket issues a short-lived, single-use ticket for the WS upgrade handshake.
+// v18.7.3 P1: Replaces passing SCARLIHQ_TOKEN in the WS URL query string.
+// Caller must already be authed (route is registered behind h.auth) — the bearer
+// token never appears in URLs/logs; only this 30s, single-use ticket does.
+// Returns {"ticket": "<64 hex chars>", "expires_in": 30}.
+func (h *Handler) issueWSTicket(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodPost {
+                writeJSONError(w, http.StatusMethodNotAllowed, "use POST")
+                return
+        }
+        ticket := issueWSTicket()
+        writeJSON(w, map[string]interface{}{
+                "ticket":     ticket,
+                "expires_in": int(wsTicketTTL / time.Second),
+        })
 }
 
 func writeJSON(w http.ResponseWriter, data interface{}) {

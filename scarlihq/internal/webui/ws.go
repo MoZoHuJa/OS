@@ -1,7 +1,6 @@
 package webui
 
 import (
-        "crypto/subtle"
         "encoding/json"
         "log"
         "net"
@@ -9,6 +8,7 @@ import (
         "strings"
         "time"
 
+        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/api"
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/profiles"
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/scarlix_mode"
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/status"
@@ -100,18 +100,27 @@ func statusJSON() []byte {
         return b
 }
 
-// RegisterWS registers WebSocket route (token-authed, pushes real status every 2s).
-func RegisterWS(mux *http.ServeMux, authToken string, _ *scarlix_mode.Mode, _ *profiles.Manager) {
+// RegisterWS registers WebSocket route (ticket-authed, pushes real status every 2s).
+// v18.7.3 P1: Switched from permanent ?token=<SCARLIHQ_TOKEN> to short-lived,
+// single-use ?ticket=<one-time>. The dashboard first POSTs /api/ws-ticket (Bearer-authed)
+// to obtain a 30s single-use ticket, then connects to /ws?ticket=<...>.
+// Net effect: SCARLIHQ_TOKEN no longer appears in URLs, browser history, referrer
+// headers, or reverse-proxy access logs.
+//
+// authToken + mode + pf parameters are kept for signature stability (callers in main.go
+// pass them); they are unused here now since auth is delegated to api.ValidateWSTicket.
+func RegisterWS(mux *http.ServeMux, _ string, _ *scarlix_mode.Mode, _ *profiles.Manager) {
         mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-                // Token auth (query param — browsers can't set headers on WS upgrade)
-                token := r.URL.Query().Get("token")
-                if authToken == "" {
-                        http.Error(w, "SCARLIHQ_TOKEN not configured", http.StatusServiceUnavailable)
+                // v18.7.3 P1: Validate short-lived WS ticket (was: permanent token in URL).
+                // Ticket is single-use: ValidateWSTicket consumes it atomically under mutex,
+                // so a replay (e.g. from a logged URL) fails with 401.
+                ticket := r.URL.Query().Get("ticket")
+                if ticket == "" {
+                        http.Error(w, "missing ticket", http.StatusUnauthorized)
                         return
                 }
-                // v18.0.0 P1: crypto/subtle.ConstantTimeCompare (was: custom secureCompare)
-                if subtle.ConstantTimeCompare([]byte(token), []byte(authToken)) != 1 {
-                        http.Error(w, "invalid token", http.StatusUnauthorized)
+                if !api.ValidateWSTicket(ticket) {
+                        http.Error(w, "invalid or expired ticket", http.StatusUnauthorized)
                         return
                 }
 

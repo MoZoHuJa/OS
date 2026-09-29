@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.7.2 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v18.7.3 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
 # v18.5 FIXES:
 #   - Missing Ollama compose file = FAILED (was: silently skipped → false "complete")
@@ -80,7 +80,8 @@ check_disk_space() {
 if [ ! -f "$VENV_DIR/bin/huggingface-cli" ]; then
   echo "Setting up Python venv for huggingface-cli..." | tee -a "$LOG_FILE"
   python -m venv "$VENV_DIR" >> "$LOG_FILE" 2>&1
-  "$VENV_DIR/bin/pip" install --upgrade pip huggingface_hub[cli] >> "$LOG_FILE" 2>&1 || { echo "ERROR: huggingface_hub install failed"; exit 1; }
+  # v18.7.3 P2: Pin huggingface_hub version (was: latest → supply-chain risk)
+  "$VENV_DIR/bin/pip" install --upgrade pip "huggingface_hub[cli]>=0.25,<0.27" >> "$LOG_FILE" 2>&1 || { echo "ERROR: huggingface_hub install failed"; exit 1; }
 fi
 HF_CLI="$VENV_DIR/bin/huggingface-cli"
 

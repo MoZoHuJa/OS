@@ -5,6 +5,8 @@ import (
         "os"
         "path/filepath"
         "strings"
+
+        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/status"
 )
 
 // Mode manages scarlix-mode via a file-based bridge (v17.9.8+).
@@ -38,11 +40,45 @@ func (m *Mode) Current() string {
         return strings.TrimSpace(string(data))
 }
 
+// Request is the centralized mode-request entry point for both REST and MCP handlers.
+// v18.7.3 P1: Centralizes the transition-state check + atomic Set() (was: duplicated in
+// scarlihq/internal/api/rest.go modeHandler and scarlihq/internal/mcp/server.go scarlix_mode_set).
+//
+// Order of operations:
+//   1. Read host-status.json. If ModeTransition.State == "retrying", reject with a
+//      "... in progress (retrying) ..." message — the dashboard surfaces this as 409.
+//      (Other states — none/applied/failed/rejected — allow new requests.)
+//   2. Delegate to Set(), which atomically reserves desired-mode via O_EXCL.
+//
+// Note: There is a small TOCTOU window between step 1 (read status) and step 2 (write
+// desired-mode). If the host bridge flips state to "retrying" between the two reads,
+// we still have the O_EXCL atomic reservation in step 2 — so the worst case is that a
+// request lands DURING an in-progress transition and is queued by the host bridge on
+// its next tick (host bridge serializes via flock 200). This is acceptable; the goal
+// of step 1 is just to short-circuit the common "user double-clicks" case.
+func (m *Mode) Request(mode string) error {
+        // Check if a transition is actively in progress.
+        // v18.6 P0: Only "retrying" blocks new requests — "applied" was a transition that
+        // succeeded, so new requests are fine (was: blocked all future switches).
+        s := status.ReadOrStale()
+        if s.ModeTransition.State == "retrying" {
+                return fmt.Errorf("mode transition in progress (retrying), try again later")
+        }
+        // v18.7.2 P0: Atomic reservation via O_EXCL — Set() is the actual lock, not a
+        // separate Stat() pre-check followed by Write (which was the v18.7.1 race).
+        return m.Set(mode)
+}
+
 // Set requests a mode switch by writing to desired-mode file.
 // v18.7.2 P0: Atomic request reservation via O_EXCL (was: Stat+CreateTemp+Rename → race).
 // O_EXCL fails if file exists → prevents lost update between Stat and Write.
 // The host bridge (scarlix-host-bridge.timer) applies it asynchronously within 5s.
 // Returns nil if the mode is valid and the file was written; the actual switch is async.
+//
+// v18.7.3 P1: Most callers should prefer Request() — it adds the transition-state
+// pre-check. Set() is the lower-level atomic write and is kept exported for any
+// future caller that intentionally wants to bypass the retrying check (e.g. a forced
+// recovery tool).
 func (m *Mode) Set(mode string) error {
         switch mode {
         case "ai", "stop", "game", "creative", "turbo", "offline", "tv":

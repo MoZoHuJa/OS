@@ -17,7 +17,7 @@ COPY . .
 
 # v18.0.0 P2: inject version via -ldflags -X main.Version (single source: VERSION file)
 # CI passes --build-arg SCARLIX_VERSION=$(cat VERSION); default matches VERSION file
-ARG SCARLIX_VERSION=18.7.2
+ARG SCARLIX_VERSION=18.7.3
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${SCARLIX_VERSION}" -o /scarlihq ./cmd/scarlihq
 
 # --- Runtime (minimal — no docker, no nvidia, no scarlix-mode) ---

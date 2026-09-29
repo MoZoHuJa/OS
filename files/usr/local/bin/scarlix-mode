@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.7.2 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v18.7.3 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.5 FIXES:
 #   P1: SGLang --disable-flashinfer (Blackwell sm_120 — see ai/sglang compose)
 #   P1: .env permissions 600 (was 664 — secrets-readable-by-group risk)
