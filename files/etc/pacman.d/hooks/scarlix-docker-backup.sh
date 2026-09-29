@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v17.1 — Docker Volume Backup Script (pacman hook)
+# SCARLIX OS v18.7.6 — Docker Volume Backup Script (pacman hook)
 # FIX Q7a: Called by scarlix-docker-backup.hook before kernel/NVIDIA updates.
 #
 # Uses restic to snapshot /var/lib/docker/volumes to /mnt/backup/restic/.

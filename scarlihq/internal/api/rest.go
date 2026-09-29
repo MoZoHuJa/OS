@@ -18,7 +18,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "18.7.5"
+var Version = "18.7.6"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -71,9 +71,15 @@ func issueWSTicket() string {
 // Upgrade, defeating the single-use replay-resistance guarantee).
 // Returns true iff the ticket was known and unexpired — in which case it has
 // been removed atomically under the lock, so concurrent callers see false.
-// Caller MUST call ReleaseWSTicket(ticket) if upgrader.Upgrade() fails, so
-// the legitimate client can retry with the same ticket without re-POSTing
-// /api/ws-ticket.
+//
+// v18.7.6 P0: Ticket is consumed once reserved — there is no longer a
+// Release-on-Upgrade-failure path (was: ReleaseWSTicket re-added the ticket
+// with a FRESH 30s TTL → attacker could repeatedly trigger Upgrade failures
+// to extend ticket lifetime indefinitely). Now, if upgrader.Upgrade() fails,
+// the ticket stays consumed and the legitimate client must re-POST
+// /api/ws-ticket to obtain a new one. This is the simplest safe behavior:
+// single-use is enforced unconditionally, and no client-controlled failure
+// can refresh the TTL.
 func ReserveWSTicket(ticket string) bool {
         if ticket == "" {
                 return false
@@ -88,28 +94,9 @@ func ReserveWSTicket(ticket string) bool {
                 delete(wsTickets, ticket)
                 return false
         }
-        // Atomically delete — ticket is now "reserved"
+        // Atomically delete — ticket is now "reserved" (and consumed for good).
         delete(wsTickets, ticket)
         return true
-}
-
-// ReleaseWSTicket puts a reserved ticket back so the client can retry without
-// re-POSTing /api/ws-ticket. Called by the WS handler ONLY on upgrader.Upgrade()
-// failure (network blip, slow client, etc). Re-adds with a fresh 30s TTL only
-// if the ticket is not already present (so a stray duplicate Release can't
-// extend an unrelated ticket's lifetime).
-// v18.7.5 P0: Replaces the v18.7.4 Peek+Consume split (was: Consume deleted
-// AFTER Upgrade → concurrent Peek-then-Upgrade race window → replay possible).
-func ReleaseWSTicket(ticket string) {
-        if ticket == "" {
-                return
-        }
-        wsTicketsMu.Lock()
-        defer wsTicketsMu.Unlock()
-        // Only re-add if not already present (don't extend expiry)
-        if _, ok := wsTickets[ticket]; !ok {
-                wsTickets[ticket] = time.Now().Add(wsTicketTTL)
-        }
 }
 
 // Handler holds dependencies for API routes.

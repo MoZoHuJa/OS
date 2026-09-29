@@ -14,7 +14,11 @@ services:
   scarlihq:
     build: .
     # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → locally-built, no supply-chain risk but reproducibility concern)
-    image: scarlihq:latest
+    # v18.7.6 P2: Pinned to versioned image for reproducibility (was: scarlihq:latest).
+    #   install.sh now builds scarlihq:v18.7.6 — same source as :latest was, but the
+    #   explicit tag means a re-pull from a registry (or a future migrate-to-registry
+    #   step) gets a deterministic image, not whatever :latest currently points to.
+    image: scarlihq:v18.7.6
     container_name: scarlihq
     restart: unless-stopped
     ports:

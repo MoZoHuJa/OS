@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v18.7.5 — Host Bridge (privileged ops for ScarliHQ dashboard)
+# SCARLIX OS v18.7.6 — Host Bridge (privileged ops for ScarliHQ dashboard)
 #
 # ARCHITECTURE (v18.0.0): ScarliHQ container has NO docker.sock, NO nvidia runtime.
 # It writes ONLY to /var/lib/scarlix/bridge-input/desired-mode (writable by nonroot 65532).
@@ -17,16 +17,16 @@
 #       — was: no validation → root could follow symlink created by nonroot
 #   P1: No hardcoded version (reads from /etc/scarlix/VERSION)
 #
-# v18.7.5 P1: ATOMIC file read via scarlix-bridge-reader (Go binary).
+# v18.7.6 P1: ATOMIC file read via scarlix-bridge-reader (Go binary).
 #   Old shell pattern (validate + cat + re-validate) had a TOCTOU window — ScarliHQ
 #   could swap the file between validate and read. New Go binary opens with
 #   O_NOFOLLOW, fstats the fd, validates UID/mode/type/size, and reads from the
 #   SAME fd — no TOCTOU window.
-# v18.7.5 P0: bridge-reader is now REQUIRED. If the Go binary isn't installed,
+# v18.7.6 P0: bridge-reader is now REQUIRED. If the Go binary isn't installed,
 #   the host-bridge rejects the desired-mode and logs a FATAL line (was: fell
 #   back to the shell validate+cat+re-validate pattern, which still had the
 #   TOCTOU window). install.sh Phase 4 now crit()s if the build fails.
-# v18.7.5 P0: stderr now goes to /var/log/scarlix/bridge-reader.log (was:
+# v18.7.6 P0: stderr now goes to /var/log/scarlix/bridge-reader.log (was:
 #   /tmp/sbr.err — predictable path, world-writable parent, symlink risk).
 #
 # This is the privilege boundary: ScarliHQ (untrusted, LAN-facing) → file → host bridge → root ops.
@@ -49,7 +49,7 @@ exec 200>"$LOCK_FILE"
 flock -n 200 || exit 0
 
 mkdir -p "$INPUT_DIR" "$STATE_DIR_ROOT"
-# v18.7.5 P0: bridge-reader stderr log dir (was: /tmp/sbr.err — predictable path).
+# v18.7.6 P0: bridge-reader stderr log dir (was: /tmp/sbr.err — predictable path).
 # Created unconditionally so the bridge-reader redirect below never silently drops errors.
 mkdir -p /var/log/scarlix 2>/dev/null || true
 # v18.3 P1: fail-closed on security boundary dirs (was: `|| true` → continued on failure)
@@ -63,7 +63,7 @@ if ! chmod 700 "$STATE_DIR_ROOT" 2>/dev/null; then
     exit 1
 fi
 
-# v18.7.5 P1: Verify bridge-input integrity at every run (was: only checked at install time)
+# v18.7.6 P1: Verify bridge-input integrity at every run (was: only checked at install time)
 input_owner=$(stat -c '%u:%g' "$INPUT_DIR" 2>/dev/null || echo "?")
 input_mode=$(stat -c '%a' "$INPUT_DIR" 2>/dev/null || echo "?")
 if [ "$input_owner" != "65532:65532" ] || [ "$input_mode" != "700" ]; then
@@ -127,13 +127,13 @@ if [ -f "$RETRY_FILE" ]; then
 fi
 
 if [ -f "$DESIRED_MODE_FILE" ]; then
-    # v18.7.5 P0: bridge-reader is REQUIRED (was: shell validate+cat+re-validate
+    # v18.7.6 P0: bridge-reader is REQUIRED (was: shell validate+cat+re-validate
     # fallback had a TOCTOU window — ScarliHQ could swap the file between validate
     # and read). The Go binary opens with O_NOFOLLOW, fstats the fd, validates
     # UID/mode/type/size, and reads from the SAME fd — the kernel holds the inode
     # reference via the fd (rename/unlink/recreate of `path` cannot affect the
     # read). No shell fallback: if the binary is missing, we reject and log FATAL.
-    # v18.7.5 P0: stderr now appends to /var/log/scarlix/bridge-reader.log (was:
+    # v18.7.6 P0: stderr now appends to /var/log/scarlix/bridge-reader.log (was:
     # /tmp/sbr.err — predictable path, symlink risk).
     if [ -x /usr/local/bin/scarlix-bridge-reader ]; then
         requested_mode=$(/usr/local/bin/scarlix-bridge-reader "$DESIRED_MODE_FILE" 2>>/var/log/scarlix/bridge-reader.log | tr -d '[:space:]' || echo "")
@@ -143,7 +143,7 @@ if [ -f "$DESIRED_MODE_FILE" ]; then
             rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
         fi
     else
-        # v18.7.5 P0: No fallback — atomic reader is required for security.
+        # v18.7.6 P0: No fallback — atomic reader is required for security.
         # (was: fell back to validate+cat+re-validate shell pattern → TOCTOU window.)
         echo "[$(date '+%H:%M:%S')] FATAL: scarlix-bridge-reader not installed — cannot process desired-mode safely" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
         rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
@@ -151,7 +151,7 @@ if [ -f "$DESIRED_MODE_FILE" ]; then
         last_error="scarlix-bridge-reader not installed (run install.sh to build)"
     fi
 
-    # v18.7.5 P1: Only process if not rejected by TOCTOU check / bridge-reader
+    # v18.7.6 P1: Only process if not rejected by TOCTOU check / bridge-reader
     if [ -n "$requested_mode" ] && [ "$transition" != "rejected" ]; then
     # Validate mode against whitelist
     case "$requested_mode" in
@@ -195,12 +195,21 @@ if [ -f "$DESIRED_MODE_FILE" ]; then
             rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
             ;;
     esac
-    fi  # v18.7.5 P1: end rejection guard (TOCTOU or bridge-reader)
+    fi  # v18.7.6 P1: end rejection guard (TOCTOU or bridge-reader)
 
     # v18.0.0 P1: Persist last transition (survives timer cycles — diagnostic info not lost)
+    # v18.7.6 P1: ATOMIC write via mktemp + mv (was: printf > file → partial on crash).
+    #   The previous `> "$LAST_TRANSITION_FILE" 2>/dev/null || true` could leave a
+    #   truncated file if the host lost power mid-write (e.g. yank cord during mode
+    #   switch). ScarliHQ's status.go then parsed a half-written file and reported a
+    #   misleading transition state. Same mktemp + mv pattern as STATUS_FILE below:
+    #   fail-closed (exit 1) on disk error so the timer surfaces the problem rather
+    #   than silently dropping diagnostic state.
+    LAST_TMP=$(mktemp "${LAST_TRANSITION_FILE}.XXXXXX") || exit 1
     printf 'requested=%s\nstate=%s\ntimestamp=%s\nretry_count=%s\nerror=%s\n' \
         "$requested_mode" "$transition" "$(date -Iseconds 2>/dev/null || date)" "$retry_count" "$last_error" \
-        > "$LAST_TRANSITION_FILE" 2>/dev/null || true
+        > "$LAST_TMP" 2>/dev/null || { rm -f "$LAST_TMP" 2>/dev/null || true; exit 1; }
+    mv -f "$LAST_TMP" "$LAST_TRANSITION_FILE" 2>/dev/null || { rm -f "$LAST_TMP" 2>/dev/null || true; exit 1; }
 fi
 
 # Read persistent last_transition (for status even when no new request)
@@ -349,7 +358,7 @@ if ! mv -f "$STATUS_TMP" "$STATUS_FILE" 2>/dev/null; then
     rm -f "$STATUS_TMP" 2>/dev/null || true
     exit 1
 fi
-# v18.7.5 P2: chmod also fail-closed (was: || true → host-status.json stayed 600 from
+# v18.7.6 P2: chmod also fail-closed (was: || true → host-status.json stayed 600 from
 # mktemp if chmod failed, so non-root readers e.g. Caddy reverse-proxy got 403 →
 # dashboard showed stale "host-status.json not found" forever). Now log + exit 1
 # so the timer goes "failed" and scarlix-doctor surfaces it. (v18.7.2 P1 made the

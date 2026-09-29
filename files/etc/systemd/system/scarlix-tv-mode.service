@@ -10,12 +10,13 @@ RemainAfterExit=yes
 #   `docker inspect` runs as soon as ExecStartPre finishes, but if docker compose
 #   up -d is still pulling the sunshine-tv image, the container doesn't exist
 #   yet → inspect fails → oneshot fails → scarlix-mode tv reports failure even
-#   though the pull would have finished a second later. Now we retry up to 3
-#   times with a 2s sleep between attempts (6s total budget — enough for a warm
-#   pull, cold pulls still need a longer ExecStartPre timeout, but this fixes
-#   the common "first boot after install" race).
+#   though the pull would have finished a second later.
+# v18.7.6 P1: 30 retries × 2s = 60s (was: 3 × 2s = 6s → too short for cold pull).
+#   Cold pulls of multi-GB images routinely exceed 6s on first boot after install.
+#   Budget is now 60s, with TimeoutStartSec=90 so systemd doesn't kill mid-pull.
 ExecStartPre=/usr/bin/docker info
-ExecStart=/bin/bash -c 'for i in 1 2 3; do /usr/bin/docker inspect -f "{{.State.Running}}" sunshine-tv 2>/dev/null | grep -qx true && exit 0; sleep 2; done; exit 1'
+TimeoutStartSec=90
+ExecStart=/bin/bash -c 'for i in $(seq 1 30); do /usr/bin/docker inspect -f "{{.State.Running}}" sunshine-tv 2>/dev/null | grep -qx true && exit 0; sleep 2; done; exit 1'
 
 [Install]
 WantedBy=multi-user.target

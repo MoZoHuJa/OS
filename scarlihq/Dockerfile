@@ -22,7 +22,7 @@ COPY . .
 
 # v18.0.0 P2: inject version via -ldflags -X main.Version (single source: VERSION file)
 # CI passes --build-arg SCARLIX_VERSION=$(cat VERSION); default matches VERSION file
-ARG SCARLIX_VERSION=18.7.5
+ARG SCARLIX_VERSION=18.7.6
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${SCARLIX_VERSION}" -o /scarlihq ./cmd/scarlihq
 
 # v18.7.4 P1: Build the host-side atomic file reader (CGO disabled for static binary).
