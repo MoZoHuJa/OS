@@ -134,8 +134,9 @@ jobs:
           # v18.0.0: use bridge-input/ layout (not bridge/)
           # v18.2 P2: chown 65532 (nonroot in ScarliHQ alpine image — was missing → mode POST 202 fails)
           mkdir -p /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
-          sudo chown -R 65532:65532 /tmp/scarlix-test/bridge-input
+          # v18.5.1: chmod BEFORE chown (was: chmod after chown → EACCES on foreign-owned file)
           chmod 700 /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
+          sudo chown -R 65532:65532 /tmp/scarlix-test/bridge-input
           # v18.5.1: use valid RFC3339 timestamp (was: "test" → stale=true, but shouldn't break)
           TS=$(date -Iseconds)
           echo "{\"timestamp\":\"$TS\",\"version\":\"18.5.1\",\"mode\":\"unknown\",\"mode_transition\":{\"requested\":\"\",\"state\":\"none\",\"retry_count\":0,\"last_error\":\"\",\"last_timestamp\":\"\"},\"gpus\":[],\"containers\":[],\"disk\":{}}" > /tmp/scarlix-test/host-status.json
