@@ -38,43 +38,39 @@ func (m *Mode) Current() string {
         return strings.TrimSpace(string(data))
 }
 
-// Set requests a mode switch by writing to desired-mode file (atomic rename).
-// v18.0.0 P1: uses os.CreateTemp for unique temp file (was: same .tmp → concurrent race).
-// v18.1: returns clear error if bridge-input/ dir doesn't exist (503 in API handler).
+// Set requests a mode switch by writing to desired-mode file.
+// v18.7.2 P0: Atomic request reservation via O_EXCL (was: Stat+CreateTemp+Rename → race).
+// O_EXCL fails if file exists → prevents lost update between Stat and Write.
 // The host bridge (scarlix-host-bridge.timer) applies it asynchronously within 5s.
 // Returns nil if the mode is valid and the file was written; the actual switch is async.
 func (m *Mode) Set(mode string) error {
         switch mode {
         case "ai", "stop", "game", "creative", "turbo", "offline", "tv":
-                // valid
         default:
                 return fmt.Errorf("invalid mode: %s (valid: ai, stop, game, creative, turbo, offline, tv)", mode)
         }
 
         dir := filepath.Dir(m.desiredModeFile)
-        // v18.1: ensure bridge-input/ dir exists (install.sh creates it, but verify)
         if info, err := os.Stat(dir); err != nil || !info.IsDir() {
                 return fmt.Errorf("bridge-input dir not accessible: %s (check install.sh Phase 5)", dir)
         }
 
-        // v18.0.0 P1: unique temp file per request (prevents concurrent race)
-        tmp, err := os.CreateTemp(dir, ".desired-mode-*")
+        // v18.7.2 P0: O_EXCL = atomic "create if not exists" — if file exists, returns EEXIST.
+        // This is the ACTUAL lock, not a Stat() check followed by a separate Write.
+        fd, err := os.OpenFile(m.desiredModeFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
         if err != nil {
-                return fmt.Errorf("create temp file failed (permission?): %w", err)
+                if os.IsExist(err) {
+                        return fmt.Errorf("mode request already pending (desired-mode exists)")
+                }
+                return fmt.Errorf("create desired-mode failed (permission?): %w", err)
         }
-        tmpName := tmp.Name()
-        defer os.Remove(tmpName) // cleanup if rename fails
+        defer fd.Close()
 
-        if _, err := tmp.WriteString(mode + "\n"); err != nil {
-                tmp.Close()
+        if _, err := fd.WriteString(mode + "\n"); err != nil {
+                os.Remove(m.desiredModeFile) // cleanup on write failure
                 return fmt.Errorf("write desired-mode failed: %w", err)
         }
-        tmp.Close()
 
-        // Atomic rename (host bridge reads either old or new file — never half-written)
-        if err := os.Rename(tmpName, m.desiredModeFile); err != nil {
-                return fmt.Errorf("rename desired-mode failed: %w", err)
-        }
         return nil
 }
 

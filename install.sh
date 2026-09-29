@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.7"
+VERSION="18.7.2"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -472,7 +472,7 @@ else
 
   # Systemd services (model-manager + host-bridge — first-boot removed Q6a)
   log "Installing systemd services..."
-  for f in model-manager.service model-manager.timer generate-env.sh scarlix-host-bridge.service scarlix-host-bridge.timer; do
+  for f in model-manager.service model-manager.timer generate-env.sh scarlix-host-bridge.service scarlix-host-bridge.timer scarlix-tv-mode.service; do
     src="$REPO_DIR/files/etc/systemd/system/$f"
     if [ -f "$src" ]; then
       cp "$src" "/etc/systemd/system/$f"
