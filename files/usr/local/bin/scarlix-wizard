@@ -35,9 +35,27 @@ PC_TYPE=$(whiptail --title "$TITLE" --menu \
 # v18.5 P2: whiptail ESC/Cancel handling (was: set -e aborts whole script)
 DEFAULT_IP="192.168.1.100"
 [ "$PC_TYPE" = "dev_workstation" ] && DEFAULT_IP="192.168.1.101"
+# v18.5.2 P0: Auto-detect gateway (was: DEFAULT_GW never set → set -u crash)
+DEFAULT_GW=$(ip route 2>/dev/null | awk '/default/ {print $3; exit}' || echo "")
+DEFAULT_GW="${DEFAULT_GW:-192.168.1.1}"
 IP=$(whiptail --title "$TITLE" --inputbox "IP adresa:" 10 50 "$DEFAULT_IP" 3>&1 1>&2 2>&3) || { echo "Wizard cancelled."; exit 0; }
 # v18.5 P2: validate IP (empty if user just pressed Enter on empty box)
 [ -z "$IP" ] && IP="$DEFAULT_IP"
+# v18.5.2 P2: Validate IP format (was: only checked empty)
+validate_ipv4() {
+  local ip="$1"
+  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  local IFS=.
+  read -r a b c d <<< "$ip"
+  for octet in "$a" "$b" "$c" "$d"; do
+    [ "$octet" -le 255 ] 2>/dev/null || return 1
+  done
+  return 0
+}
+if ! validate_ipv4 "$IP"; then
+  echo "⚠ WARN: Invalid IP '$IP' — using default $DEFAULT_IP"
+  IP="$DEFAULT_IP"
+fi
 
 # v18.5 P2: whiptail ESC handling
 GATEWAY=$(whiptail --title "$TITLE" --inputbox "Gateway (router) IP:" 10 50 "$DEFAULT_GW" 3>&1 1>&2 2>&3) || GATEWAY="$DEFAULT_GW"
@@ -83,12 +101,19 @@ if [ "$EXPERIMENTAL" = "yes" ]; then
   sudo touch /etc/scarlix/.experimental
 fi
 
-# Static IP
-sudo nmcli connection modify "Wired connection 1" \
-  ipv4.addresses "$IP/24" \
-  ipv4.gateway "$GATEWAY" \
-  ipv4.dns "1.1.1.1 8.8.8.8" \
-  ipv4.method manual 2>/dev/null || true
+# v18.5.2 P1: Auto-detect active Ethernet connection (was: hardcoded "Wired connection 1" + || true)
+CONNECTION=$(nmcli -t -f NAME,TYPE connection show --active 2>/dev/null | awk -F: '$2=="ethernet"{print $1; exit}')
+if [ -n "$CONNECTION" ]; then
+  if ! sudo nmcli connection modify "$CONNECTION" \
+    ipv4.addresses "$IP/24" \
+    ipv4.gateway "$GATEWAY" \
+    ipv4.dns "1.1.1.1 8.8.8.8" \
+    ipv4.method manual 2>/dev/null; then
+    echo "⚠ WARN: Network configuration failed (connection: $CONNECTION). Configure manually."
+  fi
+else
+  echo "⚠ WARN: No active Ethernet connection found. Configure IP manually: $IP/24 gw $GATEWAY"
+fi
 
 export TELEGRAM_BOT_TOKEN="$TG_TOKEN"
 export TELEGRAM_ZMOR_CHAT_ID="$TG_CHAT_ID"
@@ -100,6 +125,17 @@ fi
 
 # Enable model-manager timer only (no first-boot service in v17.5)
 [ -f /etc/systemd/system/model-manager.timer ] && sudo systemctl enable model-manager.timer 2>/dev/null
+
+# v18.5.2 P0: Actually trigger download if user selected "download" (was: option ignored)
+if [ "$DOWNLOAD_MODELS" = "download" ]; then
+  echo ""
+  echo "Spúšťam sťahovanie modelov (50-150GB, môže trvať hodiny)..."
+  if sudo /usr/local/bin/download-models.sh; then
+    echo "✓ Modely stiahnuté úspešne."
+  else
+    echo "⚠ Chyba pri sťahovaní modelov. Spustite neskôr: download-models.sh"
+  fi
+fi
 
 TIER_DESC="SGLang + BeeLlama"
 [ "$EXPERIMENTAL" = "yes" ] && TIER_DESC="SGLang + vLLM (TP=1) + BeeLlama"

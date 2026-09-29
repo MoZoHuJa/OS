@@ -138,7 +138,7 @@ if [ -f "$ENV_FILE" ]; then
   [ -r "$ENV_FILE" ] && pass ".env readable" || fail ".env not readable"
 else
   fail ".env not found"
-  fix "generate .env" "printf 'SGLANG_MODEL_PATH=/models/Qwen3-14B-AWQ\nVLLM_MODEL_PATH=/models/Qwen3-14B-AWQ\nLLAMACPP_MODEL_PATH=/models/Qwen3-14B-Q4_K_M.gguf\n' > /opt/scarlix/.env && chmod 660 /opt/scarlix/.env"
+  fix "generate .env" "printf 'SGLANG_MODEL_PATH=/models/Qwen3-14B-AWQ\nVLLM_MODEL_PATH=/models/Qwen3-14B-AWQ\nLLAMACPP_MODEL_PATH=/models/Qwen3-14B-Q4_K_M.gguf\n' > /opt/scarlix/.env && chmod 600 /opt/scarlix/.env"
 fi
 # v18.5: /etc/scarlix/.env (secrets + SCARLIHQ_TOKEN)
 SECRETS_ENV="/etc/scarlix/.env"

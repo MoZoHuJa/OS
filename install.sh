@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.5.1"
+VERSION="18.5.2"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -40,8 +40,10 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC
 SUCCESS_COUNT=0; FAIL_COUNT=0; CRITICAL_FAIL=0
 
 mkdir -p "$LOG_DIR" "$CHECKPOINT_DIR"
+# v18.5.2 P1: Create log file with correct perms (was: chmod on non-existent file → no effect)
+touch "$LOG_FILE"
+chmod 600 "$LOG_FILE"
 # v18.2 P1: install.log may contain tokens (SCARLIHQ_TOKEN via info) → chmod 600
-chmod 600 "$LOG_FILE" 2>/dev/null || true
 
 log()   { echo -e "[$(date '+%H:%M:%S')] $1" | tee -a "$LOG_FILE"; }
 ok()     { echo -e "${GREEN}  ✓${NC} $1" | tee -a "$LOG_FILE"; SUCCESS_COUNT=$((SUCCESS_COUNT+1)); }
@@ -238,13 +240,15 @@ else
   # Only /mnt is user-owned (user files). /var/lib/scarlix contains security-critical bridge dirs.
   chown -R "$REAL_USER:$REAL_USER" /mnt 2>/dev/null || true
   # /var/lib/scarlix stays root:root (install.sh creates it with mkdir, which defaults to root)
-  chown root:root /var/lib/scarlix 2>/dev/null || true
-  chmod 755 /var/lib/scarlix 2>/dev/null || true
+  # v18.5.2 P1: Security operations must fail-closed (was: || true → continued on failure)
+  chown root:root /var/lib/scarlix 2>/dev/null || crit "Cannot chown root:root /var/lib/scarlix"
+  chmod 755 /var/lib/scarlix 2>/dev/null || crit "Cannot chmod 755 /var/lib/scarlix"
   # /etc/scarlix stays root:root (user reads models.yaml but can't modify .env)
   # /opt/scarlix stays root:root (user reads scripts but can't modify .env)
   # v18.4 P0: Ensure config dirs are root-owned (security boundary)
-  chown root:root /etc/scarlix /opt/scarlix 2>/dev/null || true
-  chmod 755 /etc/scarlix /opt/scarlix 2>/dev/null || true
+  # v18.5.2 P1: Security operations must fail-closed (was: || true → continued on failure)
+  chown root:root /etc/scarlix /opt/scarlix 2>/dev/null || crit "Cannot chown root:root /etc/scarlix /opt/scarlix"
+  chmod 755 /etc/scarlix /opt/scarlix 2>/dev/null || crit "Cannot chmod 755 /etc/scarlix /opt/scarlix"
   # Q2a v17.8: Ollama volume root:root + 700 (was 777 — unnecessary security hole)
   chown root:root /var/lib/scarlix/ollama 2>/dev/null || true
   chmod 700 /var/lib/scarlix/ollama 2>/dev/null || true
@@ -618,16 +622,20 @@ else
       rm -rf /var/lib/scarlix/bridge 2>/dev/null || true
     fi
     # v18.5 P0: Ensure parent /var/lib/scarlix is root-owned BEFORE creating bridge dirs
-    chown root:root /var/lib/scarlix 2>/dev/null || true
-    chmod 755 /var/lib/scarlix 2>/dev/null || true
+    # v18.5.2 P1: Security operations must fail-closed (was: || true → continued on failure)
+    chown root:root /var/lib/scarlix 2>/dev/null || crit "Cannot chown root:root /var/lib/scarlix"
+    chmod 755 /var/lib/scarlix 2>/dev/null || crit "Cannot chmod 755 /var/lib/scarlix"
     # bridge-input: ScarliHQ nonroot (65532) writes desired-mode here (mode 700 — owner only)
     mkdir -p /var/lib/scarlix/bridge-input
-    chown 65532:65532 /var/lib/scarlix/bridge-input 2>/dev/null || chown nobody:nobody /var/lib/scarlix/bridge-input
+    # v18.5.2 P2: fail-closed on chown (was: `|| chown nobody:nobody` fallback → wrong UID,
+    # ScarliHQ nonroot 65532 could not write desired-mode → silent mode-switch failure)
+    chown 65532:65532 /var/lib/scarlix/bridge-input 2>/dev/null || crit "Cannot chown bridge-input to UID 65532"
     chmod 700 /var/lib/scarlix/bridge-input
     # bridge-state: host bridge (root) writes retry + last-transition here (NOT writable by ScarliHQ)
     mkdir -p /var/lib/scarlix/bridge-state
-    chown root:root /var/lib/scarlix/bridge-state
-    chmod 700 /var/lib/scarlix/bridge-state
+    # v18.5.2 P1: Security operations must fail-closed (was: no error message on failure)
+    chown root:root /var/lib/scarlix/bridge-state 2>/dev/null || crit "Cannot chown root:root /var/lib/scarlix/bridge-state"
+    chmod 700 /var/lib/scarlix/bridge-state 2>/dev/null || crit "Cannot chmod 700 /var/lib/scarlix/bridge-state"
     ok "bridge-input/ (uid 65532, 700) + bridge-state/ (root, 700) — symlink attack prevented"
   fi
 

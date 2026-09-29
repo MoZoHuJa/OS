@@ -1,4 +1,4 @@
-# ScarliHQ v18.5 — Multi-stage Dockerfile (Secure Host-Bridge architecture)
+# ScarliHQ v18.5.2 — Multi-stage Dockerfile (Secure Host-Bridge architecture)
 # v18.5 FIX: Dockerfile header comments updated (were stale v17.9.9 references)
 # v18.0.0 ARCHITECTURE: ScarliHQ has NO docker.sock, NO nvidia runtime, NO scarlix-mode.
 #   Reads /var/lib/scarlix/host-status.json, writes /var/lib/scarlix/bridge-input/desired-mode.
@@ -17,7 +17,7 @@ COPY . .
 
 # v18.0.0 P2: inject version via -ldflags -X main.Version (single source: VERSION file)
 # CI passes --build-arg SCARLIX_VERSION=$(cat VERSION); default matches VERSION file
-ARG SCARLIX_VERSION=18.5.1
+ARG SCARLIX_VERSION=18.5.2
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${SCARLIX_VERSION}" -o /scarlihq ./cmd/scarlihq
 
 # --- Runtime (minimal — no docker, no nvidia, no scarlix-mode) ---

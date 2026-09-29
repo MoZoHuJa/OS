@@ -1,4 +1,4 @@
-# SCARLIX OS v17.7 — Ollama (CPU fallback, not GPU, mem_limit 6g)
+# SCARLIX OS v18.5.2 — Ollama (CPU fallback, not GPU, mem_limit 6g)
 # v17.7: mem_limit 6g (was unlimited — OOM risk), CPU only, root:root volume
 services:
   ollama-agent:

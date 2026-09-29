@@ -1,4 +1,4 @@
-# SCARLIX OS v17.9.7 — SGLang (Tier-1, GPU 0)
+# SCARLIX OS v18.5.2 — SGLang (Tier-1, GPU 0)
 # v17.9.7: --disable-flashinfer (Blackwell sm_120 kernels missing in v0.4.4)
 # v17.9.5: Pinned image v0.4.4-cu128 (was latest-cu128 — unreproducible)
 services:
