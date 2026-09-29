@@ -42,6 +42,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install PyYAML
+        run: pip install pyyaml
       - name: Validate YAML files
         run: |
           python -c "import yaml; yaml.safe_load(open('models.yaml')); print('models.yaml OK')"
