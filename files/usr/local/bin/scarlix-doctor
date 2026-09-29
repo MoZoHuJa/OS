@@ -47,7 +47,7 @@ fix() {
 }
 
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║  SCARLIX OS v18.5 — System Diagnostic                      ║${NC}"
+echo -e "${CYAN}║  SCARLIX OS v18.7.4 — System Diagnostic                      ║${NC}"
 [ "$FIX_MODE" -eq 1 ] && echo -e "${CYAN}║  (--fix mode: will attempt automatic fixes)                  ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""

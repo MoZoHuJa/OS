@@ -40,7 +40,7 @@ exec 9>"$MODELS_LOCK"
 flock -n -x 9 || { echo "ERROR: cannot acquire models lock (scarlix-mode or model-manager running?)" >&2; exit 1; }
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v18.5 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v18.7.4 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing
