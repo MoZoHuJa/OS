@@ -1,0 +1,11 @@
+[Unit]
+Description=SCARLIX TV mode helpers
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+
+[Install]
+WantedBy=multi-user.target

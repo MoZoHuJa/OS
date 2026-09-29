@@ -4,8 +4,8 @@ import (
         "crypto/subtle"
         "encoding/json"
         "fmt"
+        "io"
         "net/http"
-        "os"
         "strings"
 
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/guard"
@@ -114,14 +114,16 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
         }
         // v18.7 P1: Limit RPC body size (was: no limit → DoS)
         r.Body = http.MaxBytesReader(w, r.Body, 64<<10) // 64KB
-        // v18.7 P1: Reject trailing JSON (was: silently ignored)
+        // v18.7.2 P1: Correct trailing JSON check (was: decoder.More() — wrong for top-level values)
         decoder := json.NewDecoder(r.Body)
         var req rpcRequest
         if err := decoder.Decode(&req); err != nil {
                 writeRPCError(w, http.StatusBadRequest, nil, -32700, "parse error")
                 return
         }
-        if decoder.More() {
+        // Verify no trailing JSON (exactly one top-level value)
+        var extra interface{}
+        if err := decoder.Decode(&extra); err != io.EOF {
                 writeRPCError(w, http.StatusBadRequest, req.ID, -32700, "trailing data after JSON request")
                 return
         }
@@ -187,10 +189,8 @@ func (s *Server) handleToolCall(req rpcRequest) rpcResponse {
                 return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]string{"mode": s.mode.Current()}}
         case "scarlix_mode_set":
                 mode, _ := params.Arguments["mode"].(string)
-                // v18.7 P0: Check pending desired-mode file (same as REST)
-                if _, err := os.Stat("/var/lib/scarlix/bridge-input/desired-mode"); err == nil {
-                        return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32004, Message: "mode request pending (desired-mode exists), try again later"}}
-                }
+                // v18.7.2 P0: Set() now uses O_EXCL — no separate os.Stat() check needed.
+                // (was: separate os.Stat + retrying + Set → race window between Stat and Write)
                 // v18.6 P1: Check transition state (was: bypassed REST 409 check)
                 currentStatus := status.ReadOrStale()
                 if currentStatus.ModeTransition.State == "retrying" {
@@ -198,8 +198,9 @@ func (s *Server) handleToolCall(req rpcRequest) rpcResponse {
                 }
                 if err := s.mode.Set(mode); err != nil {
                         code := -32603 // Internal error (default)
-                        // v18.7 P1: Invalid mode = client error -32602 (was: -32603)
-                        if strings.Contains(err.Error(), "invalid mode") {
+                        if strings.Contains(err.Error(), "already pending") {
+                                code = -32004 // Resource busy
+                        } else if strings.Contains(err.Error(), "invalid mode") {
                                 code = -32602 // Invalid params
                         }
                         return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: code, Message: err.Error()}}

@@ -4,7 +4,6 @@ import (
         "crypto/subtle"
         "encoding/json"
         "net/http"
-        "os"
         "strings"
 
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/guard"
@@ -15,7 +14,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "18.7"
+var Version = "18.7.2"
 
 // Handler holds dependencies for API routes.
 type Handler struct {
@@ -146,18 +145,6 @@ func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
                 return
         }
 
-        // v18.7 P0: Check if a desired-mode file exists (pending request not yet processed by host-bridge)
-        // This prevents "lost update" race: POST A writes desired-mode, POST B overwrites it before bridge reads it
-        if _, err := os.Stat("/var/lib/scarlix/bridge-input/desired-mode"); err == nil {
-                // File exists = pending request not yet consumed by host-bridge
-                w.WriteHeader(http.StatusConflict)
-                writeJSON(w, map[string]interface{}{
-                        "status":  "busy",
-                        "message": "a mode request is pending (desired-mode file exists, host-bridge hasn't processed it yet)",
-                })
-                return
-        }
-
         // v18.6 P0: Only block if transition is ACTIVELY in progress (was: "applied" blocked all future switches)
         // "applied" = last transition succeeded → new request OK
         // "retrying" = transition in progress → 409
@@ -176,11 +163,21 @@ func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
                 return
         }
 
+        // v18.7.2 P0: Set() now uses O_EXCL — atomic check (was: separate Stat() + CreateTemp race).
+        // No separate os.Stat() pre-check needed; Set() itself fails atomically if desired-mode exists.
         if err := h.mode.Set(mode); err != nil {
+                if strings.Contains(err.Error(), "already pending") {
+                        w.WriteHeader(http.StatusConflict)
+                        writeJSON(w, map[string]interface{}{
+                                "status":  "busy",
+                                "message": "a mode request is already pending",
+                        })
+                        return
+                }
                 code := http.StatusInternalServerError
                 if strings.Contains(err.Error(), "invalid mode") {
                         code = http.StatusBadRequest
-                } else if strings.Contains(err.Error(), "write") || strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "create temp") {
+                } else if strings.Contains(err.Error(), "create") || strings.Contains(err.Error(), "permission") {
                         code = http.StatusServiceUnavailable
                 }
                 writeJSONError(w, code, err.Error())

@@ -17,7 +17,7 @@ services:
     container_name: scarlihq
     restart: unless-stopped
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
     volumes:
       # READ-ONLY: host status (written by scarlix-host-bridge.timer every 5s)
       - /var/lib/scarlix:/var/lib/scarlix:ro

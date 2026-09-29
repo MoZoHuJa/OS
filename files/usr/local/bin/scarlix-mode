@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.5 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v18.7.2 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.5 FIXES:
 #   P1: SGLang --disable-flashinfer (Blackwell sm_120 — see ai/sglang compose)
 #   P1: .env permissions 600 (was 664 — secrets-readable-by-group risk)
@@ -14,7 +14,9 @@ set -euo pipefail
 
 LOG_FILE="/var/log/scarlix-mode.log"
 STATE_FILE="/var/lib/scarlix/current-mode"
-LOCK_FILE="/tmp/scarlix-mode.lock"
+# v18.7.2 P0: Move lock to root-owned /run/scarlix/ (was: /tmp → symlink attack)
+mkdir -p /run/scarlix 2>/dev/null || true
+LOCK_FILE="/run/scarlix/scarlix-mode.lock"
 MODELS_YAML="/etc/scarlix/models.yaml"
 ENV_FILE="/opt/scarlix/.env"
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v18.5.2 — Host Bridge (privileged ops for ScarliHQ dashboard)
+# SCARLIX OS v18.7.2 — Host Bridge (privileged ops for ScarliHQ dashboard)
 #
 # ARCHITECTURE (v18.0.0): ScarliHQ container has NO docker.sock, NO nvidia runtime.
 # It writes ONLY to /var/lib/scarlix/bridge-input/desired-mode (writable by nonroot 65532).
@@ -306,7 +306,12 @@ print(json.dumps(data))
     printf '{"timestamp":"%s","version":"%s","mode":"%s","error":"python3 unavailable","stale":true,"gpus":[],"containers":[]}' \
         "$(date -Iseconds 2>/dev/null || date)" "$scarlix_version" "$current_mode" > "$STATUS_TMP"
 }
-mv -f "$STATUS_TMP" "$STATUS_FILE" 2>/dev/null || true
+# v18.7.2 P1: Fail-closed on status write (was: || true → systemd saw SUCCESS on failure)
+if ! mv -f "$STATUS_TMP" "$STATUS_FILE" 2>/dev/null; then
+    echo "[$(date '+%H:%M:%S')] FATAL: cannot publish host status" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
+    rm -f "$STATUS_TMP" 2>/dev/null || true
+    exit 1
+fi
 chmod 644 "$STATUS_FILE" 2>/dev/null || true
 
 exit 0

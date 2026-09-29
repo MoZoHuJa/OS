@@ -3,7 +3,7 @@ services:
     build: .
     container_name: media-tools
     restart: unless-stopped
-    ports: ["8200:8200"]
+    ports: ["127.0.0.1:8200:8200"]
     volumes:
       - ./data/input:/data/input
       - ./data/output:/data/output
