@@ -102,14 +102,29 @@ if [ "$EXPERIMENTAL" = "yes" ]; then
 fi
 
 # v18.5.2 P1: Auto-detect active Ethernet connection (was: hardcoded "Wired connection 1" + || true)
+# v18.5.3 P1: Offer Retry/Continue/Abort on failure (was: just warned → wizard said "complete")
 CONNECTION=$(nmcli -t -f NAME,TYPE connection show --active 2>/dev/null | awk -F: '$2=="ethernet"{print $1; exit}')
 if [ -n "$CONNECTION" ]; then
-  if ! sudo nmcli connection modify "$CONNECTION" \
-    ipv4.addresses "$IP/24" \
-    ipv4.gateway "$GATEWAY" \
-    ipv4.dns "1.1.1.1 8.8.8.8" \
-    ipv4.method manual 2>/dev/null; then
-    echo "⚠ WARN: Network configuration failed (connection: $CONNECTION). Configure manually."
+  NET_OK=false
+  for attempt in 1 2 3; do
+    if sudo nmcli connection modify "$CONNECTION" \
+      ipv4.addresses "$IP/24" \
+      ipv4.gateway "$GATEWAY" \
+      ipv4.dns "1.1.1.1 8.8.8.8" \
+      ipv4.method manual 2>/dev/null; then
+      NET_OK=true
+      break
+    fi
+    [ "$attempt" -lt 3 ] && echo "⚠ Network config attempt $attempt failed, retrying..." && sleep 2
+  done
+  if [ "$NET_OK" != true ]; then
+    echo "⚠ Network configuration failed after 3 attempts."
+    CHOICE=$(whiptail --title "$TITLE" --menu \
+      "Network config zlyhal. Čo ďalej?" 12 60 2 \
+      "continue" "Pokračovať bez statickej IP" \
+      "abort" "Prerušiť inštaláciu" 3>&1 1>&2 2>&3) || CHOICE="continue"
+    [ "$CHOICE" = "abort" ] && { echo "Inštalácia prerušená používateľom."; exit 1; }
+    echo "⚠ Pokračujem bez statickej IP. Konfigurujte manuálne: $IP/24 gw $GATEWAY"
   fi
 else
   echo "⚠ WARN: No active Ethernet connection found. Configure IP manually: $IP/24 gw $GATEWAY"

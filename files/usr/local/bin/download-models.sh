@@ -60,6 +60,22 @@ if [ -n "$FREE_MB" ]; then
   fi
 fi
 
+# v18.5.3 P0: Disk-space check function (was: checked once at start, not before each download)
+check_disk_space() {
+  local required_mb="${1:-1024}"
+  local free_mb
+  free_mb=$(df -Pm "$MODELS_DIR" 2>/dev/null | awk 'NR==2{print $4}')
+  if ! [[ "$free_mb" =~ ^[0-9]+$ ]]; then
+    echo "  ✗ ERROR: unable to determine free disk space" | tee -a "$LOG_FILE"
+    return 1
+  fi
+  if [ "$free_mb" -lt "$required_mb" ]; then
+    echo "  ✗ ERROR: insufficient disk space (need ${required_mb}MB, have ${free_mb}MB)" | tee -a "$LOG_FILE"
+    return 1
+  fi
+  return 0
+}
+
 # Setup venv for huggingface_hub (PEP 668 safe)
 if [ ! -f "$VENV_DIR/bin/huggingface-cli" ]; then
   echo "Setting up Python venv for huggingface-cli..." | tee -a "$LOG_FILE"
@@ -113,13 +129,18 @@ if [ -z "$SGLANG_HF_REPO" ]; then
   FAILED=$((FAILED+1))
 else
   SGLANG_LOCAL_PATH=$(yq '.sglang.model_path' "$MODELS_CONFIG" 2>/dev/null || echo "/models/$SGLANG_HF_REPO")
-  echo "  Downloading: $SGLANG_HF_REPO → $SGLANG_LOCAL_PATH" | tee -a "$LOG_FILE"
-  if "$HF_CLI" download "$SGLANG_HF_REPO" --local-dir "$SGLANG_LOCAL_PATH" >> "$LOG_FILE" 2>&1; then
-    echo "  ✓ SGLang model downloaded" | tee -a "$LOG_FILE"
-  else
-    echo "  ✗ SGLang download FAILED" | tee -a "$LOG_FILE"
-    FAILED=$((FAILED+1))
+  # v18.5.3 P0: Check disk space before EACH download (was: only checked once at start)
+  check_disk_space 12000 || { FAILED=$((FAILED+1)); continue_skipped=1; }
+  if [ -z "${continue_skipped:-}" ]; then
+    echo "  Downloading: $SGLANG_HF_REPO → $SGLANG_LOCAL_PATH" | tee -a "$LOG_FILE"
+    if "$HF_CLI" download "$SGLANG_HF_REPO" --local-dir "$SGLANG_LOCAL_PATH" >> "$LOG_FILE" 2>&1; then
+      echo "  ✓ SGLang model downloaded" | tee -a "$LOG_FILE"
+    else
+      echo "  ✗ SGLang download FAILED" | tee -a "$LOG_FILE"
+      FAILED=$((FAILED+1))
+    fi
   fi
+  unset continue_skipped 2>/dev/null || true
 fi
 
 # === Step 2: BeeLlama / llama.cpp GGUF model (CPU offline) ===
@@ -130,13 +151,18 @@ BEE_HF_FILE=$(yq '.beellama.hf_file // empty' "$MODELS_CONFIG" 2>/dev/null || ec
 if [ -z "$BEE_HF_REPO" ] || [ -z "$BEE_HF_FILE" ]; then
   echo "  ⚠ No .beellama.hf_repo/hf_file in models.yaml — GGUF NOT downloaded" | tee -a "$LOG_FILE"
 else
-  echo "  Downloading: $BEE_HF_REPO / $BEE_HF_FILE → /models/" | tee -a "$LOG_FILE"
-  if "$HF_CLI" download "$BEE_HF_REPO" --include "$BEE_HF_FILE" --local-dir "$MODELS_DIR" >> "$LOG_FILE" 2>&1; then
-    echo "  ✓ GGUF model downloaded" | tee -a "$LOG_FILE"
-  else
-    echo "  ✗ GGUF download FAILED" | tee -a "$LOG_FILE"
-    FAILED=$((FAILED+1))
+  # v18.5.3 P0: Check disk space before BeeLlama download
+  check_disk_space 10000 || { FAILED=$((FAILED+1)); continue_skipped=1; }
+  if [ -z "${continue_skipped:-}" ]; then
+    echo "  Downloading: $BEE_HF_REPO / $BEE_HF_FILE → /models/" | tee -a "$LOG_FILE"
+    if "$HF_CLI" download "$BEE_HF_REPO" --include "$BEE_HF_FILE" --local-dir "$MODELS_DIR" >> "$LOG_FILE" 2>&1; then
+      echo "  ✓ GGUF model downloaded" | tee -a "$LOG_FILE"
+    else
+      echo "  ✗ GGUF download FAILED" | tee -a "$LOG_FILE"
+      FAILED=$((FAILED+1))
+    fi
   fi
+  unset continue_skipped 2>/dev/null || true
 fi
 
 # === Step 3: Ollama model (GGUF, GPU) ===
@@ -162,15 +188,21 @@ else
     else
       # Wait for Ollama API to be ready (max 60s)
       echo "  Waiting for Ollama API..." | tee -a "$LOG_FILE"
+      # v18.5.3 P0: Track ready state (was: break from loop but continued to docker exec regardless)
+      OLLAMA_API_READY=false
       for i in $(seq 1 12); do
         if curl -sf http://localhost:11435/api/tags >/dev/null 2>&1 || curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
           echo "  Ollama API ready" | tee -a "$LOG_FILE"
+          OLLAMA_API_READY=true
           break
         fi
         sleep 5
       done
-      # Pull model via ollama-agent container
-      if docker exec ollama-agent ollama pull "$OLLAMA_MODEL" >> "$LOG_FILE" 2>&1; then
+      # v18.5.3 P0: Only pull if API actually became ready (was: continued to docker exec even after timeout)
+      if [ "$OLLAMA_API_READY" != true ]; then
+        echo "  ✗ Ollama API did not become ready within 60s — skipping model pull" | tee -a "$LOG_FILE"
+        FAILED=$((FAILED+1))
+      elif docker exec ollama-agent ollama pull "$OLLAMA_MODEL" >> "$LOG_FILE" 2>&1; then
         echo "  ✓ Ollama model pulled: $OLLAMA_MODEL" | tee -a "$LOG_FILE"
       else
         echo "  ✗ Ollama pull FAILED" | tee -a "$LOG_FILE"

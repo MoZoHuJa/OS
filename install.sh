@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.5.2"
+VERSION="18.5.3"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -645,8 +645,17 @@ else
     /etc/systemd/system/generate-env.sh >> "$LOG_FILE" 2>&1 && ok ".env generated" || warn ".env generation (non-critical)"
   fi
   # v18.4 P0: /etc/scarlix/.env MUST be root:root 600 (contains secrets, root services source it)
-  chown root:root /etc/scarlix/.env 2>/dev/null || true
-  chmod 600 /etc/scarlix/.env 2>/dev/null || true
+  # v18.5.3 P0: fail-closed (was: || true → security inconsistency with commit claim)
+  if [ -f /etc/scarlix/.env ]; then
+    chown root:root /etc/scarlix/.env 2>/dev/null || crit "Cannot chown root:root /etc/scarlix/.env"
+    chmod 600 /etc/scarlix/.env 2>/dev/null || crit "Cannot chmod 600 /etc/scarlix/.env"
+    # v18.5.3 P0: verify ownership + perms after setting
+    env_owner=$(stat -c '%u:%g' /etc/scarlix/.env 2>/dev/null || echo "?")
+    env_mode=$(stat -c '%a' /etc/scarlix/.env 2>/dev/null || echo "?")
+    [ "$env_owner" = "0:0" ] || crit "/etc/scarlix/.env owner is $env_owner, expected 0:0"
+    [ "$env_mode" = "600" ] || crit "/etc/scarlix/.env mode is $env_mode, expected 600"
+    ok "/etc/scarlix/.env verified (root:root 600)"
+  fi
 
   # P1 v17.9.8: Build + start ScarliHQ dashboard (alpine image — NO nvidia needed, builds pre-reboot)
   # Architecture: ScarliHQ reads host-status.json (written by host-bridge timer), writes desired-mode.
@@ -697,7 +706,10 @@ else
     else
     log "Downloading starter model (qwen2.5:3b ~2GB) for Ollama fallback..."
     # Start Ollama temporarily to pull starter model
-    docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1
+    # v18.5.3 P1: Check compose startup failure (was: docker compose up unconditionally → sleep → API wait)
+    if ! docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
+      warn "Ollama container failed to start — starter model download skipped"
+    else
     sleep 5
     # P1-8: Wait for Ollama API to be ready before pulling (max 60s)
     log "Waiting for Ollama API to be ready..."
@@ -720,6 +732,7 @@ else
     fi
     # Stop Ollama (user will start AI stack manually via scarlix-mode ai)
     docker compose -f /opt/scarlix/ai/ollama/docker-compose.yml stop >> "$LOG_FILE" 2>&1 || true
+    fi  # v18.5.3: end compose startup else (was: unconditional docker compose up)
     fi  # end disk-space else
   fi
 

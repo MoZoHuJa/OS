@@ -14,7 +14,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "18.5.2"
+var Version = "18.5.3"
 
 // Handler holds dependencies for API routes.
 type Handler struct {
@@ -137,6 +137,22 @@ func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
         }
         if mode == "" {
                 writeJSONError(w, http.StatusBadRequest, "no mode specified")
+                return
+        }
+
+        // v18.5.3 P1: 409 Conflict if a transition is already pending (was: last-writer-wins)
+        // Check host-status for active transition state
+        currentStatus := status.ReadOrStale()
+        if currentStatus.ModeTransition.State == "applied" || currentStatus.ModeTransition.State == "retrying" {
+                // A transition is in progress — reject new request
+                w.WriteHeader(http.StatusConflict)
+                writeJSON(w, map[string]interface{}{
+                        "status":          "busy",
+                        "message":         "a mode transition is already in progress",
+                        "requested_mode": currentStatus.ModeTransition.Requested,
+                        "transition_state": currentStatus.ModeTransition.State,
+                        "retry_count":     currentStatus.ModeTransition.RetryCount,
+                })
                 return
         }
 
