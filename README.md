@@ -2,7 +2,7 @@
   <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.7.4 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v18.7.4</h1>
+<h1 align="center">SCARLIX OS v18.7.5</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.7.4"><img alt="Version" src="https://img.shields.io/badge/version-v18.7.4.4-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.7.5"><img alt="Version" src="https://img.shields.io/badge/version-v18.7.5.4-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -29,7 +29,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v18.7.4.4   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v18.7.5.4   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -46,7 +46,7 @@ download-models.sh
 scarlix-mode ai
 
 # 4. (optional) Open dashboard — token printed by install.sh
-#    http://<this-ip>:8090/?token=<SCARLIHQ_TOKEN>
+#    http://<this-ip>:8090/  (login with SCARLIHQ_TOKEN from /etc/scarlix/.env)
 ```
 
 ---
@@ -414,7 +414,7 @@ scarlix-mode status     # System summary
 scarlix-doctor          # Self-diagnostic (--fix for auto-fix)
 ```
 
-**Dashboard** (`http://<ip>:8090/?token=<SCARLIHQ_TOKEN>`): all 7 modes clickable. `game`/`tv` request the switch but `systemctl sunshine` runs on host (bridge applies it) — see Known Limitations.
+**Dashboard** (`http://<ip>:8090/` — login with `SCARLIHQ_TOKEN` from `/etc/scarlix/.env`): all 7 modes clickable. `game`/`tv` request the switch but `systemctl sunshine` runs on host (bridge applies it) — see Known Limitations.
 
 ---
 
@@ -558,7 +558,7 @@ Host-bridge architecture: dashboard reads JSON status, writes desired-mode. No p
 - **Single maintainer**: One person maintaining full stack.
 - **vLLM TP=1**: Separate model per GPU (less efficient than TP=2 but mixed-arch safe).
 - **ScarliHQ `game`/`tv` modes**: `scarlix-mode game` calls `systemctl start sunshine` on the HOST (via host-bridge, which runs as root — `sudo` removed in v17.9.9). If `sunshine.service` isn't installed, mode switch fails — dashboard now shows `✗ game failed` in mode transition field (v17.9.9 state machine). Check `/var/log/scarlix-host-bridge.log`.
-- **ScarliHQ auth = single shared token**: No per-user auth. Token in `/etc/scarlix/.env` (chmod 600). Token-in-URL (`?token=`) can leak via browser history/proxy logs — known limitation. For production, put a reverse proxy with session auth in front.
+- **ScarliHQ auth = single shared token**: No per-user auth. Token in `/etc/scarlix/.env` (chmod 600). v18.7.5: token no longer accepted via `?token=` URL param — dashboard reads it only from `sessionStorage` (paste-once-per-session via the auth gate); previously the URL `?token=` could leak via browser history/proxy logs (known limitation, now resolved). For production, put a reverse proxy with session auth in front.
 - **First install is slow**: `pacman -Syu` + NVIDIA + CUDA + cuDNN + Steam/Wine + docker images + ScarliHQ Go build + model download (50-150GB) = hours. Reboots + re-login required for NVIDIA driver + docker group.
 - **host-status.json 5s latency**: Dashboard data is up to 5s stale (host-bridge timer interval). Mode transition feedback (applied/retrying/failed) appears within 5s. Not for real-time control.
 

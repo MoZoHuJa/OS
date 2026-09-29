@@ -94,7 +94,7 @@
     <div class="brand">
       <div class="logo">S</div>
       <div>
-        <h1>ScarliHQ <span class="ver" id="dashboard-version">v18.7.4</span></h1>
+        <h1>ScarliHQ <span class="ver" id="dashboard-version">v18.7.5</span></h1>
         <div class="ver">SCARLIX OS — Sovereign AI Cloud Dashboard</div>
       </div>
     </div>
@@ -144,7 +144,7 @@
   </div>
 
   <footer>
-    SCARLIX OS <span class="ver" id="footer-version">v18.7.4</span> — ScarliHQ dashboard (host-bridge architecture) · Verified AI path: SGLang + vLLM + BeeLlama + Ollama fallback
+    SCARLIX OS <span class="ver" id="footer-version">v18.7.5</span> — ScarliHQ dashboard (host-bridge architecture) · Verified AI path: SGLang + vLLM + BeeLlama + Ollama fallback
   </footer>
 </div>
 <div class="toast" id="toast"></div>
@@ -153,7 +153,11 @@
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
 
-let TOKEN = sessionStorage.getItem('scarlihq_token') || new URLSearchParams(location.search).get('token') || '';
+// v18.7.5 P0: Token is read ONLY from sessionStorage (was: also from
+// ?token= URL param → permanent SCARLIHQ_TOKEN leaked into browser history,
+// referrer headers, reverse-proxy access logs). Users now paste the token
+// into the auth gate once per session; it is never in the URL.
+let TOKEN = sessionStorage.getItem('scarlihq_token') || '';
 
 function toast(msg, err){
   const t = $('#toast');
@@ -352,12 +356,12 @@ async function pollStatus(){
   if(s) renderStatus(s);
 }
 
-// v18.7.4 P1: Dynamic version from /api/health (was: hardcoded v17.9.9 in HTML).
+// v18.7.5 P1: Dynamic version from /api/health (was: hardcoded v17.9.9 in HTML).
 // The backend's /api/health returns {"version":"v18.7.x"} with the version
 // injected via -ldflags -X main.Version from the VERSION file (single source
 // of truth). We update every .ver element with id^=dashboard-version or
 // id^=footer-version after a successful health fetch. On failure we leave
-// the static fallback (v18.7.4) in place — the dashboard still works, just
+// the static fallback (v18.7.5) in place — the dashboard still works, just
 // with a potentially-stale version label instead of a blank one.
 function refreshVersion(){
   fetch('/api/health', {headers:{'Authorization':'Bearer '+TOKEN}})
@@ -374,7 +378,7 @@ function initApp(){
   // Verify token works, then start WS + polling
   fetch('/api/health', {headers:{'Authorization':'Bearer '+TOKEN}}).then(r=>{
     if(!r.ok){ showAuth('Token rejected'); return; }
-    // v18.7.4 P1: refresh version label from health response (single source of truth)
+    // v18.7.5 P1: refresh version label from health response (single source of truth)
     refreshVersion();
     connectWS();
     pollStatus();

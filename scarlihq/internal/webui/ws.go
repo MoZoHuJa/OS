@@ -5,7 +5,7 @@ import (
         "log"
         "net"
         "net/http"
-        "strings"
+        "net/url"
         "time"
 
         "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/api"
@@ -46,39 +46,36 @@ func init() {
 // checkOrigin validates the Origin header against allowed LAN networks.
 // Returns true for: empty origin (non-browser clients like curl), localhost, LAN private ranges.
 // v17.9.9: uses net.ParseIP + net.IPNet.Contains (was: strings.HasPrefix — crude, https rejected).
+//
+// v18.7.5 P1: Use url.Parse for robust origin validation (was: manual string
+// ops to strip scheme/port/brackets → broke on IPv6 origins like
+// http://[::1]:8090, and on origins with paths/queries; also mis-stripped the
+// port for IPv6 because LastIndex(":") matched inside the [::1] brackets).
+// url.Parse + u.Hostname() handles all of these correctly per RFC 3986.
+// We still require an IP literal (not a hostname) and still require the IP to
+// be in one of the allowed LAN CIDRs — so this is strictly a parser robustness
+// fix, not a policy change.
 func checkOrigin(r *http.Request) bool {
         origin := r.Header.Get("Origin")
         if origin == "" {
                 return true // non-browser clients (curl, scripts) — still need token
         }
-
-        // Parse host:port from origin URL (http://host:port or https://host:port)
-        origin = strings.TrimSpace(origin)
-        host := ""
-        for _, scheme := range []string{"https://", "http://"} {
-                if strings.HasPrefix(origin, scheme) {
-                        host = strings.TrimPrefix(origin, scheme)
-                        break
-                }
+        // v18.7.5 P1: Use url.Parse for robust origin validation (was: manual string ops → IPv6 broken)
+        u, err := url.Parse(origin)
+        if err != nil {
+                return false
         }
+        if u.Scheme != "http" && u.Scheme != "https" {
+                return false
+        }
+        host := u.Hostname()
         if host == "" {
-                return false // not http/https origin → reject
+                return false
         }
-        // Strip path + port
-        if idx := strings.Index(host, "/"); idx >= 0 {
-                host = host[:idx]
-        }
-        if idx := strings.LastIndex(host, ":"); idx >= 0 {
-                host = host[:idx] // strip port
-        }
-        // Strip brackets from IPv6 [::1]
-        host = strings.Trim(host, "[]")
-
         ip := net.ParseIP(host)
         if ip == nil {
-                return false // not an IP (could be hostname — reject for security; LAN uses IPs)
+                return false // not an IP (hostname — reject for security; LAN uses IPs)
         }
-
         for _, n := range allowedNetworks {
                 if n.Contains(ip) {
                         return true
@@ -107,26 +104,25 @@ func statusJSON() []byte {
 // Net effect: SCARLIHQ_TOKEN no longer appears in URLs, browser history, referrer
 // headers, or reverse-proxy access logs.
 //
-// v18.7.4 P1: Ticket is now Peeked (validated WITHOUT consuming) BEFORE the
-// upgrader.Upgrade() call, and Consumed (deleted) only AFTER a successful
-// Upgrade. Was: ValidateWSTicket consumed the ticket atomically before Upgrade,
-// so any Upgrade/Origin/slots failure wasted the ticket and forced the client
-// to re-POST /api/ws-ticket — mild DoS amplifier and UX breakage on flaky WiFi.
-// The split (Peek + Consume) preserves the single-use replay-resistance guarantee:
-// Peek returns true for at most one concurrent caller because the first Consume
-// deletes the entry, and the second Peek returns false.
+// v18.7.5 P0: Ticket is now RESERVED (atomically deleted) BEFORE upgrader.Upgrade(),
+// replacing the v18.7.4 Peek+Consume split (was: Peek didn't delete → two concurrent
+// WS connects with the same ticket could both Peek=true and both Upgrade, defeating
+// the single-use replay-resistance guarantee). On Upgrade failure, Release puts the
+// ticket back so the legitimate client can retry without re-POSTing /api/ws-ticket.
 //
 // authToken + mode + pf parameters are kept for signature stability (callers in main.go
-// pass them); they are unused here now since auth is delegated to api.PeekWSTicket.
+// pass them); they are unused here now since auth is delegated to api.ReserveWSTicket.
 func RegisterWS(mux *http.ServeMux, _ string, _ *scarlix_mode.Mode, _ *profiles.Manager) {
         mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-                // v18.7.4 P1: Peek (check WITHOUT consume) before Upgrade (was: consume before Upgrade).
                 ticket := r.URL.Query().Get("ticket")
                 if ticket == "" {
                         http.Error(w, "missing ticket", http.StatusUnauthorized)
                         return
                 }
-                if !api.PeekWSTicket(ticket) {
+                // v18.7.5 P0: Atomic reservation — delete BEFORE Upgrade (was: Peek didn't delete).
+                // Single-use replay-resistance guarantee: only the first concurrent caller
+                // can Reserve=true; all others see false because the entry is gone.
+                if !api.ReserveWSTicket(ticket) {
                         http.Error(w, "invalid or expired ticket", http.StatusUnauthorized)
                         return
                 }
@@ -136,22 +132,21 @@ func RegisterWS(mux *http.ServeMux, _ string, _ *scarlix_mode.Mode, _ *profiles.
                 case <-wsSlots:
                         defer func() { wsSlots <- struct{}{} }()
                 default:
+                        // v18.7.5 P0: Release ticket so client can retry without re-POSTing.
+                        api.ReleaseWSTicket(ticket)
                         http.Error(w, "too many WebSocket connections", http.StatusServiceUnavailable)
                         return
                 }
 
                 conn, err := upgrader.Upgrade(w, r, nil)
                 if err != nil {
-                        log.Printf("WS upgrade error: %v (ticket not consumed — client may retry with same ticket)", err)
+                        log.Printf("WS upgrade error: %v", err)
+                        // v18.7.5 P0: Release ticket on upgrade failure (was: consumed before → wasted)
+                        api.ReleaseWSTicket(ticket)
                         return
                 }
                 defer conn.Close()
-
-                // v18.7.4 P1: Consume ticket ONLY after successful Upgrade (was: consumed
-                // before Upgrade → wasted on Upgrade/Origin failure → client had to re-POST
-                // /api/ws-ticket). Single-use enforcement preserved: this is the first and
-                // only Consume; any concurrent WS connect that Peeks after this returns false.
-                api.ConsumeWSTicket(ticket)
+                // Ticket is already reserved (deleted from store) — no ConsumeWSTicket needed.
 
                 log.Println("WS client connected")
 

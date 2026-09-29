@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.7.4"
+VERSION="18.7.5"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -460,10 +460,11 @@ if is_checkpoint_valid phase4; then
 else
   # v18.7.4 P1: Build scarlix-bridge-reader (host-side atomic Go file reader).
   # Used by /usr/local/bin/scarlix-host-bridge to atomically read desired-mode
-  # (was: shell validate+cat+re-validate pattern with TOCTOU window). Build is
-  # non-fatal: on failure the host-bridge script falls back to the old shell
-  # pattern (with the TOCTOU window — acceptable for installs where Docker/Go
-  # are unavailable, e.g. minimal ISO rescue mode).
+  # (was: shell validate+cat+re-validate pattern with TOCTOU window).
+  # v18.7.5 P0: build is now CRITICAL — host-bridge no longer has a shell fallback
+  # (the shell fallback had the TOCTOU window, so it was removed for security).
+  # If the build fails here, crit() aborts install — the host-bridge script will
+  # reject every desired-mode until scarlix-bridge-reader is installed.
   log "Building scarlix-bridge-reader (atomic Go file reader)..."
   mkdir -p "$REPO_DIR/files/usr/local/bin"
   SBR_SRC="$REPO_DIR/scarlihq/cmd/scarlix-bridge-reader/main.go"
@@ -475,43 +476,63 @@ else
         chmod 755 "$SBR_OUT"
         ok "scarlix-bridge-reader built (native Go)"
       else
-        warn "scarlix-bridge-reader native build failed — host-bridge will use shell fallback"
+        # v18.7.5 P0: was warn (shell fallback existed) — now crit (no fallback).
+        crit "scarlix-bridge-reader native build failed — required for secure host-bridge operation"
       fi
     elif command -v docker >/dev/null 2>&1; then
       # Build via golang:1.23-alpine container (host has no Go but has Docker).
+      # v18.7.5 P1: added second volume mount for the output path (was:
+      #   -o /build/files/usr/local/bin/scarlix-bridge-reader — but /build is
+      #   mounted to $REPO_DIR/scarlihq, so the output landed at
+      #   $REPO_DIR/scarlihq/files/usr/local/bin/scarlix-bridge-reader, not
+      #   $REPO_DIR/files/usr/local/bin/scarlix-bridge-reader → SBR_OUT missing
+      #   → later crit 'scarlix-bridge-reader not built' even though go build
+      #   exited 0). Now mount $REPO_DIR/files/usr/local/bin → /out and write
+      #   to /out/scarlix-bridge-reader.
       if docker run --rm \
           -v "$REPO_DIR/scarlihq:/build" \
+          -v "$REPO_DIR/files/usr/local/bin:/out" \
           -w /build \
           -e GOFLAGS=-mod=mod \
           golang:1.23-alpine \
-          go build -o /build/files/usr/local/bin/scarlix-bridge-reader ./cmd/scarlix-bridge-reader \
+          go build -o /out/scarlix-bridge-reader ./cmd/scarlix-bridge-reader \
           >> "$LOG_FILE" 2>&1; then
         chmod 755 "$SBR_OUT"
         ok "scarlix-bridge-reader built (via golang:1.23-alpine container)"
       else
-        warn "scarlix-bridge-reader container build failed — host-bridge will use shell fallback"
+        # v18.7.5 P0: was warn (shell fallback existed) — now crit (no fallback).
+        crit "scarlix-bridge-reader container build failed — required for secure host-bridge operation"
       fi
     else
-      warn "Neither Go nor Docker available — scarlix-bridge-reader not built (host-bridge will use shell fallback)"
+      # v18.7.5 P0: was warn (shell fallback existed) — now crit (no fallback).
+      crit "Neither Go nor Docker available — scarlix-bridge-reader not built (required for secure host-bridge operation)"
     fi
   else
-    warn "scarlix-bridge-reader source not found ($SBR_SRC) — host-bridge will use shell fallback"
+    # v18.7.5 P0: was warn (shell fallback existed) — now crit (no fallback).
+    crit "scarlix-bridge-reader source not found ($SBR_SRC) — required for secure host-bridge operation"
+  fi
+  # v18.7.5 P0: bridge-reader is CRITICAL (was: warn → shell TOCTOU fallback).
+  # Defense-in-depth: even if a future edit re-introduces a warn() above, this
+  # final check catches a missing binary before the copy loop below.
+  if [ ! -f "$SBR_OUT" ]; then
+    crit "scarlix-bridge-reader not built — required for secure host-bridge operation"
   fi
 
   # Q10a: ALL file copy failures are crit (scarlix-mode, scarlix-wizard = core)
   # v17.9.8: added scarlix-host-bridge (privileged ops for ScarliHQ dashboard)
   # v18.7.4 P2: added generate-sha256sums.sh (release integrity manifest generator)
   # v18.7.4 P1: added scarlix-bridge-reader (atomic Go file reader — built above).
-  #   For scarlix-bridge-reader ONLY, missing file is warn (not crit) because the
-  #   build above may have failed and the host-bridge script has a shell fallback.
+  # v18.7.5 P0: scarlix-bridge-reader is now CRITICAL (was: warn — shell fallback
+  #   existed). The build block above crit()s on any failure, so reaching this
+  #   elif branch means the build was skipped/aborted — crit here too for safety.
   log "Installing SCARLIX scripts (CRITICAL)..."
   for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge generate-sha256sums.sh scarlix-bridge-reader; do
     src="$REPO_DIR/files/usr/local/bin/$binfile"
     if [ -f "$src" ]; then
       cp "$src" "/usr/local/bin/$binfile" && chmod 755 "/usr/local/bin/$binfile" && ok "/usr/local/bin/$binfile" || crit "$binfile copy failed"
     elif [ "$binfile" = "scarlix-bridge-reader" ]; then
-      # v18.7.4 P1: bridge-reader build may have failed — non-fatal (shell fallback).
-      warn "scarlix-bridge-reader not built — host-bridge will use shell fallback (validate+cat+re-validate)"
+      # v18.7.5 P0: was warn (shell fallback existed) — now crit (no fallback).
+      crit "scarlix-bridge-reader not built — required for secure host-bridge operation"
     else
       crit "$binfile not found in repo"
     fi
@@ -725,7 +746,7 @@ else
           # v18.2 P1: token only on TTY (was: info() → tee to log 644 → token leaked)
           if [ -t 1 ]; then
             echo -e "${CYAN}  Dashboard login token: ${GREEN}${SCARLIHQ_TOKEN}${NC}" | tee /dev/tty 2>/dev/null || true
-            echo -e "${CYAN}  Open: http://<this-ip>:8090/?token=${SCARLIHQ_TOKEN}${NC}" | tee /dev/tty 2>/dev/null || true
+            echo -e "${CYAN}  Dashboard: http://<this-ip>:8090/ (login with SCARLIHQ_TOKEN from /etc/scarlix/.env)${NC}" | tee /dev/tty 2>/dev/null || true
             echo -e "${CYAN}  (token also in /etc/scarlix/.env — chmod 600)${NC}" | tee /dev/tty 2>/dev/null || true
           else
             info "  Dashboard token generated (in /etc/scarlix/.env — run 'cat /etc/scarlix/.env | grep SCARLIHQ_TOKEN')"
