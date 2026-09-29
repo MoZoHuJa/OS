@@ -9,6 +9,7 @@ package status
 import (
         "encoding/json"
         "os"
+        "time"
 )
 
 // HostStatus is the JSON shape written by scarlix-host-bridge every 5s.
@@ -23,6 +24,7 @@ type HostStatus struct {
         Containers     []Container     `json:"containers"`
         Disk           Disk            `json:"disk"`
         Stale          bool            `json:"stale,omitempty"` // v18.3: true if file missing/corrupt/old
+        Error          string          `json:"error,omitempty"` // v18.5 P1: present when status generation failed
 }
 
 // ModeTransition holds the state of the most recent mode switch request.
@@ -81,6 +83,21 @@ func Read() (HostStatus, error) {
         // v18.3: mark stale if timestamp is empty or > 60s old
         if s.Timestamp == "" {
                 s.Stale = true
+        }
+        // v18.5 P1: Real stale check (was: only checked empty timestamp, not age)
+        if s.Timestamp != "" {
+                if t, err := time.Parse(time.RFC3339, s.Timestamp); err == nil {
+                        if time.Since(t) > 60*time.Second {
+                                s.Stale = true
+                        }
+                        // v18.5: also reject future timestamps (clock skew protection)
+                        if t.After(time.Now().Add(30 * time.Second)) {
+                                s.Stale = true
+                        }
+                } else {
+                        // Can't parse timestamp → mark stale
+                        s.Stale = true
+                }
         }
         return s, nil
 }

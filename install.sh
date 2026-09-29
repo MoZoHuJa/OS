@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v18.2 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v18.5 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
 # v18.2 FIXES (vs v18.1) — Security + UX:
@@ -25,11 +25,11 @@ set -euo pipefail
 # USAGE (primary — safe):
 #   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
-#   git checkout v18.2   # ALWAYS checkout specific tag (main may be ahead)
+#   git checkout v18.5   # ALWAYS checkout specific tag (main may be ahead)
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.4"
+VERSION="18.5"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -234,11 +234,12 @@ else
 
   mkdir -p /opt/scarlix /var/lib/scarlix /etc/scarlix/{profiles,secrets}
   mkdir -p /models /var/lib/docker /var/lib/scarlix/ollama /mnt/{files,games,photos,backup/restic}
-  # v18.4 P0: SECURITY — do NOT chown /etc/scarlix or /opt/scarlix to user.
-  # These dirs contain .env files that root services `source` — if user can write them,
-  # they can inject shell commands → local privilege escalation.
-  # Only chown user data dirs (/var/lib/scarlix for state, /mnt for files).
-  chown -R "$REAL_USER:$REAL_USER" /var/lib/scarlix /mnt 2>/dev/null || true
+  # v18.5 P0: /var/lib/scarlix must be root:root 755 (was: chown -R REAL_USER → symlink attack on bridge-state/input)
+  # Only /mnt is user-owned (user files). /var/lib/scarlix contains security-critical bridge dirs.
+  chown -R "$REAL_USER:$REAL_USER" /mnt 2>/dev/null || true
+  # /var/lib/scarlix stays root:root (install.sh creates it with mkdir, which defaults to root)
+  chown root:root /var/lib/scarlix 2>/dev/null || true
+  chmod 755 /var/lib/scarlix 2>/dev/null || true
   # /etc/scarlix stays root:root (user reads models.yaml but can't modify .env)
   # /opt/scarlix stays root:root (user reads scripts but can't modify .env)
   # v18.4 P0: Ensure config dirs are root-owned (security boundary)
@@ -503,7 +504,19 @@ else
 
   # models.yaml (single source of truth)
   log "Installing models.yaml..."
-  [ -f "$REPO_DIR/models.yaml" ] && { cp "$REPO_DIR/models.yaml" /etc/scarlix/models.yaml; ok "/etc/scarlix/models.yaml"; } || crit "models.yaml not found"
+  # v18.5 P1: Don't overwrite user's models.yaml on upgrade (was: unconditional cp → lost custom model config)
+  [ -f "$REPO_DIR/models.yaml" ] || crit "models.yaml not found"
+  if [ ! -f /etc/scarlix/models.yaml ]; then
+    cp "$REPO_DIR/models.yaml" /etc/scarlix/models.yaml
+    ok "/etc/scarlix/models.yaml (installed from repo)"
+  else
+    # User already has a models.yaml — preserve it, but show diff for reference
+    if ! diff -q "$REPO_DIR/models.yaml" /etc/scarlix/models.yaml >/dev/null 2>&1; then
+      info "/etc/scarlix/models.yaml: preserved (user-customized, repo version available at $REPO_DIR/models.yaml)"
+    else
+      ok "/etc/scarlix/models.yaml (unchanged)"
+    fi
+  fi
   [ -f "$REPO_DIR/AGENTS.md" ] && { cp "$REPO_DIR/AGENTS.md" /etc/scarlix/AGENTS.md; ok "/etc/scarlix/AGENTS.md"; } || warn "AGENTS.md not found (non-critical)"
 
   # Q6a: Copy ALL stacks INCLUDING scarlihq (was typo'd as scarlihp in v17.3)
@@ -532,6 +545,14 @@ else
       warn "$dir/ not in repo (non-critical)"
     fi
   done
+
+  # v18.5 P0: Fix /opt/scarlix/.env ownership on upgrade (was: only /etc/scarlix/.env fixed in v18.4)
+  # Systems upgraded from v18.0-18.3 have user-owned .env → LPE via source
+  if [ -f /opt/scarlix/.env ]; then
+    chown root:root /opt/scarlix/.env 2>/dev/null || true
+    chmod 600 /opt/scarlix/.env 2>/dev/null || true
+    ok "/opt/scarlix/.env ownership fixed (root:root 600)"
+  fi
 
   # v17.9.5: Removed dead "Unifying Docker network" + SGLang sed code
   # Source compose files are already correct (scarlix-net, v0.4.4-cu128, ${SGLANG_MODEL_PATH})
@@ -596,6 +617,9 @@ else
       # v18.1 P1: rm -rf (was: rmdir — fails if dir has hidden files like .retry)
       rm -rf /var/lib/scarlix/bridge 2>/dev/null || true
     fi
+    # v18.5 P0: Ensure parent /var/lib/scarlix is root-owned BEFORE creating bridge dirs
+    chown root:root /var/lib/scarlix 2>/dev/null || true
+    chmod 755 /var/lib/scarlix 2>/dev/null || true
     # bridge-input: ScarliHQ nonroot (65532) writes desired-mode here (mode 700 — owner only)
     mkdir -p /var/lib/scarlix/bridge-input
     chown 65532:65532 /var/lib/scarlix/bridge-input 2>/dev/null || chown nobody:nobody /var/lib/scarlix/bridge-input

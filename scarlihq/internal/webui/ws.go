@@ -34,6 +34,15 @@ var upgrader = websocket.Upgrader{
         HandshakeTimeout: 10 * time.Second,
 }
 
+// v18.5 P1: Limit concurrent WebSocket connections (was: unlimited → DoS)
+var wsSlots = make(chan struct{}, 16) // max 16 concurrent WS clients
+
+func init() {
+        for i := 0; i < 16; i++ {
+                wsSlots <- struct{}{}
+        }
+}
+
 // checkOrigin validates the Origin header against allowed LAN networks.
 // Returns true for: empty origin (non-browser clients like curl), localhost, LAN private ranges.
 // v17.9.9: uses net.ParseIP + net.IPNet.Contains (was: strings.HasPrefix — crude, https rejected).
@@ -106,6 +115,15 @@ func RegisterWS(mux *http.ServeMux, authToken string, _ *scarlix_mode.Mode, _ *p
                         return
                 }
 
+                // v18.5 P1: Limit concurrent WebSocket connections (was: unlimited → DoS)
+                select {
+                case <-wsSlots:
+                        defer func() { wsSlots <- struct{}{} }()
+                default:
+                        http.Error(w, "too many WebSocket connections", http.StatusServiceUnavailable)
+                        return
+                }
+
                 conn, err := upgrader.Upgrade(w, r, nil)
                 if err != nil {
                         log.Printf("WS upgrade error: %v", err)
@@ -115,9 +133,14 @@ func RegisterWS(mux *http.ServeMux, authToken string, _ *scarlix_mode.Mode, _ *p
 
                 log.Println("WS client connected")
 
+                // v18.5 P1: Write deadline prevents blocked clients (was: no deadline → goroutine leak DoS)
+                conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+
                 ticker := time.NewTicker(2 * time.Second)
                 defer ticker.Stop()
 
+                // v18.5 P1: refresh write deadline before each WriteMessage
+                conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
                 if err := conn.WriteMessage(websocket.TextMessage, statusJSON()); err != nil {
                         log.Printf("WS write error: %v", err)
                         return
@@ -126,6 +149,8 @@ func RegisterWS(mux *http.ServeMux, authToken string, _ *scarlix_mode.Mode, _ *p
                 for {
                         select {
                         case <-ticker.C:
+                                // v18.5 P1: refresh write deadline before each WriteMessage
+                                conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
                                 if err := conn.WriteMessage(websocket.TextMessage, statusJSON()); err != nil {
                                         log.Printf("WS write error: %v", err)
                                         return

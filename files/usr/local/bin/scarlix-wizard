@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.4 — EndeavourOS Edition — Setup Wizard
-# v18.4: gateway prompt (was hardcoded 192.168.1.1), version unified
+# SCARLIX OS v18.5 — EndeavourOS Edition — Setup Wizard
+# v18.5: gateway prompt (was hardcoded 192.168.1.1), version unified
 # v17.5: Creates .experimental if 2+ GPU (Q3a — vLLM starts without --profile gate)
 
-TITLE="SCARLIX OS v18.4 Setup"
+TITLE="SCARLIX OS v18.5 Setup"
 
 NVIDIA_DGPU_COUNT=$(lspci -nn 2>/dev/null | grep -iE 'NVIDIA.*(VGA|3D)' | wc -l || echo 0)
 if [ "$NVIDIA_DGPU_COUNT" -gt 0 ]; then
@@ -17,7 +17,7 @@ else
 fi
 
 whiptail --title "$TITLE" --msgbox --ok-button "OK" \
-  "Vitaj v SCARLIX OS v18.4 (EndeavourOS Edition)!\n\n\
+  "Vitaj v SCARLIX OS v18.5 (EndeavourOS Edition)!\n\n\
 Working AI Path — model-aware, fail-hard.\n\
 Base: EndeavourOS (near-vanilla Arch)\n\
 Kernel: linux + linux-lts (fallback)\n\
@@ -32,21 +32,21 @@ PC_TYPE=$(whiptail --title "$TITLE" --menu \
   "ai_server" "AI Server (EndeavourOS + NVIDIA + AI + Gaming)" \
   "dev_workstation" "Dev Workstation (Headless — coding + files)" 3>&1 1>&2 2>&3) || PC_TYPE="$SUGGESTED_TYPE"
 
-# v18.4 P2: whiptail ESC/Cancel handling (was: set -e aborts whole script)
+# v18.5 P2: whiptail ESC/Cancel handling (was: set -e aborts whole script)
 DEFAULT_IP="192.168.1.100"
 [ "$PC_TYPE" = "dev_workstation" ] && DEFAULT_IP="192.168.1.101"
 IP=$(whiptail --title "$TITLE" --inputbox "IP adresa:" 10 50 "$DEFAULT_IP" 3>&1 1>&2 2>&3) || { echo "Wizard cancelled."; exit 0; }
-# v18.4 P2: validate IP (empty if user just pressed Enter on empty box)
+# v18.5 P2: validate IP (empty if user just pressed Enter on empty box)
 [ -z "$IP" ] && IP="$DEFAULT_IP"
 
-# v18.4 P2: whiptail ESC handling
+# v18.5 P2: whiptail ESC handling
 GATEWAY=$(whiptail --title "$TITLE" --inputbox "Gateway (router) IP:" 10 50 "$DEFAULT_GW" 3>&1 1>&2 2>&3) || GATEWAY="$DEFAULT_GW"
 [ -z "$GATEWAY" ] && GATEWAY="$DEFAULT_GW"
 
 # v17.9.6: PASS removed (was never applied to user — misleading input)
 # User sets password during EndeavourOS Calamares install
 
-# v18.4 P2: whiptail ESC handling
+# v18.5 P2: whiptail ESC handling
 TG_TOKEN=$(whiptail --title "$TITLE" --inputbox "Telegram Bot Token (prazdne = preskoc):" 10 60 "" 3>&1 1>&2 2>&3) || TG_TOKEN=""
 TG_CHAT_ID=""
 [ -n "$TG_TOKEN" ] && { TG_CHAT_ID=$(whiptail --title "$TITLE" --inputbox "Telegram Chat ID:" 10 50 "" 3>&1 1>&2 2>&3) || TG_CHAT_ID=""; }
@@ -109,7 +109,7 @@ whiptail --title "$TITLE" --yesno \
 
 echo ""
 echo "========================================"
-echo "  SCARLIX OS v18.4 — EndeavourOS Edition"
+echo "  SCARLIX OS v18.5 — EndeavourOS Edition"
 echo "  Setup complete!"
 echo "  PC Type: $PC_TYPE"
 echo "  IP: $IP (gw: $GATEWAY)"
