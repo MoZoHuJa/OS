@@ -6,7 +6,7 @@ services:
     ports: ["100.64.0.1:8428:8428"]
     volumes: ["./victoria:/storage"]
     command: --storageDataPath=/storage --retentionPeriod=90d
-    networks: [scarlix_net]
+    networks: [scarlix-net]
 
   grafana:
     image: grafana/grafana:11.3.0
@@ -17,33 +17,36 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
       - GF_SERVER_ROOT_URL=https://monitoring.scarlix.example.com
-    networks: [scarlix_net]
+    networks: [scarlix-net]
 
   otel-collector:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: otel/opentelemetry-collector-contrib:latest
     container_name: otel-collector
     restart: unless-stopped
     ports: ["100.64.0.1:4317:4317", "100.64.0.1:4318:4318"]
     volumes: ["./otel/config.yaml:/etc/otelcol/config.yaml"]
-    networks: [scarlix_net]
+    networks: [scarlix-net]
 
   openlit:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: openlit/openlit:latest
     container_name: openlit
     restart: unless-stopped
     ports: ["100.64.0.1:3002:3000"]
     volumes: ["./openlit:/data"]
-    networks: [scarlix_net]
+    networks: [scarlix-net]
     profiles: [tracing]
 
   alertmanager:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: prom/alertmanager:latest
     container_name: alertmanager
     restart: unless-stopped
     ports: ["100.64.0.1:9093:9093"]
     volumes: ["./alertmanager:/etc/alertmanager"]
-    networks: [scarlix_net]
+    networks: [scarlix-net]
     profiles: [tracing]
 
 networks:
-  scarlix_net: {external: true}
+  scarlix-net: {external: true}

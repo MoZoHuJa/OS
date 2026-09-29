@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ScarliHQ — SCARLIX OS Dashboard</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#111622; --panel2:#161c2c; --border:#232b40;
+    --text:#e6e9f0; --muted:#8892a8; --accent:#10b981; --accent2:#f59e0b;
+    --red:#ef4444; --blue:#3b82f6; --violet:#8b5cf6; --cyan:#06b6d4;
+    --radius:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;min-height:100vh;padding:18px;line-height:1.45}
+  .wrap{max-width:1180px;margin:0 auto}
+  header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#111622,#161c2c);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:18px}
+  .brand{display:flex;align-items:center;gap:12px}
+  .logo{width:42px;height:42px;border-radius:10px;background:conic-gradient(from 180deg,var(--accent),var(--cyan),var(--violet),var(--accent));display:flex;align-items:center;justify-content:center;font-weight:800;color:#0b0e14;font-size:20px}
+  h1{font-size:20px;letter-spacing:.5px}
+  .ver{font-size:12px;color:var(--muted);font-weight:500}
+  .clock{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;color:var(--accent2)}
+  .ws-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:middle;transition:.3s}
+  .ws-dot.live{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+  .ws-dot.dead{background:var(--red)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-bottom:18px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .stat{display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--border)}
+  .stat:last-child{border-bottom:none}
+  .stat .k{color:var(--muted);font-size:13px}
+  .stat .v{font-family:ui-monospace,monospace;font-weight:600}
+  .gpu-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+  .gpu-card{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .gpu-card .nm{font-size:12px;color:var(--muted);margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .gpu-card .id{font-size:11px;font-weight:700;color:var(--cyan);background:#0b0e14;padding:2px 7px;border-radius:5px;display:inline-block;margin-bottom:6px}
+  .bar{height:7px;background:#1f2638;border-radius:4px;overflow:hidden;margin:4px 0 2px}
+  .bar > i{display:block;height:100%;border-radius:4px;transition:width .6s ease}
+  .bar.mem > i{background:linear-gradient(90deg,var(--accent),var(--cyan))}
+  .bar.util > i{background:linear-gradient(90deg,var(--accent2),var(--red))}
+  .barlabel{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-family:ui-monospace,monospace}
+  .modes{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+  .mode-btn{flex:1;min-width:84px;padding:11px 8px;border-radius:9px;cursor:pointer;background:var(--panel2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:600;transition:.18s}
+  .mode-btn:hover{border-color:var(--accent);transform:translateY(-1px)}
+  .mode-btn.active{background:linear-gradient(135deg,var(--accent),#0c8a5e);color:#0b0e14;border-color:transparent}
+  .mode-btn.danger:hover{border-color:var(--red)}
+  .mode-btn.danger.active{background:linear-gradient(135deg,var(--red),#b91c1c);color:#fff}
+  .mode-btn.creative.active{background:linear-gradient(135deg,var(--violet),#6d28d9);color:#fff}
+  .mode-btn.tv.active{background:linear-gradient(135deg,var(--cyan),#0e7490);color:#0b0e14}
+  .curmode{font-size:13px;color:var(--muted);text-align:center;margin-top:6px}
+  .curmode b{color:var(--accent);text-transform:uppercase;font-family:ui-monospace,monospace}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:7px 8px;border-bottom:1px solid var(--border)}
+  td{padding:7px 8px;border-bottom:1px solid var(--border);font-family:ui-monospace,monospace}
+  tr:last-child td{border-bottom:none}
+  .pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
+  .pill.up{background:rgba(16,185,129,.15);color:var(--accent)}
+  .pill.down{background:rgba(239,68,68,.15);color:var(--red)}
+  .pill.other{background:rgba(245,158,11,.15);color:var(--accent2)}
+  .empty{color:var(--muted);font-style:italic;padding:14px;text-align:center}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--accent);padding:11px 18px;border-radius:9px;font-size:13px;z-index:50;box-shadow:0 8px 30px rgba(0,0,0,.4);opacity:0;transition:.3s;pointer-events:none}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
+  .toast.err{border-left-color:var(--red)}
+  .spinner{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;display:inline-block}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;padding:14px}
+  footer a{color:var(--cyan);text-decoration:none}
+  /* Auth gate */
+  .auth-overlay{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100}
+  .auth-box{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:28px 32px;max-width:380px;width:90%}
+  .auth-box h2{margin-bottom:8px;font-size:18px}
+  .auth-box p{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .auth-box input{width:100%;padding:10px 12px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:ui-monospace,monospace;font-size:13px;margin-bottom:12px}
+  .auth-box button{width:100%;padding:11px;border:none;border-radius:8px;background:linear-gradient(135deg,var(--accent),#0c8a5e);color:#0b0e14;font-weight:700;cursor:pointer;font-size:14px}
+  .auth-box button:hover{filter:brightness(1.1)}
+  .auth-err{color:var(--red);font-size:12px;margin-top:8px;min-height:16px}
+  @media(max-width:640px){header{flex-direction:column;align-items:flex-start}}
+</style>
+</head>
+<body>
+<!-- Auth gate (shown if no token) -->
+<div class="auth-overlay" id="authOverlay" style="display:none">
+  <div class="auth-box">
+    <h2>ScarliHQ Login</h2>
+    <p>Enter the SCARLIHQ_TOKEN (from <code>/etc/scarlix/.env</code>):</p>
+    <input type="password" id="tokenInput" placeholder="SCARLIHQ_TOKEN" autofocus>
+    <button id="tokenSubmit">Connect</button>
+    <div class="auth-err" id="authErr"></div>
+  </div>
+</div>
+
+<div class="wrap" id="dashboard" style="display:none">
+  <header>
+    <div class="brand">
+      <div class="logo">S</div>
+      <div>
+        <h1>ScarliHQ <span class="ver" id="dashboard-version">v18.7.4</span></h1>
+        <div class="ver">SCARLIX OS — Sovereign AI Cloud Dashboard</div>
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="ver"><span class="ws-dot" id="wsdot"></span><span id="wsstate">connecting…</span></div>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>GPU Status</h2>
+      <div class="gpu-grid" id="gpus"><div class="empty">Waiting for host-status…</div></div>
+    </div>
+
+    <div class="card">
+      <h2>System</h2>
+      <div class="stat"><span class="k">Mode</span><span class="v" id="sysmode" style="color:var(--accent)">—</span></div>
+      <div class="stat"><span class="k">Health</span><span class="v" id="syshealth">—</span></div>
+      <div class="stat"><span class="k">Containers</span><span class="v" id="syscont">—</span></div>
+      <div class="stat"><span class="k">Experimental</span><span class="v" id="sysexp">—</span></div>
+      <div class="stat"><span class="k">/models free</span><span class="v" id="sysdisk">—</span></div>
+      <div class="stat"><span class="k">ScarliHQ</span><span class="v">:8090</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Mode Switcher</h2>
+      <div class="modes">
+        <button class="mode-btn" data-mode="ai">AI</button>
+        <button class="mode-btn" data-mode="turbo">Turbo</button>
+        <button class="mode-btn" data-mode="offline">Offline</button>
+        <button class="mode-btn creative" data-mode="creative">Creative</button>
+        <button class="mode-btn tv" data-mode="tv">TV</button>
+        <button class="mode-btn" data-mode="game">Game</button>
+        <button class="mode-btn danger" data-mode="stop">Stop</button>
+      </div>
+      <div class="curmode">Current: <b id="curmode">unknown</b></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Docker Containers</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Status</th><th>Ports</th></tr></thead>
+      <tbody id="contbody"><tr><td colspan="3" class="empty">Waiting for host-status…</td></tr></tbody>
+    </table>
+  </div>
+
+  <footer>
+    SCARLIX OS <span class="ver" id="footer-version">v18.7.4</span> — ScarliHQ dashboard (host-bridge architecture) · Verified AI path: SGLang + vLLM + BeeLlama + Ollama fallback
+  </footer>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+
+let TOKEN = sessionStorage.getItem('scarlihq_token') || new URLSearchParams(location.search).get('token') || '';
+
+function toast(msg, err){
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (err ? ' err' : '');
+  clearTimeout(t._t);
+  t._t = setTimeout(()=>{ t.className = 'toast' + (err ? ' err' : ''); }, 3200);
+}
+
+async function api(path, opts){
+  try{
+    const r = await fetch(path, Object.assign({headers:{'Authorization':'Bearer '+TOKEN}}, opts||{}));
+    if(r.status === 401){
+      showAuth('Token rejected — re-enter SCARLIHQ_TOKEN');
+      return null;
+    }
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return await r.json();
+  }catch(e){
+    return null;
+  }
+}
+
+function showAuth(err){
+  $('#dashboard').style.display = 'none';
+  $('#authOverlay').style.display = 'flex';
+  $('#authErr').textContent = err || '';
+  $('#tokenInput').value = TOKEN;
+  $('#tokenInput').focus();
+}
+
+function hideAuth(){
+  $('#authOverlay').style.display = 'none';
+  $('#dashboard').style.display = 'block';
+}
+
+$('#tokenSubmit').addEventListener('click', async ()=>{
+  TOKEN = $('#tokenInput').value.trim();
+  if(!TOKEN){ $('#authErr').textContent = 'Token cannot be empty'; return; }
+  // Verify token
+  const h = await fetch('/api/health', {headers:{'Authorization':'Bearer '+TOKEN}});
+  if(h.ok){
+    sessionStorage.setItem('scarlihq_token', TOKEN);
+    hideAuth();
+    initApp();
+  }else{
+    $('#authErr').textContent = 'Invalid token (HTTP '+(h.status)+')';
+  }
+});
+$('#tokenInput').addEventListener('keydown', e=>{ if(e.key==='Enter') $('#tokenSubmit').click(); });
+
+// Render functions
+function renderStatus(s){
+  if(!s) return;
+  // Clock
+  if(s.timestamp){
+    const t = s.timestamp.includes('T') ? s.timestamp.substr(11,8) : s.timestamp;
+    $('#clock').textContent = t;
+  }
+  // Mode
+  const mode = s.mode || 'unknown';
+  $('#sysmode').textContent = mode;
+  $('#curmode').textContent = mode;
+  $$('.mode-btn').forEach(b=> b.classList.toggle('active', b.dataset.mode === mode));
+  // v17.9.9 P1: mode transition feedback (retry/failed — was: silent no-op)
+  if(s.mode_transition && s.mode_transition.requested){
+    const mt = s.mode_transition;
+    let trText = '';
+    let trColor = 'var(--muted)';
+    if(mt.state === 'applied'){ trText = '✓ '+mt.requested+' applied'; trColor = 'var(--accent)'; }
+    else if(mt.state === 'retrying'){ trText = '⟳ '+mt.requested+' retry '+mt.retry_count+'/3'; trColor = 'var(--accent2)'; }
+    else if(mt.state === 'failed'){ trText = '✗ '+mt.requested+' failed'; trColor = 'var(--red)'; }
+    if(trText){
+      $('#sysmode').textContent = mode + ' (' + trText + ')';
+      $('#sysmode').style.color = trColor;
+    }
+  }
+  // Experimental
+  $('#sysexp').textContent = s.experimental ? 'YES (vLLM)' : 'no';
+  // Disk
+  if(s.disk && s.disk.models_total_mb){
+    const freeGB = (s.disk.models_free_mb/1024).toFixed(1);
+    const totGB = (s.disk.models_total_mb/1024).toFixed(1);
+    $('#sysdisk').textContent = freeGB + '/' + totGB + ' GB';
+  }
+  // Health
+  $('#syshealth').textContent = s.version ? 'OK ('+s.version+')' : '—';
+  $('#syshealth').style.color = s.version ? 'var(--accent)' : 'var(--muted)';
+  // GPUs
+  const el = $('#gpus');
+  if(s.gpus && s.gpus.length){
+    el.innerHTML = s.gpus.map(g=>{
+      const memPct = g.mem_total>0 ? Math.round(g.mem_used/g.mem_total*100) : 0;
+      const utilPct = Math.round(g.util||0);
+      return `<div class="gpu-card">
+        <span class="id">GPU ${g.index} · sm_${g.compute_cap}</span>
+        <div class="nm" title="${g.name}">${g.name}</div>
+        <div class="barlabel"><span>VRAM</span><span>${Math.round(g.mem_used)}/${Math.round(g.mem_total)} MiB</span></div>
+        <div class="bar mem"><i style="width:${memPct}%"></i></div>
+        <div class="barlabel"><span>Util</span><span>${utilPct}%</span></div>
+        <div class="bar util"><i style="width:${utilPct}%"></i></div>
+        <div class="barlabel" style="margin-top:6px"><span>${g.temp||0}°C</span><span>${g.power||0} W</span></div>
+      </div>`;
+    }).join('');
+  }else{
+    el.innerHTML = '<div class="empty">No GPUs in host-status (scarlix-host-bridge.timer not running, or no NVIDIA dGPU)</div>';
+  }
+  // Containers
+  const tb = $('#contbody');
+  if(s.containers && s.containers.length){
+    $('#syscont').textContent = s.containers.length;
+    tb.innerHTML = s.containers.map(c=>{
+      let cls = 'other';
+      if(/Up/i.test(c.status)) cls = 'up';
+      else if(/Exit|Down|Stopped/i.test(c.status)) cls = 'down';
+      return `<tr><td>${c.name||'—'}</td><td><span class="pill ${cls}">${c.status||'—'}</span></td><td style="color:var(--muted);font-size:11px">${c.ports||'—'}</td></tr>`;
+    }).join('');
+  }else{
+    tb.innerHTML = '<tr><td colspan="3" class="empty">No containers (or host-bridge not running)</td></tr>';
+    $('#syscont').textContent = '0';
+  }
+}
+
+async function setMode(mode){
+  toast('Requesting mode → '+mode+'…');
+  const r = await api('/api/mode?set='+encodeURIComponent(mode), {method:'POST'});
+  if(r && (r.status === 'accepted' || r.status === 'ok')){
+    toast('Mode '+mode+' requested (host bridge applies within 5s)');
+  }else{
+    toast('Mode switch failed: '+(r&&r.message||'API error'), true);
+  }
+}
+
+$$('.mode-btn').forEach(b=>{
+  b.addEventListener('click', ()=> setMode(b.dataset.mode));
+});
+
+// WebSocket — pushes full host-status every 2s
+// v18.7.3 P1: Use short-lived WS ticket (was: permanent token in URL)
+let ws = null;
+async function connectWS(){
+  try{
+    // Step 1: Get a short-lived WS ticket via REST API (Bearer auth)
+    const ticketResp = await fetch('/api/ws-ticket', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + TOKEN }
+    });
+    if(!ticketResp.ok){
+      $('#wsdot').className = 'ws-dot dead';
+      $('#wsstate').textContent = 'ticket failed';
+      setTimeout(()=>{ if(TOKEN) connectWS(); }, 5000);
+      return;
+    }
+    const ticketData = await ticketResp.json();
+    const ticket = ticketData.ticket;
+    if(!ticket){
+      $('#wsdot').className = 'ws-dot dead';
+      $('#wsstate').textContent = 'no ticket';
+      return;
+    }
+    // Step 2: Connect WS with ticket (not permanent token)
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(proto+'://'+location.host+'/ws?ticket='+encodeURIComponent(ticket));
+    ws.onopen = ()=>{
+      $('#wsdot').className = 'ws-dot live';
+      $('#wsstate').textContent = 'live';
+    };
+    ws.onmessage = (ev)=>{
+      try{
+        const s = JSON.parse(ev.data);
+        if(s.timestamp){ renderStatus(s); }
+      }catch(e){}
+    };
+    ws.onclose = ()=>{
+      $('#wsdot').className = 'ws-dot dead';
+      $('#wsstate').textContent = 'reconnecting…';
+      setTimeout(()=>{ if(TOKEN) connectWS(); }, 3000);
+    };
+    ws.onerror = ()=>{ try{ws.close();}catch(e){} };
+  }catch(e){
+    $('#wsdot').className = 'ws-dot dead';
+    $('#wsstate').textContent = 'unavailable';
+  }
+}
+
+// Fallback clock (if WS not connected)
+setInterval(()=>{
+  if($('#wsstate').textContent !== 'live'){
+    $('#clock').textContent = new Date().toTimeString().slice(0,8);
+  }
+}, 1000);
+
+// REST polling fallback (every 5s — in case WS fails)
+async function pollStatus(){
+  const s = await api('/api/status');
+  if(s) renderStatus(s);
+}
+
+// v18.7.4 P1: Dynamic version from /api/health (was: hardcoded v17.9.9 in HTML).
+// The backend's /api/health returns {"version":"v18.7.x"} with the version
+// injected via -ldflags -X main.Version from the VERSION file (single source
+// of truth). We update every .ver element with id^=dashboard-version or
+// id^=footer-version after a successful health fetch. On failure we leave
+// the static fallback (v18.7.4) in place — the dashboard still works, just
+// with a potentially-stale version label instead of a blank one.
+function refreshVersion(){
+  fetch('/api/health', {headers:{'Authorization':'Bearer '+TOKEN}})
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP '+r.status)))
+    .then(h => {
+      if(!h || !h.version) return;
+      const v = h.version.startsWith('v') ? h.version : 'v' + h.version;
+      document.querySelectorAll('.ver').forEach(el => { el.textContent = v; });
+    })
+    .catch(() => {}); // silently fail — static version is the fallback
+}
+
+function initApp(){
+  // Verify token works, then start WS + polling
+  fetch('/api/health', {headers:{'Authorization':'Bearer '+TOKEN}}).then(r=>{
+    if(!r.ok){ showAuth('Token rejected'); return; }
+    // v18.7.4 P1: refresh version label from health response (single source of truth)
+    refreshVersion();
+    connectWS();
+    pollStatus();
+    setInterval(pollStatus, 5000);
+  }).catch(()=>{
+    // Backend down — show dashboard anyway (will show stale/empty data)
+    hideAuth();
+    connectWS();
+  });
+}
+
+// Boot: if token in URL/session, verify + init; else show auth gate
+if(TOKEN){
+  hideAuth();
+  initApp();
+}else{
+  showAuth();
+}
+</script>
+</body>
+</html>

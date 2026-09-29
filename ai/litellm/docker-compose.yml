@@ -4,15 +4,14 @@ services:
     container_name: litellm
     restart: unless-stopped
     ports:
-      - "100.64.0.1:4000:4000"
-      - "127.0.0.1:4000:4000"
+      - "127.0.0.1:4001:4000"
     volumes:
       - ./config.yaml:/app/config.yaml
       - ./data:/app/data
     command: --config /app/config.yaml --port 4000
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
-    networks: [scarlix-net, scarlix_net]
+    networks: [scarlix-net]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:4000/health"]
       interval: 30s
@@ -20,4 +19,3 @@ services:
       retries: 3
 networks:
   scarlix-net: { external: true }
-  scarlix_net: { external: true }

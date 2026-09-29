@@ -1,5 +1,6 @@
 services:
   hermes:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: nousresearch/hermes-agent:latest
     container_name: hermes
     restart: unless-stopped
@@ -16,12 +17,11 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_ZMOR_CHAT_ID}
       - TZ=Europe/Bratislava
-    networks: [scarlix_ai, scarlix_net]
+    networks: [scarlix-net]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:7999/health"]
       interval: 30s
       timeout: 5s
       retries: 3
 networks:
-  scarlix_ai: { external: true }
-  scarlix_net: { external: true }
+  scarlix-net: { external: true }

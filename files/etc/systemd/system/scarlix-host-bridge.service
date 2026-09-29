@@ -1,0 +1,29 @@
+[Unit]
+Description=SCARLIX OS Host Bridge (privileged ops for ScarliHQ dashboard)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/scarlix-host-bridge
+# Runs as root (needs nvidia-smi, docker, scarlix-mode)
+User=root
+
+# v17.9.9 P1: systemd hardening (root daemon that reads untrusted input from ScarliHQ container)
+# Note: Cannot use ProtectSystem=strict or ReadOnlyPaths=/etc because scarlix-mode
+# writes to /var/lib/scarlix/current-mode + docker compose needs /opt/scarlix.
+# NoNewPrivileges + Restrict* are safe and don't break functionality.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+# Restrict to needed address families (docker needs AF_UNIX for socket, AF_INET for pulls)
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Limit capabilities: scarlix-mode needs CAP_SYS_ADMIN (systemctl), CAP_NET_RAW (network)
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_NET_RAW CAP_DAC_OVERRIDE CAP_KILL

@@ -1,21 +1,38 @@
+# SCARLIX OS v18.5.2 — ScarliHQ Dashboard compose (host-bridge architecture)
+# v17.9.8 ARCHITECTURE: ScarliHQ has NO privileged host access.
+#   - Reads /var/lib/scarlix/host-status.json (written by scarlix-host-bridge timer on host)
+#   - Reads /var/lib/scarlix/current-mode (written by scarlix-mode on host)
+#   - Writes /var/lib/scarlix/desired-mode (read by scarlix-host-bridge timer)
+#   - Reads /etc/scarlix/{models.yaml,profiles/,VERSION}
+#
+# v17.9.8 FIXES:
+#   P0: Removed docker daemon socket mount (was privilege escalation)
+#   P0: Removed scarlix-mode mount (was: needed yq/sudo/systemctl in container — all missing)
+#   P0: Removed nvidia runtime (was: deploy.resources ignored by non-swarm compose anyway)
+#   P1: Auth token from /etc/scarlix/.env (SCARLIHQ_TOKEN) — all /api/* and /ws require it
 services:
   scarlihq:
     build: .
-    image: localhost/scarlihq:v12
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → locally-built, no supply-chain risk but reproducibility concern)
+    image: scarlihq:latest
     container_name: scarlihq
     restart: unless-stopped
     ports:
-      - "8090:8090"
-      - "8091:8091"
+      - "127.0.0.1:8090:8090"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/scarlix:/var/lib/scarlix
+      # READ-ONLY: host status (written by scarlix-host-bridge.timer every 5s)
+      - /var/lib/scarlix:/var/lib/scarlix:ro
+      # WRITABLE: bridge-input subdir (overrides ro parent for this path only)
+      # v18.0.0 P0: ScarliHQ writes ONLY desired-mode here. State (.retry, last-transition)
+      # is in bridge-state/ (root:root 700 — NOT mounted writable to ScarliHQ).
+      # Was (v17.9.9): single bridge/ dir = symlink attack surface.
+      - /var/lib/scarlix/bridge-input:/var/lib/scarlix/bridge-input:rw
+      # READ-ONLY: scarlix config + profiles + VERSION
       - /etc/scarlix:/etc/scarlix:ro
-      - /opt/scarlix:/opt/scarlix:ro
     environment:
       - SCARLIHQ_PORT=8090
+      - SCARLIHQ_TOKEN=${SCARLIHQ_TOKEN}
       - TZ=Europe/Bratislava
-    networks: [scarlix_net, scarlix_ai]
+    networks: [scarlix-net]
 networks:
-  scarlix_net: { external: true }
-  scarlix_ai: { external: true }
+  scarlix-net: { external: true }

@@ -1,11 +1,11 @@
-# SCARLIX OS v17.5 — BeeLlama.cpp / llama.cpp (Tier-4, CPU offline fallback)
-# v17.5: Official llama.cpp image (BeeLlama fork was unverified)
-#   q4_0 KV cache (similar benefit to KVarN, officially supported)
-#   Model path from env var ${LLAMACPP_MODEL_PATH}
+# SCARLIX OS v18.5.2 — BeeLlama.cpp / llama.cpp (Tier-4, CPU offline fallback)
+# v17.5.1 FIX: Uses CPU image (server, not server-cuda) for true CPU offline fallback.
+#   server-cuda requires NVIDIA runtime which may not be available in offline mode.
+# Model path from env var ${LLAMACPP_MODEL_PATH}
 
 services:
   beellama:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    image: ghcr.io/ggml-org/llama.cpp:server
     container_name: beellama
     restart: unless-stopped
     ports:
@@ -13,7 +13,7 @@ services:
     volumes:
       - /models:/models:ro
     command: >
-      --model ${LLAMACPP_MODEL_PATH:-/models/qwen3.6-14b-instruct-q4_k_m.gguf}
+      --model ${LLAMACPP_MODEL_PATH:-/models/Qwen3-14B-Q4_K_M.gguf}
       --ctx-size 32768
       --threads 16
       --host 0.0.0.0
@@ -21,5 +21,11 @@ services:
       --cache-type-k q4_0
       --cache-type-v q4_0
     networks: [scarlix-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 networks:
   scarlix-net: { external: true }

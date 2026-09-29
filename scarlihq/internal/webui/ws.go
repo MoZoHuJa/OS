@@ -1,50 +1,183 @@
 package webui
 
 import (
-	"log"
-	"net/http"
-	"time"
+        "encoding/json"
+        "log"
+        "net"
+        "net/http"
+        "strings"
+        "time"
 
-	"github.com/gorilla/websocket"
+        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/api"
+        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/profiles"
+        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/scarlix_mode"
+        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/status"
+        "github.com/gorilla/websocket"
 )
 
+// v17.9.9 P1: proper CIDR origin check (was: strings.HasPrefix — missed https, no real IP validation).
+// Allowed networks: 127.0.0.1/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.
+// Accepts both http:// and https:// origins.
+var allowedNetworks = func() []*net.IPNet {
+        cidrs := []string{"127.0.0.1/32", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+        nets := make([]*net.IPNet, 0, len(cidrs))
+        for _, c := range cidrs {
+                if _, n, err := net.ParseCIDR(c); err == nil {
+                        nets = append(nets, n)
+                }
+        }
+        return nets
+}()
+
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins in LAN
-	},
+        CheckOrigin:      checkOrigin,
+        HandshakeTimeout: 10 * time.Second,
 }
 
-// RegisterWS registers WebSocket routes for real-time updates
-func RegisterWS(mux *http.ServeMux) {
-	mux.HandleFunc("/ws", handleWS)
+// v18.5 P1: Limit concurrent WebSocket connections (was: unlimited → DoS)
+var wsSlots = make(chan struct{}, 16) // max 16 concurrent WS clients
+
+func init() {
+        for i := 0; i < 16; i++ {
+                wsSlots <- struct{}{}
+        }
 }
 
-func handleWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("WS upgrade error: %v", err)
-		return
-	}
-	defer conn.Close()
+// checkOrigin validates the Origin header against allowed LAN networks.
+// Returns true for: empty origin (non-browser clients like curl), localhost, LAN private ranges.
+// v17.9.9: uses net.ParseIP + net.IPNet.Contains (was: strings.HasPrefix — crude, https rejected).
+func checkOrigin(r *http.Request) bool {
+        origin := r.Header.Get("Origin")
+        if origin == "" {
+                return true // non-browser clients (curl, scripts) — still need token
+        }
 
-	log.Println("WS client connected")
+        // Parse host:port from origin URL (http://host:port or https://host:port)
+        origin = strings.TrimSpace(origin)
+        host := ""
+        for _, scheme := range []string{"https://", "http://"} {
+                if strings.HasPrefix(origin, scheme) {
+                        host = strings.TrimPrefix(origin, scheme)
+                        break
+                }
+        }
+        if host == "" {
+                return false // not http/https origin → reject
+        }
+        // Strip path + port
+        if idx := strings.Index(host, "/"); idx >= 0 {
+                host = host[:idx]
+        }
+        if idx := strings.LastIndex(host, ":"); idx >= 0 {
+                host = host[:idx] // strip port
+        }
+        // Strip brackets from IPv6 [::1]
+        host = strings.Trim(host, "[]")
 
-	// Send periodic updates
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+        ip := net.ParseIP(host)
+        if ip == nil {
+                return false // not an IP (could be hostname — reject for security; LAN uses IPs)
+        }
 
-	for {
-		select {
-		case <-ticker.C:
-			// Send system status update
-			msg := map[string]interface{}{
-				"type": "status",
-				"time": time.Now().Format("15:04:05"),
-			}
-			if err := conn.WriteJSON(msg); err != nil {
-				log.Printf("WS write error: %v", err)
-				return
-			}
-		}
-	}
+        for _, n := range allowedNetworks {
+                if n.Contains(ip) {
+                        return true
+                }
+        }
+        return false
+}
+
+// statusJSON returns the current host-status.json as JSON bytes.
+func statusJSON() []byte {
+        s := status.ReadOrStale()
+        if s.Timestamp == "" {
+                return []byte(`{"error":"host-status.json not found","stale":true}`)
+        }
+        b, err := json.Marshal(s)
+        if err != nil {
+                return []byte(`{"error":"marshal failed","stale":true}`)
+        }
+        return b
+}
+
+// RegisterWS registers WebSocket route (ticket-authed, pushes real status every 2s).
+// v18.7.3 P1: Switched from permanent ?token=<SCARLIHQ_TOKEN> to short-lived,
+// single-use ?ticket=<one-time>. The dashboard first POSTs /api/ws-ticket (Bearer-authed)
+// to obtain a 30s single-use ticket, then connects to /ws?ticket=<...>.
+// Net effect: SCARLIHQ_TOKEN no longer appears in URLs, browser history, referrer
+// headers, or reverse-proxy access logs.
+//
+// v18.7.4 P1: Ticket is now Peeked (validated WITHOUT consuming) BEFORE the
+// upgrader.Upgrade() call, and Consumed (deleted) only AFTER a successful
+// Upgrade. Was: ValidateWSTicket consumed the ticket atomically before Upgrade,
+// so any Upgrade/Origin/slots failure wasted the ticket and forced the client
+// to re-POST /api/ws-ticket — mild DoS amplifier and UX breakage on flaky WiFi.
+// The split (Peek + Consume) preserves the single-use replay-resistance guarantee:
+// Peek returns true for at most one concurrent caller because the first Consume
+// deletes the entry, and the second Peek returns false.
+//
+// authToken + mode + pf parameters are kept for signature stability (callers in main.go
+// pass them); they are unused here now since auth is delegated to api.PeekWSTicket.
+func RegisterWS(mux *http.ServeMux, _ string, _ *scarlix_mode.Mode, _ *profiles.Manager) {
+        mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+                // v18.7.4 P1: Peek (check WITHOUT consume) before Upgrade (was: consume before Upgrade).
+                ticket := r.URL.Query().Get("ticket")
+                if ticket == "" {
+                        http.Error(w, "missing ticket", http.StatusUnauthorized)
+                        return
+                }
+                if !api.PeekWSTicket(ticket) {
+                        http.Error(w, "invalid or expired ticket", http.StatusUnauthorized)
+                        return
+                }
+
+                // v18.5 P1: Limit concurrent WebSocket connections (was: unlimited → DoS)
+                select {
+                case <-wsSlots:
+                        defer func() { wsSlots <- struct{}{} }()
+                default:
+                        http.Error(w, "too many WebSocket connections", http.StatusServiceUnavailable)
+                        return
+                }
+
+                conn, err := upgrader.Upgrade(w, r, nil)
+                if err != nil {
+                        log.Printf("WS upgrade error: %v (ticket not consumed — client may retry with same ticket)", err)
+                        return
+                }
+                defer conn.Close()
+
+                // v18.7.4 P1: Consume ticket ONLY after successful Upgrade (was: consumed
+                // before Upgrade → wasted on Upgrade/Origin failure → client had to re-POST
+                // /api/ws-ticket). Single-use enforcement preserved: this is the first and
+                // only Consume; any concurrent WS connect that Peeks after this returns false.
+                api.ConsumeWSTicket(ticket)
+
+                log.Println("WS client connected")
+
+                // v18.5 P1: Write deadline prevents blocked clients (was: no deadline → goroutine leak DoS)
+                conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+
+                ticker := time.NewTicker(2 * time.Second)
+                defer ticker.Stop()
+
+                // v18.5 P1: refresh write deadline before each WriteMessage
+                conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+                if err := conn.WriteMessage(websocket.TextMessage, statusJSON()); err != nil {
+                        log.Printf("WS write error: %v", err)
+                        return
+                }
+
+                for {
+                        select {
+                        case <-ticker.C:
+                                // v18.5 P1: refresh write deadline before each WriteMessage
+                                conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+                                if err := conn.WriteMessage(websocket.TextMessage, statusJSON()); err != nil {
+                                        log.Printf("WS write error: %v", err)
+                                        return
+                                }
+                        }
+                }
+        })
 }

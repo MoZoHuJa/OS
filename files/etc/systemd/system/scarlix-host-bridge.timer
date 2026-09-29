@@ -1,0 +1,13 @@
+[Unit]
+Description=SCARLIX OS Host Bridge timer (refreshes host-status.json every 5s)
+Requires=scarlix-host-bridge.service
+
+[Timer]
+# Every 5 seconds — ScarliHQ dashboard reads host-status.json (fresh data)
+OnBootSec=10s
+OnUnitActiveSec=5s
+AccuracySec=1s
+Unit=scarlix-host-bridge.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'v18.*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Shellcheck
+        run: |
+          shellcheck -S error install.sh
+          shellcheck -S error files/usr/local/bin/scarlix-mode
+          shellcheck -S error files/usr/local/bin/scarlix-wizard
+          shellcheck -S error files/usr/local/bin/scarlix-doctor
+          shellcheck -S error files/usr/local/bin/model-manager.sh
+          shellcheck -S error files/usr/local/bin/download-models.sh
+          shellcheck -S error files/usr/local/bin/scarlix-host-bridge
+          shellcheck -S error files/etc/systemd/system/generate-env.sh
+
+  bash-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax check
+        run: |
+          bash -n install.sh
+          for f in files/usr/local/bin/*; do bash -n "$f"; done
+          for f in files/etc/systemd/system/*.sh; do bash -n "$f"; done
+          for f in files/etc/pacman.d/hooks/*.sh; do bash -n "$f"; done
+
+  yaml-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Validate YAML files
+        run: |
+          python -c "import yaml; yaml.safe_load(open('models.yaml')); print('models.yaml OK')"
+          find . -name 'docker-compose*.yml' -not -path './.git/*' | while read f; do
+            python -c "import yaml; yaml.safe_load(open('$f')); print('$f OK')" || exit 1
+          done
+
+  compose-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate ALL Docker Compose files
+        run: |
+          find . -name 'docker-compose*.yml' -not -path './.git/*' | while read f; do
+            echo "Checking $f..."
+            DUP=$(grep -c "^  scarlix-net:" "$f" 2>/dev/null || echo 0)
+            if [ "$DUP" -gt 1 ]; then
+              echo "ERROR: Duplicate scarlix-net key in $f ($DUP occurrences)"
+              exit 1
+            fi
+            if grep -q "scarlix_ai" "$f"; then
+              echo "ERROR: scarlix_ai found in $f — should be scarlix-net"
+              exit 1
+            fi
+            if grep -q "scarlix_net" "$f"; then
+              echo "ERROR: scarlix_net found in $f — should be scarlix-net"
+              exit 1
+            fi
+            if grep -q "scarlix-net, scarlix-net" "$f"; then
+              echo "ERROR: Duplicate scarlix-net in service networks in $f"
+              exit 1
+            fi
+            # v17.9.8: reject docker.sock mount in ScarliHQ compose (privilege boundary)
+            if [ "$f" = "./scarlihq/docker-compose.yml" ] && grep -q "docker.sock" "$f"; then
+              echo "ERROR: ScarliHQ compose mounts docker.sock — use host-bridge instead (v17.9.8)"
+              exit 1
+            fi
+          done
+          echo "All compose files validated"
+
+  # v17.9.8 P2: Go build + vet + test for ScarliHQ (catches compile errors before release)
+  go-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: go vet
+        working-directory: scarlihq
+        run: |
+          # v18.2 P1: go.sum generated at build time (not committed — no local Go to generate)
+          go mod download
+          go mod verify
+          go vet ./...
+      - name: go build
+        working-directory: scarlihq
+        run: |
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o /tmp/scarlihq ./cmd/scarlihq
+          echo "ScarliHQ binary built successfully"
+      - name: go test
+        working-directory: scarlihq
+        # v18.3 P1: removed `|| echo "(no tests yet)"` mask (was: hid test failures)
+        run: |
+          # Only run if Go packages exist (avoids "no packages" error on empty test suite)
+          if go list ./... 2>/dev/null | grep -q .; then
+            go test ./...
+          else
+            echo "(no Go test files yet — OK)"
+          fi
+
+  # v17.9.8 P2: Real ScarliHQ Docker build (catches Dockerfile + go.mod issues)
+  # v17.9.9 P2: Added runtime smoke test (container starts + /api/health responds)
+  scarlihq-docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ScarliHQ Docker image
+        run: |
+          # v18.0.0 P2: use VERSION file as build-arg (was: hardcoded default in Dockerfile)
+          SCARLIX_VERSION=$(cat VERSION)
+          docker build --build-arg SCARLIX_VERSION="$SCARLIX_VERSION" -t scarlihq:ci scarlihq/
+          docker images scarlihq:ci
+          echo "ScarliHQ image built (version $SCARLIX_VERSION) — size:"
+          docker image inspect scarlihq:ci --format '{{.Size}}' | awk '{printf "  %.1f MB\n", $1/1024/1024}'
+      - name: Runtime smoke test (container starts + port responds)
+        run: |
+          # v18.0.0: use bridge-input/ layout (not bridge/)
+          # v18.2 P2: chown 65532 (nonroot in ScarliHQ alpine image — was missing → mode POST 202 fails)
+          mkdir -p /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
+          # v18.5.1: chmod BEFORE chown (was: chmod after chown → EACCES on foreign-owned file)
+          chmod 700 /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
+          sudo chown -R 65532:65532 /tmp/scarlix-test/bridge-input
+          # v18.5.1: use valid RFC3339 timestamp (was: "test" → stale=true, but shouldn't break)
+          TS=$(date -Iseconds)
+          echo "{\"timestamp\":\"$TS\",\"version\":\"18.5.1\",\"mode\":\"unknown\",\"mode_transition\":{\"requested\":\"\",\"state\":\"none\",\"retry_count\":0,\"last_error\":\"\",\"last_timestamp\":\"\"},\"gpus\":[],\"containers\":[],\"disk\":{}}" > /tmp/scarlix-test/host-status.json
+          docker run -d --name scarlihq-test -p 8090:8090 \
+            -e SCARLIHQ_TOKEN=test-token \
+            -v /tmp/scarlix-test:/var/lib/scarlix:ro \
+            -v /tmp/scarlix-test/bridge-input:/var/lib/scarlix/bridge-input:rw \
+            scarlihq:ci
+          sleep 5
+          # v18.5.1: print container status + logs for debugging
+          docker ps -a --filter name=scarlihq-test --format '{{.Status}}'
+          docker logs scarlihq-test 2>&1 | head -20
+          # Health: no token → 401, with token → 200
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health || echo "000")
+          echo "Health (no token): HTTP $HTTP_CODE (expected 401)"
+          [ "$HTTP_CODE" = "401" ] || { echo "FAIL: expected 401"; docker logs scarlihq-test; exit 1; }
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer test-token" http://127.0.0.1:8090/api/health || echo "000")
+          echo "Health (with token): HTTP $HTTP_CODE (expected 200)"
+          [ "$HTTP_CODE" = "200" ] || { echo "FAIL: expected 200"; docker logs scarlihq-test; exit 1; }
+          # v18.0.0 P2: mode POST writes desired-mode to bridge-input/ (test the write path)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer test-token" "http://127.0.0.1:8090/api/mode?set=ai" || echo "000")
+          echo "Mode POST (set=ai): HTTP $HTTP_CODE (expected 202)"
+          [ "$HTTP_CODE" = "202" ] || { echo "FAIL: expected 202"; docker logs scarlihq-test; exit 1; }
+          # Check desired-mode file was written (container must be able to write to bridge-input/)
+          sudo ls -la /tmp/scarlix-test/bridge-input/desired-mode && echo "desired-mode written ✓"
+          # v18.7: Clean up desired-mode before next test (was: file existed → 409 instead of 400)
+          sudo rm -f /tmp/scarlix-test/bridge-input/desired-mode
+          # Invalid mode → 400
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer test-token" "http://127.0.0.1:8090/api/mode?set=invalid" || echo "000")
+          echo "Mode POST (set=invalid): HTTP $HTTP_CODE (expected 400)"
+          [ "$HTTP_CODE" = "400" ] || { echo "FAIL: expected 400"; docker logs scarlihq-test; exit 1; }
+          echo "Smoke test PASSED — ScarliHQ starts + auth + mode write + error codes"
+          docker stop scarlihq-test 2>/dev/null || true
+          docker rm scarlihq-test 2>/dev/null || true

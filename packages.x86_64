@@ -1,12 +1,15 @@
 # ============================================================================
-# SCARLIX OS v17.5 — EndeavourOS Edition
+# SCARLIX OS v17.9.7 — EndeavourOS Edition
 # Package list for bootstrap installer (install.sh)
 #
+# v17.9.7: multilib auto-enabled by install.sh (before steam/wine/lib32-*)
 # v17.5: ISO profile removed — this list is used by install.sh (not mkarchiso)
 #   - No calamares (ISO-only)
 #   - No yay (installed via git clone + makepkg in install.sh)
 #   - No archiso (build-only, not needed)
 #   - nvidia-container-toolkit via yay (AUR) in install.sh Phase 3
+#   - yq = python-yq (kislyuk) — supports jq syntax used by scarlix-mode/doctor.
+#     install.sh Phase 1 verifies yq is functional; if broken, crit (fail-hard).
 # ============================================================================
 
 # === Base system ===
@@ -45,9 +48,11 @@ git
 curl
 wget
 jq
+yq
 bc
 python
 python-pip
+python-virtualenv
 
 # === Terminal / editors ===
 neovim

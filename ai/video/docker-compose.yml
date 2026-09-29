@@ -3,7 +3,7 @@ services:
     build: .
     container_name: video-api
     restart: unless-stopped
-    ports: ["7861:7861"]
+    ports: ["127.0.0.1:7861:7861"]
     volumes:
       - ./data/models:/app/models
       - ./data/output:/app/output
@@ -12,8 +12,7 @@ services:
       resources:
         reservations:
           devices: [{driver: nvidia, device_ids: ['0'], capabilities: [gpu]}]
-    networks: [scarlix-net, scarlix_net]
+    networks: [scarlix-net]
     profiles: [creative]
 networks:
   scarlix-net: {external: true}
-  scarlix_net: {external: true}

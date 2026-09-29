@@ -4,7 +4,7 @@ services:
     container_name: whisper-sk
     restart: unless-stopped
     ports:
-      - "8002:8000"
+      - "127.0.0.1:8002:8000"
     volumes:
       - ./data:/root/.cache
     environment:
@@ -19,7 +19,6 @@ services:
             - driver: nvidia
               device_ids: ['1']
               capabilities: [gpu]
-    networks: [scarlix_ai, scarlix_net]
+    networks: [scarlix-net]
 networks:
-  scarlix_ai: { external: true }
-  scarlix_net: { external: true }
+  scarlix-net: { external: true }

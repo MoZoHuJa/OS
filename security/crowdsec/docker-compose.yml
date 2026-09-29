@@ -10,6 +10,6 @@ services:
       - /var/log/authelia:/var/log/authelia:ro
     environment:
       - COLLECTIONS=crowdsecurity/caddy crowdsecurity/http-cve crowdsecurity/sshd
-    networks: [scarlix_net]
+    networks: [scarlix-net]
 networks:
-  scarlix_net: { external: true }
+  scarlix-net: { external: true }

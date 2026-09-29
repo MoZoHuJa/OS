@@ -1,14 +1,13 @@
-# SCARLIX OS v17.5 — SGLang (Tier-1, GPU 0)
-# v17.5: cu128 image (Blackwell support), env var model path, flashinfer auto-disabled on Blackwell
-# Model path from ${SGLANG_MODEL_PATH} (parsed from models.yaml by scarlix-mode)
-
+# SCARLIX OS v18.5.2 — SGLang (Tier-1, GPU 0)
+# v17.9.7: --disable-flashinfer (Blackwell sm_120 kernels missing in v0.4.4)
+# v17.9.5: Pinned image v0.4.4-cu128 (was latest-cu128 — unreproducible)
 services:
   sglang:
-    image: ghcr.io/sgl-project/sglang:latest-cu128
+    image: ghcr.io/sgl-project/sglang:v0.4.4-cu128
     container_name: sglang
     restart: unless-stopped
     ports:
-      - "30000:30000"
+      - "127.0.0.1:30000:30000"
     volumes:
       - /var/lib/sglang/cache:/root/.cache/huggingface
       - /models:/models:ro
@@ -17,11 +16,12 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     command: >
       python -m sglang.launch_server
-      --model-path ${SGLANG_MODEL_PATH:-/models/Qwen3-14B-Instruct-AWQ}
+      --model-path ${SGLANG_MODEL_PATH:-/models/Qwen3-14B-AWQ}
       --port 30000
       --host 0.0.0.0
-      --mem-fraction-static 0.90
+      --mem-fraction-static ${SGLANG_MEM_FRACTION:-0.85}
       --context-length 32768
+      --disable-flashinfer
     deploy:
       resources:
         reservations:
@@ -31,7 +31,7 @@ services:
               capabilities: [gpu]
     networks: [scarlix-net]
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:30000/health"]
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:30000/health\")' 2>/dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

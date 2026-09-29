@@ -4,6 +4,7 @@ services:
   # Sunshine Docker container is for TV mode only
   
   sunshine-tv:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: lizardbyte/sunshine:latest
     container_name: sunshine-tv
     restart: unless-stopped
@@ -21,7 +22,7 @@ services:
     image: jellyfin/jellyfin:10.10
     container_name: jellyfin
     restart: unless-stopped
-    ports: ["8096:8096"]
+    ports: ["127.0.0.1:8096:8096"]
     volumes:
       - ./jellyfin/config:/config
       - /mnt/files/media:/media:ro
@@ -30,16 +31,17 @@ services:
       resources:
         reservations:
           devices: [{driver: nvidia, device_ids: ['0'], capabilities: [gpu]}]
-    networks: [scarlix_net]
+    networks: [scarlix-net]
 
   minecraft:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: ghcr.io/pumpkin-mc/pumpkin:latest
     container_name: minecraft
     restart: unless-stopped
-    ports: ["25565:25565"]
+    ports: ["127.0.0.1:25565:25565"]
     volumes: ["./minecraft/data:/data"]
     environment: [MAX_MEMORY=4G, TZ=Europe/Bratislava]
-    networks: [scarlix_net]
+    networks: [scarlix-net]
 
 networks:
-  scarlix_net: {external: true}
+  scarlix-net: {external: true}

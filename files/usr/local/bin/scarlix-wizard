@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v17.5 — EndeavourOS Edition — Setup Wizard
+# SCARLIX OS v18.5 — EndeavourOS Edition — Setup Wizard
+# v18.5: gateway prompt (was hardcoded 192.168.1.1), version unified
 # v17.5: Creates .experimental if 2+ GPU (Q3a — vLLM starts without --profile gate)
 
-TITLE="SCARLIX OS v17.5 Setup"
+TITLE="SCARLIX OS v18.5 Setup"
 
 NVIDIA_DGPU_COUNT=$(lspci -nn 2>/dev/null | grep -iE 'NVIDIA.*(VGA|3D)' | wc -l || echo 0)
 if [ "$NVIDIA_DGPU_COUNT" -gt 0 ]; then
@@ -15,8 +16,8 @@ else
   SUGGESTED_DESC="Auto-detected: no NVIDIA dGPU"
 fi
 
-whiptail --title "$TITLE" --msgbox \
-  "Vitaj v SCARLIX OS v17.5 (EndeavourOS Edition)!\n\n\
+whiptail --title "$TITLE" --msgbox --ok-button "OK" \
+  "Vitaj v SCARLIX OS v18.5 (EndeavourOS Edition)!\n\n\
 Working AI Path — model-aware, fail-hard.\n\
 Base: EndeavourOS (near-vanilla Arch)\n\
 Kernel: linux + linux-lts (fallback)\n\
@@ -31,15 +32,42 @@ PC_TYPE=$(whiptail --title "$TITLE" --menu \
   "ai_server" "AI Server (EndeavourOS + NVIDIA + AI + Gaming)" \
   "dev_workstation" "Dev Workstation (Headless — coding + files)" 3>&1 1>&2 2>&3) || PC_TYPE="$SUGGESTED_TYPE"
 
+# v18.5 P2: whiptail ESC/Cancel handling (was: set -e aborts whole script)
 DEFAULT_IP="192.168.1.100"
 [ "$PC_TYPE" = "dev_workstation" ] && DEFAULT_IP="192.168.1.101"
-IP=$(whiptail --title "$TITLE" --inputbox "IP adresa:" 10 50 "$DEFAULT_IP" 3>&1 1>&2 2>&3)
+# v18.5.2 P0: Auto-detect gateway (was: DEFAULT_GW never set → set -u crash)
+DEFAULT_GW=$(ip route 2>/dev/null | awk '/default/ {print $3; exit}' || echo "")
+DEFAULT_GW="${DEFAULT_GW:-192.168.1.1}"
+IP=$(whiptail --title "$TITLE" --inputbox "IP adresa:" 10 50 "$DEFAULT_IP" 3>&1 1>&2 2>&3) || { echo "Wizard cancelled."; exit 0; }
+# v18.5 P2: validate IP (empty if user just pressed Enter on empty box)
+[ -z "$IP" ] && IP="$DEFAULT_IP"
+# v18.5.2 P2: Validate IP format (was: only checked empty)
+validate_ipv4() {
+  local ip="$1"
+  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  local IFS=.
+  read -r a b c d <<< "$ip"
+  for octet in "$a" "$b" "$c" "$d"; do
+    [ "$octet" -le 255 ] 2>/dev/null || return 1
+  done
+  return 0
+}
+if ! validate_ipv4 "$IP"; then
+  echo "⚠ WARN: Invalid IP '$IP' — using default $DEFAULT_IP"
+  IP="$DEFAULT_IP"
+fi
 
-PASS=$(whiptail --title "$TITLE" --passwordbox "Heslo pre scarlix user:" 10 50 3>&1 1>&2 2>&3)
+# v18.5 P2: whiptail ESC handling
+GATEWAY=$(whiptail --title "$TITLE" --inputbox "Gateway (router) IP:" 10 50 "$DEFAULT_GW" 3>&1 1>&2 2>&3) || GATEWAY="$DEFAULT_GW"
+[ -z "$GATEWAY" ] && GATEWAY="$DEFAULT_GW"
 
-TG_TOKEN=$(whiptail --title "$TITLE" --inputbox "Telegram Bot Token (prazdne = preskoc):" 10 60 "" 3>&1 1>&2 2>&3)
+# v17.9.6: PASS removed (was never applied to user — misleading input)
+# User sets password during EndeavourOS Calamares install
+
+# v18.5 P2: whiptail ESC handling
+TG_TOKEN=$(whiptail --title "$TITLE" --inputbox "Telegram Bot Token (prazdne = preskoc):" 10 60 "" 3>&1 1>&2 2>&3) || TG_TOKEN=""
 TG_CHAT_ID=""
-[ -n "$TG_TOKEN" ] && TG_CHAT_ID=$(whiptail --title "$TITLE" --inputbox "Telegram Chat ID:" 10 50 "" 3>&1 1>&2 2>&3)
+[ -n "$TG_TOKEN" ] && { TG_CHAT_ID=$(whiptail --title "$TITLE" --inputbox "Telegram Chat ID:" 10 50 "" 3>&1 1>&2 2>&3) || TG_CHAT_ID=""; }
 
 DOWNLOAD_MODELS=$(whiptail --title "$TITLE" --menu \
   "Stiahnuť AI modely (50-150GB) po inštalácii?" 15 70 2 \
@@ -73,12 +101,34 @@ if [ "$EXPERIMENTAL" = "yes" ]; then
   sudo touch /etc/scarlix/.experimental
 fi
 
-# Static IP
-sudo nmcli connection modify "Wired connection 1" \
-  ipv4.addresses "$IP/24" \
-  ipv4.gateway 192.168.1.1 \
-  ipv4.dns "1.1.1.1 8.8.8.8" \
-  ipv4.method manual 2>/dev/null || true
+# v18.5.2 P1: Auto-detect active Ethernet connection (was: hardcoded "Wired connection 1" + || true)
+# v18.5.3 P1: Offer Retry/Continue/Abort on failure (was: just warned → wizard said "complete")
+CONNECTION=$(nmcli -t -f NAME,TYPE connection show --active 2>/dev/null | awk -F: '$2=="ethernet"{print $1; exit}')
+if [ -n "$CONNECTION" ]; then
+  NET_OK=false
+  for attempt in 1 2 3; do
+    if sudo nmcli connection modify "$CONNECTION" \
+      ipv4.addresses "$IP/24" \
+      ipv4.gateway "$GATEWAY" \
+      ipv4.dns "1.1.1.1 8.8.8.8" \
+      ipv4.method manual 2>/dev/null; then
+      NET_OK=true
+      break
+    fi
+    [ "$attempt" -lt 3 ] && echo "⚠ Network config attempt $attempt failed, retrying..." && sleep 2
+  done
+  if [ "$NET_OK" != true ]; then
+    echo "⚠ Network configuration failed after 3 attempts."
+    CHOICE=$(whiptail --title "$TITLE" --menu \
+      "Network config zlyhal. Čo ďalej?" 12 60 2 \
+      "continue" "Pokračovať bez statickej IP" \
+      "abort" "Prerušiť inštaláciu" 3>&1 1>&2 2>&3) || CHOICE="continue"
+    [ "$CHOICE" = "abort" ] && { echo "Inštalácia prerušená používateľom."; exit 1; }
+    echo "⚠ Pokračujem bez statickej IP. Konfigurujte manuálne: $IP/24 gw $GATEWAY"
+  fi
+else
+  echo "⚠ WARN: No active Ethernet connection found. Configure IP manually: $IP/24 gw $GATEWAY"
+fi
 
 export TELEGRAM_BOT_TOKEN="$TG_TOKEN"
 export TELEGRAM_ZMOR_CHAT_ID="$TG_CHAT_ID"
@@ -91,23 +141,35 @@ fi
 # Enable model-manager timer only (no first-boot service in v17.5)
 [ -f /etc/systemd/system/model-manager.timer ] && sudo systemctl enable model-manager.timer 2>/dev/null
 
+# v18.5.2 P0: Actually trigger download if user selected "download" (was: option ignored)
+if [ "$DOWNLOAD_MODELS" = "download" ]; then
+  echo ""
+  echo "Spúšťam sťahovanie modelov (50-150GB, môže trvať hodiny)..."
+  if sudo /usr/local/bin/download-models.sh; then
+    echo "✓ Modely stiahnuté úspešne."
+  else
+    echo "⚠ Chyba pri sťahovaní modelov. Spustite neskôr: download-models.sh"
+  fi
+fi
+
 TIER_DESC="SGLang + BeeLlama"
 [ "$EXPERIMENTAL" = "yes" ] && TIER_DESC="SGLang + vLLM (TP=1) + BeeLlama"
 
 whiptail --title "$TITLE" --yesno \
-  "PC Typ: $PC_TYPE\nIP: $IP\nGPU count: ${NVIDIA_DGPU_COUNT} NVIDIA\nModely: $DOWNLOAD_MODELS\nInference: $TIER_DESC\n\nPo inštalácii:\n  1. Reboot\n  2. bash /etc/systemd/system/download-models.sh\n  3. scarlix-mode ai" 22 65 3>&1 1>&2 2>&3
+  "PC Typ: $PC_TYPE\nIP: $IP\nGPU count: ${NVIDIA_DGPU_COUNT} NVIDIA\nModely: $DOWNLOAD_MODELS\nInference: $TIER_DESC\n\nPo inštalácii:\n  1. Reboot\n  2. download-models.sh\n  3. scarlix-mode ai" 22 65 3>&1 1>&2 2>&3
 
 echo ""
 echo "========================================"
-echo "  SCARLIX OS v17.5 — EndeavourOS Edition"
+echo "  SCARLIX OS v18.5 — EndeavourOS Edition"
 echo "  Setup complete!"
 echo "  PC Type: $PC_TYPE"
+echo "  IP: $IP (gw: $GATEWAY)"
 echo "  GPU: ${NVIDIA_DGPU_COUNT} NVIDIA dGPU(s)"
 echo "  Models: $DOWNLOAD_MODELS"
 echo "  Inference: $TIER_DESC"
 echo "========================================"
 echo "  NEXT STEPS:"
 echo "    1. Reboot (activate NVIDIA driver)"
-echo "    2. Download models: bash /etc/systemd/system/download-models.sh"
+echo "    2. Download models: download-models.sh"
 echo "    3. Start AI: scarlix-mode ai"
 echo "========================================"

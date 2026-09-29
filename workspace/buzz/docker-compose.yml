@@ -1,5 +1,6 @@
 services:
   buzz-relay:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: ghcr.io/block/buzz-relay:latest
     container_name: buzz-relay
     restart: unless-stopped
@@ -15,7 +16,7 @@ services:
       - REDIS_URL=redis://buzz-redis:6379
       - MINIO_ENDPOINT=buzz-minio:9000
     depends_on: [buzz-postgres, buzz-redis, buzz-minio]
-    networks: [scarlix_net]
+    networks: [scarlix-net]
 
   buzz-postgres:
     image: postgres:16-alpine
@@ -26,7 +27,7 @@ services:
     environment:
       - POSTGRES_PASSWORD=${BUZZ_POSTGRES_PASSWORD}
       - POSTGRES_DB=buzz
-    networks: [scarlix_net]
+    networks: [scarlix-net]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -37,9 +38,10 @@ services:
     image: redis:7-alpine
     container_name: buzz-redis
     restart: unless-stopped
-    networks: [scarlix_net]
+    networks: [scarlix-net]
 
   buzz-minio:
+    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
     image: minio/minio:latest
     container_name: buzz-minio
     restart: unless-stopped
@@ -51,6 +53,6 @@ services:
       - MINIO_ROOT_USER=scarlix
       - MINIO_ROOT_PASSWORD=${BUZZ_MINIO_PASSWORD}
     command: server /data
-    networks: [scarlix_net]
+    networks: [scarlix-net]
 networks:
-  scarlix_net: { external: true }
+  scarlix-net: { external: true }
