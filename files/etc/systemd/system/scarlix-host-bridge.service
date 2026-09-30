@@ -26,4 +26,8 @@ RestrictNamespaces=true
 # Restrict to needed address families (docker needs AF_UNIX for socket, AF_INET for pulls)
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 # Limit capabilities: scarlix-mode needs CAP_SYS_ADMIN (systemctl), CAP_NET_RAW (network)
-CapabilityBoundingSet=CAP_SYS_ADMIN CAP_NET_RAW CAP_DAC_OVERRIDE CAP_KILL
+# v18.8.6 P0-1: +CAP_CHOWN (host-bridge chowns bridge-state/ root:root)
+#               +CAP_FOWNER (chmod 700 on files not owned by current user)
+#   Without these, chown fails EPERM → host-bridge exits 1 → host-status.json
+#   not generated → dashboard shows stale data → mode transitions break.
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_NET_RAW CAP_DAC_OVERRIDE CAP_KILL CAP_CHOWN CAP_FOWNER
