@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.8.7"
+VERSION="18.8.8"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"

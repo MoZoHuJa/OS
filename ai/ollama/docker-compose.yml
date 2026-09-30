@@ -12,8 +12,11 @@ services:
       - /models:/models:ro
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
-      - OLLAMA_NUM_PARALLEL=2
-      - OLLAMA_KEEP_ALIVE=-1
+      # v18.8.8 P2-01: Ollama config from models.yaml → .env (was: hardcoded
+      #   OLLAMA_NUM_PARALLEL=2 + OLLAMA_KEEP_ALIVE=-1 which contradicted
+      #   models.yaml keep_alive=15m. Now: env vars from scarlix-mode generate_env_file.)
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-15m}
       - OLLAMA_FLASH_ATTENTION=0
       - TZ=Europe/Bratislava
     mem_limit: 6g

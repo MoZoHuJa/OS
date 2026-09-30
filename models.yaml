@@ -1,4 +1,4 @@
-# SCARLIX OS v18.8.7 — EndeavourOS Edition — Model-Agnostic Configuration
+# SCARLIX OS v18.8.8 — EndeavourOS Edition — Model-Agnostic Configuration
 #
 # v17.9.7: flashinfer disabled in SGLang compose (--disable-flashinfer) — Blackwell sm_120 safe.
 #   `flashinfer: false` documents this (compose is the source of truth for the flag).
@@ -23,7 +23,10 @@ sglang:
   # hf_repo: "meta-llama/Llama-3.1-8B-Instruct"
   # model_path: "/models/Mistral-7B-Instruct-v0.3"
   # hf_repo: "mistralai/Mistral-7B-Instruct-v0.3"
-  quantization: "awq"
+  # v18.8.8 P1-03: quantization removed (was: not wired to compose — SGLang
+  #   auto-detects from checkpoint config. Having it here gave false impression
+  #   it was configurable. To use different quantization: change model_path.)
+  # quantization: "awq"  # REMOVED — not a runtime parameter
   context_length: 32768
   mem_fraction: 0.85
   # v18.8.3 P1 (D): Basic SGLang runtime tuning (no PyTorch env vars — kept
@@ -55,8 +58,9 @@ vllm:
 # v17.5: Uses official llama.cpp image (not BeeLlama fork — was unverified).
 # KVarN flags are BeeLlama-specific; official image uses q4_0 (similar benefit).
 beellama:
-  model_file: "/models/Qwen3-14B-Q4_K_M.gguf"
-  hf_repo: "Qwen/Qwen3-14B-GGUF"  # v17.9.5: correct repo (was Qwen3-14B-Instruct-GGUF — doesn't exist)
+  # v18.8.8 P1-02: model_file removed (was: dead config — hf_file is used by
+  #   download-models.sh, scarlix-mode, and compose. model_file was never read.)
+  hf_repo: "Qwen/Qwen3-14B-GGUF"  # v17.9.5: correct repo
   hf_file: "Qwen3-14B-Q4_K_M.gguf"  # v17.9.5: correct file (was qwen3.6-14b... — doesn't exist)
   context_size: 32768
   threads: 16

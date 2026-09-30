@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.8.7 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v18.8.8 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.7.7 FIXES:
 #   P0: TV mode uses systemctl restart (was: start on RemainAfterExit=yes oneshot
 #       → service stays 'active' after first run → start doesn't re-run healthcheck
@@ -112,6 +112,9 @@ generate_env_file() {
   local sglang_max_running="4"
   # v18.8.7 P1-06: shm_size from models.yaml (was: hardcoded 8gb in compose)
   local sglang_shm_size="8gb"
+  # v18.8.8 P2-01: Ollama runtime config from models.yaml (was: hardcoded in compose)
+  local ollama_keep_alive="15m"
+  local ollama_num_parallel="2"
 
   if [ -f "$MODELS_YAML" ] && command -v yq >/dev/null 2>&1; then
     # v18.8.7 P1-02: If yaml_get fails (yq parse error), abort generate_env_file.
@@ -125,6 +128,9 @@ generate_env_file() {
     sglang_chunked_prefill=$(yaml_get '.sglang.chunked_prefill_size' "$sglang_chunked_prefill") || return 1
     sglang_max_running=$(yaml_get '.sglang.max_running_requests' "$sglang_max_running") || return 1
     sglang_shm_size=$(yaml_get '.sglang.shm_size' "$sglang_shm_size") || return 1
+    # v18.8.8 P2-01: Ollama runtime config from models.yaml
+    ollama_keep_alive=$(yaml_get '.ollama.keep_alive' "$ollama_keep_alive") || return 1
+    ollama_num_parallel=$(yaml_get '.ollama.num_parallel' "$ollama_num_parallel") || return 1
   elif [ ! -f "$MODELS_YAML" ]; then
     log "WARNING: models.yaml not found — using defaults"
   elif ! command -v yq >/dev/null 2>&1; then
@@ -169,6 +175,9 @@ SGLANG_CHUNKED_PREFILL=$sglang_chunked_prefill
 SGLANG_MAX_RUNNING=$sglang_max_running
 # v18.8.7 P1-06: shm_size from models.yaml (was: hardcoded in compose)
 SGLANG_SHM_SIZE=$sglang_shm_size
+# v18.8.8 P2-01: Ollama runtime config from models.yaml
+OLLAMA_KEEP_ALIVE=$ollama_keep_alive
+OLLAMA_NUM_PARALLEL=$ollama_num_parallel
 EOF
   then
     log "WARNING: cannot write $ENV_FILE (permission denied — run as root: scarlix-mode needs root to write root:root /opt/scarlix/.env)"
@@ -192,6 +201,8 @@ EOF
   export SGLANG_CHUNKED_PREFILL="$sglang_chunked_prefill"
   export SGLANG_MAX_RUNNING="$sglang_max_running"
   export SGLANG_SHM_SIZE="$sglang_shm_size"
+  export OLLAMA_KEEP_ALIVE="$ollama_keep_alive"
+  export OLLAMA_NUM_PARALLEL="$ollama_num_parallel"
 
   # v18.8.3 P1 (A-a): Regenerate LiteLLM config from models.yaml (was: hardcoded
   #   config.yaml → model ID mismatch. Now: if generate-litellm-config.sh exists,
@@ -333,7 +344,7 @@ wait_for_healthy() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v18.8.7 — VRAM Check ==="
+  echo "=== SCARLIX OS v18.8.8 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
@@ -385,7 +396,30 @@ healthcheck_and_restart() {
       log "ERROR: models.yaml is invalid YAML — cannot compute config hash"
       return 1
     fi
-    current_hash=$(yq -r '.sglang.model_path, .sglang.mem_fraction, .sglang.context_length, .sglang.chunked_prefill_size, .sglang.max_running_requests, .sglang.shm_size, .vllm.model_path, .vllm.gpu_memory_utilization, .beellama.hf_file, .ollama.model' "$MODELS_YAML" 2>/dev/null | sha256sum | awk '{print $1}')
+    # v18.8.8 P1-01: Hash now covers ALL runtime-relevant params (was: missing
+    #   vllm.tensor_parallel_size, vllm.max_model_len, beellama.context_size/threads/
+    #   cache_type_k/cache_type_v, ollama.keep_alive/num_parallel → changing these
+    #   didn't trigger recreate → stale config kept running.)
+    current_hash=$(yq -r '
+      .sglang.model_path,
+      .sglang.mem_fraction,
+      .sglang.context_length,
+      .sglang.chunked_prefill_size,
+      .sglang.max_running_requests,
+      .sglang.shm_size,
+      .vllm.model_path,
+      .vllm.gpu_memory_utilization,
+      .vllm.tensor_parallel_size,
+      .vllm.max_model_len,
+      .beellama.hf_file,
+      .beellama.context_size,
+      .beellama.threads,
+      .beellama.cache_type_k,
+      .beellama.cache_type_v,
+      .ollama.model,
+      .ollama.keep_alive,
+      .ollama.num_parallel
+    ' "$MODELS_YAML" 2>/dev/null | sha256sum | awk '{print $1}')
     if [ -z "$current_hash" ]; then
       log "ERROR: models.yaml hash computation failed (yq returned empty)"
       return 1
@@ -396,7 +430,17 @@ healthcheck_and_restart() {
       log "models.yaml changed (hash mismatch) — will force-recreate"
       env_changed=true
     elif [ -n "$current_hash" ] && [ -z "$stored_hash" ]; then
-      log "First run — storing models.yaml hash (no recreate)"
+      # v18.8.8 P2-02: First run must verify existing containers (was: stored
+      #   hash without checking if containers exist with old config. Now: if
+      #   AI containers already exist, force-recreate to ensure config matches.)
+      local existing_container
+      existing_container=$(docker inspect -f '{{.State.Status}}' sglang 2>/dev/null || echo "not_found")
+      if [ "$existing_container" != "not_found" ]; then
+        log "First run — containers already exist, forcing recreate to verify config"
+        env_changed=true
+      else
+        log "First run — no existing containers, storing models.yaml hash"
+      fi
       echo "$current_hash" > "$models_hash_file" 2>/dev/null || true
     fi
   fi
@@ -981,7 +1025,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v18.8.7 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v18.8.8 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"
