@@ -12,11 +12,19 @@ RemainAfterExit=yes
 #   yet → inspect fails → oneshot fails → scarlix-mode tv reports failure even
 #   though the pull would have finished a second later.
 # v18.7.6 P1: 30 retries × 2s = 60s (was: 3 × 2s = 6s → too short for cold pull).
-#   Cold pulls of multi-GB images routinely exceed 6s on first boot after install.
-#   Budget is now 60s, with TimeoutStartSec=90 so systemd doesn't kill mid-pull.
+# v18.7.7 P1: 60 retries × 2s = 120s + TimeoutStartSec=300 (was: 30×2s=60s +
+#   TimeoutStartSec=90 → cold pulls of multi-GB Sunshine images on slow
+#   connections routinely exceed 60s → scarlix-mode tv exits 1 even though
+#   the pull was still progressing fine). Now budget is 120s with a 300s
+#   systemd safety net so the timer doesn't kill mid-pull.
+# NOTE: scarlix-mode v18.7.7 uses `systemctl restart` (not `start`) for this
+#   service — RemainAfterExit=yes means the service stays 'active' after the
+#   first successful run, and `systemctl start` on an already-active oneshot
+#   service does NOT re-run ExecStart. `restart` forces the healthcheck to
+#   re-run on every `scarlix-mode tv` invocation.
 ExecStartPre=/usr/bin/docker info
-TimeoutStartSec=90
-ExecStart=/bin/bash -c 'for i in $(seq 1 30); do /usr/bin/docker inspect -f "{{.State.Running}}" sunshine-tv 2>/dev/null | grep -qx true && exit 0; sleep 2; done; exit 1'
+TimeoutStartSec=300
+ExecStart=/bin/bash -c 'for i in $(seq 1 60); do /usr/bin/docker inspect -f "{{.State.Running}}" sunshine-tv 2>/dev/null | grep -qx true && exit 0; sleep 2; done; exit 1'
 
 [Install]
 WantedBy=multi-user.target

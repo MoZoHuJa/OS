@@ -318,11 +318,28 @@ $$('.mode-btn').forEach(b=>{
 // onclose + initApp + pollStatus could all call connectWS() concurrently,
 // stacking fetch(/api/ws-ticket) + new WebSocket() attempts → multiple
 // wasted tickets + race conditions on the `ws` variable).
+// v18.7.7 P1: wsConnecting held until onopen or definitive failure (was: set
+//   false in finally right after `new WebSocket()` — before onopen fired →
+//   a second connectWS() from an onclose/timeout could stack a second
+//   ticket+socket). Now: wsConnecting stays true through the async ticket
+//   fetch + WebSocket constructor + until onopen/onclose fires.
+// v18.7.7 P1: Single reconnect timer (was: multiple setTimeout calls from
+//   onclose + ticket-fail could stack parallel reconnect timers → multiple
+//   concurrent connectWS attempts after the delay). Now: one reconnectTimer,
+//   clearTimeout before each new setTimeout.
 let ws = null;
 let wsConnecting = false;
+let reconnectTimer = null;
+function scheduleReconnect(ms){
+  if(reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(()=>{ reconnectTimer = null; if(TOKEN) connectWS(); }, ms);
+}
 async function connectWS(){
-  if(wsConnecting) return; // v18.7.6 P1: Prevent stacking (was: multiple concurrent connectWS)
+  if(wsConnecting) return; // v18.7.6 P1: Prevent stacking
   wsConnecting = true;
+  // v18.7.7 P1: Clear any pending reconnect timer (was: setTimeout from onclose
+  //   could fire while we're already connecting → stacked connectWS).
+  if(reconnectTimer){ clearTimeout(reconnectTimer); reconnectTimer = null; }
   try{
     // Step 1: Get a short-lived WS ticket via REST API (Bearer auth)
     const ticketResp = await fetch('/api/ws-ticket', {
@@ -332,7 +349,9 @@ async function connectWS(){
     if(!ticketResp.ok){
       $('#wsdot').className = 'ws-dot dead';
       $('#wsstate').textContent = 'ticket failed';
-      setTimeout(()=>{ if(TOKEN) connectWS(); }, 5000);
+      // v18.7.7 P1: wsConnecting released here — ticket fetch failed definitively.
+      wsConnecting = false;
+      scheduleReconnect(5000);
       return;
     }
     const ticketData = await ticketResp.json();
@@ -340,12 +359,20 @@ async function connectWS(){
     if(!ticket){
       $('#wsdot').className = 'ws-dot dead';
       $('#wsstate').textContent = 'no ticket';
+      // v18.7.7 P1: No ticket = server error, don't hammer. Release flag.
+      wsConnecting = false;
+      scheduleReconnect(5000);
       return;
     }
     // Step 2: Connect WS with ticket (not permanent token)
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     ws = new WebSocket(proto+'://'+location.host+'/ws?ticket='+encodeURIComponent(ticket));
+    // v18.7.7 P1: Release wsConnecting on onopen (success) or onclose (failure).
+    //   Was: released in finally right after new WebSocket() → before onopen →
+    //   a second connectWS could stack. Now: flag stays true until the socket
+    //   is actually open (then we're live) or has closed (then we reconnect).
     ws.onopen = ()=>{
+      wsConnecting = false;
       $('#wsdot').className = 'ws-dot live';
       $('#wsstate').textContent = 'live';
     };
@@ -356,17 +383,22 @@ async function connectWS(){
       }catch(e){}
     };
     ws.onclose = ()=>{
+      wsConnecting = false;
       $('#wsdot').className = 'ws-dot dead';
       $('#wsstate').textContent = 'reconnecting…';
-      setTimeout(()=>{ if(TOKEN) connectWS(); }, 3000);
+      scheduleReconnect(3000);
     };
     ws.onerror = ()=>{ try{ws.close();}catch(e){} };
   }catch(e){
     $('#wsdot').className = 'ws-dot dead';
     $('#wsstate').textContent = 'unavailable';
-  }finally{
+    // v18.7.7 P1: Release flag on exception + schedule retry.
     wsConnecting = false;
+    scheduleReconnect(5000);
   }
+  // v18.7.7 P1: NO finally block — wsConnecting is released in onopen/onclose/catch.
+  //   The finally was the bug: it released the flag before the WebSocket handshake
+  //   completed, allowing a second connectWS to stack.
 }
 
 // Fallback clock (if WS not connected)

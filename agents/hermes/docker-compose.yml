@@ -1,14 +1,11 @@
 services:
   hermes:
-    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
-    # v18.7.6 P2 TODO: Pin to specific version (was: :latest → supply-chain risk).
-    #   Could not verify the exact published tag for nousresearch/hermes-agent
-    #   from within the build sandbox (no registry access). Keeping :latest so
-    #   `docker compose up -d` does not break on missing-tag — coordinator MUST
-    #   verify against https://hub.docker.com/r/nousresearch/hermes-agent/tags
-    #   before the v18.7.6 release goes out, then replace `:latest` below with
-    #   the verified `:vX.Y.Z` tag (and remove this TODO block).
-    image: nousresearch/hermes-agent:latest
+    # v18.7.7 P1: Pinned to verified versioned tag (was: :latest → supply-chain
+    #   risk: git commit + identical install.sh + install today → image A, but
+    #   next week → image B without any change in SCARLIX OS). Verified via
+    #   hub.docker.com/v2/repositories/nousresearch/hermes-agent/tags — latest
+    #   non-desktop version tag is v2026.9.24. Update deliberately when upgrading.
+    image: nousresearch/hermes-agent:v2026.9.24
     container_name: hermes
     restart: unless-stopped
     ports:

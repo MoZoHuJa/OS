@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v18.7.6 — Host Bridge (privileged ops for ScarliHQ dashboard)
+# SCARLIX OS v18.7.7 — Host Bridge (privileged ops for ScarliHQ dashboard)
 #
 # ARCHITECTURE (v18.0.0): ScarliHQ container has NO docker.sock, NO nvidia runtime.
 # It writes ONLY to /var/lib/scarlix/bridge-input/desired-mode (writable by nonroot 65532).
@@ -28,6 +28,20 @@
 #   TOCTOU window). install.sh Phase 4 now crit()s if the build fails.
 # v18.7.6 P0: stderr now goes to /var/log/scarlix/bridge-reader.log (was:
 #   /tmp/sbr.err — predictable path, world-writable parent, symlink risk).
+# v18.7.7 P1: Timeouts on all external commands (nvidia-smi, docker info, docker ps)
+#   — was: a hung nvidia-smi (GPU reset/driver hang) or a frozen Docker daemon
+#   would block the 5s host-bridge timer indefinitely → host-status.json stops
+#   updating → dashboard goes stale with no error. Now: timeout 10s/5s wraps
+#   each external call so the timer always completes.
+# v18.7.7 P1: Fail-closed retry-state write (was: `printf > $RETRY_FILE || true`
+#   → on disk-full/RO-fs the retry state was silently lost → next timer tick
+#   saw retry_count=0 → retry state lost mid-transition). Now: mktemp + mv with
+#   exit 1 on failure (same pattern as last-transition + status file).
+# v18.7.7 P1: Validate last_retry regex (was: int(os.environ["..."]) could
+#   panic on a corrupted state file → fallback JSON → missing mode_transition).
+# v18.7.7 P2: All logs under /var/log/scarlix/ (was: host-bridge log at
+#   /var/log/scarlix-host-bridge.log while bridge-reader log was at
+#   /var/log/scarlix/bridge-reader.log → inconsistent during debugging).
 #
 # This is the privilege boundary: ScarliHQ (untrusted, LAN-facing) → file → host bridge → root ops.
 set -uo pipefail
@@ -50,16 +64,20 @@ flock -n 200 || exit 0
 
 mkdir -p "$INPUT_DIR" "$STATE_DIR_ROOT"
 # v18.7.6 P0: bridge-reader stderr log dir (was: /tmp/sbr.err — predictable path).
+# v18.7.7 P2: All scarlix logs under /var/log/scarlix/ (was: host-bridge log at
+#   /var/log/scarlix-host-bridge.log → inconsistent with bridge-reader.log).
 # Created unconditionally so the bridge-reader redirect below never silently drops errors.
 mkdir -p /var/log/scarlix 2>/dev/null || true
+# v18.7.7 P2: unified log path
+BRIDGE_LOG="/var/log/scarlix/host-bridge.log"
 # v18.3 P1: fail-closed on security boundary dirs (was: `|| true` → continued on failure)
 # bridge-state/ MUST be root:root 700 — if we can't enforce that, abort (don't continue).
 if ! chown root:root "$STATE_DIR_ROOT" 2>/dev/null; then
-    echo "[$(date '+%H:%M:%S')] FATAL: cannot chown root:root $STATE_DIR_ROOT — aborting" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
+    echo "[$(date '+%H:%M:%S')] FATAL: cannot chown root:root $STATE_DIR_ROOT — aborting" >> "$BRIDGE_LOG" 2>/dev/null || true
     exit 1
 fi
 if ! chmod 700 "$STATE_DIR_ROOT" 2>/dev/null; then
-    echo "[$(date '+%H:%M:%S')] FATAL: cannot chmod 700 $STATE_DIR_ROOT — aborting" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
+    echo "[$(date '+%H:%M:%S')] FATAL: cannot chmod 700 $STATE_DIR_ROOT — aborting" >> "$BRIDGE_LOG" 2>/dev/null || true
     exit 1
 fi
 
@@ -67,7 +85,7 @@ fi
 input_owner=$(stat -c '%u:%g' "$INPUT_DIR" 2>/dev/null || echo "?")
 input_mode=$(stat -c '%a' "$INPUT_DIR" 2>/dev/null || echo "?")
 if [ "$input_owner" != "65532:65532" ] || [ "$input_mode" != "700" ]; then
-    echo "[$(date '+%H:%M:%S')] FATAL: bridge-input integrity compromised (owner=$input_owner, mode=$input_mode, expected 65532:65532/700)" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
+    echo "[$(date '+%H:%M:%S')] FATAL: bridge-input integrity compromised (owner=$input_owner, mode=$input_mode, expected 65532:65532/700)" >> "$BRIDGE_LOG" 2>/dev/null || true
     exit 1
 fi
 
@@ -110,7 +128,7 @@ validate_input_file() {
     return 0
 }
 
-log_warn() { echo "[$(date '+%H:%M:%S')] WARN: $1" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true; }
+log_warn() { echo "[$(date '+%H:%M:%S')] WARN: $1" >> "$BRIDGE_LOG" 2>/dev/null || true; }
 
 # --- 1. Apply desired mode (if any) ---
 requested_mode=""
@@ -145,7 +163,7 @@ if [ -f "$DESIRED_MODE_FILE" ]; then
     else
         # v18.7.6 P0: No fallback — atomic reader is required for security.
         # (was: fell back to validate+cat+re-validate shell pattern → TOCTOU window.)
-        echo "[$(date '+%H:%M:%S')] FATAL: scarlix-bridge-reader not installed — cannot process desired-mode safely" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
+        echo "[$(date '+%H:%M:%S')] FATAL: scarlix-bridge-reader not installed — cannot process desired-mode safely" >> "$BRIDGE_LOG" 2>/dev/null || true
         rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
         transition="rejected"
         last_error="scarlix-bridge-reader not installed (run install.sh to build)"
@@ -164,7 +182,7 @@ if [ -f "$DESIRED_MODE_FILE" ]; then
                 # v18.0.0: SINGLE execution (was: ran twice on failure for error capture)
                 mode_output=$("$MODE_BIN" "$requested_mode" 2>&1)
                 mode_rc=$?
-                echo "$mode_output" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
+                echo "$mode_output" >> "$BRIDGE_LOG" 2>/dev/null || true
 
                 if [ "$mode_rc" -eq 0 ]; then
                     transition="applied"
@@ -180,7 +198,24 @@ if [ -f "$DESIRED_MODE_FILE" ]; then
                         rm -f "$DESIRED_MODE_FILE" "$RETRY_FILE" 2>/dev/null || true
                     else
                         transition="retrying"
-                        printf 'count=%s\nerror=%s\n' "$retry_count" "$last_error" > "$RETRY_FILE" 2>/dev/null || true
+                        # v18.7.7 P1: Fail-closed retry-state write (was: `printf > $RETRY_FILE || true`
+                        #   → on disk-full/RO-fs the retry state was silently lost → next timer tick
+                        #   saw retry_count=0 → retry state lost mid-transition). Now: mktemp + mv
+                        #   with exit 1 on failure (same pattern as last-transition + status file).
+                        RETRY_TMP=$(mktemp "${RETRY_FILE}.XXXXXX") || exit 1
+                        if ! printf 'count=%s\nerror=%s\n' "$retry_count" "$last_error" > "$RETRY_TMP" 2>/dev/null; then
+                            rm -f "$RETRY_TMP" 2>/dev/null || true
+                            echo "[$(date '+%H:%M:%S')] FATAL: cannot persist retry state" >> "$BRIDGE_LOG" 2>/dev/null || true
+                            transition="failed"
+                            rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
+                        else
+                            mv -f "$RETRY_TMP" "$RETRY_FILE" 2>/dev/null || {
+                                rm -f "$RETRY_TMP" 2>/dev/null || true
+                                echo "[$(date '+%H:%M:%S')] FATAL: cannot mv retry state" >> "$BRIDGE_LOG" 2>/dev/null || true
+                                transition="failed"
+                                rm -f "$DESIRED_MODE_FILE" 2>/dev/null || true
+                            }
+                        fi
                     fi
                 fi
             else
@@ -222,7 +257,12 @@ if [ -f "$LAST_TRANSITION_FILE" ]; then
     last_state=$(grep '^state=' "$LAST_TRANSITION_FILE" 2>/dev/null | cut -d= -f2 || echo "")
     last_timestamp=$(grep '^timestamp=' "$LAST_TRANSITION_FILE" 2>/dev/null | cut -d= -f2- || echo "")
     # v18.2 P2: restore retry_count + last_error from last-transition file
+    # v18.7.7 P1: Validate last_retry regex (was: int(os.environ["..."]) could
+    #   panic on a corrupted state file → fallback JSON → missing mode_transition).
     last_retry=$(grep '^retry_count=' "$LAST_TRANSITION_FILE" 2>/dev/null | cut -d= -f2 || echo "0")
+    [[ "$last_retry" =~ ^[0-9]+$ ]] || last_retry=0
+    # Clamp to MAX_RETRIES so a corrupted file can't set an absurd value
+    (( last_retry <= MAX_RETRIES )) || last_retry=$MAX_RETRIES
     last_error_stored=$(grep '^error=' "$LAST_TRANSITION_FILE" 2>/dev/null | cut -d= -f2- || echo "")
     # If current transition is "none", use last_transition for status
     if [ "$transition" = "none" ]; then
@@ -239,9 +279,13 @@ current_mode="unknown"
 [ -z "$current_mode" ] && current_mode="unknown"
 
 # GPU status
+# v18.7.7 P1: timeout 10s on nvidia-smi (was: bare nvidia-smi → a hung GPU
+#   reset or driver hang would block the 5s host-bridge timer indefinitely →
+#   host-status.json goes stale, dashboard shows no error). timeout returns 124
+#   on expiry; gpu_data stays "[]" which the dashboard renders as "no GPUs".
 gpu_data="[]"
 if command -v nvidia-smi >/dev/null 2>&1; then
-    gpu_data=$(nvidia-smi --query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,compute_cap \
+    gpu_data=$(timeout 10s nvidia-smi --query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,compute_cap \
         --format=csv,noheader,nounits 2>/dev/null | python3 -c '
 import sys, json
 gpus = []
@@ -266,9 +310,13 @@ print(json.dumps(gpus))
 fi
 
 # Container status
+# v18.7.7 P1: timeout 5s on docker info + timeout 10s on docker ps (was: bare
+#   calls → a frozen Docker daemon would block the timer indefinitely). If the
+#   daemon is unresponsive, container_data stays "[]" which renders as "no
+#   containers" — the dashboard still shows the last known GPU/mode status.
 container_data="[]"
-if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    container_data=$(docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null | python3 -c '
+if command -v docker >/dev/null 2>&1 && timeout 5s docker info >/dev/null 2>&1; then
+    container_data=$(timeout 10s docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null | python3 -c '
 import sys, json
 containers = []
 for line in sys.stdin:
@@ -354,7 +402,7 @@ print(json.dumps(data))
 }
 # v18.7.2 P1: Fail-closed on status write (was: || true → systemd saw SUCCESS on failure)
 if ! mv -f "$STATUS_TMP" "$STATUS_FILE" 2>/dev/null; then
-    echo "[$(date '+%H:%M:%S')] FATAL: cannot publish host status" >> /var/log/scarlix-host-bridge.log 2>/dev/null || true
+    echo "[$(date '+%H:%M:%S')] FATAL: cannot publish host status" >> "$BRIDGE_LOG" 2>/dev/null || true
     rm -f "$STATUS_TMP" 2>/dev/null || true
     exit 1
 fi
@@ -363,6 +411,7 @@ fi
 # dashboard showed stale "host-status.json not found" forever). Now log + exit 1
 # so the timer goes "failed" and scarlix-doctor surfaces it. (v18.7.2 P1 made the
 # mv fail-closed; this closes the second || true in the same block.)
-chmod 644 "$STATUS_FILE" 2>/dev/null || { echo "FATAL: cannot chmod status" >> /var/log/scarlix-host-bridge.log; exit 1; }
+# v18.7.7 P2: use $BRIDGE_LOG (was: hardcoded /var/log/scarlix-host-bridge.log).
+chmod 644 "$STATUS_FILE" 2>/dev/null || { echo "FATAL: cannot chmod status" >> "$BRIDGE_LOG"; exit 1; }
 
 exit 0

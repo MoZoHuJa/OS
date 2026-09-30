@@ -154,10 +154,21 @@ jobs:
             -v /tmp/scarlix-test/bridge-input:/var/lib/scarlix/bridge-input:rw \
             scarlihq:ci
           # v18.7.6 P1: Poll for readiness (was: sleep 5 → flaky on slow runners)
+          # v18.7.7 P1: READY flag check (was: loop ended without checking if
+          #   break happened → test continued with a dead server → cryptic
+          #   "expected 401" failure instead of "server never became ready").
+          READY=0
           for i in $(seq 1 30); do
-              curl -sf http://127.0.0.1:8090/api/health >/dev/null 2>&1 && break
+              if curl -sf http://127.0.0.1:8090/api/health >/dev/null 2>&1; then
+                  READY=1; break
+              fi
               sleep 1
           done
+          if [ "$READY" -ne 1 ]; then
+              echo "FAIL: ScarliHQ never became ready after 30s"
+              docker logs scarlihq-test 2>&1 | tail -30
+              exit 1
+          fi
           # v18.5.1: print container status + logs for debugging
           docker ps -a --filter name=scarlihq-test --format '{{.Status}}'
           docker logs scarlihq-test 2>&1 | head -20
@@ -183,6 +194,7 @@ jobs:
           echo "Smoke test PASSED — ScarliHQ starts + auth + mode write + error codes"
 
   # v18.7.5 P2: Integration tests — real API + WS ticket + mode switch
+  # v18.7.7 P1: Added real WebSocket lifecycle test (ticket→upgrade→reuse→reject)
   integration-test:
     runs-on: ubuntu-latest
     needs: scarlihq-docker-build
@@ -192,6 +204,10 @@ jobs:
         run: |
           SCARLIX_VERSION=$(cat VERSION)
           docker build --build-arg SCARLIX_VERSION="$SCARLIX_VERSION" -t scarlihq:ci scarlihq/
+      # v18.7.7 P1: Install Python websockets library for the real WS lifecycle test
+      # (Test 10). Pinned for reproducibility (same rationale as pyyaml pinning).
+      - name: Install Python websockets library
+        run: pip install "websockets==13.1"
       - name: Integration tests
         run: |
           # v18.7.6 P1: trap cleanup so any `exit 1` still tears down the container
@@ -213,10 +229,21 @@ jobs:
             -v /tmp/scarlix-test/bridge-input:/var/lib/scarlix/bridge-input:rw \
             scarlihq:ci
           # v18.7.6 P1: Poll for readiness (was: sleep 5 → flaky on slow runners)
+          # v18.7.7 P1: READY flag check (was: loop ended without checking if
+          #   break happened → test continued with a dead server → cryptic
+          #   "Test 1 failed" instead of "server never became ready").
+          READY=0
           for i in $(seq 1 30); do
-              curl -sf http://127.0.0.1:8090/api/health >/dev/null 2>&1 && break
+              if curl -sf http://127.0.0.1:8090/api/health >/dev/null 2>&1; then
+                  READY=1; break
+              fi
               sleep 1
           done
+          if [ "$READY" -ne 1 ]; then
+              echo "FAIL: ScarliHQ never became ready after 30s"
+              docker logs scarlihq-int 2>&1 | tail -30
+              exit 1
+          fi
 
           # Test 1: Health without token → 401
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health)
@@ -269,4 +296,53 @@ jobs:
           echo "Test 9 (trailing JSON): $HTTP (expected 400)"
           [ "$HTTP" = "400" ] || { echo "FAIL: expected 400 for trailing JSON"; exit 1; }
 
+          # v18.7.7 P1: Test 10 — REAL WebSocket lifecycle (was: only tested
+          #   POST /api/ws-ticket, never tested the actual WS upgrade → the most
+          #   changed security component had the least coverage). This test:
+          #   1. Gets a ticket via POST /api/ws-ticket
+          #   2. Opens a WebSocket to /ws?ticket=<ticket>
+          #   3. Expects 101 Switching Protocols + receives a status JSON push
+          #   4. Closes the socket
+          #   5. Tries to REUSE the same ticket → expects rejection (single-use)
+          #   Uses Python3 websockets library (pip install websockets).
+          echo "=== Test 10: WebSocket lifecycle (ticket → upgrade → reuse) ==="
+          python3 << 'PYEOF'
+          import asyncio, json, urllib.request
+          import websockets
+
+          async def test_ws_lifecycle():
+              # Step 1: Get a ticket
+              req = urllib.request.Request(
+                  'http://127.0.0.1:8090/api/ws-ticket',
+                  method='POST',
+                  headers={'Authorization': 'Bearer test-token'}
+              )
+              resp = json.loads(urllib.request.urlopen(req, timeout=5).read())
+              ticket = resp['ticket']
+              assert ticket and ticket != '0'*64, f'bad ticket: {ticket[:16]}...'
+              print(f'  Ticket obtained: {ticket[:16]}...')
+
+              # Step 2: Open WS + expect 101 + receive status push
+              uri = f'ws://127.0.0.1:8090/ws?ticket={ticket}'
+              async with websockets.connect(uri, open_timeout=5) as ws:
+                  data = await asyncio.wait_for(ws.recv(), timeout=5)
+                  s = json.loads(data)
+                  assert 'timestamp' in s, f'no timestamp in status: {data[:100]}'
+                  print(f'  WS upgrade OK (101) — received status: mode={s.get("mode","?")}')
+
+              # Step 3: Reuse the same ticket → MUST be rejected (single-use)
+              try:
+                  async with websockets.connect(uri, open_timeout=5) as ws:
+                      await asyncio.wait_for(ws.recv(), timeout=3)
+                  print('  FAIL: reused ticket was accepted — single-use broken!')
+                  return False
+              except (websockets.exceptions.InvalidStatus, websockets.exceptions.InvalidURI,
+                      ConnectionRefusedError, OSError, asyncio.TimeoutError) as e:
+                  print(f'  Reuse correctly rejected: {type(e).__name__}')
+                  return True
+
+          ok = asyncio.run(test_ws_lifecycle())
+          assert ok, 'WS single-use test FAILED — ticket reuse was accepted'
+          print('  Test 10: PASS')
+          PYEOF
           echo "=== ALL INTEGRATION TESTS PASSED ==="

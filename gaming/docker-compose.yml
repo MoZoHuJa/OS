@@ -4,8 +4,14 @@ services:
   # Sunshine Docker container is for TV mode only
   
   sunshine-tv:
-    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
-    image: lizardbyte/sunshine:latest
+    # v18.7.7 P1: Pinned to versioned tag (was: :latest → supply-chain risk:
+    #   git commit + identical install.sh + install today → image A, but next
+    #   week → image B without any change in SCARLIX OS). Now pinned to the
+    #   latest verified nightly tag for ubuntu-24.04 (Sunshine doesn't publish
+    #   stable semver tags — only nightly date-based tags). Update this tag
+    #   deliberately when upgrading, don't let it float.
+    #   Verified via hub.docker.com/v2/repositories/lizardbyte/sunshine/tags
+    image: lizardbyte/sunshine:v2026.929.125923-ubuntu-24.04
     container_name: sunshine-tv
     restart: unless-stopped
     network_mode: host
@@ -35,6 +41,10 @@ services:
 
   minecraft:
     # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
+    # v18.7.7 P1: GHCR (ghcr.io) requires auth to query tags via API — can't
+    #   auto-verify in CI. Before the v18.7.7 release goes out, manually check
+    #   https://github.com/pumpkin-mc/pumpkin/pkgs/container/pumpkin for version
+    #   tags, then replace `:latest` below with the verified `:vX.Y.Z` tag.
     image: ghcr.io/pumpkin-mc/pumpkin:latest
     container_name: minecraft
     restart: unless-stopped

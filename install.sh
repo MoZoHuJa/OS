@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.7.6"
+VERSION="18.7.7"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -730,9 +730,10 @@ else
   # No docker.sock, no scarlix-mode mount, no nvidia runtime → minimal privilege.
   if [ -f /opt/scarlix/scarlihq/Dockerfile ]; then
     # v18.7.6 P2: Versioned image tag (was: scarlihq:latest). Compose now references
-    # scarlihq:v18.7.6 — the literal tag here MUST match the image: line in
+    # scarlihq:v$VERSION — the literal tag here MUST match the image: line in
     # scarlihq/docker-compose.yml, otherwise `docker compose up` re-builds as latest.
-    log "Building ScarliHQ dashboard image (scarlihq:v18.7.6, alpine)..."
+    # v18.7.7 P2: Use $VERSION variable (was: hardcoded v18.7.6 → drifted on every release).
+    log "Building ScarliHQ dashboard image (scarlihq:v$VERSION, alpine)..."
     # v18.4 P0: SAFE parse SCARLIHQ_TOKEN from /etc/scarlix/.env (was: `source` → LPE on re-run)
     if [ -f /etc/scarlix/.env ]; then
       SCARLIHQ_TOKEN=$(grep '^SCARLIHQ_TOKEN=' /etc/scarlix/.env 2>/dev/null | cut -d= -f2 || echo "")
@@ -740,10 +741,12 @@ else
     # Export for compose (compose reads ${SCARLIHQ_TOKEN} from environment)
     export SCARLIHQ_TOKEN="${SCARLIHQ_TOKEN:-}"
     # v17.9.9 P2: pass VERSION as build-arg (Dockerfile injects via -ldflags -X main.Version)
-    # v18.7.6 P2: image tag matches scarlihq/docker-compose.yml (was: scarlihq:latest).
-    if docker build --build-arg SCARLIX_VERSION="$VERSION" -t scarlihq:v18.7.6 /opt/scarlix/scarlihq/ >> "$LOG_FILE" 2>&1; then
-      ok "ScarliHQ image built (scarlihq:v18.7.6, alpine ~20MB, version $VERSION)"
-      # Start dashboard on :8090 (compose references scarlihq:v18.7.6 — matches build tag).
+    # v18.7.7 P2: image tag matches VERSION variable (was: hardcoded v18.7.6 —
+    #   drifted from VERSION on every release). Now uses $VERSION so the build
+    #   tag, compose image tag, and VERSION file all agree.
+    if docker build --build-arg SCARLIX_VERSION="$VERSION" -t scarlihq:v$VERSION /opt/scarlix/scarlihq/ >> "$LOG_FILE" 2>&1; then
+      ok "ScarliHQ image built (scarlihq:v$VERSION, alpine ~20MB, version $VERSION)"
+      # Start dashboard on :8090 (compose references scarlihq:v$VERSION — matches build tag).
       # v18.7.6 P2: --env-file /etc/scarlix/.env so compose picks up SCARLIHQ_TOKEN
       # from the secrets file rather than relying on the install.sh export (was already
       # correct — preserved here as the canonical pattern for future up -d re-runs).
@@ -751,20 +754,37 @@ else
         ok "ScarliHQ dashboard started on :8090"
         if [ -n "$SCARLIHQ_TOKEN" ]; then
           # v18.2 P1: token only on TTY (was: info() → tee to log 644 → token leaked)
+          # v18.7.7 P1: Dashboard URL says 127.0.0.1:8090 (was: <this-ip>:8090 —
+          #   misleading because the compose binds 127.0.0.1:8090:8090, so LAN
+          #   clients get connection refused. The bind is correct for security
+          #   (dashboard not exposed to LAN without a tunnel). The text now reflects
+          #   reality: localhost only, with a note about Tailscale/SSH tunnel for LAN.)
           if [ -t 1 ]; then
             echo -e "${CYAN}  Dashboard login token: ${GREEN}${SCARLIHQ_TOKEN}${NC}" | tee /dev/tty 2>/dev/null || true
-            echo -e "${CYAN}  Dashboard: http://<this-ip>:8090/ (login with SCARLIHQ_TOKEN from /etc/scarlix/.env)${NC}" | tee /dev/tty 2>/dev/null || true
-            echo -e "${CYAN}  (token also in /etc/scarlix/.env — chmod 600)${NC}" | tee /dev/tty 2>/dev/null || true
+            echo -e "${CYAN}  Dashboard (this PC only): http://127.0.0.1:8090/${NC}" | tee /dev/tty 2>/dev/null || true
+            echo -e "${CYAN}  (login with the token above, or from /etc/scarlix/.env — chmod 600)${NC}" | tee /dev/tty 2>/dev/null || true
+            echo -e "${CYAN}  LAN access: use Tailscale, an SSH tunnel, or a reverse proxy → 127.0.0.1:8090${NC}" | tee /dev/tty 2>/dev/null || true
           else
             info "  Dashboard token generated (in /etc/scarlix/.env — run 'cat /etc/scarlix/.env | grep SCARLIHQ_TOKEN')"
+            info "  Dashboard URL: http://127.0.0.1:8090/ (localhost only — use Tailscale/SSH tunnel for LAN)"
           fi
         fi
       else
-        warn "ScarliHQ dashboard start failed (non-critical — run 'docker compose --env-file /etc/scarlix/.env -f /opt/scarlix/scarlihq/docker-compose.yml up -d' later)"
+        # v18.7.7 P1: ScarliHQ dashboard start fail is non-critical (CLI scarlix-mode
+        # still works), but make it VERY visible in the summary so the user knows
+        # the dashboard won't be available (was: just a warn line easily missed).
+        warn "ScarliHQ dashboard start failed (non-critical — CLI still works)"
+        warn "  Run: docker compose --env-file /etc/scarlix/.env -f /opt/scarlix/scarlihq/docker-compose.yml up -d"
+        SCARLIHQ_DASHBOARD_FAILED=1
       fi
     else
-      warn "ScarliHQ build failed (non-critical — dashboard optional. Check /var/log/scarlix/install.log)"
+      # v18.7.7 P1: ScarliHQ build fail is non-critical (CLI scarlix-mode still
+      # works), but flag it prominently so the user knows the dashboard won't be
+      # available. The final summary checks SCARLIHQ_DASHBOARD_FAILED.
+      warn "ScarliHQ build failed (non-critical — CLI scarlix-mode still works, but dashboard will NOT be available)"
       warn "  Common cause: no internet for Go module download, or Go syntax error"
+      warn "  Check /var/log/scarlix/install.log and re-run install.sh after fixing"
+      SCARLIHQ_DASHBOARD_FAILED=1
     fi
   else
     warn "ScarliHQ Dockerfile not found — dashboard not built"
@@ -851,6 +871,17 @@ echo -e "${CYAN}║  NEXT STEPS:${NC}"
 echo -e "${CYAN}║    1. Reboot (activate NVIDIA + ZRAM)${NC}"
 echo -e "${CYAN}║    2. Download models: download-models.sh${NC}"
 echo -e "${CYAN}║    3. Start AI: scarlix-mode ai${NC}"
+# v18.7.7 P1: Prominent dashboard failure warning (was: just a warn line that
+# was easy to miss in the scrollback. If the ScarliHQ build or start failed,
+# the user would expect the dashboard at :8090 and get connection refused
+# with no explanation. Now: a big red banner in the summary.)
+if [ -n "${SCARLIHQ_DASHBOARD_FAILED:-}" ]; then
+  echo -e "${RED}╠══════════════════════════════════════════════════════════════╣${NC}"
+  echo -e "${RED}║  ⚠ DASHBOARD NOT INSTALLED — scarlihq build/start failed      ║${NC}"
+  echo -e "${RED}║    CLI scarlix-mode still works (ai/game/tv/creative/offline) ║${NC}"
+  echo -e "${RED}║    Dashboard at http://127.0.0.1:8090 will NOT be available   ║${NC}"
+  echo -e "${RED}║    Fix: check /var/log/scarlix/install.log, re-run install.sh ║${NC}"
+fi
 echo -e "${CYAN}║  Commands:${NC}"
 echo -e "${CYAN}║    scarlix-mode status     # System summary${NC}"
 echo -e "${CYAN}║    scarlix-mode vram        # VRAM health${NC}"

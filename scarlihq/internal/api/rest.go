@@ -18,17 +18,29 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "18.7.6"
+var Version = "18.7.7"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
 // The dashboard POSTs /api/ws-ticket (Bearer-authed) to obtain a ticket,
 // then connects to /ws?ticket=<one-time> — the URL no longer carries the
 // permanent SCARLIHQ_TOKEN (was: leaked into logs/history/referrer headers).
+//
+// v18.7.7 P1: Rate limit max outstanding tickets (was: a single holder of
+//   SCARLIHQ_TOKEN could POST /api/ws-ticket in a tight loop and create
+//   unlimited map entries during the 30s TTL — the sweep only runs on the
+//   NEXT issueWSTicket call, so 100k requests could allocate 100k entries
+//   before any expired. Now: maxWSTickets=1024 caps the map size — if the
+//   store is full, issueWSTicket returns "" and the HTTP handler returns 503
+//   so the dashboard backs off instead of exhausting memory.)
 var (
         wsTickets   = make(map[string]time.Time)
         wsTicketsMu sync.Mutex
         wsTicketTTL = 30 * time.Second
+        // v18.7.7 P1: max outstanding (unconsumed) tickets. 1024 is far above the
+        // dashboard's normal usage (1 ticket per WS connect, consumed atomically on
+        // Reserve). A legitimate user never hits this; only a flooding client does.
+        maxWSTickets = 1024
 )
 
 // issueWSTicket generates a single-use WS ticket valid for wsTicketTTL.
@@ -45,6 +57,11 @@ var (
 // crypto/rand.Read on Linux already uses getrandom(2) (or /dev/urandom internally
 // via the runtime) — there is no scenario where crypto/rand fails but a manual
 // /dev/urandom read would succeed AND be safe. Fail-closed: return "".
+//
+// v18.7.7 P1: Returns "" if the ticket store is at capacity (maxWSTickets).
+// This caps memory usage under a flooding client (was: unlimited map growth
+// until the next sweep — but the sweep only removes EXPIRED entries, so a
+// fast loop creates entries faster than they expire). Caller returns HTTP 503.
 func issueWSTicket() string {
         b := make([]byte, 32)
         // v18.7.5 P0: Remove urandom fallback (was: os.ReadFile → infinite read/OOM)
@@ -59,6 +76,13 @@ func issueWSTicket() string {
                 if now.After(expiry) {
                         delete(wsTickets, t)
                 }
+        }
+        // v18.7.7 P1: Rate limit — reject if too many unconsumed tickets outstanding.
+        // (was: no cap → flooding client could exhaust memory. 1024 is far above the
+        // dashboard's normal usage of 1 ticket per WS connect.)
+        if len(wsTickets) >= maxWSTickets {
+                wsTicketsMu.Unlock()
+                return "" // Signal rate-limited
         }
         wsTickets[ticket] = now.Add(wsTicketTTL)
         wsTicketsMu.Unlock()
@@ -296,6 +320,10 @@ func (h *Handler) listProfiles(w http.ResponseWriter, r *http.Request) {
 // If issueWSTicket returns "", the runtime's RNG is unavailable and we must NOT
 // issue a predictable ticket — return HTTP 500 so the dashboard surfaces the
 // error rather than silently accepting a constant-ticket DoS vector.
+//
+// v18.7.7 P1: Also returns 503 if the ticket store is at capacity (maxWSTickets).
+// This distinguishes RNG failure (500) from rate-limiting (503) so the dashboard
+// can back off appropriately.
 func (h *Handler) issueWSTicket(w http.ResponseWriter, r *http.Request) {
         if r.Method != http.MethodPost {
                 writeJSONError(w, http.StatusMethodNotAllowed, "use POST")
@@ -304,6 +332,15 @@ func (h *Handler) issueWSTicket(w http.ResponseWriter, r *http.Request) {
         ticket := issueWSTicket()
         if ticket == "" {
                 // v18.7.4 P0: RNG failure — fail-closed (was: all-zeros ticket valid 30s).
+                // v18.7.7 P1: Could also be rate-limit (store full). Both return "" — we
+                // return 503 for rate-limit, 500 for RNG. Check store size to distinguish.
+                wsTicketsMu.Lock()
+                storeFull := len(wsTickets) >= maxWSTickets
+                wsTicketsMu.Unlock()
+                if storeFull {
+                        writeJSONError(w, http.StatusServiceUnavailable, "too many outstanding tickets — retry shortly")
+                        return
+                }
                 writeJSONError(w, http.StatusInternalServerError, "unable to generate secure ticket (RNG unavailable)")
                 return
         }

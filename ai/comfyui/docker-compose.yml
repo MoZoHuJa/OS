@@ -1,6 +1,10 @@
 services:
   comfyui:
     # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
+    # v18.7.7 P1: GHCR (ghcr.io) requires auth to query tags via API — can't
+    #   auto-verify in CI. Before the v18.7.7 release goes out, manually check
+    #   https://github.com/ai-dock/comfyui/pkgs/container/comfyui for version
+    #   tags, then replace `:latest` below with the verified `:vX.Y.Z` tag.
     image: ghcr.io/ai-dock/comfyui:latest
     container_name: comfyui
     restart: unless-stopped
