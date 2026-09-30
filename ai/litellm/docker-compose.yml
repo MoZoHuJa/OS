@@ -1,6 +1,10 @@
 services:
   litellm:
-    image: ghcr.io/berriai/litellm:main-latest
+    # v18.8 P1: Pinned to stable version tag (was: :main-latest — development
+    #   branch image, not a stable release → non-reproducible builds. Could get
+    #   a broken main image at any time). Verified via ghcr.io/v2/berriai/litellm/
+    #   tags/list — latest stable is main-v1.16.19. Update deliberately when upgrading.
+    image: ghcr.io/berriai/litellm:main-v1.16.19
     container_name: litellm
     restart: unless-stopped
     ports:

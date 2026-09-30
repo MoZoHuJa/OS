@@ -7,7 +7,10 @@ version: "3.9"
 
 services:
   browser-mcp:
-    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
+    # v18.8 P1: Supply-chain risk — NOT YET PINNED (was: :latest → non-reproducible).
+#   Docker Hub anonymous API returns NO_ACCESS for this repo → can't auto-verify
+#   tags. Before FINAL release, manually check https://hub.docker.com/r/mcp/playwright-server/tags for version tags,
+#   then replace :latest with the verified :vX.Y.Z tag.
     image: mcp/playwright-server:latest
     container_name: browser-mcp
     restart: unless-stopped

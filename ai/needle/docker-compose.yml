@@ -1,6 +1,11 @@
 services:
   needle-router:
-    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
+    # v18.8 P1: Supply-chain risk — NOT YET PINNED (was: :latest → git commit +
+    #   identical install → image A, next week → image B without any SCARLIX
+    #   change). GHCR anonymous token returns NO_ACCESS for cactus-compute/needle
+    #   → can't auto-verify tags. Before FINAL release, manually check
+    #   https://github.com/cactus-compute/needle/pkgs/container/needle for version
+    #   tags, then replace :latest with the verified :vX.Y.Z tag.
     image: ghcr.io/cactus-compute/needle:latest
     container_name: needle-router
     restart: unless-stopped

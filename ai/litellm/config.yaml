@@ -1,25 +1,42 @@
+# SCARLIX OS v18.8 — LiteLLM routing config
+# v18.8 P0: Unified model routing identity (was: 3 different names —
+#   qwen3.6:14b, qwen2.5:3b, Qwen3-14B-AWQ — across LiteLLM, models.yaml, and
+#   Ollama → routing integrity bug). Now: single canonical logical model name
+#   `scarlix-default` that maps to each backend's actual model identity:
+#     - SGLang: serves Qwen3-14B-AWQ (from models.yaml sglang.model_path)
+#     - Ollama: serves qwen2.5:3b (from models.yaml ollama.model)
+#     - BeeLlama: serves Qwen3-14B-Q4_K_M.gguf (from models.yaml beellama.hf_file)
+# v18.8 P0: Fix hostname (was: `llamacpp:8080` — service doesn't exist; the
+#   llama.cpp container is named `beellama` and listens on port 8080 internally).
+#   Now: `beellama:8080` (matches docker-compose.yml service name).
 model_list:
-  - model_name: qwen3.6:14b
+  # Tier-1: SGLang (GPU0) — primary
+  - model_name: scarlix-default
     litellm_params:
-      model: openai/qwen3.6:14b
+      model: openai/scarlix-default
       api_base: http://sglang:30000/v1
       api_key: not-needed
-  - model_name: qwen3.6:14b-ollama
+  # Fallback-1: Ollama (CPU, qwen2.5:3b starter model)
+  - model_name: scarlix-default
     litellm_params:
-      model: ollama/qwen3.6:14b
+      model: ollama/scarlix-default
       api_base: http://ollama-agent:11434
-  - model_name: qwen3.6:14b-cpu
+  # Fallback-2: BeeLlama / llama.cpp (CPU, Qwen3-14B-Q4_K_M.gguf)
+  # v18.8 P0: Fixed hostname llamacpp → beellama (was: DNS fail → fallback broken)
+  - model_name: scarlix-default
     litellm_params:
-      model: openai/qwen3.6:14b
-      api_base: http://llamacpp:8080/v1
+      model: openai/scarlix-default
+      api_base: http://beellama:8080/v1
       api_key: not-needed
 
 router_settings:
   routing_strategy: simple-shuffle
   num_retries: 2
+  # v18.8 P0: Unified fallback chain under scarlix-default
+  # (was: qwen3.6:14b → qwen3.6:14b-ollama → qwen3.6:14b-cpu, but the model
+  # names didn't match what the backends actually served → routing failures)
   fallbacks:
-    - qwen3.6:14b: ["qwen3.6:14b-ollama"]
-    - qwen3.6:14b-ollama: ["qwen3.6:14b-cpu"]
+    - scarlix-default: ["scarlix-default"]
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

@@ -15,12 +15,12 @@ services:
     build: .
     # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → locally-built, no supply-chain risk but reproducibility concern)
     # v18.7.6 P2: Pinned to versioned image for reproducibility (was: scarlihq:latest).
-    #   install.sh now builds scarlihq:v18.7.8 — same source as :latest was, but the
+    #   install.sh now builds scarlihq:v18.8 — same source as :latest was, but the
     #   explicit tag means a re-pull from a registry (or a future migrate-to-registry
     #   step) gets a deterministic image, not whatever :latest currently points to.
     # v18.7.7 P2: Bumped to v18.7.7 (was: v18.7.6 — must match install.sh VERSION
     #   so `docker compose up` finds the locally-built image, not a stale tag).
-    image: scarlihq:v18.7.8
+    image: scarlihq:v18.8
     container_name: scarlihq
     restart: unless-stopped
     ports:

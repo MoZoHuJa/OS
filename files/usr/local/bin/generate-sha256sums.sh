@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v18.7.8 — SHA256SUMS manifest generator for release integrity
+# SCARLIX OS v18.8 — SHA256SUMS manifest generator for release integrity
 #
 # v18.7.4 P2: Generate SHA256SUMS of all critical SCARLIX files so users can
 # verify release integrity after install/upgrade (was: no manifest → silent

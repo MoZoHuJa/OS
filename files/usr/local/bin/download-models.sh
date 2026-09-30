@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.7.8 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v18.8 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
 # v18.5 FIXES:
 #   - Missing Ollama compose file = FAILED (was: silently skipped → false "complete")
@@ -18,8 +18,13 @@ set -euo pipefail
 #   - Correct container names (ollama-agent, not ollama-main)
 
 # v18.5 P0: download-models.sh needs root for /var/lock + /var/log/scarlix/ + pacman
+# v18.8 P1: Drop -E (was: sudo -E preserved entire env → unnecessary surface for
+#   a privileged downloader; also inconsistent with scarlix-mode which dropped -E
+#   in v18.7.7. MODELS_CONFIG/MODELS_DIR overrides below use ${VAR:-default}
+#   which still works because sudo preserves HOME by default; for explicit override
+#   users should edit /etc/scarlix/models.yaml, not pass env vars to root.)
 if [ "$(id -u)" -ne 0 ]; then
-  exec sudo -E /usr/local/bin/download-models.sh "$@"
+  exec sudo /usr/local/bin/download-models.sh "$@"
 fi
 
 MODELS_CONFIG="${MODELS_CONFIG:-/etc/scarlix/models.yaml}"
@@ -33,14 +38,18 @@ mkdir -p "$(dirname "$LOG_FILE")" "$MODELS_DIR" "$VENV_DIR"
 # v18.5 P0: Lock file moved to /var/lib/scarlix/ (was: /var/lock — EACCES on Arch which is 0755 root:root, not 1777 like Debian)
 # v18.5 P0: /var/lib/scarlix/ is root:root 755 after install.sh P0-1 fix — safe for root to write
 MODELS_LOCK="/var/lib/scarlix/.models.lock"
-mkdir -p "$(dirname "$MODELS_LOCK")" 2>/dev/null || true
+if ! mkdir -p "$(dirname "$MODELS_LOCK")" 2>/dev/null; then
+  echo "FATAL: cannot create models lock directory $(dirname "$MODELS_LOCK")" >&2
+  exit 1
+fi
+# v18.8 P1: Fail-closed mkdir (was: || true → cryptic set -e exit if dir RO)
 exec 9>"$MODELS_LOCK"
 # v18.5 P0: Non-blocking + exclusive (was: shared -s, blocking without -n)
 # v18.5 P1: Exclusive because download-models WRITES to /models (was: -s shared → race with model-manager)
 flock -n -x 9 || { echo "ERROR: cannot acquire models lock (scarlix-mode or model-manager running?)" >&2; exit 1; }
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v18.7.8 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v18.8 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing
@@ -150,7 +159,14 @@ progress "BeeLlama/llama.cpp GGUF model (CPU offline)"
 BEE_HF_REPO=$(yq '.beellama.hf_repo // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
 BEE_HF_FILE=$(yq '.beellama.hf_file // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
 if [ -z "$BEE_HF_REPO" ] || [ -z "$BEE_HF_FILE" ]; then
+  # v18.8 P1: BeeLlama is Tier-4 CPU fallback — optional but warned (was: silent
+  #   "NOT downloaded" → download-models.sh exited SUCCESS even though offline
+  #   fallback model was missing → scarlix-mode offline would fail later with
+  #   no model. Now: explicit warning that offline mode will be broken without it,
+  #   but NOT FAILED++ since BeeLlama is optional — SGLang+Ollama stack still works.)
   echo "  ⚠ No .beellama.hf_repo/hf_file in models.yaml — GGUF NOT downloaded" | tee -a "$LOG_FILE"
+  echo "  ⚠ OFFLINE MODE (scarlix-mode offline) WILL NOT WORK without this model" | tee -a "$LOG_FILE"
+  echo "  ⚠ AI/creative/game/turbo modes still work (SGLang + Ollama fallback)" | tee -a "$LOG_FILE"
 else
   # v18.5.3 P0: Check disk space before BeeLlama download
   check_disk_space 10000 || { FAILED=$((FAILED+1)); continue_skipped=1; }

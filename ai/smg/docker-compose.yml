@@ -1,7 +1,11 @@
 services:
   smg:
-    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
-    image: ghcr.io/lightseekorg/smg:latest
+    # v18.8 P1: Pinned to verified sglang variant (was: :latest — supply-chain
+    #   risk: git commit + identical install → image A, next week → image B).
+    #   Verified via ghcr.io/v2/lightseekorg/smg/tags/list — latest stable sglang
+    #   variant is v1.4.1.post1-sglang-v0.5.10. SCARLIX uses SGLang for GPU0,
+    #   so the sglang variant matches. Update deliberately when upgrading.
+    image: ghcr.io/lightseekorg/smg:v1.4.1.post1-sglang-v0.5.10
     container_name: smg
     restart: unless-stopped
     ports: ["127.0.0.1:4000:4000"]

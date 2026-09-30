@@ -11,7 +11,10 @@ version: "3.9"
 
 services:
   freetoken:
-    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
+    # v18.8 P1: Supply-chain risk — NOT YET PINNED (was: :latest → non-reproducible).
+#   Docker Hub anonymous API returns NO_ACCESS for this repo → can't auto-verify
+#   tags. Before FINAL release, manually check https://hub.docker.com/r/freetoken/serving/tags for version tags,
+#   then replace :latest with the verified :vX.Y.Z tag.
     image: freetoken/serving:latest
     container_name: freetoken
     restart: unless-stopped

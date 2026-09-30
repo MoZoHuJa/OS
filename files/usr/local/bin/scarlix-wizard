@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.7.8 — EndeavourOS Edition — Setup Wizard
+# SCARLIX OS v18.8 — EndeavourOS Edition — Setup Wizard
 # v18.5: gateway prompt (was hardcoded 192.168.1.1), version unified
 # v17.5: Creates .experimental if 2+ GPU (Q3a — vLLM starts without --profile gate)
 
-TITLE="SCARLIX OS v18.7.8 Setup"
+TITLE="SCARLIX OS v18.8 Setup"
 
 NVIDIA_DGPU_COUNT=$(lspci -nn 2>/dev/null | grep -iE 'NVIDIA.*(VGA|3D)' | wc -l || echo 0)
 if [ "$NVIDIA_DGPU_COUNT" -gt 0 ]; then

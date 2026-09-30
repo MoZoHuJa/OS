@@ -175,7 +175,7 @@ jobs:
           #   is authed, so 401 = server is running. Now: any non-000 code = up.
           READY=0
           for i in $(seq 1 30); do
-              code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health 2>/dev/null || echo 000)
+              code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 --max-time 5 http://127.0.0.1:8090/api/health 2>/dev/null) || code="000"
               if [ "$code" != "000" ]; then
                   READY=1; break
               fi
@@ -190,14 +190,18 @@ jobs:
           docker ps -a --filter name=scarlihq-test --format '{{.Status}}'
           docker logs scarlihq-test 2>&1 | head -20
           # Health: no token → 401, with token → 200
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health || echo "000")
+          # v18.8 P0: Fix `|| echo 000` → 000000 bug (was: curl fails → prints 000
+          #   to stdout AND exits 1 → || echo 000 adds another 000 → code=000000
+          #   → `[ "$code" != "000" ]` = TRUE → false healthy). Now: separate
+          #   assignment + fallback so code is exactly "000" on failure.
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health) || HTTP_CODE="000"
           echo "Health (no token): HTTP $HTTP_CODE (expected 401)"
           [ "$HTTP_CODE" = "401" ] || { echo "FAIL: expected 401"; docker logs scarlihq-test; exit 1; }
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer test-token" http://127.0.0.1:8090/api/health || echo "000")
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer test-token" http://127.0.0.1:8090/api/health) || HTTP_CODE="000"
           echo "Health (with token): HTTP $HTTP_CODE (expected 200)"
           [ "$HTTP_CODE" = "200" ] || { echo "FAIL: expected 200"; docker logs scarlihq-test; exit 1; }
           # v18.0.0 P2: mode POST writes desired-mode to bridge-input/ (test the write path)
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer test-token" "http://127.0.0.1:8090/api/mode?set=ai" || echo "000")
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer test-token" "http://127.0.0.1:8090/api/mode?set=ai") || HTTP_CODE="000"
           echo "Mode POST (set=ai): HTTP $HTTP_CODE (expected 202)"
           [ "$HTTP_CODE" = "202" ] || { echo "FAIL: expected 202"; docker logs scarlihq-test; exit 1; }
           # Check desired-mode file was written (container must be able to write to bridge-input/)
@@ -205,7 +209,7 @@ jobs:
           # v18.7: Clean up desired-mode before next test (was: file existed → 409 instead of 400)
           sudo rm -f /tmp/scarlix-test/bridge-input/desired-mode
           # Invalid mode → 400
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer test-token" "http://127.0.0.1:8090/api/mode?set=invalid" || echo "000")
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer test-token" "http://127.0.0.1:8090/api/mode?set=invalid") || HTTP_CODE="000"
           echo "Mode POST (set=invalid): HTTP $HTTP_CODE (expected 400)"
           [ "$HTTP_CODE" = "400" ] || { echo "FAIL: expected 400"; docker logs scarlihq-test; exit 1; }
           echo "Smoke test PASSED — ScarliHQ starts + auth + mode write + error codes"
@@ -223,6 +227,11 @@ jobs:
           docker build --build-arg SCARLIX_VERSION="$SCARLIX_VERSION" -t scarlihq:ci scarlihq/
       # v18.7.7 P1: Install Python websockets library for the real WS lifecycle test
       # (Test 10). Pinned for reproducibility (same rationale as pyyaml pinning).
+      # v18.8 P1: Add setup-python (was: bare `pip install` on ubuntu-latest 24.04
+      #   → PEP 668 "externally-managed-environment" error → job fails before Test 10).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Install Python websockets library
         run: pip install "websockets==13.1"
       - name: Integration tests
@@ -255,7 +264,7 @@ jobs:
           #   is authed, so 401 = server is running. Now: any non-000 code = up.
           READY=0
           for i in $(seq 1 30); do
-              code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health 2>/dev/null || echo 000)
+              code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 --max-time 5 http://127.0.0.1:8090/api/health 2>/dev/null) || code="000"
               if [ "$code" != "000" ]; then
                   READY=1; break
               fi
@@ -355,23 +364,39 @@ jobs:
               # Step 3: Reuse the same ticket → MUST be rejected (single-use)
               # v18.7.8 P0: Assert HTTP 401 specifically (was: broad except caught
               #   TimeoutError/ConnectionRefused/OSError → false PASS if server
-              #   crashed or network glitched). Now: only InvalidStatus with
-              #   status_code 401 counts as correct replay rejection. Any other
-              #   exception = test FAIL (surfaces real bugs instead of masking them).
+              #   crashed or network glitched).
+              # v18.8 P0: Fix exception class (was: `websockets.exceptions.InvalidStatus`
+              #   — that class doesn't exist in websockets==13.1; the actual exception
+              #   is `InvalidStatusCode` with `.status_code` attribute, not `InvalidStatus`
+              #   with `.response.status_code`. CI failed with "unexpected error:
+              #   InvalidStatusCode: server rejected WebSocket connection: HTTP 401"
+              #   even though the server correctly returned 401. Now: use a version-
+              #   compatible approach — extract status_code from whichever attribute
+              #   the exception has (handles both old InvalidStatusCode.status_code
+              #   and new InvalidStatus.response.status_code), and ONLY accept 401
+              #   as PASS. Any other status or non-HTTP exception = FAIL.)
               try:
                   async with websockets.connect(uri, open_timeout=5) as ws:
                       await asyncio.wait_for(ws.recv(), timeout=3)
                   print('  FAIL: reused ticket was accepted — single-use broken!')
                   return False
-              except websockets.exceptions.InvalidStatus as e:
-                  status_code = e.response.status_code
+              except Exception as e:
+                  # Extract HTTP status code — compatible across websockets versions.
+                  # 13.x: InvalidStatusCode with .status_code
+                  # 14.x+: InvalidStatus with .response.status_code
+                  status_code = getattr(e, 'status_code', None)
+                  response = getattr(e, 'response', None)
+                  if response is not None and status_code is None:
+                      status_code = getattr(response, 'status_code', None)
                   if status_code == 401:
                       print(f'  Reuse correctly rejected: HTTP 401 (single-use enforced)')
                       return True
-                  print(f'  FAIL: reuse rejected with HTTP {status_code}, expected 401')
-                  return False
-              except Exception as e:
-                  print(f'  FAIL: reuse failed with unexpected error (not HTTP 401): {type(e).__name__}: {e}')
+                  if status_code is not None:
+                      print(f'  FAIL: reuse rejected with HTTP {status_code}, expected 401')
+                      return False
+                  # Non-HTTP exception (timeout, connection refused, etc.) = test FAIL
+                  # (was: previous versions treated these as false PASS).
+                  print(f'  FAIL: reuse failed with non-HTTP error (expected 401): {type(e).__name__}: {e}')
                   return False
 
           ok = asyncio.run(test_ws_lifecycle())

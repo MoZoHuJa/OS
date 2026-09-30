@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.7.8"
+VERSION="18.8"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -759,7 +759,7 @@ else
         DASHBOARD_OK=0
         for i in $(seq 1 30); do
           # Any HTTP response (even 401) = server is up. 000 = connection refused.
-          code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health 2>/dev/null || echo 000)
+          code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 --max-time 5 http://127.0.0.1:8090/api/health 2>/dev/null) || code="000"
           if [ "$code" != "000" ]; then
             DASHBOARD_OK=1
             break

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.7.8 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v18.8 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.7.7 FIXES:
 #   P0: TV mode uses systemctl restart (was: start on RemainAfterExit=yes oneshot
 #       → service stays 'active' after first run → start doesn't re-run healthcheck
@@ -262,7 +262,7 @@ wait_for_healthy() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v18.7.8 — VRAM Check ==="
+  echo "=== SCARLIX OS v18.8 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
@@ -601,7 +601,11 @@ case "$MODE" in
     #   ComfyUI was NEVER restarted. Now: only short-circuit if ComfyUI is ACTUALLY
     #   running; otherwise fall through to the normal start path.)
     if [[ "$CURRENT_MODE" = "creative" ]]; then
-      local comfyui_status comfyui_health
+      # v18.8 P0: Removed `local` (was: SC2168 — 'local' is only valid in functions;
+      #   creative) is a top-level case branch, not a function. shellcheck -S error
+      #   failed CI. Now: plain assignment without local.)
+      comfyui_status=""
+      comfyui_health=""
       comfyui_status=$(docker inspect -f '{{.State.Status}}' comfyui 2>/dev/null || echo "missing")
       # v18.7.8 P1: Check health, not just running (was: only checked .State.Status
       #   = running → container could be running but API deadlocked → "Already in
@@ -648,8 +652,19 @@ case "$MODE" in
     $DC -f /opt/scarlix/ai/comfyui/docker-compose.yml --profile creative up -d >> "$LOG_FILE" 2>&1 && creative_ok=1
     $DC -f /opt/scarlix/ai/video/docker-compose.yml --profile creative up -d 2>/dev/null || true
     $DC -f /opt/scarlix/ai/musicgen/docker-compose.yml --profile creative up -d 2>/dev/null || true
+    # v18.8 P1: Wait for ComfyUI health before writing state (was: `up -d` exit 0
+    #   → immediately wrote "creative" to state — but ComfyUI could still be
+    #   starting/crashing. Now: wait_for_healthy comfyui 120s; if not healthy,
+    #   state = failed, exit 1. Consistent with AI mode's wait_for_healthy pattern.)
     if [ "$creative_ok" -eq 1 ]; then
-      echo "creative" | tee "$STATE_FILE" >/dev/null
+      if wait_for_healthy "comfyui" 120; then
+        log "  ✓ ComfyUI healthy — Creative mode active"
+        echo "creative" | tee "$STATE_FILE" >/dev/null
+      else
+        log "ERROR: ComfyUI not healthy after 120s — Creative mode FAILED"
+        echo "failed" | tee "$STATE_FILE" >/dev/null
+        exit 1
+      fi
     else
       log "ERROR: ComfyUI failed to start"
       echo "failed" | tee "$STATE_FILE" >/dev/null
@@ -733,7 +748,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v18.7.8 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v18.8 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"

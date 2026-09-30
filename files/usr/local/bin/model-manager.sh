@@ -19,7 +19,11 @@ mkdir -p "$(dirname "$LOG_FILE")"
 
 # v18.7 P1: Shared lock with scarlix-mode + download-models (was: race condition on /models)
 MODELS_LOCK="/var/lib/scarlix/.models.lock"
-mkdir -p "$(dirname "$MODELS_LOCK")" 2>/dev/null || true
+if ! mkdir -p "$(dirname "$MODELS_LOCK")" 2>/dev/null; then
+  echo "FATAL: cannot create models lock directory $(dirname "$MODELS_LOCK")" >&2
+  exit 1
+fi
+# v18.8 P1: Fail-closed mkdir (was: || true → cryptic set -e exit if dir RO)
 exec 9>"$MODELS_LOCK"
 # v18.7 P0: Non-blocking + exclusive (was: shared -s, blocking without -n)
 # v18.7 P1: Exclusive because model-manager WRITES to /models (was: -s shared → race with download-models)
