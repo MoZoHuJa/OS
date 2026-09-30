@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.8.6 — Generate .env (with guard for existing passwords)
+# SCARLIX OS v18.8.7 — Generate .env (with guard for existing passwords)
 # v17.9.5 FIX: If .env exists, only add missing keys (don't overwrite existing passwords)
 # v17.9.7: This handles /etc/scarlix/.env (SECRETS only). Model paths live in /opt/scarlix/.env
 #   which scarlix-mode ALWAYS regenerates (no guard) — model updates are picked up.

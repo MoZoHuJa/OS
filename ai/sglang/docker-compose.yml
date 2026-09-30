@@ -17,7 +17,9 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     # v18.8.6 P1: shm_size for SGLang multiprocessing (was: default 64MB → hangs/OOM
     #   on long context + agent workload. 8gb is safe for 16GB GPU.)
-    shm_size: "8gb"
+    # v18.8.7 P1-06: shm_size from ${SGLANG_SHM_SIZE} env (was: hardcoded 8gb →
+    #   couldn't change without editing compose. Now: models.yaml → .env → compose.)
+    shm_size: ${SGLANG_SHM_SIZE:-8gb}
     command: >
       python -m sglang.launch_server
       --model-path ${SGLANG_MODEL_PATH:-/models/Qwen3-14B-AWQ}

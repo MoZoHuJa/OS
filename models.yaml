@@ -1,4 +1,4 @@
-# SCARLIX OS v18.8.6 — EndeavourOS Edition — Model-Agnostic Configuration
+# SCARLIX OS v18.8.7 — EndeavourOS Edition — Model-Agnostic Configuration
 #
 # v17.9.7: flashinfer disabled in SGLang compose (--disable-flashinfer) — Blackwell sm_120 safe.
 #   `flashinfer: false` documents this (compose is the source of truth for the flag).
@@ -32,10 +32,14 @@ sglang:
   #   max_running_requests: limit concurrent requests (4 = single-user agent load)
   chunked_prefill_size: 4096
   max_running_requests: 4
+  # v18.8.7 P1-05: shm_size from models.yaml → .env → compose (was: hardcoded 8gb in compose).
+  shm_size: "8gb"
   # v17.9.7: flashinfer DISABLED in SGLang compose (--disable-flashinfer).
-  # Blackwell (RTX 5060 Ti, sm_120) flashinfer kernels missing in SGLang v0.4.4.
-  # This field documents the compose setting (compose is source of truth).
-  flashinfer: false
+  # v18.8.7 P1-05: flashinfer removed as config key — it's NOT wired to compose
+  #   (compose hardcodes --disable-flashinfer for Blackwell sm_120 safety in v0.4.4).
+  #   Having it in models.yaml gave false impression it was configurable. To enable
+  #   flashinfer: upgrade SGLang image + remove --disable-flashinfer from compose.
+  # flashinfer: false  # REMOVED — not a runtime parameter in current architecture
 
 # === Tier-2: vLLM (EXPERIMENTAL, GPU 1, TP=1) ===
 # Only starts if /etc/scarlix/.experimental flag exists (created by wizard for 2+ GPU).

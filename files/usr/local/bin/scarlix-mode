@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.8.6 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v18.8.7 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.7.7 FIXES:
 #   P0: TV mode uses systemctl restart (was: start on RemainAfterExit=yes oneshot
 #       → service stays 'active' after first run → start doesn't re-run healthcheck
@@ -83,7 +83,13 @@ fi
 yaml_get() {
   local key="$1" default="$2"
   local val
-  val=$(yq -r "$key // \"$default\"" "$MODELS_YAML" 2>/dev/null || echo "$default")
+  # v18.8.7 P1-02: Distinguish yq parse error from missing key (was: `|| echo "$default"`
+  #   masked yq syntax/YAML errors → silently used default → wrong model loaded).
+  #   Now: if yq itself fails (non-zero exit), FATAL. If key is absent/null, use default.
+  if ! val=$(yq -r "$key // empty" "$MODELS_YAML" 2>/dev/null); then
+    log "ERROR: yq evaluation failed for key '$key' — models.yaml may be invalid"
+    return 1
+  fi
   if [ "$val" = "null" ] || [ -z "$val" ]; then
     echo "$default"
   else
@@ -104,16 +110,21 @@ generate_env_file() {
   local sglang_context_length="32768"
   local sglang_chunked_prefill="4096"
   local sglang_max_running="4"
+  # v18.8.7 P1-06: shm_size from models.yaml (was: hardcoded 8gb in compose)
+  local sglang_shm_size="8gb"
 
   if [ -f "$MODELS_YAML" ] && command -v yq >/dev/null 2>&1; then
-    sglang_path=$(yaml_get '.sglang.model_path' "$sglang_path")
-    vllm_path=$(yaml_get '.vllm.model_path' "$sglang_path")
-    llamacpp_file=$(yaml_get '.beellama.hf_file' "$llamacpp_file")
-    sglang_mem_fraction=$(yaml_get '.sglang.mem_fraction' "$sglang_mem_fraction")
-    vllm_gpu_util=$(yaml_get '.vllm.gpu_memory_utilization' "$vllm_gpu_util")
-    sglang_context_length=$(yaml_get '.sglang.context_length' "$sglang_context_length")
-    sglang_chunked_prefill=$(yaml_get '.sglang.chunked_prefill_size' "$sglang_chunked_prefill")
-    sglang_max_running=$(yaml_get '.sglang.max_running_requests' "$sglang_max_running")
+    # v18.8.7 P1-02: If yaml_get fails (yq parse error), abort generate_env_file.
+    #   yaml_get returns 1 on yq failure. Each call must be checked.
+    sglang_path=$(yaml_get '.sglang.model_path' "$sglang_path") || return 1
+    vllm_path=$(yaml_get '.vllm.model_path' "$sglang_path") || return 1
+    llamacpp_file=$(yaml_get '.beellama.hf_file' "$llamacpp_file") || return 1
+    sglang_mem_fraction=$(yaml_get '.sglang.mem_fraction' "$sglang_mem_fraction") || return 1
+    vllm_gpu_util=$(yaml_get '.vllm.gpu_memory_utilization' "$vllm_gpu_util") || return 1
+    sglang_context_length=$(yaml_get '.sglang.context_length' "$sglang_context_length") || return 1
+    sglang_chunked_prefill=$(yaml_get '.sglang.chunked_prefill_size' "$sglang_chunked_prefill") || return 1
+    sglang_max_running=$(yaml_get '.sglang.max_running_requests' "$sglang_max_running") || return 1
+    sglang_shm_size=$(yaml_get '.sglang.shm_size' "$sglang_shm_size") || return 1
   elif [ ! -f "$MODELS_YAML" ]; then
     log "WARNING: models.yaml not found — using defaults"
   elif ! command -v yq >/dev/null 2>&1; then
@@ -156,6 +167,8 @@ VLLM_GPU_UTIL=$vllm_gpu_util
 SGLANG_CONTEXT_LENGTH=$sglang_context_length
 SGLANG_CHUNKED_PREFILL=$sglang_chunked_prefill
 SGLANG_MAX_RUNNING=$sglang_max_running
+# v18.8.7 P1-06: shm_size from models.yaml (was: hardcoded in compose)
+SGLANG_SHM_SIZE=$sglang_shm_size
 EOF
   then
     log "WARNING: cannot write $ENV_FILE (permission denied — run as root: scarlix-mode needs root to write root:root /opt/scarlix/.env)"
@@ -178,12 +191,18 @@ EOF
   export SGLANG_CONTEXT_LENGTH="$sglang_context_length"
   export SGLANG_CHUNKED_PREFILL="$sglang_chunked_prefill"
   export SGLANG_MAX_RUNNING="$sglang_max_running"
+  export SGLANG_SHM_SIZE="$sglang_shm_size"
 
   # v18.8.3 P1 (A-a): Regenerate LiteLLM config from models.yaml (was: hardcoded
   #   config.yaml → model ID mismatch. Now: if generate-litellm-config.sh exists,
   #   regenerate config before starting AI so LiteLLM always matches current model.)
+  # v18.8.7 P1-01: FAIL CLOSED (was: || log "WARNING" → stale config could route
+  #   to wrong model silently. Now: return 1 so scarlix-mode ai aborts.)
   if [ -x /usr/local/bin/generate-litellm-config.sh ] && [ -f "$MODELS_YAML" ]; then
-    /usr/local/bin/generate-litellm-config.sh "$MODELS_YAML" /opt/scarlix/ai/litellm/config.yaml >> "$LOG_FILE" 2>&1 || log "WARNING: generate-litellm-config.sh failed (LiteLLM may use stale config)"
+    if ! /usr/local/bin/generate-litellm-config.sh "$MODELS_YAML" /opt/scarlix/ai/litellm/config.yaml >> "$LOG_FILE" 2>&1; then
+      log "ERROR: LiteLLM config generation failed — refusing to start AI with stale config"
+      return 1
+    fi
   fi
 }
 
@@ -314,7 +333,7 @@ wait_for_healthy() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v18.8.6 — VRAM Check ==="
+  echo "=== SCARLIX OS v18.8.7 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
@@ -356,7 +375,21 @@ healthcheck_and_restart() {
     # v18.8.3 P1 (P1-6): Hash includes all runtime-relevant SGLang params (was: only
     #   model_path + mem_fraction → changing context_length/chunked_prefill/max_running
     #   didn't trigger recreate → stale config kept running. Now: all fields included.)
-    current_hash=$(yq -r '.sglang.model_path, .sglang.mem_fraction, .sglang.context_length, .sglang.chunked_prefill_size, .sglang.max_running_requests, .vllm.model_path, .vllm.gpu_memory_utilization, .beellama.hf_file, .ollama.model' "$MODELS_YAML" 2>/dev/null | sha256sum | awk '{print $1}' || echo "")
+    # v18.8.7 P1-03: Validate YAML first, fail if yq fails (was: `|| echo ""` →
+    #   hash of empty stream = valid SHA256 → false "config OK" → stale config.)
+    # v18.8.7 P1-04: Added .sglang.shm_size to hash (was: missing → shm_size
+    #   change didn't trigger recreate.)
+    # v18.8.7 P1-05: Removed .sglang.flashinfer from hash — it's not wired to
+    #   compose (compose hardcodes --disable-flashinfer). Documented in models.yaml.
+    if ! yq -e '.' "$MODELS_YAML" >/dev/null 2>&1; then
+      log "ERROR: models.yaml is invalid YAML — cannot compute config hash"
+      return 1
+    fi
+    current_hash=$(yq -r '.sglang.model_path, .sglang.mem_fraction, .sglang.context_length, .sglang.chunked_prefill_size, .sglang.max_running_requests, .sglang.shm_size, .vllm.model_path, .vllm.gpu_memory_utilization, .beellama.hf_file, .ollama.model' "$MODELS_YAML" 2>/dev/null | sha256sum | awk '{print $1}')
+    if [ -z "$current_hash" ]; then
+      log "ERROR: models.yaml hash computation failed (yq returned empty)"
+      return 1
+    fi
     stored_hash=$(cat "$models_hash_file" 2>/dev/null || echo "")
     # P2-7 v17.9.2: Empty stored_hash = first run → don't recreate, just store hash
     if [ -n "$current_hash" ] && [ -n "$stored_hash" ] && [ "$current_hash" != "$stored_hash" ]; then
@@ -948,7 +981,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v18.8.6 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v18.8.7 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"
