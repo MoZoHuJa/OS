@@ -81,12 +81,21 @@ fix_install_yq() { pacman -S --noconfirm yq; }
 #   runtime vars. Now: calls the canonical /etc/systemd/system/generate-env.sh
 #   which is the single source of truth for /etc/scarlix/.env secrets. For
 #   /opt/scarlix/.env model paths, scarlix-mode regenerates them on next run.)
+# v18.8.5 P1 (P1-1): Fallback writes to /etc/scarlix/.env (secrets), NOT
+#   /opt/scarlix/.env (was: fallback wrote model paths to /opt/scarlix/.env
+#   → if doctor was called to fix missing /etc/scarlix/.env, fallback created
+#   the WRONG file. Doctor said "Fixed" but /etc/scarlix/.env stayed missing.
+#   Now: fallback writes minimal secrets (SCARLIHQ_TOKEN + LITELLM_MASTER_KEY)
+#   to /etc/scarlix/.env, which is what the doctor check below expects.)
 fix_generate_env() {
   if [ -f /etc/systemd/system/generate-env.sh ]; then
     /etc/systemd/system/generate-env.sh
   else
-    # Fallback: minimal model paths (scarlix-mode will regenerate full on next run)
-    printf 'SGLANG_MODEL_PATH=/models/Qwen3-14B-AWQ\nVLLM_MODEL_PATH=/models/Qwen3-14B-AWQ\nLLAMACPP_MODEL_PATH=/models/Qwen3-14B-Q4_K_M.gguf\n' > /opt/scarlix/.env && chmod 600 /opt/scarlix/.env
+    # Fallback: minimal secrets to /etc/scarlix/.env (was: model paths to /opt/scarlix/.env)
+    mkdir -p /etc/scarlix
+    printf 'SCARLIHQ_TOKEN=%s\nLITELLM_MASTER_KEY=sk-scarlix-%s\n' \
+      "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" \
+      > /etc/scarlix/.env && chmod 600 /etc/scarlix/.env
   fi
 }
 fix_add_scarlihq_token() {
