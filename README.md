@@ -560,6 +560,21 @@ Host-bridge architecture: dashboard reads JSON status, writes desired-mode. No p
 - **First install is slow**: `pacman -Syu` + NVIDIA + CUDA + cuDNN + Steam/Wine + docker images + ScarliHQ Go build + model download (50-150GB) = hours. Reboots + re-login required for NVIDIA driver + docker group.
 - **host-status.json 5s latency**: Dashboard data is up to 5s stale (host-bridge timer interval). Mode transition feedback (applied/retrying/failed) appears within 5s. Not for real-time control.
 
+## ⚠️ Known Arch/EndeavourOS Risks
+
+These are platform-level risks, not SCARLIX bugs. EndeavourOS/Arch is a rolling release — always test after `pacman -Syu`.
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Calamares + existing BTRFS subvolumes | Install fails if disk has existing `@`/`@home` | Use clean disk or rename existing subvolumes before install |
+| `nvidia-container-toolkit` via AUR | GPU Docker runtime may break | Install from Docker official repo (`install.sh` Phase 3 already does this) |
+| `nvidia-open` on Turing (RTX 20xx) | Power management gaps, flicker | Use `nvidia` (proprietary) if flicker occurs; `nvidia-open` is for Ampere+ |
+| SGLang AUR packaging gaps | Tier-1 may need manual fixes | We use Docker image (not AUR) — avoids this |
+| Ollama CUDA regressions after update | Tier-3 breaks | `model-manager.sh` tests health after pull; pinned to 0.5.4 |
+| `snap-pac` backup hook fragility | Docker volumes may not snapshot | `scarlix-docker-backup.sh` runs BEFORE pacman; restic used as fallback |
+| `nvidia-open-lts` + `nvidia-dkms` conflict | LTS fallback fails | `install.sh` uses atomic single `pacman -S` call to avoid this |
+| `model-manager.timer` auto-update | May pull incompatible models | Timer tests health post-pull; rollback via Snapper if needed |
+
 ## 🗺️ Roadmap
 
 - **v18.9**: LiteLLM E2E inference CI test, Go unit tests (ReserveWSTicket, Mode.Set O_EXCL), CI artifact sharing between jobs (faster), scarlix-doctor LiteLLM + model identity checks.
