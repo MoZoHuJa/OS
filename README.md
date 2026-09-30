@@ -52,35 +52,30 @@ scarlix-mode ai
 
 ---
 
-## 🆕 What's New in v18.8.3 (vs v18.7.8)
+## 🆕 What's New in v18.8.5 (vs v18.8.3)
 
-**CI fail fix + LiteLLM routing + image pinning.** 12 fixes from 3 expert reviews.
+**Dynamic LiteLLM config + offline mode + backup hardening + Arch risk docs.** 7 fixes from P0/P1 review.
 
-v18.7.8 had a **CI that always failed**: shellcheck SC2168 (`local` outside function), WS test used wrong exception class (websockets 13.1 API), `curl || echo 000` → 000000 bug, and missing `setup-python` (PEP 668). Also LiteLLM fallback pointed to non-existent hostname `llamacpp` (should be `beellama`).
+v18.8.3 introduced `generate-litellm-config.sh` (generates LiteLLM `config.yaml` from `models.yaml`), but **CI Test 12 still validated the *committed static* `ai/litellm/config.yaml`** — production could be stale while CI passed. Also `offline` mode had a broken `api_url`, `restic-backup` continued after init failure, and `doctor fix_generate_env` had a wrong fallback path.
 
-### P0 — CI fail + routing (4)
-| # | Fix | v18.7.8 Problem | v18.8.3 Solution |
+### v18.8.5 fixes (7)
+| # | Fix | v18.8.3 Problem | v18.8.5 Solution |
 |---|-----|-----------------|-------------------|
-| P0 | **shellcheck SC2168** | `local comfyui_status` in top-level case branch (not function) → CI failed | Plain assignment without `local` |
-| P0 | **WS test exception class** | Expected `InvalidStatus` but websockets==13.1 raises `InvalidStatusCode` (different attribute) → server returned 401 correctly but test failed | Version-compatible `getattr()` extracts status_code from either API |
-| P0 | **curl `|| echo 000` → 000000** | curl fail prints 000 AND exits 1 → `|| echo 000` adds another → code=000000 → false healthy | Separate assignment + fallback `|| code="000"` (6 sites) |
-| P0 | **LiteLLM routing** | `api_base: http://llamacpp:8080` — service doesn't exist (container is `beellama`) → CPU fallback always failed with DNS error. Also 3 different model names | `beellama:8080` + unified `scarlix-default` logical model |
+| P0 | **CI Test 12 validates GENERATED config** | Test 12 read committed `ai/litellm/config.yaml` → could pass while production config was stale (generator output never tested) | Run `generate-litellm-config.sh` with a test `models.yaml`, validate generated `config.yaml` + assert model IDs match input |
+| P1 | **Dynamic LiteLLM config from `models.yaml`** | `ai/litellm/config.yaml` had hardcoded model IDs — changing model in `models.yaml` didn't update routing | `generate-litellm-config.sh` derives IDs (SGLang `basename`, BeeLlama `hf_file`, Ollama `model`) from `models.yaml` |
+| P1 | **offline mode `api_url` + `dump_vram` port fallback** | Offline mode wrote empty/`localhost` `api_url` → clients pointed at non-running gateway; `dump_vram` had no port fallback if env var unset | Default `http://127.0.0.1:4001/v1` + port fallback chain |
+| P1 | **restic backup hardening** | `restic init \|\| true` → if init failed, backup ran on uninitialized repo (silent); missing `RESTIC_PASSWORD` env | Config-file existence check + early return on missing repo + explicit `RESTIC_PASSWORD` env var |
+| P1 | **doctor `fix_generate_env` fallback path fix** | `fix_generate_env` fallback path was wrong → didn't write SGLANG_* runtime vars | Delegates to `generate-env.sh` (single source of truth) with corrected fallback path |
+| P2 | **CI Test 12 `KeyError` on missing `model_name`** | `m['model_name']` → cryptic traceback if any entry missing the field | `m.get('model_name', '<MISSING>')` → clean FAIL line |
+| P2 | **Arch-specific risks documented** | Calamares BTRFS default, AUR `nvidia-container-toolkit`, etc. undocumented → users hit known pitfalls | Docs section listing Arch-specific risks + workarounds (Calamares BTRFS, AUR nvidia-container-toolkit, host-bridge `/var/lock` `mkdir`) |
 
-### P1 — reliability (8)
-| # | Fix | v18.7.8 Problem | v18.8.3 Solution |
-|---|-----|-----------------|-------------------|
-| P1 | **setup-python before pip** | bare `pip install` on ubuntu 24.04 → PEP 668 "externally-managed" → job failed | `actions/setup-python@v5` with python 3.12 |
-| P1 | **Creative start health wait** | `up -d` exit 0 → immediately wrote "creative" to state — container could still be starting | `wait_for_healthy comfyui 120` before writing state |
-| P1 | **Fail-closed mkdir parity** | model-manager + download-models still had `mkdir \|\| true` | Explicit FATAL + exit 1 (same as scarlix-mode) |
-| P1 | **Pin SMG + LiteLLM** | `:latest` and `:main-latest` (dev branch) | SMG `:v1.4.1.post1-sglang-v0.5.10`, LiteLLM `:main-v1.16.19` |
-| P1 | **MusicGen pip pinned** | `pip install audiocraft fastapi...` no versions | audiocraft==0.0.2, fastapi==0.115.0, etc. |
-| P1 | **Video Wan2GP pinned** | `git clone ... .` no commit | Shallow clone + checkout f3f204e50f6e |
-| P1 | **download-models sudo -E → sudo** | Inconsistent with scarlix-mode v18.7.7 fix | `exec sudo` without -E |
-| P1 | **BeeLlama missing warning** | Silent "NOT downloaded" → SUCCESS exit even though offline fallback missing | Explicit "OFFLINE MODE WILL NOT WORK" warning |
-| P1 | **Fallback JSON has Error field** | When python3 failed, fallback JSON `{"error":"python3 unavailable"}` was valid but Go struct had no Error field → looked like valid status | Added `Error string` to HostStatus struct + `stale:true` in fallback JSON |
-
-### Lock path unification
-All 3 scripts now use `/var/lib/scarlix/.models.lock` (was: scarlix-mode + model-manager used `/var/lock/`, download-models used `/var/lib/scarlix/` — inconsistent → no mutual exclusion).
+### Dynamic config flow (v18.8.3+, hardened v18.8.5)
+```
+models.yaml  →  generate-litellm-config.sh  →  ai/litellm/config.yaml
+                       ↑ (called by install.sh + scarlix-mode generate_env_file())
+CI Test 12 now feeds a test models.yaml into the generator + validates the
+output (was: validated committed static file → could pass while stale).
+```
 
 ---
 

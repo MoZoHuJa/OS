@@ -535,14 +535,50 @@ jobs:
           #   config had bugs. Now: validate actual ai/litellm/config.yaml:
           #   scarlix-default exists, backend IDs present, fallback targets
           #   exist, no self-reference, all api_base hosts are valid service names.)
-          echo "=== Test 12: Production LiteLLM config validation ==="
+          # v18.8.5 P0 (P0-4): Validate GENERATED config, not static (was: validated
+          #   committed ai/litellm/config.yaml → could pass while production
+          #   config was stale — generator output never tested). Now: run
+          #   generate-litellm-config.sh with test models.yaml, validate output.
+          # v18.8.5 P2 (P2-1): Use .get('model_name', '<MISSING>') instead of
+          #   m['model_name'] (was: KeyError if any model entry missing
+          #   model_name field → cryptic traceback instead of clean FAIL line).
+          echo "=== Test 12: Production LiteLLM config validation (generated) ==="
+          # Install yq (required by generate-litellm-config.sh; not in ubuntu-latest default).
+          # MUST be python-yq (kislyuk/yq, pip install yq) — NOT mikefarah/yq — because
+          # the generator uses jq syntax `// empty` which only python-yq supports.
+          # Production Arch package is python-yq (kislyuk) — see packages.x86_64.
+          if ! command -v yq >/dev/null 2>&1; then
+            sudo apt-get install -y -qq jq
+            pip install --quiet yq
+          fi
+          # Generate LiteLLM config from models.yaml (like production does)
+          python3 << 'GENEOF'
+          # Create a test models.yaml with known values
+          import yaml
+          test_models = {
+              'sglang': {'model_path': '/models/TestModel-AWQ'},
+              'beellama': {'hf_file': 'TestModel-Q4_K_M.gguf'},
+              'ollama': {'model': 'test-model:3b'}
+          }
+          with open('/tmp/test-models.yaml', 'w') as f:
+              yaml.dump(test_models, f)
+          GENEOF
+          # Run the generator with test models.yaml
+          bash files/usr/local/bin/generate-litellm-config.sh /tmp/test-models.yaml /tmp/test-litellm-config.yaml
+          # Validate the GENERATED config (not the static committed one)
           python3 << 'PYEOF2'
           import yaml, sys
-          config = yaml.safe_load(open('ai/litellm/config.yaml'))
+          config = yaml.safe_load(open('/tmp/test-litellm-config.yaml'))
           errors = []
 
           model_list = config.get('model_list', [])
-          model_names = [m['model_name'] for m in model_list]
+          # v18.8.5 P2 (P2-1): .get() avoids KeyError on missing model_name
+          model_names = [m.get('model_name', '<MISSING>') for m in model_list]
+
+          # Verify model IDs match models.yaml input (generated config must
+          # reflect the source models.yaml, not a stale committed snapshot)
+          sglang_entry = [m for m in model_list if m.get('model_name') == 'scarlix-default'][0]
+          assert 'TestModel-AWQ' in sglang_entry['litellm_params']['model'], f"expected TestModel-AWQ, got {sglang_entry['litellm_params']['model']}"
 
           # Check scarlix-default exists
           if 'scarlix-default' not in model_names:
@@ -562,9 +598,9 @@ jobs:
           for m in model_list:
               p = m.get('litellm_params', {})
               if 'model' not in p:
-                  errors.append(f"{m['model_name']}: missing litellm_params.model")
+                  errors.append(f"{m.get('model_name', '<MISSING>')}: missing litellm_params.model")
               if 'api_base' not in p:
-                  errors.append(f"{m['model_name']}: missing litellm_params.api_base")
+                  errors.append(f"{m.get('model_name', '<MISSING>')}: missing litellm_params.api_base")
 
           # Check api_base hosts are valid service names (not llamacpp!)
           valid_hosts = ['sglang', 'vllm', 'beellama', 'ollama-agent', 'host.docker.internal']
@@ -572,7 +608,7 @@ jobs:
               api_base = m.get('litellm_params', {}).get('api_base', '')
               host = api_base.split('//')[1].split(':')[0] if '//' in api_base else ''
               if host and host not in valid_hosts:
-                  errors.append(f"{m['model_name']}: api_base host '{host}' not in valid hosts {valid_hosts}")
+                  errors.append(f"{m.get('model_name', '<MISSING>')}: api_base host '{host}' not in valid hosts {valid_hosts}")
 
           # Check general_settings has master_key + database_url
           gs = config.get('general_settings', {})
@@ -587,7 +623,7 @@ jobs:
               for e in errors:
                   print(f"  FAIL: {e}")
               sys.exit(1)
-          print(f"  PASS: config valid — {len(model_names)} models, fallbacks OK, hosts valid, DB persisted")
+          print(f"  PASS: generated config valid — {len(model_names)} models, fallbacks OK, hosts valid, DB persisted, model IDs match models.yaml")
           PYEOF2
           echo "  Test 12: PASS"
           echo "=== ALL INTEGRATION TESTS PASSED ==="
