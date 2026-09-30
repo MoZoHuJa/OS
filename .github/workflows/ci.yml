@@ -248,8 +248,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install Python websockets library
-        run: pip install "websockets==13.1"
+      - name: Install Python websockets + PyYAML libraries
+        # v18.8.3 P1 fix: Added pyyaml (was: only websockets → Test 12 `import yaml`
+        #   failed with ModuleNotFoundError. Test 12 validates production LiteLLM
+        #   config.yaml which requires PyYAML to parse.)
+        run: pip install "websockets==13.1" "pyyaml==6.0.2"
       - name: Integration tests
         run: |
           # v18.7.6 P1: trap cleanup so any `exit 1` still tears down the container
