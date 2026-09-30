@@ -25,7 +25,10 @@ services:
     profiles: [tv]
   
   jellyfin:
-    image: jellyfin/jellyfin:10.10
+    # v18.8.2 P2: Pinned to stable version (was: 10.10 — Jellyfin moved to v12;
+    #   10.10 tag may not exist anymore. Verified via Docker Hub API — latest
+    #   stable is 12.1.)
+    image: jellyfin/jellyfin:12.1
     container_name: jellyfin
     restart: unless-stopped
     ports: ["127.0.0.1:8096:8096"]

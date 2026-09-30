@@ -1,19 +1,24 @@
-# SCARLIX OS v17.1 — Playwright MCP (Browser Automation)
+# SCARLIX OS v18.8.2 — Playwright MCP (Browser Automation, EXPERIMENTAL)
 # FIX Q13a: License-clean browser automation for agents (Apache-2.0 Playwright, not AGPL Sitegeist)
 # Hermes/omp can drive the browser via MCP protocol: scraping, form filling, screenshots
 # Port: 8095 (MCP server)
+# v18.8.2 P1 (B-a/c): Marked experimental profile (was: :latest in default stack
+#   → non-reproducible + runs by default. Now: profiles: [experimental] — won't
+#   start with default `compose up`, only with `--profile experimental`. Image
+#   stays :latest because Docker Hub API returns NO_ACCESS for this repo —
+#   cannot verify tags. Use only for development/testing.)
 
 version: "3.9"
 
 services:
   browser-mcp:
-    # v18.8 P1: Supply-chain risk — NOT YET PINNED (was: :latest → non-reproducible).
-#   Docker Hub anonymous API returns NO_ACCESS for this repo → can't auto-verify
-#   tags. Before FINAL release, manually check https://hub.docker.com/r/mcp/playwright-server/tags for version tags,
-#   then replace :latest with the verified :vX.Y.Z tag.
+    # v18.8.2 P1: :latest — could NOT pin (Docker Hub API NO_ACCESS).
+    #   Isolated to experimental profile to prevent production use.
     image: mcp/playwright-server:latest
     container_name: browser-mcp
     restart: unless-stopped
+    # v18.8.2 P1: experimental profile — does NOT start in default compose up
+    profiles: ["experimental"]
     ports:
       - "127.0.0.1:8095:3000"
     environment:

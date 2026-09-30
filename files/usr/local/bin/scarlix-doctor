@@ -1,18 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.8.1 — Self-Diagnostic (scarlix-doctor)
+# SCARLIX OS v18.8.2 — Self-Diagnostic (scarlix-doctor)
 # v18.5: http_ok() with -k/--no-check-certificate fallback; host-bridge check; version unified
 # v17.9.2: unhealthy = FAIL (not PASS), --fix mode, API healthcheck, docker group check
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 PASS=0; FAIL=0; WARN=0
 FIX_MODE=0
+STRICT_MODE=0
+# v18.8.2 P1: --strict mode (was: WARN > 0 = exit 0 → doctor could report "OK"
+#   even when LiteLLM gateway didn't exist. Now: --strict promotes WARN to FAIL
+#   so exit code reflects real health. Usage: scarlix-doctor --strict)
 [[ "${1:-}" == "--fix" ]] && FIX_MODE=1
+[[ "${1:-}" == "--strict" ]] && STRICT_MODE=1
 
 pass() { echo -e "  ${GREEN}✓ PASS${NC} $1"; PASS=$((PASS+1)); }
 fail() { echo -e "  ${RED}✗ FAIL${NC} $1"; FAIL=$((FAIL+1)); }
-warn() { echo -e "  ${YELLOW}⚠ WARN${NC} $1"; WARN=$((WARN+1)); }
+# v18.8.2 P1: warn() promotes to fail in --strict mode
+warn() {
+  if [ "$STRICT_MODE" -eq 1 ]; then
+    echo -e "  ${RED}✗ FAIL${NC} $1 (strict)"
+    FAIL=$((FAIL+1))
+  else
+    echo -e "  ${YELLOW}⚠ WARN${NC} $1"
+    WARN=$((WARN+1))
+  fi
+}
 
 # P1 v18.5: HTTP check with curl -k → wget --no-check-certificate fallback (self-signed proxy safe)
 http_ok() {
@@ -38,17 +52,43 @@ http_ok_with_token() {
   fi
 }
 
+# v18.8.2 P1 (P1-12): Named fix functions (was: `bash -c "$2"` — dynamically
+#   executed shell string in privileged doctor. Even though strings were hardcoded,
+#   it's not statically audit-friendly. Now: dispatch table maps fix name → named
+#   function. Each fix is a standalone function, auditable with grep/static analysis.
+fix_create_nvidia_runtime() {
+  nvidia-ctk runtime configure --runtime=docker && systemctl restart docker
+}
+fix_start_docker() { systemctl start docker; }
+fix_create_scarlix_net() { docker network create scarlix-net; }
+fix_remove_old_scarlix_net() { docker network rm scarlix_net; }
+fix_add_docker_group() { usermod -aG docker "$CURRENT_USER"; }
+fix_install_yq() { pacman -S --noconfirm yq; }
+fix_generate_env() {
+  printf 'SGLANG_MODEL_PATH=/models/Qwen3-14B-AWQ\nVLLM_MODEL_PATH=/models/Qwen3-14B-AWQ\nLLAMACPP_MODEL_PATH=/models/Qwen3-14B-Q4_K_M.gguf\n' > /opt/scarlix/.env && chmod 600 /opt/scarlix/.env
+}
+fix_add_scarlihq_token() {
+  echo "SCARLIHQ_TOKEN=$(openssl rand -hex 32)" >> /etc/scarlix/.env
+}
+fix_enable_host_bridge_timer() { systemctl enable --now scarlix-host-bridge.timer; }
+
 fix() {
   if [ "$FIX_MODE" -eq 1 ]; then
     echo -e "  ${CYAN}🔧 FIX${NC} $1"
-    # v18.6 P2: Replace eval with bash -c (was: eval "$2" → injection risk; bash -c runs in subshell)
-    bash -c "$2" 2>/dev/null && echo -e "  ${GREEN}  ✓ Fixed${NC}" || echo -e "  ${RED}  ✗ Fix failed${NC}"
+    # v18.8.2 P1: Dispatch to named function (was: bash -c "$2")
+    local fn="$2"
+    if command -v "$fn" >/dev/null 2>&1; then
+      "$fn" 2>/dev/null && echo -e "  ${GREEN}  ✓ Fixed${NC}" || echo -e "  ${RED}  ✗ Fix failed${NC}"
+    else
+      echo -e "  ${RED}  ✗ Unknown fix function: $fn${NC}"
+    fi
   fi
 }
 
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║  SCARLIX OS v18.8.1 — System Diagnostic                      ║${NC}"
+echo -e "${CYAN}║  SCARLIX OS v18.8.2 — System Diagnostic                      ║${NC}"
 [ "$FIX_MODE" -eq 1 ] && echo -e "${CYAN}║  (--fix mode: will attempt automatic fixes)                  ║${NC}"
+[ "$STRICT_MODE" -eq 1 ] && echo -e "${CYAN}║  (--strict mode: WARN → FAIL, exit 1 on any warning)         ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -79,14 +119,14 @@ if command -v docker >/dev/null 2>&1; then
   pass "Docker installed"
   if docker info >/dev/null 2>&1; then
     pass "Docker running"
-    docker info 2>/dev/null | grep -qi "Runtimes.*nvidia" && pass "Docker NVIDIA runtime" || { warn "Docker NVIDIA runtime not detected"; fix "create nvidia runtime" "nvidia-ctk runtime configure --runtime=docker && systemctl restart docker"; }
+    docker info 2>/dev/null | grep -qi "Runtimes.*nvidia" && pass "Docker NVIDIA runtime" || { warn "Docker NVIDIA runtime not detected"; fix "create nvidia runtime" fix_create_nvidia_runtime; }
   else
     fail "Docker not running"
-    fix "start docker" "systemctl start docker"
+    fix "start docker" fix_start_docker
   fi
-  docker network inspect scarlix-net >/dev/null 2>&1 && pass "Docker network: scarlix-net" || { fail "scarlix-net missing"; fix "create scarlix-net" "docker network create scarlix-net"; }
+  docker network inspect scarlix-net >/dev/null 2>&1 && pass "Docker network: scarlix-net" || { fail "scarlix-net missing"; fix "create scarlix-net" fix_create_scarlix_net; }
   # Check for old scarlix_net
-  docker network inspect scarlix_net >/dev/null 2>&1 && { warn "Old network scarlix_net found (should be scarlix-net)"; fix "remove old scarlix_net" "docker network rm scarlix_net"; } || true
+  docker network inspect scarlix_net >/dev/null 2>&1 && { warn "Old network scarlix_net found (should be scarlix-net)"; fix "remove old scarlix_net" fix_remove_old_scarlix_net; } || true
 else
   fail "Docker not installed"
 fi
@@ -100,14 +140,14 @@ if [ -n "$CURRENT_USER" ]; then
     pass "$CURRENT_USER in docker group"
   else
     warn "$CURRENT_USER not in docker group (needs: sudo usermod -aG docker $CURRENT_USER && re-login)"
-    fix "add to docker group" "usermod -aG docker $CURRENT_USER"
+    fix "add to docker group" fix_add_docker_group
   fi
 fi
 
 # === yq ===
 echo ""
 echo "=== Tools ==="
-command -v yq >/dev/null 2>&1 && pass "yq: $(yq --version 2>&1 | head -1)" || { fail "yq not installed"; fix "install yq" "pacman -S --noconfirm yq"; }
+command -v yq >/dev/null 2>&1 && pass "yq: $(yq --version 2>&1 | head -1)" || { fail "yq not installed"; fix "install yq" fix_install_yq; }
 
 # === Models ===
 echo ""
@@ -139,7 +179,7 @@ if [ -f "$ENV_FILE" ]; then
   [ -r "$ENV_FILE" ] && pass ".env readable" || fail ".env not readable"
 else
   fail ".env not found"
-  fix "generate .env" "printf 'SGLANG_MODEL_PATH=/models/Qwen3-14B-AWQ\nVLLM_MODEL_PATH=/models/Qwen3-14B-AWQ\nLLAMACPP_MODEL_PATH=/models/Qwen3-14B-Q4_K_M.gguf\n' > /opt/scarlix/.env && chmod 600 /opt/scarlix/.env"
+  fix "generate .env" fix_generate_env
 fi
 # v18.5: /etc/scarlix/.env (secrets + SCARLIHQ_TOKEN)
 SECRETS_ENV="/etc/scarlix/.env"
@@ -149,7 +189,7 @@ if [ -f "$SECRETS_ENV" ]; then
     pass "SCARLIHQ_TOKEN present (dashboard auth)"
   else
     fail "SCARLIHQ_TOKEN missing — dashboard will reject all API requests"
-    fix "add SCARLIHQ_TOKEN" "echo \"SCARLIHQ_TOKEN=$(openssl rand -hex 32)\" >> /etc/scarlix/.env"
+    fix "add SCARLIHQ_TOKEN" fix_add_scarlihq_token
   fi
 else
   fail "/etc/scarlix/.env not found (run generate-env.sh)"
@@ -162,7 +202,7 @@ if systemctl is-active scarlix-host-bridge.timer >/dev/null 2>&1; then
   pass "scarlix-host-bridge.timer active"
 else
   fail "scarlix-host-bridge.timer NOT active (dashboard will show stale/empty data)"
-  fix "enable host-bridge timer" "systemctl enable --now scarlix-host-bridge.timer"
+  fix "enable host-bridge timer" fix_enable_host_bridge_timer
 fi
 if [ -f /var/lib/scarlix/host-status.json ]; then
   STATUS_AGE=$(( $(date +%s) - $(stat -c %Y /var/lib/scarlix/host-status.json 2>/dev/null || echo 0) ))
@@ -298,13 +338,38 @@ else
       ;;
   esac
   # Check logical model scarlix-default exists in LiteLLM routing
-  if [ -n "${LITELLM_MASTER_KEY:-}" ] || [ -f /opt/scarlix/.env ]; then
-    LITELLM_KEY="${LITELLM_MASTER_KEY:-$(grep '^LITELLM_MASTER_KEY=' /opt/scarlix/.env 2>/dev/null | cut -d= -f2 || echo '')}"
+  if [ -n "${LITELLM_MASTER_KEY:-}" ] || [ -f /etc/scarlix/.env ]; then
+    # v18.8.2 P1: Read LITELLM_MASTER_KEY from /etc/scarlix/.env (was: /opt/scarlix/.env
+    #   — that file holds only model paths, not secrets. Secrets are in /etc/scarlix/.env
+    #   root:root 600. This was a direct consequence of P0-1 — the key wasn't generated
+    #   at all, and even if it were, doctor looked in the wrong file.)
+    LITELLM_KEY="${LITELLM_MASTER_KEY:-$(grep '^LITELLM_MASTER_KEY=' /etc/scarlix/.env 2>/dev/null | cut -d= -f2 || echo '')}"
     if [ -n "$LITELLM_KEY" ]; then
       if curl -sf --max-time 3 -H "Authorization: Bearer $LITELLM_KEY" http://127.0.0.1:4001/v1/models 2>/dev/null | grep -q "scarlix-default"; then
         pass "litellm: logical model 'scarlix-default' available"
       else
         warn "litellm: 'scarlix-default' not in /v1/models (routing config issue?)"
+      fi
+    fi
+  fi
+
+  # v18.8.2 P1 (P1-14): Verify SGLang backend model ID matches LiteLLM config
+  # (was: doctor only checked 'scarlix-default' exists, not that the real backend
+  #   model ID matches. LiteLLM config says openai/Qwen3-14B-AWQ, but SGLang might
+  #   serve a different id depending on --model-path --served-model-name. If they
+  #   don't match, LiteLLM primary always fails with "model not found".)
+  if [ "$LITELLM_STATUS" = "running" ]; then
+    SGLANG_STATUS=$(docker inspect -f '{{.State.Status}}' sglang 2>/dev/null || echo "not_found")
+    if [ "$SGLANG_STATUS" = "running" ]; then
+      # Get real model ID from SGLang /v1/models
+      SGLANG_MODEL_ID=$(curl -sf --max-time 3 http://127.0.0.1:30000/v1/models 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['data'][0]['id'] if d.get('data') else '')" 2>/dev/null || echo "")
+      if [ -n "$SGLANG_MODEL_ID" ]; then
+        # Check if LiteLLM config references this model
+        if grep -q "model: openai/$SGLANG_MODEL_ID" /opt/scarlix/ai/litellm/config.yaml 2>/dev/null; then
+          pass "sglang backend model ID '$SGLANG_MODEL_ID' matches LiteLLM config"
+        else
+          warn "sglang serves '$SGLANG_MODEL_ID' but LiteLLM config expects different ID (routing may fail)"
+        fi
       fi
     fi
   fi
@@ -326,7 +391,7 @@ echo -e "${CYAN}╚════════════════════�
 
 if [ "$FAIL" -gt 0 ]; then
   echo -e "${RED}System NOT ready — fix FAIL items above.${NC}"
-  [ "$FIX_MODE" -eq 0 ] && echo "  Tip: run 'scarlix-doctor --fix' for automatic fixes."
+  [ "$FIX_MODE" -eq 0 ] && echo "  Tip: run 'scarlix-doctor --fix' for automatic fixes, or '--strict' to treat warnings as failures."
   exit 1
 elif [ "$WARN" -gt 0 ]; then
   echo -e "${YELLOW}System partially ready — check WARN items.${NC}"

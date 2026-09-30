@@ -65,12 +65,23 @@ type Disk struct {
 
 const statusFile = "/var/lib/scarlix/host-status.json"
 
+// v18.8.2 P2: testStatusFile overrides statusFile for unit tests (empty = use default).
+var testStatusFile string
+
+// getStatusFile returns testStatusFile if set, else the production const.
+func getStatusFile() string {
+        if testStatusFile != "" {
+                return testStatusFile
+        }
+        return statusFile
+}
+
 // Read loads host-status.json. Returns zero-value HostStatus + nil error on success.
 // v18.3 P1: Returns error on corrupt JSON (was: silent `_ = json.Unmarshal` → API got zero values).
 // API handlers can now report "stale" or "corrupt" status to dashboard.
 func Read() (HostStatus, error) {
         var s HostStatus
-        data, err := os.ReadFile(statusFile)
+        data, err := os.ReadFile(getStatusFile())
         if err != nil {
                 return s, err // file missing — caller checks os.IsNotExist
         }

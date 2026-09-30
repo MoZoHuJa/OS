@@ -18,8 +18,12 @@ services:
     networks: [scarlix-net]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:4000/health"]
-      interval: 30s
+      interval: 15s
       timeout: 5s
-      retries: 3
+      retries: 5
+      # v18.8.2 P1: start_period (was: missing → wait_for_healthy could fail before
+      #   LiteLLM finished reading config + connecting to backends). 30s is enough
+      #   for LiteLLM cold start (no model loading, just config parse + DB init).
+      start_period: 30s
 networks:
   scarlix-net: { external: true }

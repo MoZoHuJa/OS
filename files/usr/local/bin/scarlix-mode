@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.8.1 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v18.8.2 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.7.7 FIXES:
 #   P0: TV mode uses systemctl restart (was: start on RemainAfterExit=yes oneshot
 #       → service stays 'active' after first run → start doesn't re-run healthcheck
@@ -214,7 +214,9 @@ dump_vram() {
     [ "$ollama_model" = "null" ] && ollama_model="qwen2.5:3b"
   fi
   curl -s -X POST "http://localhost:11435/api/generate" -d "{\"model\":\"$ollama_model\",\"keep_alive\":0}" >/dev/null 2>&1 || true
-  docker stop sglang vllm beellama ollama-agent 2>/dev/null || true
+  # v18.8.2 P1: Also stop LiteLLM gateway (was: only AI engines stopped → LiteLLM
+  #   kept running pointing to dead backends → /v1/chat/completions would hang.)
+  docker stop sglang vllm beellama ollama-agent litellm 2>/dev/null || true
   sleep 3
 }
 
@@ -229,8 +231,11 @@ dump_vram() {
 #   Now: 'none' + 'running' → accept as OK (consistent with healthcheck_and_restart
 #   line ~366 which already treats none+running as OK). This also prevents silent
 #   breakage if someone removes a HEALTHCHECK from a compose file.
+# v18.8.2 P1: Added optional 3rd param api_url — when health=none+running, probe
+#   the HTTP API directly (was: none+running=OK blindly → container could be
+#   running but API deadlocked. Now: if api_url given, curl it before accepting.)
 wait_for_healthy() {
-  local container="$1" timeout="${2:-60}"
+  local container="$1" timeout="${2:-60}" api_url="${3:-}"
   log "  Waiting for $container to become healthy (max ${timeout}s)..."
   local deadline=$((SECONDS + timeout))
   while [ "$SECONDS" -lt "$deadline" ]; do
@@ -247,11 +252,21 @@ wait_for_healthy() {
         ;;
       none)
         # v18.7.7 P1: No healthcheck configured — accept if container is running.
-        # (Matches healthcheck_and_restart's existing none+running=OK logic.)
+        # v18.8.2 P1: If api_url provided, probe it before accepting (was: blind
+        #   accept → running but deadlocked API counted as healthy).
         status=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo "not_found")
         if [ "$status" = "running" ]; then
-          log "  ✓ $container: running (no healthcheck configured)"
-          return 0
+          if [ -n "$api_url" ]; then
+            if curl -sf --max-time 5 "$api_url" >/dev/null 2>&1; then
+              log "  ✓ $container: running + API reachable ($api_url)"
+              return 0
+            else
+              log "  ⏳ $container: running but API not ready yet ($api_url)..."
+            fi
+          else
+            log "  ✓ $container: running (no healthcheck configured)"
+            return 0
+          fi
         fi
         ;;
     esac
@@ -262,7 +277,7 @@ wait_for_healthy() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v18.8.1 — VRAM Check ==="
+  echo "=== SCARLIX OS v18.8.2 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
@@ -439,7 +454,7 @@ start_verified_ai() {
   if check_model_exists "SGLang" "$SGLANG_MODEL_PATH"; then
     if $DC -f /opt/scarlix/ai/sglang/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
       # P0 v17.9.3: Wait for healthy (up -d exit 0 ≠ model loaded)
-      if wait_for_healthy "sglang" 300; then
+      if wait_for_healthy "sglang" 300 http://127.0.0.1:30000/health; then
         log "  ✓ SGLang (GPU0, healthy)"
         sglang_ok=1
       else
@@ -458,7 +473,7 @@ start_verified_ai() {
   if [ "$EXPERIMENTAL" -eq 1 ]; then
     if check_model_exists "vLLM" "$VLLM_MODEL_PATH"; then
       if $DC -f /opt/scarlix/ai/vllm/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
-        if wait_for_healthy "vllm" 300; then
+        if wait_for_healthy "vllm" 300 http://127.0.0.1:8089/v1/models; then
           log "  ✓ vLLM (GPU1, TP=1, healthy)"
           vllm_ok=1
         else
@@ -480,7 +495,7 @@ start_verified_ai() {
     if check_model_exists "llama.cpp" "$LLAMACPP_MODEL_PATH"; then
       if $DC -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
         # v18.7 P1: Wait for healthy before setting ok (was: immediate ok=1)
-        if wait_for_healthy "beellama" 120; then
+        if wait_for_healthy "beellama" 120 http://127.0.0.1:11438/health; then
           log "  ✓ BeeLlama (CPU, secondary fallback)"
           beellama_ok=1
         else
@@ -501,7 +516,7 @@ start_verified_ai() {
     log "  ⚠ All engines failed — starting Ollama (qwen2.5:3b, tertiary fallback)"
     if $DC -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
       # v18.7 P1: Wait for healthy (was: immediate ok=1)
-      if wait_for_healthy "ollama-agent" 60; then
+      if wait_for_healthy "ollama-agent" 60 http://127.0.0.1:11435/api/tags; then
         log "  ✓ Ollama (CPU, tertiary fallback)"
         ollama_ok=1
       else
@@ -521,6 +536,31 @@ start_verified_ai() {
     log "ERROR: no inference engine healthy — mode switch FAILED"
     return 1
   fi
+
+  # v18.8.2 P1 (A-a): Start LiteLLM gateway as part of AI mode lifecycle (was:
+  #   LiteLLM was never started by scarlix-mode — doctor said "optional" + ručný
+  #   compose up. Now: if /opt/scarlix/ai/litellm/docker-compose.yml exists AND
+  #   /etc/scarlix/.env has LITELLM_MASTER_KEY, start LiteLLM on scarlix-net.
+  #   Fail-soft: if LiteLLM fails to start, AI mode still succeeds (direct backend
+  #   access works). LiteLLM is a unified gateway — clients can use either it OR
+  #   the backends directly.)
+  if [ -f /opt/scarlix/ai/litellm/docker-compose.yml ] && grep -q '^LITELLM_MASTER_KEY=' /etc/scarlix/.env 2>/dev/null; then
+    log "Starting LiteLLM gateway (unified API on :4001)..."
+    if $DC -f /opt/scarlix/ai/litellm/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
+      # Wait for LiteLLM health (60s — LiteLLM starts fast, no model loading)
+      if wait_for_healthy "litellm" 60; then
+        log "  ✓ LiteLLM gateway healthy (scarlix-default → backends)"
+      else
+        # Fail-soft: LiteLLM not healthy, but AI mode still succeeds
+        log "  ⚠ LiteLLM not healthy after 60s — gateway unavailable (direct backend access still works)"
+      fi
+    else
+      log "  ⚠ LiteLLM compose up failed — gateway unavailable (non-critical, direct backends OK)"
+    fi
+  else
+    log "  ℹ LiteLLM gateway skipped (no compose file or no LITELLM_MASTER_KEY in /etc/scarlix/.env)"
+  fi
+
   return 0
 }
 
@@ -671,22 +711,14 @@ case "$MODE" in
     #   starting/crashing. Now: wait_for_healthy comfyui 120s; if not healthy,
     #   state = failed, exit 1. Consistent with AI mode's wait_for_healthy pattern.)
     if [ "$creative_ok" -eq 1 ]; then
-      if wait_for_healthy "comfyui" 120; then
-        # v18.8.1 P1: API probe after healthy (was: wait_for_healthy accepts
-        #   none+running, but ComfyUI image may not have HEALTHCHECK → "running"
-        #   but API not ready. Now: explicit curl :8188 to verify HTTP server
-        #   actually responds before writing "creative" state. Matches the
-        #   "already in creative" path which already does this probe.)
-        if curl -sf --max-time 5 http://127.0.0.1:8188/ >/dev/null 2>&1; then
-          log "  ✓ ComfyUI healthy + API reachable — Creative mode active"
-          echo "creative" | tee "$STATE_FILE" >/dev/null
-        else
-          log "ERROR: ComfyUI healthy but API not responding (port 8188) — Creative mode FAILED"
-          echo "failed" | tee "$STATE_FILE" >/dev/null
-          exit 1
-        fi
+      # v18.8.2 P1: wait_for_healthy now takes api_url as 3rd param — it probes
+      #   :8188 directly when health=none (no HEALTHCHECK). Was: separate curl
+      #   after healthy (v18.8.1) — now unified into wait_for_healthy.
+      if wait_for_healthy "comfyui" 120 http://127.0.0.1:8188/; then
+        log "  ✓ ComfyUI healthy + API reachable — Creative mode active"
+        echo "creative" | tee "$STATE_FILE" >/dev/null
       else
-        log "ERROR: ComfyUI not healthy after 120s — Creative mode FAILED"
+        log "ERROR: ComfyUI not healthy/API not responding after 120s — Creative mode FAILED"
         echo "failed" | tee "$STATE_FILE" >/dev/null
         exit 1
       fi
@@ -730,11 +762,20 @@ case "$MODE" in
       beellama_status=$(docker inspect -f '{{.State.Status}}' beellama 2>/dev/null || echo "missing")
       if [[ "$beellama_status" = "running" ]]; then
         beellama_health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' beellama 2>/dev/null || echo "none")
-        if [[ "$beellama_health" = "healthy" ]] || [[ "$beellama_health" = "none" ]]; then
+        if [[ "$beellama_health" = "healthy" ]]; then
           log "Already in Offline mode — BeeLlama healthy."
           exit 0
+        elif [[ "$beellama_health" = "none" ]]; then
+          # v18.8.2 P1: No healthcheck — probe API directly (was: blind accept
+          #   of none+running → could be running but API deadlocked).
+          if curl -sf --max-time 5 http://127.0.0.1:11438/health >/dev/null 2>&1; then
+            log "Already in Offline mode — BeeLlama API reachable."
+            exit 0
+          fi
+          log "BeeLlama running but API not responding — repairing..."
+        else
+          log "BeeLlama running but $beellama_health — repairing..."
         fi
-        log "BeeLlama running but $beellama_health — repairing..."
       else
         log "Mode says 'offline' but BeeLlama is not running ($beellama_status) — repairing..."
       fi
@@ -801,7 +842,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v18.8.1 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v18.8.2 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"

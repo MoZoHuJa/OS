@@ -1,12 +1,15 @@
+# SCARLIX OS v18.8.2 — Buzz Nostr Relay (EXPERIMENTAL workspace)
+# v18.8.2 P1 (B-a/c): All buzz services marked profiles: [buzz] (was: :latest
+#   in default stack → non-reproducible + runs by default. Now: won't start
+#   with default `compose up`, only with `--profile buzz`.)
 services:
   buzz-relay:
-    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
-        # v18.8.1 P1: Supply-chain risk — NOT YET PINNED (was: :latest).
-    #   GHCR anonymous token returned NO_ACCESS. Before FINAL, manually check
-    #   https://github.com/block/buzz-relay/pkgs/container/buzz-relay for tags.
+    # v18.8.2 P1: :latest — could NOT pin (GHCR API NO_ACCESS). Experimental profile.
     image: ghcr.io/block/buzz-relay:latest
     container_name: buzz-relay
     restart: unless-stopped
+    # v18.8.2 P1: experimental profile — does NOT start in default compose up
+    profiles: ["buzz"]
     ports:
       - "100.64.0.1:3000:3000"
     volumes:
@@ -25,6 +28,8 @@ services:
     image: postgres:16-alpine
     container_name: buzz-postgres
     restart: unless-stopped
+    # v18.8.2 P1: experimental profile — only starts with --profile buzz
+    profiles: ["buzz"]
     volumes:
       - ./postgres/data:/var/lib/postgresql/data
     environment:
@@ -41,17 +46,17 @@ services:
     image: redis:7-alpine
     container_name: buzz-redis
     restart: unless-stopped
+    # v18.8.2 P1: experimental profile — only starts with --profile buzz
+    profiles: ["buzz"]
     networks: [scarlix-net]
 
   buzz-minio:
-    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
-        # v18.8.1 P1: Supply-chain risk — NOT YET PINNED (was: :latest).
-    #   Docker Hub API returned no tags. Before FINAL, manually check
-    #   https://hub.docker.com/r/minio/minio/tags then replace :latest with a
-    #   RELEASE.YYYY-MM-DDTHH-MM-SSZ tag (MinIO uses date-based release tags).
+    # v18.8.2 P1: :latest — could NOT pin (Docker Hub API no tags). Experimental profile.
     image: minio/minio:latest
     container_name: buzz-minio
     restart: unless-stopped
+    # v18.8.2 P1: experimental profile — only starts with --profile buzz
+    profiles: ["buzz"]
     ports:
       - "127.0.0.1:9000:9000"
     volumes:

@@ -30,6 +30,14 @@ func New() *Mode {
         }
 }
 
+// NewForTest creates a Mode manager with a custom desired-mode file path.
+// v18.8.2 P2: Used by unit tests to avoid touching real /var/lib/scarlix paths.
+func NewForTest(desiredModeFile string) *Mode {
+        return &Mode{
+                desiredModeFile: desiredModeFile,
+        }
+}
+
 // Current returns the current mode from current-mode file (written by scarlix-mode on host).
 // v17.9.8 P1: TrimSpace — state file contains trailing newline from `echo "ai" | tee`.
 func (m *Mode) Current() string {

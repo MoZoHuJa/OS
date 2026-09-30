@@ -13,6 +13,10 @@ RUN git clone --depth 1 https://github.com/deepbeepmeep/Wan2GP.git . \
     && git fetch --depth 1 origin "$WAN2GP_COMMIT" \
     && git checkout "$WAN2GP_COMMIT" \
     && rm -rf .git
-RUN pip install --no-cache-dir -r requirements.txt
+# v18.8.2 P2: pip install with constraints (was: `pip install -r requirements.txt`
+#   with no constraints → dependency tree could drift. Now: -c constraints.txt
+#   pins major transitive deps. Wan2GP requirements.txt provides base deps.)
+COPY constraints.txt /app/constraints.txt
+RUN pip install --no-cache-dir -r requirements.txt -c /app/constraints.txt
 EXPOSE 7861
 CMD ["python", "app.py", "--listen", "0.0.0.0", "--port", "7861"]

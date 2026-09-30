@@ -48,9 +48,15 @@ model_list:
 router_settings:
   routing_strategy: simple-shuffle
   num_retries: 2
-  # v18.8.1 P0: Real fallback chain (was: self-referencing scarlix-default→scarlix-default).
-  # On SGLang failure → try Ollama → try BeeLlama. Matches scarlix-mode's
-  # start_verified_ai() fallback order (SGLang → vLLM → BeeLlama → Ollama).
+  # v18.8.2 P1 (C-b): Real fallback chain (was: self-referencing scarlix-default→scarlix-default
+  # in v18.8, and v18.8.1 had a 3-tier but comment claimed 4-tier matching scarlix-mode).
+  # v18.8.2 decision: LiteLLM uses a SIMPLIFIED 3-tier chain (SGLang → Ollama → BeeLlama)
+  # because vLLM is experimental (.experimental only) and LiteLLM routing shouldn't
+  # depend on a backend that may not be running. scarlix-mode's start_verified_ai()
+  # has the FULL 4-tier (SGLang → vLLM → BeeLlama → Ollama) for direct mode switching;
+  # LiteLLM is a unified gateway for external clients and uses the stable 3-tier subset.
+  # README documents this distinction. If vLLM is needed in LiteLLM later, add
+  # scarlix-vllm model_name + api_base http://vllm:8000/v1 + add to fallbacks array.
   fallbacks:
     - scarlix-default: ["scarlix-ollama", "scarlix-beellama"]
 

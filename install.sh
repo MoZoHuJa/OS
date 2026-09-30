@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.8.1"
+VERSION="18.8.2"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -708,9 +708,13 @@ else
   fi
 
   # v17.9.8: Generate /etc/scarlix/.env (secrets + SCARLIHQ_TOKEN) if not already
-  if [ ! -f /etc/scarlix/.env ] && [ -f /etc/systemd/system/generate-env.sh ]; then
-    log "Generating /etc/scarlix/.env (secrets + SCARLIHQ_TOKEN)..."
-    /etc/systemd/system/generate-env.sh >> "$LOG_FILE" 2>&1 && ok ".env generated" || warn ".env generation (non-critical)"
+  # v18.8.2 P0: Run generate-env.sh ALWAYS (was: only if .env didn't exist → upgrade
+  #   runs skipped it → new keys like LITELLM_MASTER_KEY + SCARLIX_VERSION never got
+  #   added to existing .env. generate-env.sh is idempotent: `grep -q || echo` only
+  #   adds missing keys, never overwrites existing secrets.)
+  if [ -f /etc/systemd/system/generate-env.sh ]; then
+    log "Ensuring /etc/scarlix/.env has all keys (idempotent)..."
+    /etc/systemd/system/generate-env.sh >> "$LOG_FILE" 2>&1 && ok ".env keys ensured" || warn ".env generation (non-critical)"
   fi
   # v18.4 P0: /etc/scarlix/.env MUST be root:root 600 (contains secrets, root services source it)
   # v18.5.3 P0: fail-closed (was: || true → security inconsistency with commit claim)

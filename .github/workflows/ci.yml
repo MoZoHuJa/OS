@@ -144,6 +144,17 @@ jobs:
           docker images scarlihq:ci
           echo "ScarliHQ image built (version $SCARLIX_VERSION) — size:"
           docker image inspect scarlihq:ci --format '{{.Size}}' | awk '{printf "  %.1f MB\n", $1/1024/1024}'
+      # v18.8.2 P2: Save image as artifact so integration-test reuses it (was:
+      #   integration-test rebuilt the same image → slower CI. Now: docker save
+      #   → upload-artifact → download-artifact → docker load. ~20MB alpine image
+      #   = fast transfer, saves ~30s build time per integration run.)
+      - name: Save ScarliHQ image as artifact
+        run: docker save scarlihq:ci | gzip > /tmp/scarlihq-ci.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scarlihq-ci-image
+          path: /tmp/scarlihq-ci.tar.gz
+          retention-days: 1
       - name: Runtime smoke test (container starts + port responds)
         run: |
           # v18.7.6 P2: trap cleanup so failures still tear down the container
@@ -221,10 +232,14 @@ jobs:
     needs: scarlihq-docker-build
     steps:
       - uses: actions/checkout@v4
-      - name: Build ScarliHQ image
-        run: |
-          SCARLIX_VERSION=$(cat VERSION)
-          docker build --build-arg SCARLIX_VERSION="$SCARLIX_VERSION" -t scarlihq:ci scarlihq/
+      # v18.8.2 P2: Download pre-built image artifact (was: rebuilt same image →
+      #   slower CI. Now: download from scarlihq-docker-build job + docker load.)
+      - uses: actions/download-artifact@v4
+        with:
+          name: scarlihq-ci-image
+          path: /tmp
+      - name: Load ScarliHQ image from artifact
+        run: docker load < /tmp/scarlihq-ci.tar.gz
       # v18.7.7 P1: Install Python websockets library for the real WS lifecycle test
       # (Test 10). Pinned for reproducibility (same rationale as pyyaml pinning).
       # v18.8 P1: Add setup-python (was: bare `pip install` on ubuntu-latest 24.04
@@ -238,7 +253,8 @@ jobs:
         run: |
           # v18.7.6 P1: trap cleanup so any `exit 1` still tears down the container
           # (was: exit 1 skipped `docker stop/rm scarlihq-int` → container stayed running)
-          trap 'docker logs scarlihq-int 2>/dev/null | tail -20; docker stop scarlihq-int 2>/dev/null || true; docker rm scarlihq-int 2>/dev/null || true' EXIT
+          # v18.8.2 P1: trap also cleans up litellm-test (Test 11 container)
+          trap 'docker logs scarlihq-int 2>/dev/null | tail -20; docker stop scarlihq-int litellm-test 2>/dev/null || true; docker rm scarlihq-int litellm-test 2>/dev/null || true' EXIT
           # Setup test environment
           mkdir -p /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
           chmod 700 /tmp/scarlix-test/bridge-input /tmp/scarlix-test/bridge-state
@@ -403,4 +419,110 @@ jobs:
           assert ok, 'WS single-use test FAILED — ticket reuse was accepted or rejected with wrong status'
           print('  Test 10: PASS')
           PYEOF
+
+          # v18.8.2 P1 (P1-13): Test 11 — LiteLLM routing + fallback simulation
+          # (was: CI tested YAML/build/HTTP but never reálny inference routing.
+          #   LiteLLM routing bug (wrong model IDs) passed CI green. Now: mock
+          #   OpenAI backend + real LiteLLM container → verify chat completion
+          #   works + fallback triggers when primary goes down.)
+          echo "=== Test 11: LiteLLM routing + fallback (mock backends) ==="
+          # Create a mock OpenAI backend that returns a fixed response
+          mkdir -p /tmp/litellm-test/mock-backend
+          cat > /tmp/litellm-test/mock-backend/server.py << 'MOCKEOF'
+          import http.server, json, sys
+          PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9999
+          RESPONSE = sys.argv[2] if len(sys.argv) > 2 else "primary-ok"
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_POST(self):
+                  length = int(self.headers.get('Content-Length', 0))
+                  body = self.rfile.read(length)
+                  resp = {"id":"chatcmpl-mock","object":"chat.completion","model":"mock",
+                          "choices":[{"index":0,"message":{"role":"assistant","content":RESPONSE},"finish_reason":"stop"}]}
+                  self.send_response(200)
+                  self.send_header("Content-Type","application/json")
+                  self.end_headers()
+                  self.wfile.write(json.dumps(resp).encode())
+              def do_GET(self):
+                  if self.path == "/v1/models":
+                      resp = {"object":"list","data":[{"id":"mock-model","object":"model"}]}
+                      self.send_response(200)
+                      self.send_header("Content-Type","application/json")
+                      self.end_headers()
+                      self.wfile.write(json.dumps(resp).encode())
+                  elif self.path == "/health":
+                      self.send_response(200); self.end_headers()
+                  else:
+                      self.send_response(404); self.end_headers()
+              def log_message(self, *args): pass
+          http.server.HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+          MOCKEOF
+          # Start primary mock backend on 9999, fallback on 9998
+          python3 /tmp/litellm-test/mock-backend/server.py 9999 primary-ok &
+          MOCK_PID1=$!
+          python3 /tmp/litellm-test/mock-backend/server.py 9998 fallback-ok &
+          MOCK_PID2=$!
+          sleep 1
+          # Create LiteLLM config that routes scarlix-test → primary, fallback → fallback
+          cat > /tmp/litellm-test/config.yaml << LITELLMEOF
+          model_list:
+            - model_name: scarlix-test
+              litellm_params:
+                model: openai/mock-model
+                api_base: http://host.docker.internal:9999/v1
+                api_key: not-needed
+            - model_name: scarlix-test-fallback
+              litellm_params:
+                model: openai/mock-model
+                api_base: http://host.docker.internal:9998/v1
+                api_key: not-needed
+          router_settings:
+            num_retries: 1
+            fallbacks:
+              - scarlix-test: ["scarlix-test-fallback"]
+          LITELLMEOF
+          # Start LiteLLM container with test config
+          docker run -d --name litellm-test -p 4002:4000 \
+            -v /tmp/litellm-test/config.yaml:/app/config.yaml \
+            -e LITELLM_MASTER_KEY=test-litellm-key \
+            --add-host=host.docker.internal:host-gateway \
+            ghcr.io/berriai/litellm:main-v1.16.19 \
+            --config /app/config.yaml --port 4000
+          # Wait for LiteLLM readiness
+          LITELLM_READY=0
+          for i in $(seq 1 30); do
+              code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:4002/health 2>/dev/null) || code="000"
+              if [ "$code" != "000" ] && [ "$code" != "502" ]; then
+                  LITELLM_READY=1; break
+              fi
+              sleep 2
+          done
+          if [ "$LITELLM_READY" -ne 1 ]; then
+              echo "FAIL: LiteLLM never became ready after 60s"
+              docker logs litellm-test 2>&1 | tail -20
+              kill $MOCK_PID1 $MOCK_PID2 2>/dev/null || true
+              docker stop litellm-test 2>/dev/null; docker rm litellm-test 2>/dev/null
+              exit 1
+          fi
+          sleep 3  # extra time for model registration
+          # Test 11a: Primary routing — chat completion should return "primary-ok"
+          RESP=$(curl -sf --max-time 10 -H "Authorization: Bearer test-litellm-key" \
+            -H "Content-Type: application/json" \
+            -d '{"model":"scarlix-test","messages":[{"role":"user","content":"hi"}],"max_tokens":5}' \
+            http://127.0.0.1:4002/v1/chat/completions 2>/dev/null || echo "")
+          echo "Test 11a (primary routing): $RESP"
+          echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['choices'][0]['message']['content']=='primary-ok', f'expected primary-ok, got {d[\"choices\"][0][\"message\"][\"content\"]}'; print('  PASS: primary routing OK')" || { echo 'FAIL: primary routing'; kill $MOCK_PID1 $MOCK_PID2 2>/dev/null; docker stop litellm-test 2>/dev/null; docker rm litellm-test 2>/dev/null; exit 1; }
+          # Test 11b: Fallback — kill primary, retry, should get "fallback-ok"
+          kill $MOCK_PID1 2>/dev/null || true
+          sleep 1
+          RESP=$(curl -sf --max-time 15 -H "Authorization: Bearer test-litellm-key" \
+            -H "Content-Type: application/json" \
+            -d '{"model":"scarlix-test","messages":[{"role":"user","content":"hi"}],"max_tokens":5}' \
+            http://127.0.0.1:4002/v1/chat/completions 2>/dev/null || echo "")
+          echo "Test 11b (fallback after primary down): $RESP"
+          echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['choices'][0]['message']['content']=='fallback-ok', f'expected fallback-ok, got {d[\"choices\"][0][\"message\"][\"content\"]}'; print('  PASS: fallback routing OK')" || { echo 'FAIL: fallback routing'; kill $MOCK_PID1 $MOCK_PID2 2>/dev/null; docker stop litellm-test 2>/dev/null; docker rm litellm-test 2>/dev/null; exit 1; }
+          echo "  Test 11: PASS — LiteLLM routing + fallback verified end-to-end"
+          # Cleanup mock + litellm
+          kill $MOCK_PID1 $MOCK_PID2 2>/dev/null || true
+          docker stop litellm-test 2>/dev/null || true
+          docker rm litellm-test 2>/dev/null || true
           echo "=== ALL INTEGRATION TESTS PASSED ==="

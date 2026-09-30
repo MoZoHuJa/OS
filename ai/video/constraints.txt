@@ -1,0 +1,18 @@
+# SCARLIX OS v18.8.2 — Video Wan2GP pip constraints
+# v18.8.2 P2: Pin major transitive deps (was: `pip install -r requirements.txt`
+#   with no constraints → dependency tree could drift. Now: pip install with
+#   -c constraints.txt limits major deps to pinned versions. Wan2GP's own
+#   requirements.txt provides the base; this file constrains the tree.)
+# Generated from Wan2GP commit f3f204e50f6e dependency tree as of 2025-09-30.
+
+torch==2.4.0
+torchvision==0.19.0
+transformers==4.44.2
+tokenizers==0.19.1
+safetensors==0.4.4
+huggingface-hub==0.24.6
+accelerate==0.34.0
+diffusers==0.30.0
+numpy==1.26.4
+pillow==10.4.0
+einops==0.8.0

@@ -1,0 +1,26 @@
+# SCARLIX OS v18.8.2 — MusicGen requirements.lock (pinned direct + major transitive deps)
+# v18.8.2 P2: Lock major transitive dependencies (was: only direct deps pinned
+#   → dependency tree could still change. Now: major transitive deps also pinned
+#   to prevent silent breakage. For FULL reproducibility use pip-compile --generate-hashes.)
+# Generated from audiocraft==0.0.2 dependency tree as of 2025-09-30.
+
+# Direct deps (also in Dockerfile)
+audiocraft==0.0.2
+fastapi==0.115.0
+uvicorn==0.30.6
+torchaudio==2.4.0
+
+# Major transitive deps (pinned to prevent drift)
+torch==2.4.0
+torchvision==0.19.0
+transformers==4.44.2
+tokenizers==0.19.1
+safetensors==0.4.4
+huggingface-hub==0.24.6
+numpy==1.26.4
+scipy==1.13.1
+pillow==10.4.0
+einops==0.8.0
+pydantic==2.9.0
+pydantic-core==2.23.0
+starlette==0.38.2
