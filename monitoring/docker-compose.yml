@@ -30,18 +30,17 @@ services:
     networks: [scarlix-net]
 
   openlit:
-    # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
-        # v18.8.1 P1: Supply-chain risk — NOT YET PINNED (was: :latest).
-    #   Docker Hub API returned no tags (private/empty repo?). Before FINAL,
-    #   manually check https://hub.docker.com/r/openlit/openlit/tags then replace
-    #   :latest with verified :vX.Y.Z tag.
+    # v18.8.3 P1: :latest — Docker Hub API returns NO_ACCESS, cannot pin.
+    #   Isolated to [tracing] profile (already had it) — won't start in default.
+    #   Before FINAL: manually check https://hub.docker.com/r/openlit/openlit/tags
     image: openlit/openlit:latest
     container_name: openlit
     restart: unless-stopped
+    # v18.8.3 P1: experimental — only starts with --profile tracing (already had this)
+    profiles: [tracing]
     ports: ["100.64.0.1:3002:3000"]
     volumes: ["./openlit:/data"]
     networks: [scarlix-net]
-    profiles: [tracing]
 
   alertmanager:
     # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)

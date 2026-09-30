@@ -1,4 +1,4 @@
-# SCARLIX OS v18.8.2 — EndeavourOS Edition — Model-Agnostic Configuration
+# SCARLIX OS v18.8.3 — EndeavourOS Edition — Model-Agnostic Configuration
 #
 # v17.9.7: flashinfer disabled in SGLang compose (--disable-flashinfer) — Blackwell sm_120 safe.
 #   `flashinfer: false` documents this (compose is the source of truth for the flag).
@@ -26,6 +26,12 @@ sglang:
   quantization: "awq"
   context_length: 32768
   mem_fraction: 0.85
+  # v18.8.3 P1 (D): Basic SGLang runtime tuning (no PyTorch env vars — kept
+  #   conservative for stability). These map to SGLang CLI flags via .env.
+  #   chunked_prefill_size: smaller = less peak VRAM for prefill (4096 = safe for 16GB)
+  #   max_running_requests: limit concurrent requests (4 = single-user agent load)
+  chunked_prefill_size: 4096
+  max_running_requests: 4
   # v17.9.7: flashinfer DISABLED in SGLang compose (--disable-flashinfer).
   # Blackwell (RTX 5060 Ti, sm_120) flashinfer kernels missing in SGLang v0.4.4.
   # This field documents the compose setting (compose is source of truth).

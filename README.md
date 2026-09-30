@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.8.2 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.8.3 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v18.8.2</h1>
+<h1 align="center">SCARLIX OS v18.8.3</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.8.2"><img alt="Version" src="https://img.shields.io/badge/version-v18.8.2-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.8.3"><img alt="Version" src="https://img.shields.io/badge/version-v18.8.3-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -20,9 +20,9 @@
 
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
-> **LiteLLM Gateway** (v18.8.2+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
+> **LiteLLM Gateway** (v18.8.3+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v18.8.2 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v18.8.3 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v18.8.2   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v18.8.3   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -52,14 +52,14 @@ scarlix-mode ai
 
 ---
 
-## 🆕 What's New in v18.8.2 (vs v18.7.8)
+## 🆕 What's New in v18.8.3 (vs v18.7.8)
 
 **CI fail fix + LiteLLM routing + image pinning.** 12 fixes from 3 expert reviews.
 
 v18.7.8 had a **CI that always failed**: shellcheck SC2168 (`local` outside function), WS test used wrong exception class (websockets 13.1 API), `curl || echo 000` → 000000 bug, and missing `setup-python` (PEP 668). Also LiteLLM fallback pointed to non-existent hostname `llamacpp` (should be `beellama`).
 
 ### P0 — CI fail + routing (4)
-| # | Fix | v18.7.8 Problem | v18.8.2 Solution |
+| # | Fix | v18.7.8 Problem | v18.8.3 Solution |
 |---|-----|-----------------|-------------------|
 | P0 | **shellcheck SC2168** | `local comfyui_status` in top-level case branch (not function) → CI failed | Plain assignment without `local` |
 | P0 | **WS test exception class** | Expected `InvalidStatus` but websockets==13.1 raises `InvalidStatusCode` (different attribute) → server returned 401 correctly but test failed | Version-compatible `getattr()` extracts status_code from either API |
@@ -67,7 +67,7 @@ v18.7.8 had a **CI that always failed**: shellcheck SC2168 (`local` outside func
 | P0 | **LiteLLM routing** | `api_base: http://llamacpp:8080` — service doesn't exist (container is `beellama`) → CPU fallback always failed with DNS error. Also 3 different model names | `beellama:8080` + unified `scarlix-default` logical model |
 
 ### P1 — reliability (8)
-| # | Fix | v18.7.8 Problem | v18.8.2 Solution |
+| # | Fix | v18.7.8 Problem | v18.8.3 Solution |
 |---|-----|-----------------|-------------------|
 | P1 | **setup-python before pip** | bare `pip install` on ubuntu 24.04 → PEP 668 "externally-managed" → job failed | `actions/setup-python@v5` with python 3.12 |
 | P1 | **Creative start health wait** | `up -d` exit 0 → immediately wrote "creative" to state — container could still be starting | `wait_for_healthy comfyui 120` before writing state |

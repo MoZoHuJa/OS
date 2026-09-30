@@ -1,6 +1,7 @@
-# SCARLIX OS v18.5.2 — SGLang (Tier-1, GPU 0)
+# SCARLIX OS v18.8.3 — SGLang (Tier-1, GPU 0)
 # v17.9.7: --disable-flashinfer (Blackwell sm_120 kernels missing in v0.4.4)
 # v17.9.5: Pinned image v0.4.4-cu128 (was latest-cu128 — unreproducible)
+# v18.8.3 P1 (D): context-length + chunked-prefill + max-running from env (was: hardcoded)
 services:
   sglang:
     image: ghcr.io/sgl-project/sglang:v0.4.4-cu128
@@ -20,7 +21,9 @@ services:
       --port 30000
       --host 0.0.0.0
       --mem-fraction-static ${SGLANG_MEM_FRACTION:-0.85}
-      --context-length 32768
+      --context-length ${SGLANG_CONTEXT_LENGTH:-32768}
+      --chunked-prefill-size ${SGLANG_CHUNKED_PREFILL:-4096}
+      --max-running-requests ${SGLANG_MAX_RUNNING:-4}
       --disable-flashinfer
     deploy:
       resources:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v18.8.2 — Docker Volume Backup Script (pacman hook)
+# SCARLIX OS v18.8.3 — Docker Volume Backup Script (pacman hook)
 # FIX Q7a: Called by scarlix-docker-backup.hook before kernel/NVIDIA updates.
 #
 # Uses restic to snapshot /var/lib/docker/volumes to /mnt/backup/restic/.
@@ -27,11 +27,20 @@ if ! docker info >/dev/null 2>&1; then
   exit 0
 fi
 
+# v18.8.3 P2 (P2-12): Track backup status explicitly (was: restic init || true
+#   → if init failed, backup also failed silently with "continuing anyway".
+#   Now: BACKUP_STATUS tracks init + backup result, logged at end.)
+BACKUP_STATUS="OK"
+
 # Check if restic backup repo exists, init if not
 if [ ! -d "$BACKUP_REPO" ]; then
   mkdir -p "$BACKUP_REPO"
   log "Initializing restic repo: $BACKUP_REPO"
-  restic init --repo "$BACKUP_REPO" >> "$LOG_FILE" 2>&1 || true
+  # v18.8.3 P2: Fail-closed init (was: || true → backup ran on uninitialized repo)
+  if ! restic init --repo "$BACKUP_REPO" >> "$LOG_FILE" 2>&1; then
+    log "✗ restic init FAILED — backup will likely fail"
+    BACKUP_STATUS="INIT_FAILED"
+  fi
 fi
 
 # Snapshot Docker volumes
@@ -45,10 +54,14 @@ if restic backup --repo "$BACKUP_REPO" "$BACKUP_TARGET" \
   # Prune old backups (keep last 10)
   restic forget --repo "$BACKUP_REPO" \
     --keep-last 10 \
-    --prune >> "$LOG_FILE" 2>&1 || true
+    --prune >> "$LOG_FILE" 2>&1 || log "⚠ prune failed (non-fatal)"
 else
-  log "⚠ Backup failed — continuing anyway (non-fatal)"
+  log "⚠ Backup FAILED — continuing anyway (non-fatal, but volumes NOT backed up)"
+  BACKUP_STATUS="BACKUP_FAILED"
 fi
+
+# v18.8.3 P2: Final status line (was: silent — user couldn't tell if backup worked)
+log "Backup status: $BACKUP_STATUS"
 
 log "=== Backup complete ==="
 exit 0

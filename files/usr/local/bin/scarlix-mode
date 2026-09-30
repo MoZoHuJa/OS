@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.8.2 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v18.8.3 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.7.7 FIXES:
 #   P0: TV mode uses systemctl restart (was: start on RemainAfterExit=yes oneshot
 #       → service stays 'active' after first run → start doesn't re-run healthcheck
@@ -100,6 +100,10 @@ generate_env_file() {
   # v18.5 P2: mem-fraction from models.yaml (was: hardcoded 0.85 in compose — OOM on 8GB GPU)
   local sglang_mem_fraction="0.85"
   local vllm_gpu_util="0.85"
+  # v18.8.3 P1 (D): Basic SGLang runtime params from models.yaml (no PyTorch env)
+  local sglang_context_length="32768"
+  local sglang_chunked_prefill="4096"
+  local sglang_max_running="4"
 
   if [ -f "$MODELS_YAML" ] && command -v yq >/dev/null 2>&1; then
     sglang_path=$(yaml_get '.sglang.model_path' "$sglang_path")
@@ -107,6 +111,9 @@ generate_env_file() {
     llamacpp_file=$(yaml_get '.beellama.hf_file' "$llamacpp_file")
     sglang_mem_fraction=$(yaml_get '.sglang.mem_fraction' "$sglang_mem_fraction")
     vllm_gpu_util=$(yaml_get '.vllm.gpu_memory_utilization' "$vllm_gpu_util")
+    sglang_context_length=$(yaml_get '.sglang.context_length' "$sglang_context_length")
+    sglang_chunked_prefill=$(yaml_get '.sglang.chunked_prefill_size' "$sglang_chunked_prefill")
+    sglang_max_running=$(yaml_get '.sglang.max_running_requests' "$sglang_max_running")
   elif [ ! -f "$MODELS_YAML" ]; then
     log "WARNING: models.yaml not found — using defaults"
   elif ! command -v yq >/dev/null 2>&1; then
@@ -145,6 +152,10 @@ LLAMACPP_MODEL_PATH=/models/$llamacpp_file
 # v18.5 P2: GPU memory fractions (configurable in models.yaml — was hardcoded 0.85)
 SGLANG_MEM_FRACTION=$sglang_mem_fraction
 VLLM_GPU_UTIL=$vllm_gpu_util
+# v18.8.3 P1 (D): SGLang runtime params (no PyTorch env — conservative for stability)
+SGLANG_CONTEXT_LENGTH=$sglang_context_length
+SGLANG_CHUNKED_PREFILL=$sglang_chunked_prefill
+SGLANG_MAX_RUNNING=$sglang_max_running
 EOF
   then
     log "WARNING: cannot write $ENV_FILE (permission denied — run as root: scarlix-mode needs root to write root:root /opt/scarlix/.env)"
@@ -164,6 +175,16 @@ EOF
   export SGLANG_MODEL_PATH="$sglang_path"
   export VLLM_MODEL_PATH="$vllm_path"
   export LLAMACPP_MODEL_PATH="/models/$llamacpp_file"
+  export SGLANG_CONTEXT_LENGTH="$sglang_context_length"
+  export SGLANG_CHUNKED_PREFILL="$sglang_chunked_prefill"
+  export SGLANG_MAX_RUNNING="$sglang_max_running"
+
+  # v18.8.3 P1 (A-a): Regenerate LiteLLM config from models.yaml (was: hardcoded
+  #   config.yaml → model ID mismatch. Now: if generate-litellm-config.sh exists,
+  #   regenerate config before starting AI so LiteLLM always matches current model.)
+  if [ -x /usr/local/bin/generate-litellm-config.sh ] && [ -f "$MODELS_YAML" ]; then
+    /usr/local/bin/generate-litellm-config.sh "$MODELS_YAML" /opt/scarlix/ai/litellm/config.yaml >> "$LOG_FILE" 2>&1 || log "WARNING: generate-litellm-config.sh failed (LiteLLM may use stale config)"
+  fi
 }
 
 # P1 FIX v17.8: Always regenerate, then source
@@ -277,7 +298,7 @@ wait_for_healthy() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v18.8.2 — VRAM Check ==="
+  echo "=== SCARLIX OS v18.8.3 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
@@ -316,7 +337,10 @@ healthcheck_and_restart() {
     local current_hash stored_hash
     # P1 v17.9.5: Hash only model paths (not whole file — comments caused false recreates)
     # v18.5 P1: Include mem_fraction + gpu_util in hash (was: missing → config change didn't trigger recreate)
-    current_hash=$(yq -r '.sglang.model_path, .sglang.mem_fraction, .vllm.model_path, .vllm.gpu_memory_utilization, .beellama.hf_file, .ollama.model' "$MODELS_YAML" 2>/dev/null | sha256sum | awk '{print $1}' || echo "")
+    # v18.8.3 P1 (P1-6): Hash includes all runtime-relevant SGLang params (was: only
+    #   model_path + mem_fraction → changing context_length/chunked_prefill/max_running
+    #   didn't trigger recreate → stale config kept running. Now: all fields included.)
+    current_hash=$(yq -r '.sglang.model_path, .sglang.mem_fraction, .sglang.context_length, .sglang.chunked_prefill_size, .sglang.max_running_requests, .vllm.model_path, .vllm.gpu_memory_utilization, .beellama.hf_file, .ollama.model' "$MODELS_YAML" 2>/dev/null | sha256sum | awk '{print $1}' || echo "")
     stored_hash=$(cat "$models_hash_file" 2>/dev/null || echo "")
     # P2-7 v17.9.2: Empty stored_hash = first run → don't recreate, just store hash
     if [ -n "$current_hash" ] && [ -n "$stored_hash" ] && [ "$current_hash" != "$stored_hash" ]; then
@@ -344,7 +368,21 @@ healthcheck_and_restart() {
         *) continue ;;
       esac
       log "  $container: $status — starting with $DC..."
-      $DC -f "$compose_file" up -d >> "$LOG_FILE" 2>&1 && log "  ✓ $container started" || log "  ✗ $container start failed"
+      if $DC -f "$compose_file" up -d >> "$LOG_FILE" 2>&1; then
+        log "  ✓ $container started"
+        # v18.8.3 P1 (P1-4): wait_for_healthy after start (was: no wait → could
+        #   report "not healthy" at end even though container would be healthy
+        #   in 40s. Now: wait like start_verified_ai does.)
+        local hc_timeout hc_url
+        case "$container" in
+          sglang) hc_timeout=300; hc_url="http://127.0.0.1:30000/health" ;;
+          vllm) hc_timeout=300; hc_url="http://127.0.0.1:8089/v1/models" ;;
+          beellama) hc_timeout=120; hc_url="http://127.0.0.1:11438/health" ;;
+        esac
+        wait_for_healthy "$container" "$hc_timeout" "$hc_url" 2>/dev/null || true
+      else
+        log "  ✗ $container start failed"
+      fi
     elif [ "$env_changed" = true ]; then
       local compose_file
       case "$container" in
@@ -356,6 +394,14 @@ healthcheck_and_restart() {
       log "  $container: recreating (env changed)..."
       if $DC -f "$compose_file" up -d --force-recreate >> "$LOG_FILE" 2>&1; then
         log "  ✓ $container recreated"
+        # v18.8.3 P1 (P1-4): wait_for_healthy after recreate (was: no wait)
+        local rc_timeout rc_url
+        case "$container" in
+          sglang) rc_timeout=300; rc_url="http://127.0.0.1:30000/health" ;;
+          vllm) rc_timeout=300; rc_url="http://127.0.0.1:8089/v1/models" ;;
+          beellama) rc_timeout=120; rc_url="http://127.0.0.1:11438/health" ;;
+        esac
+        wait_for_healthy "$container" "$rc_timeout" "$rc_url" 2>/dev/null || true
       else
         log "  ✗ $container recreate failed"
         recreate_success=false
@@ -375,6 +421,14 @@ healthcheck_and_restart() {
         esac
         if $DC -f "$compose_file" up -d --force-recreate >> "$LOG_FILE" 2>&1; then
           log "  ✓ $container recreated"
+          # v18.8.3 P1 (P1-4): wait_for_healthy after unhealthy recreate (was: no wait)
+          local uh_timeout uh_url
+          case "$container" in
+            sglang) uh_timeout=300; uh_url="http://127.0.0.1:30000/health" ;;
+            vllm) uh_timeout=300; uh_url="http://127.0.0.1:8089/v1/models" ;;
+            beellama) uh_timeout=120; uh_url="http://127.0.0.1:11438/health" ;;
+          esac
+          wait_for_healthy "$container" "$uh_timeout" "$uh_url" 2>/dev/null || true
         else
           log "  ✗ $container recreate failed"
           # v18.5.2 P2: Update recreate_success (was: only logged, didn't update flag)
@@ -406,6 +460,30 @@ healthcheck_and_restart() {
       $DC -f /opt/scarlix/ai/ollama/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ ollama-agent restarted" || log "  ✗ ollama-agent restart failed"
     else
       log "  ℹ ollama-agent: stopped (SGLang or vLLM running — not needed)"
+    fi
+  fi
+
+  # v18.8.3 P1 (P1-3): Check LiteLLM gateway health (was: not checked → if LiteLLM
+  #   crashed but engines were healthy, scarlix-mode ai said "healthy" but gateway
+  #   was down → clients couldn't reach unified API. Now: if LiteLLM container
+  #   exists but not running/unhealthy, restart it + wait_for_healthy.)
+  local litellm_status
+  litellm_status=$(docker inspect -f '{{.State.Status}}' litellm 2>/dev/null || echo "not_found")
+  if [ "$litellm_status" != "not_found" ]; then
+    if [ "$litellm_status" != "running" ]; then
+      log "  litellm: $litellm_status — restarting..."
+      $DC -f /opt/scarlix/ai/litellm/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ litellm restarted" || log "  ✗ litellm restart failed"
+      wait_for_healthy "litellm" 60 http://127.0.0.1:4001/health 2>/dev/null || true
+    else
+      local litellm_health
+      litellm_health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' litellm 2>/dev/null || echo "none")
+      if [ "$litellm_health" = "unhealthy" ]; then
+        log "  litellm: unhealthy — recreating..."
+        $DC -f /opt/scarlix/ai/litellm/docker-compose.yml up -d --force-recreate >> "$LOG_FILE" 2>&1 && log "  ✓ litellm recreated" || log "  ✗ litellm recreate failed"
+        wait_for_healthy "litellm" 60 http://127.0.0.1:4001/health 2>/dev/null || true
+      else
+        log "  ✓ litellm: running ($litellm_health)"
+      fi
     fi
   fi
 
@@ -603,13 +681,16 @@ case "$MODE" in
     ;;
   stop)
     log "=== Stopping AI stack (keeping dashboard/infra) ==="
-    docker stop sglang vllm beellama ollama-agent 2>/dev/null || true
+    docker stop sglang vllm beellama ollama-agent litellm 2>/dev/null || true
     $DC -f /opt/scarlix/ai/sglang/docker-compose.yml stop >> "$LOG_FILE" 2>&1 || true
     $DC -f /opt/scarlix/ai/vllm/docker-compose.yml stop >> "$LOG_FILE" 2>&1 || true
     $DC -f /opt/scarlix/ai/llamacpp/docker-compose.yml stop >> "$LOG_FILE" 2>&1 || true
     $DC -f /opt/scarlix/ai/ollama/docker-compose.yml stop >> "$LOG_FILE" 2>&1 || true
+    # v18.8.3 P1 (L-a): Stop LiteLLM gateway (was: missing → gateway stayed open
+    #   with no backends → clients got connection errors instead of clean shutdown)
+    $DC -f /opt/scarlix/ai/litellm/docker-compose.yml stop >> "$LOG_FILE" 2>&1 || true
     echo "stopped" | tee "$STATE_FILE" >/dev/null
-    log "AI stack stopped. Dashboard/infra still running. Run 'scarlix-mode ai' to restart."
+    log "AI stack + LiteLLM gateway stopped. Dashboard/infra still running. Run 'scarlix-mode ai' to restart."
     ;;
   game)
     # v18.7.7 P0: Stale-state repair (was: `[[ "$CURRENT_MODE" = "game" ]] && exit 0`
@@ -842,7 +923,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v18.8.2 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v18.8.3 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"

@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# SCARLIX OS v18.8.2 — SHA256SUMS manifest generator for release integrity
+# SCARLIX OS v18.8.3 — SHA256SUMS manifest generator for release integrity
 #
 # v18.7.4 P2: Generate SHA256SUMS of all critical SCARLIX files so users can
 # verify release integrity after install/upgrade (was: no manifest → silent
 # tampering / partial-upgrade risk).
+# v18.8.3 P2 (P2-11): Expanded manifest — now includes docker-compose files,
+#   litellm config, Dockerfiles, install.sh, generate-env.sh, etc. (was: only
+#   host bin scripts + models.yaml + VERSION → couldn't detect tampering of
+#   compose files or Dockerfiles.)
 #
 # Usage: generate-sha256sums.sh [--output PATH]
 #   Default output: /tmp/SCARLIX-v<version>-SHA256SUMS
@@ -32,7 +36,9 @@ while [ $# -gt 0 ]; do
 done
 
 # v18.7.4 P2: Critical files — if any are tampered, the SHA256SUMS will mismatch
+# v18.8.3 P2 (P2-11): Expanded to include compose files, configs, Dockerfiles
 CRITICAL_FILES=(
+  # Host bin scripts
   /usr/local/bin/scarlix-mode
   /usr/local/bin/scarlix-wizard
   /usr/local/bin/scarlix-doctor
@@ -40,8 +46,27 @@ CRITICAL_FILES=(
   /usr/local/bin/download-models.sh
   /usr/local/bin/model-manager.sh
   /usr/local/bin/generate-sha256sums.sh
+  /usr/local/bin/generate-litellm-config.sh
+  # Configs
   /etc/scarlix/models.yaml
   /etc/scarlix/VERSION
+  /etc/systemd/system/generate-env.sh
+  # Docker compose files (AI stack)
+  /opt/scarlix/ai/sglang/docker-compose.yml
+  /opt/scarlix/ai/vllm/docker-compose.yml
+  /opt/scarlix/ai/llamacpp/docker-compose.yml
+  /opt/scarlix/ai/ollama/docker-compose.yml
+  /opt/scarlix/ai/litellm/docker-compose.yml
+  /opt/scarlix/ai/litellm/config.yaml
+  /opt/scarlix/ai/comfyui/docker-compose.yml
+  /opt/scarlix/gaming/docker-compose.yml
+  /opt/scarlix/scarlihq/docker-compose.yml
+  # Dockerfiles
+  /opt/scarlix/scarlihq/Dockerfile
+  /opt/scarlix/ai/musicgen/Dockerfile
+  /opt/scarlix/ai/video/Dockerfile
+  # Installer
+  /opt/scarlix/install.sh
 )
 
 {

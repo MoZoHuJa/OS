@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.8.2"
+VERSION="18.8.3"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -526,7 +526,8 @@ else
   #   existed). The build block above crit()s on any failure, so reaching this
   #   elif branch means the build was skipped/aborted — crit here too for safety.
   log "Installing SCARLIX scripts (CRITICAL)..."
-  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge generate-sha256sums.sh scarlix-bridge-reader; do
+  # v18.8.3 P1 (A-a): Added generate-litellm-config.sh (dynamic LiteLLM config from models.yaml)
+  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge generate-sha256sums.sh generate-litellm-config.sh scarlix-bridge-reader; do
     src="$REPO_DIR/files/usr/local/bin/$binfile"
     if [ -f "$src" ]; then
       cp "$src" "/usr/local/bin/$binfile" && chmod 755 "/usr/local/bin/$binfile" && ok "/usr/local/bin/$binfile" || crit "$binfile copy failed"
@@ -715,6 +716,12 @@ else
   if [ -f /etc/systemd/system/generate-env.sh ]; then
     log "Ensuring /etc/scarlix/.env has all keys (idempotent)..."
     /etc/systemd/system/generate-env.sh >> "$LOG_FILE" 2>&1 && ok ".env keys ensured" || warn ".env generation (non-critical)"
+  fi
+  # v18.8.3 P1 (A-a): Generate LiteLLM config from models.yaml (was: hardcoded
+  #   config.yaml → model ID mismatch when user changed model. Now: dynamic.)
+  if [ -f /usr/local/bin/generate-litellm-config.sh ] && [ -f /etc/scarlix/models.yaml ]; then
+    log "Generating LiteLLM config from models.yaml..."
+    /usr/local/bin/generate-litellm-config.sh /etc/scarlix/models.yaml /opt/scarlix/ai/litellm/config.yaml >> "$LOG_FILE" 2>&1 && ok "LiteLLM config generated (matches models.yaml)" || warn "LiteLLM config generation (non-critical)"
   fi
   # v18.4 P0: /etc/scarlix/.env MUST be root:root 600 (contains secrets, root services source it)
   # v18.5.3 P0: fail-closed (was: || true → security inconsistency with commit claim)

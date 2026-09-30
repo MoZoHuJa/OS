@@ -25,6 +25,7 @@ jobs:
           shellcheck -S error files/usr/local/bin/download-models.sh
           shellcheck -S error files/usr/local/bin/scarlix-host-bridge
           shellcheck -S error files/usr/local/bin/generate-sha256sums.sh
+          shellcheck -S error files/usr/local/bin/generate-litellm-config.sh
           shellcheck -S error files/etc/systemd/system/generate-env.sh
 
   bash-syntax:
@@ -525,4 +526,65 @@ jobs:
           kill $MOCK_PID1 $MOCK_PID2 2>/dev/null || true
           docker stop litellm-test 2>/dev/null || true
           docker rm litellm-test 2>/dev/null || true
+
+          # v18.8.3 P1 (P1-9): Test 12 — Production LiteLLM config validation
+          # (was: CI Test 11 used mock config → could pass while production
+          #   config had bugs. Now: validate actual ai/litellm/config.yaml:
+          #   scarlix-default exists, backend IDs present, fallback targets
+          #   exist, no self-reference, all api_base hosts are valid service names.)
+          echo "=== Test 12: Production LiteLLM config validation ==="
+          python3 << 'PYEOF2'
+          import yaml, sys
+          config = yaml.safe_load(open('ai/litellm/config.yaml'))
+          errors = []
+
+          model_list = config.get('model_list', [])
+          model_names = [m['model_name'] for m in model_list]
+
+          # Check scarlix-default exists
+          if 'scarlix-default' not in model_names:
+              errors.append("scarlix-default model_name missing")
+
+          # Check no self-referencing fallbacks
+          fallbacks = config.get('router_settings', {}).get('fallbacks', [])
+          for fb in fallbacks:
+              for src, targets in fb.items():
+                  if src in targets:
+                      errors.append(f"self-referencing fallback: {src} -> {src}")
+                  for t in targets:
+                      if t not in model_names:
+                          errors.append(f"fallback target '{t}' not in model_list")
+
+          # Check all litellm_params have required fields
+          for m in model_list:
+              p = m.get('litellm_params', {})
+              if 'model' not in p:
+                  errors.append(f"{m['model_name']}: missing litellm_params.model")
+              if 'api_base' not in p:
+                  errors.append(f"{m['model_name']}: missing litellm_params.api_base")
+
+          # Check api_base hosts are valid service names (not llamacpp!)
+          valid_hosts = ['sglang', 'vllm', 'beellama', 'ollama-agent', 'host.docker.internal']
+          for m in model_list:
+              api_base = m.get('litellm_params', {}).get('api_base', '')
+              host = api_base.split('//')[1].split(':')[0] if '//' in api_base else ''
+              if host and host not in valid_hosts:
+                  errors.append(f"{m['model_name']}: api_base host '{host}' not in valid hosts {valid_hosts}")
+
+          # Check general_settings has master_key + database_url
+          gs = config.get('general_settings', {})
+          if 'master_key' not in gs:
+              errors.append("general_settings.master_key missing")
+          if 'database_url' not in gs:
+              errors.append("general_settings.database_url missing")
+          elif '/app/data/' not in gs['database_url']:
+              errors.append(f"database_url not persisted under /app/data/ (got: {gs['database_url']})")
+
+          if errors:
+              for e in errors:
+                  print(f"  FAIL: {e}")
+              sys.exit(1)
+          print(f"  PASS: config valid — {len(model_names)} models, fallbacks OK, hosts valid, DB persisted")
+          PYEOF2
+          echo "  Test 12: PASS"
           echo "=== ALL INTEGRATION TESTS PASSED ==="

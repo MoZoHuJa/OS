@@ -1,4 +1,4 @@
-# SCARLIX OS v18.8.2 — Pacman Hook: Docker Volume Backup
+# SCARLIX OS v18.8.3 — Pacman Hook: Docker Volume Backup
 # FIX Q7a: Pre-rollback Docker volume backup
 #
 # Before any kernel or NVIDIA driver update (which may require a Snapper
