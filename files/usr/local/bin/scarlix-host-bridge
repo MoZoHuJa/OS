@@ -59,6 +59,11 @@ LOCK_FILE="/var/lock/scarlix-host-bridge.lock"
 MODE_BIN="/usr/local/bin/scarlix-mode"
 MAX_RETRIES=3
 
+# v18.8.5 P1: Ensure /var/lock exists (was: missing → exec 200> failed → flock failed
+#   → script exit 0 → host-bridge silently did nothing → stale dashboard).
+#   On minimal Arch installs /var/lock may be absent or a dangling symlink to
+#   /run/lock which itself may not exist. mkdir both, tolerate failure.
+mkdir -p /var/lock 2>/dev/null || mkdir -p /run/lock 2>/dev/null || true
 exec 200>"$LOCK_FILE"
 flock -n 200 || exit 0
 
