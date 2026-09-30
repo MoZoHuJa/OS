@@ -32,14 +32,46 @@ fi
 #   Now: BACKUP_STATUS tracks init + backup result, logged at end.)
 BACKUP_STATUS="OK"
 
+# v18.8.5 P1 (P1-2): Source /etc/scarlix/.env so RESTIC_PASSWORD is available
+#   to restic init/backup. (was: no sourcing → restic prompted for password
+#   interactively in pacman hook (no TTY) → init/backup silently failed.)
+if [ -f /etc/scarlix/.env ]; then
+  set -a
+  # shellcheck source=/dev/null
+  . /etc/scarlix/.env
+  set +a
+fi
+
+# v18.8.5 P1 (P1-2): restic needs RESTIC_PASSWORD (was: interactive prompt
+#   fails in pacman hook — no TTY. Without password, restic init prompts and
+#   hangs/fails. Now: fail-closed early with explicit NO_PASSWORD status.)
+if [ -z "${RESTIC_PASSWORD:-}" ]; then
+  log "⚠ RESTIC_PASSWORD not set — restic init/backup will fail (set in /etc/scarlix/.env)"
+  BACKUP_STATUS="NO_PASSWORD"
+  log "Backup status: $BACKUP_STATUS"
+  log "=== Backup complete (no password) ==="
+  exit 0
+fi
+export RESTIC_PASSWORD
+
 # Check if restic backup repo exists, init if not
-if [ ! -d "$BACKUP_REPO" ]; then
+# v18.8.5 P0 (P0-3): Check for restic config file, not directory (was: [ ! -d ]
+#   → mkdir -p created the dir → next run [ ! -d ] was false → restic init was
+#   NEVER retried → repo stayed uninitialized → every backup failed silently.
+#   Also: after INIT_FAILED, script continued to restic backup which also
+#   failed, and BACKUP_STATUS got overwritten from INIT_FAILED to BACKUP_FAILED
+#   — the root cause (init) was lost. Now: check for config file (only present
+#   after successful restic init), and exit early on init failure so the
+#   INIT_FAILED status survives.)
+if [ ! -f "$BACKUP_REPO/config" ]; then
   mkdir -p "$BACKUP_REPO"
   log "Initializing restic repo: $BACKUP_REPO"
-  # v18.8.3 P2: Fail-closed init (was: || true → backup ran on uninitialized repo)
   if ! restic init --repo "$BACKUP_REPO" >> "$LOG_FILE" 2>&1; then
-    log "✗ restic init FAILED — backup will likely fail"
+    log "✗ restic init FAILED — skipping backup (repo not initialized)"
     BACKUP_STATUS="INIT_FAILED"
+    log "Backup status: $BACKUP_STATUS"
+    log "=== Backup complete (init failed) ==="
+    exit 0
   fi
 fi
 
