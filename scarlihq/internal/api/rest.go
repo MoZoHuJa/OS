@@ -5,6 +5,7 @@ import (
         "crypto/subtle"
         "encoding/hex"
         "encoding/json"
+        "errors"
         "net/http"
         "strings"
         "sync"
@@ -18,7 +19,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "18.7.7"
+var Version = "18.7.8"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -31,8 +32,17 @@ var Version = "18.7.7"
 //   unlimited map entries during the 30s TTL — the sweep only runs on the
 //   NEXT issueWSTicket call, so 100k requests could allocate 100k entries
 //   before any expired. Now: maxWSTickets=1024 caps the map size — if the
-//   store is full, issueWSTicket returns "" and the HTTP handler returns 503
-//   so the dashboard backs off instead of exhausting memory.)
+//   store is full, issueWSTicket returns ErrTicketLimit and the HTTP handler
+//   returns 503 so the dashboard backs off instead of exhausting memory.)
+//
+// v18.7.8 P1: Use error type instead of returning "" + guessing (was:
+//   issueWSTicket returned "" for BOTH RNG failure and rate-limit → handler
+//   re-checked len(wsTickets) to distinguish → RACE: between issueWSTicket
+//   returning "" and the handler checking len(), another goroutine could
+//   consume tickets → len < 1024 → handler returns 500 (RNG failure) even
+//   though the real reason was 503 (rate-limit). Now: issueWSTicket returns
+//   (ticket, err) with sentinel errors ErrTicketLimit / ErrTicketRNG so
+//   the handler can return the correct status without re-checking state.)
 var (
         wsTickets   = make(map[string]time.Time)
         wsTicketsMu sync.Mutex
@@ -43,31 +53,44 @@ var (
         maxWSTickets = 1024
 )
 
+// v18.7.8 P1: Sentinel errors for ticket issuance (was: issueWSTicket returned
+// "" for both failure modes → handler guessed via len() → race condition).
+var (
+        ErrTicketLimit = errors.New("ticket store at capacity")
+        ErrTicketRNG   = errors.New("RNG unavailable")
+)
+
 // issueWSTicket generates a single-use WS ticket valid for wsTicketTTL.
 // Also sweeps any expired tickets so the map can't grow unboundedly under
 // repeated POST /api/ws-ticket calls without a WS connect.
 //
-// v18.7.4 P0: Returns "" on RNG failure (was: ignored → all-zeros ticket
+// v18.7.4 P0: Returns error on RNG failure (was: ignored → all-zeros ticket
 // "0000...0000" valid for 30s → single predictable ticket for any unauthed
-// caller who could guess the failure mode). Caller MUST treat "" as failure
+// caller who could guess the failure mode). Caller MUST treat error as failure
 // and fail-closed (HTTP 500 — do NOT issue a predictable ticket).
 //
 // v18.7.5 P0: Removed /dev/urandom fallback (was: os.ReadFile("/dev/urandom")
 // → /dev/urandom never sends EOF → infinite read / OOM if rand.Read ever fails).
 // crypto/rand.Read on Linux already uses getrandom(2) (or /dev/urandom internally
 // via the runtime) — there is no scenario where crypto/rand fails but a manual
-// /dev/urandom read would succeed AND be safe. Fail-closed: return "".
+// /dev/urandom read would succeed AND be safe. Fail-closed: return ErrTicketRNG.
 //
-// v18.7.7 P1: Returns "" if the ticket store is at capacity (maxWSTickets).
-// This caps memory usage under a flooding client (was: unlimited map growth
-// until the next sweep — but the sweep only removes EXPIRED entries, so a
-// fast loop creates entries faster than they expire). Caller returns HTTP 503.
-func issueWSTicket() string {
+// v18.7.7 P1: Returns ErrTicketLimit if the ticket store is at capacity
+// (maxWSTickets). This caps memory usage under a flooding client (was: unlimited
+// map growth until the next sweep — but the sweep only removes EXPIRED entries,
+// so a fast loop creates entries faster than they expire). Caller returns HTTP 503.
+//
+// v18.7.8 P1: Returns (ticket, error) instead of just string (was: returned ""
+// for both failure modes → handler re-checked len(wsTickets) to distinguish →
+// RACE between issueWSTicket and the handler's len() check). Now: sentinel
+// errors ErrTicketLimit / ErrTicketRNG are returned atomically under the lock,
+// so the handler returns the correct HTTP status without any TOCTOU window.
+func issueWSTicket() (string, error) {
         b := make([]byte, 32)
         // v18.7.5 P0: Remove urandom fallback (was: os.ReadFile → infinite read/OOM)
         // crypto/rand on Linux uses /dev/urandom internally. If it fails, fail-closed.
         if _, err := rand.Read(b); err != nil {
-                return "" // Signal failure
+                return "", ErrTicketRNG // Signal RNG failure
         }
         ticket := hex.EncodeToString(b)
         wsTicketsMu.Lock()
@@ -82,11 +105,11 @@ func issueWSTicket() string {
         // dashboard's normal usage of 1 ticket per WS connect.)
         if len(wsTickets) >= maxWSTickets {
                 wsTicketsMu.Unlock()
-                return "" // Signal rate-limited
+                return "", ErrTicketLimit // Signal rate-limited
         }
         wsTickets[ticket] = now.Add(wsTicketTTL)
         wsTicketsMu.Unlock()
-        return ticket
+        return ticket, nil
 }
 
 // ReserveWSTicket atomically removes the ticket from the store (single-use).
@@ -317,30 +340,31 @@ func (h *Handler) listProfiles(w http.ResponseWriter, r *http.Request) {
 // Returns {"ticket": "<64 hex chars>", "expires_in": 30}.
 //
 // v18.7.4 P0: Fail-closed on RNG failure (was: ignored → all-zeros ticket).
-// If issueWSTicket returns "", the runtime's RNG is unavailable and we must NOT
-// issue a predictable ticket — return HTTP 500 so the dashboard surfaces the
-// error rather than silently accepting a constant-ticket DoS vector.
+// If issueWSTicket returns ErrTicketRNG, the runtime's RNG is unavailable and we
+// must NOT issue a predictable ticket — return HTTP 500 so the dashboard surfaces
+// the error rather than silently accepting a constant-ticket DoS vector.
 //
 // v18.7.7 P1: Also returns 503 if the ticket store is at capacity (maxWSTickets).
 // This distinguishes RNG failure (500) from rate-limiting (503) so the dashboard
 // can back off appropriately.
+//
+// v18.7.8 P1: Use sentinel errors instead of re-checking len(wsTickets) (was:
+//   issueWSTicket returned "" for both failures → handler re-checked len() →
+//   RACE: between issueWSTicket returning "" and the handler checking len(),
+//   another goroutine could consume tickets → handler returns wrong status.
+//   Now: errors.Is() on the returned error is atomic — no TOCTOU window.)
 func (h *Handler) issueWSTicket(w http.ResponseWriter, r *http.Request) {
         if r.Method != http.MethodPost {
                 writeJSONError(w, http.StatusMethodNotAllowed, "use POST")
                 return
         }
-        ticket := issueWSTicket()
-        if ticket == "" {
-                // v18.7.4 P0: RNG failure — fail-closed (was: all-zeros ticket valid 30s).
-                // v18.7.7 P1: Could also be rate-limit (store full). Both return "" — we
-                // return 503 for rate-limit, 500 for RNG. Check store size to distinguish.
-                wsTicketsMu.Lock()
-                storeFull := len(wsTickets) >= maxWSTickets
-                wsTicketsMu.Unlock()
-                if storeFull {
+        ticket, err := issueWSTicket()
+        if err != nil {
+                if errors.Is(err, ErrTicketLimit) {
                         writeJSONError(w, http.StatusServiceUnavailable, "too many outstanding tickets — retry shortly")
                         return
                 }
+                // ErrTicketRNG (or any other unexpected error) — fail-closed.
                 writeJSONError(w, http.StatusInternalServerError, "unable to generate secure ticket (RNG unavailable)")
                 return
         }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.7.7 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v18.7.8 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.7.7 FIXES:
 #   P0: TV mode uses systemctl restart (was: start on RemainAfterExit=yes oneshot
 #       → service stays 'active' after first run → start doesn't re-run healthcheck
@@ -61,7 +61,14 @@ fi
 # v18.5 P1: Exclusive lock on /models during mode switch (was: race with model-manager)
 # Uses FD 9 (separate from FD 200 above) — shared by model-manager.sh + download-models.sh
 MODELS_LOCK="/var/lib/scarlix/.models.lock"
-mkdir -p "$(dirname "$MODELS_LOCK")" 2>/dev/null || true
+# v18.7.8 P1: Fail-closed mkdir for models lock dir (was: `|| true` → if /var/lib/scarlix
+#   was RO/broken, mkdir silently failed, then `exec 9>` failed under set -e with a
+#   cryptic error and no diagnostic. Now: explicit FATAL + exit 1, consistent with
+#   the /run/scarlix mkdir fix from v18.7.7.)
+if ! mkdir -p "$(dirname "$MODELS_LOCK")" 2>/dev/null; then
+  echo "FATAL: cannot create models lock directory $(dirname "$MODELS_LOCK") — aborting" >&2
+  exit 1
+fi
 exec 9>"$MODELS_LOCK"
 # Only acquire exclusive lock for write operations (ai/turbo/offline that start containers)
 # For status/vram (read-only), use shared lock
@@ -255,7 +262,7 @@ wait_for_healthy() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v18.7.7 — VRAM Check ==="
+  echo "=== SCARLIX OS v18.7.8 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
@@ -594,13 +601,37 @@ case "$MODE" in
     #   ComfyUI was NEVER restarted. Now: only short-circuit if ComfyUI is ACTUALLY
     #   running; otherwise fall through to the normal start path.)
     if [[ "$CURRENT_MODE" = "creative" ]]; then
-      local comfyui_status
+      local comfyui_status comfyui_health
       comfyui_status=$(docker inspect -f '{{.State.Status}}' comfyui 2>/dev/null || echo "missing")
+      # v18.7.8 P1: Check health, not just running (was: only checked .State.Status
+      #   = running → container could be running but API deadlocked → "Already in
+      #   Creative mode — ComfyUI running" was a lie. Now: if a healthcheck exists,
+      #   require it to be 'healthy' (not just 'running'); if no healthcheck, fall
+      #   back to a real API probe at 127.0.0.1:8188 so we verify the HTTP server
+      #   actually responds, not just that the process is alive.)
       if [[ "$comfyui_status" = "running" ]]; then
-        log "Already in Creative mode — ComfyUI running."
-        exit 0
+        comfyui_health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' comfyui 2>/dev/null || echo "none")
+        case "$comfyui_health" in
+          healthy)
+            log "Already in Creative mode — ComfyUI healthy."
+            exit 0
+            ;;
+          unhealthy)
+            log "ComfyUI running but UNHEALTHY — repairing..."
+            ;;
+          none)
+            # No healthcheck configured — probe the API directly (was: assumed
+            # running = OK, but process could be deadlocked with dead HTTP).
+            if curl -sf --max-time 3 http://127.0.0.1:8188/ >/dev/null 2>&1; then
+              log "Already in Creative mode — ComfyUI API reachable."
+              exit 0
+            fi
+            log "ComfyUI running but API not responding (port 8188) — repairing..."
+            ;;
+        esac
+      else
+        log "Mode says 'creative' but ComfyUI is not running ($comfyui_status) — repairing..."
       fi
-      log "Mode says 'creative' but ComfyUI is not running ($comfyui_status) — repairing..."
     fi
     log "=== CREATIVE mode ==="
     dump_vram
@@ -702,7 +733,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v18.7.7 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v18.7.8 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"

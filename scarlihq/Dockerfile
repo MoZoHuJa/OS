@@ -22,7 +22,10 @@ COPY . .
 
 # v18.0.0 P2: inject version via -ldflags -X main.Version (single source: VERSION file)
 # CI passes --build-arg SCARLIX_VERSION=$(cat VERSION); default matches VERSION file
-ARG SCARLIX_VERSION=18.7.6
+# v18.7.8 P1: Bumped default to 18.7.8 (was: 18.7.6 — stale even though install.sh
+#   passes --build-arg so runtime was correct. Default matters for manual `docker build`
+#   without the arg, and for consistency with VERSION file.)
+ARG SCARLIX_VERSION=18.7.8
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${SCARLIX_VERSION}" -o /scarlihq ./cmd/scarlihq
 
 # v18.7.4 P1: Build the host-side atomic file reader (CGO disabled for static binary).

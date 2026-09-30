@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.7.7"
+VERSION="18.7.8"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -751,23 +751,49 @@ else
       # from the secrets file rather than relying on the install.sh export (was already
       # correct — preserved here as the canonical pattern for future up -d re-runs).
       if docker compose --env-file /etc/scarlix/.env -f /opt/scarlix/scarlihq/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
-        ok "ScarliHQ dashboard started on :8090"
-        if [ -n "$SCARLIHQ_TOKEN" ]; then
-          # v18.2 P1: token only on TTY (was: info() → tee to log 644 → token leaked)
-          # v18.7.7 P1: Dashboard URL says 127.0.0.1:8090 (was: <this-ip>:8090 —
-          #   misleading because the compose binds 127.0.0.1:8090:8090, so LAN
-          #   clients get connection refused. The bind is correct for security
-          #   (dashboard not exposed to LAN without a tunnel). The text now reflects
-          #   reality: localhost only, with a note about Tailscale/SSH tunnel for LAN.)
-          if [ -t 1 ]; then
-            echo -e "${CYAN}  Dashboard login token: ${GREEN}${SCARLIHQ_TOKEN}${NC}" | tee /dev/tty 2>/dev/null || true
-            echo -e "${CYAN}  Dashboard (this PC only): http://127.0.0.1:8090/${NC}" | tee /dev/tty 2>/dev/null || true
-            echo -e "${CYAN}  (login with the token above, or from /etc/scarlix/.env — chmod 600)${NC}" | tee /dev/tty 2>/dev/null || true
-            echo -e "${CYAN}  LAN access: use Tailscale, an SSH tunnel, or a reverse proxy → 127.0.0.1:8090${NC}" | tee /dev/tty 2>/dev/null || true
-          else
-            info "  Dashboard token generated (in /etc/scarlix/.env — run 'cat /etc/scarlix/.env | grep SCARLIHQ_TOKEN')"
-            info "  Dashboard URL: http://127.0.0.1:8090/ (localhost only — use Tailscale/SSH tunnel for LAN)"
+        # v18.7.8 P0: Post-start health check (was: `compose up -d` exit 0 →
+        #   "dashboard started" — but container could start then immediately
+        #   panic/exit. Compose returns 0 even if the container exits 1 second
+        #   later. Now: poll /api/health for up to 30s; if no HTTP response,
+        #   the dashboard is NOT actually running → set FAILED flag + dump logs).
+        DASHBOARD_OK=0
+        for i in $(seq 1 30); do
+          # Any HTTP response (even 401) = server is up. 000 = connection refused.
+          code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health 2>/dev/null || echo 000)
+          if [ "$code" != "000" ]; then
+            DASHBOARD_OK=1
+            break
           fi
+          sleep 1
+        done
+        if [ "$DASHBOARD_OK" -eq 1 ]; then
+          ok "ScarliHQ dashboard started on :8090 (HTTP $code — healthy)"
+          if [ -n "$SCARLIHQ_TOKEN" ]; then
+            # v18.2 P1: token only on TTY (was: info() → tee to log 644 → token leaked)
+            # v18.7.7 P1: Dashboard URL says 127.0.0.1:8090 (was: <this-ip>:8090 —
+            #   misleading because the compose binds 127.0.0.1:8090:8090, so LAN
+            #   clients get connection refused. The bind is correct for security
+            #   (dashboard not exposed to LAN without a tunnel). The text now reflects
+            #   reality: localhost only, with a note about Tailscale/SSH tunnel for LAN.)
+            if [ -t 1 ]; then
+              echo -e "${CYAN}  Dashboard login token: ${GREEN}${SCARLIHQ_TOKEN}${NC}" | tee /dev/tty 2>/dev/null || true
+              echo -e "${CYAN}  Dashboard (this PC only): http://127.0.0.1:8090/${NC}" | tee /dev/tty 2>/dev/null || true
+              echo -e "${CYAN}  (login with the token above, or from /etc/scarlix/.env — chmod 600)${NC}" | tee /dev/tty 2>/dev/null || true
+              echo -e "${CYAN}  LAN access: use Tailscale, an SSH tunnel, or a reverse proxy → 127.0.0.1:8090${NC}" | tee /dev/tty 2>/dev/null || true
+            else
+              info "  Dashboard token generated (in /etc/scarlix/.env — run 'cat /etc/scarlix/.env | grep SCARLIHQ_TOKEN')"
+              info "  Dashboard URL: http://127.0.0.1:8090/ (localhost only — use Tailscale/SSH tunnel for LAN)"
+            fi
+          fi
+        else
+          # v18.7.8 P0: Container started but /api/health never responded — likely
+          # panicked/exited immediately. Dump logs so the user sees WHY.
+          warn "ScarliHQ container started but /api/health never responded (30s) — likely crashed"
+          warn "  Container status:"
+          docker ps -a --filter name=scarlihq --format '{{.Status}}' 2>/dev/null | head -3 | sed 's/^/    /' || true
+          warn "  Last 20 log lines:"
+          docker logs scarlihq 2>&1 | tail -20 | sed 's/^/    /' || true
+          SCARLIHQ_DASHBOARD_FAILED=1
         fi
       else
         # v18.7.7 P1: ScarliHQ dashboard start fail is non-critical (CLI scarlix-mode
@@ -787,7 +813,11 @@ else
       SCARLIHQ_DASHBOARD_FAILED=1
     fi
   else
+    # v18.7.8 P1: Dockerfile missing = dashboard won't exist → set FAILED flag
+    # (was: just a warn, SCARLIHQ_DASHBOARD_FAILED never set → summary showed SUCCESS
+    # even though dashboard was never built).
     warn "ScarliHQ Dockerfile not found — dashboard not built"
+    SCARLIHQ_DASHBOARD_FAILED=1
   fi
 
   # P1 FIX v17.9: Download starter model for ALL systems (was NVIDIA_COUNT > 0 only)

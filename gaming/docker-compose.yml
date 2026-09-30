@@ -45,7 +45,13 @@ services:
     #   auto-verify in CI. Before the v18.7.7 release goes out, manually check
     #   https://github.com/pumpkin-mc/pumpkin/pkgs/container/pumpkin for version
     #   tags, then replace `:latest` below with the verified `:vX.Y.Z` tag.
-    image: ghcr.io/pumpkin-mc/pumpkin:latest
+    # v18.7.8 P0: Pinned by digest (was: :latest → supply-chain risk: git
+    #   commit + identical install.sh + install today → image A, but next week
+    #   → image B without any change in SCARLIX OS). Pumpkin only publishes
+    #   `sha-<hash>` and `latest` tags — no semver — so digest is the only way
+    #   to get reproducibility. Digest verified via ghcr.io/v2/pumpkin-mc/pumpkin/
+    #   manifests/latest. Update deliberately when upgrading (re-pull latest digest).
+    image: ghcr.io/pumpkin-mc/pumpkin@sha256:61fd9494f96d58b46b14edd8336c1e5d9aa41f40e973ab3b61474e05e7feef39
     container_name: minecraft
     restart: unless-stopped
     ports: ["127.0.0.1:25565:25565"]

@@ -24,6 +24,7 @@ jobs:
           shellcheck -S error files/usr/local/bin/model-manager.sh
           shellcheck -S error files/usr/local/bin/download-models.sh
           shellcheck -S error files/usr/local/bin/scarlix-host-bridge
+          shellcheck -S error files/usr/local/bin/generate-sha256sums.sh
           shellcheck -S error files/etc/systemd/system/generate-env.sh
 
   bash-syntax:
@@ -62,7 +63,13 @@ jobs:
         run: |
           find . -name 'docker-compose*.yml' -not -path './.git/*' | while read f; do
             echo "Checking $f..."
-            DUP=$(grep -c "^  scarlix-net:" "$f" 2>/dev/null || echo 0)
+            # v18.7.8 P1: Fix grep -c + || echo 0 bug (was: `grep -c` exits 1 when
+            #   0 matches → `|| echo 0` runs → DUP=$'0\n0' → `[ "$DUP" -gt 1 ]`
+            #   → "integer expression expected" → CI fails on compose files
+            #   WITHOUT scarlix-net like gaming/monitoring. Now: grep -c already
+            #   prints 0 on no match, so just suppress the exit code with `|| true`.)
+            DUP=$(grep -c "^  scarlix-net:" "$f" 2>/dev/null || true)
+            [ -z "$DUP" ] && DUP=0
             if [ "$DUP" -gt 1 ]; then
               echo "ERROR: Duplicate scarlix-net key in $f ($DUP occurrences)"
               exit 1
@@ -107,6 +114,11 @@ jobs:
         run: |
           CGO_ENABLED=0 go build -ldflags="-s -w" -o /tmp/scarlihq ./cmd/scarlihq
           echo "ScarliHQ binary built successfully"
+          # v18.7.8 P1: Also build scarlix-bridge-reader (was: only ./cmd/scarlihq
+          #   → bridge-reader compile errors weren't caught by go-build job, only by
+          #   the slower scarlihq-docker-build job. Now both binaries are vetted here.)
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o /tmp/scarlix-bridge-reader ./cmd/scarlix-bridge-reader
+          echo "scarlix-bridge-reader binary built successfully"
       - name: go test
         working-directory: scarlihq
         # v18.3 P1: removed `|| echo "(no tests yet)"` mask (was: hid test failures)
@@ -157,9 +169,14 @@ jobs:
           # v18.7.7 P1: READY flag check (was: loop ended without checking if
           #   break happened → test continued with a dead server → cryptic
           #   "expected 401" failure instead of "server never became ready").
+          # v18.7.8 P0: Accept ANY HTTP response (was: `curl -sf` → 401 counts
+          #   as failure because -f fails on 4xx → READY stays 0 → CI ALWAYS
+          #   fails "never became ready" even though server is up). /api/health
+          #   is authed, so 401 = server is running. Now: any non-000 code = up.
           READY=0
           for i in $(seq 1 30); do
-              if curl -sf http://127.0.0.1:8090/api/health >/dev/null 2>&1; then
+              code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health 2>/dev/null || echo 000)
+              if [ "$code" != "000" ]; then
                   READY=1; break
               fi
               sleep 1
@@ -232,9 +249,14 @@ jobs:
           # v18.7.7 P1: READY flag check (was: loop ended without checking if
           #   break happened → test continued with a dead server → cryptic
           #   "Test 1 failed" instead of "server never became ready").
+          # v18.7.8 P0: Accept ANY HTTP response (was: `curl -sf` → 401 counts
+          #   as failure because -f fails on 4xx → READY stays 0 → CI ALWAYS
+          #   fails "never became ready" even though server is up). /api/health
+          #   is authed, so 401 = server is running. Now: any non-000 code = up.
           READY=0
           for i in $(seq 1 30); do
-              if curl -sf http://127.0.0.1:8090/api/health >/dev/null 2>&1; then
+              code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/health 2>/dev/null || echo 000)
+              if [ "$code" != "000" ]; then
                   READY=1; break
               fi
               sleep 1
@@ -331,18 +353,29 @@ jobs:
                   print(f'  WS upgrade OK (101) — received status: mode={s.get("mode","?")}')
 
               # Step 3: Reuse the same ticket → MUST be rejected (single-use)
+              # v18.7.8 P0: Assert HTTP 401 specifically (was: broad except caught
+              #   TimeoutError/ConnectionRefused/OSError → false PASS if server
+              #   crashed or network glitched). Now: only InvalidStatus with
+              #   status_code 401 counts as correct replay rejection. Any other
+              #   exception = test FAIL (surfaces real bugs instead of masking them).
               try:
                   async with websockets.connect(uri, open_timeout=5) as ws:
                       await asyncio.wait_for(ws.recv(), timeout=3)
                   print('  FAIL: reused ticket was accepted — single-use broken!')
                   return False
-              except (websockets.exceptions.InvalidStatus, websockets.exceptions.InvalidURI,
-                      ConnectionRefusedError, OSError, asyncio.TimeoutError) as e:
-                  print(f'  Reuse correctly rejected: {type(e).__name__}')
-                  return True
+              except websockets.exceptions.InvalidStatus as e:
+                  status_code = e.response.status_code
+                  if status_code == 401:
+                      print(f'  Reuse correctly rejected: HTTP 401 (single-use enforced)')
+                      return True
+                  print(f'  FAIL: reuse rejected with HTTP {status_code}, expected 401')
+                  return False
+              except Exception as e:
+                  print(f'  FAIL: reuse failed with unexpected error (not HTTP 401): {type(e).__name__}: {e}')
+                  return False
 
           ok = asyncio.run(test_ws_lifecycle())
-          assert ok, 'WS single-use test FAILED — ticket reuse was accepted'
+          assert ok, 'WS single-use test FAILED — ticket reuse was accepted or rejected with wrong status'
           print('  Test 10: PASS')
           PYEOF
           echo "=== ALL INTEGRATION TESTS PASSED ==="

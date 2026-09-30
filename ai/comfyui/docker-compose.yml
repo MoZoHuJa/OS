@@ -5,7 +5,12 @@ services:
     #   auto-verify in CI. Before the v18.7.7 release goes out, manually check
     #   https://github.com/ai-dock/comfyui/pkgs/container/comfyui for version
     #   tags, then replace `:latest` below with the verified `:vX.Y.Z` tag.
-    image: ghcr.io/ai-dock/comfyui:latest
+    # v18.7.8 P0: Pinned to verified versioned tag (was: :latest → supply-chain
+    #   risk: git commit + identical install.sh + install today → image A, but
+    #   next week → image B without any change in SCARLIX OS). Verified via
+    #   ghcr.io/v2/ai-dock/comfyui/tags/list — latest versioned cuda-12.1.1-base
+    #   tag is v0.2.7. Update deliberately when upgrading, don't let it float.
+    image: ghcr.io/ai-dock/comfyui:v2-cuda-12.1.1-base-22.04-v0.2.7
     container_name: comfyui
     restart: unless-stopped
     ports: ["127.0.0.1:8188:8188"]
