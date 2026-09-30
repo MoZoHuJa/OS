@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+@page {
+    size: 720px 1020px;
+    margin: 0;
+}
+:root {
+    --c-bg: #0a0e1a;
+    --c-bg2: #111827;
+    --c-card: #161e2e;
+    --c-text: #e2e8f0;
+    --c-muted: #94a3b8;
+    --c-accent: #06b6d4;
+    --c-accent2: #14b8a6;
+    --c-warm: #f59e0b;
+    --c-danger: #ef4444;
+}
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 720px;
+    background: var(--c-bg);
+    color: var(--c-text);
+    font-family: 'Noto Sans SC', sans-serif;
+    font-weight: 400;
+    line-height: 1.6;
+}
+@media screen {
+    html {
+        height: auto;
+        display: flex;
+        justify-content: center;
+        background: #222;
+    }
+    body {
+        transform-origin: top center;
+        margin: 20px auto;
+        box-shadow: 0 0 40px rgba(0,0,0,0.5);
+    }
+}
+
+/* === COVER PAGE === */
+.cover {
+    width: 720px;
+    height: 1020px;
+    box-sizing: border-box;
+    break-after: page;
+    overflow: hidden;
+    background: linear-gradient(145deg, #0a0e1a 0%, #0d1424 40%, #0a1520 70%, #050810 100%);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 70px;
+}
+.cover::before {
+    content: '';
+    position: absolute;
+    top: -120px;
+    right: -120px;
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, rgba(6,182,212,0.15) 0%, transparent 70%);
+    border-radius: 50%;
+}
+.cover::after {
+    content: '';
+    position: absolute;
+    bottom: -80px;
+    left: -80px;
+    width: 300px;
+    height: 300px;
+    background: radial-gradient(circle, rgba(20,184,166,0.1) 0%, transparent 70%);
+    border-radius: 50%;
+}
+.cover-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 4px;
+    color: var(--c-accent);
+    text-transform: uppercase;
+    margin-bottom: 24px;
+    position: relative;
+    z-index: 1;
+}
+.cover-title {
+    font-size: 52px;
+    font-weight: 900;
+    line-height: 1.1;
+    margin: 0 0 12px 0;
+    background: linear-gradient(135deg, #06b6d4 0%, #14b8a6 50%, #06b6d4 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    position: relative;
+    z-index: 1;
+}
+.cover-subtitle {
+    font-size: 18px;
+    color: var(--c-muted);
+    font-weight: 300;
+    margin-bottom: 40px;
+    position: relative;
+    z-index: 1;
+}
+.cover-version {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    color: var(--c-accent2);
+    margin-bottom: 60px;
+    position: relative;
+    z-index: 1;
+}
+.cover-stats {
+    display: flex;
+    gap: 40px;
+    position: relative;
+    z-index: 1;
+}
+.stat {
+    text-align: left;
+}
+.stat-num {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--c-text);
+}
+.stat-label {
+    font-size: 11px;
+    color: var(--c-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+.cover-footer {
+    position: absolute;
+    bottom: 50px;
+    left: 70px;
+    right: 70px;
+    display: flex;
+    justify-content: space-between;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--c-muted);
+    z-index: 1;
+}
+.cover-line {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 4px;
+    height: 120px;
+    background: linear-gradient(180deg, var(--c-accent) 0%, transparent 100%);
+    transform: translateY(-50%);
+    z-index: 0;
+}
+
+/* === CONTENT === */
+.main-content {
+    padding: 55px 60px 40px 60px;
+}
+.chapter-header {
+    break-after: avoid;
+    break-inside: avoid;
+    margin-top: 28px;
+    margin-bottom: 20px;
+}
+.section-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--c-accent);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+.section-title {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--c-text);
+    margin: 0 0 10px 0;
+}
+.divider {
+    width: 40px;
+    height: 3px;
+    background: linear-gradient(90deg, var(--c-accent) 0%, var(--c-accent2) 100%);
+    border-radius: 2px;
+    margin-bottom: 18px;
+}
+.body-text {
+    font-size: 14px;
+    color: var(--c-text);
+    line-height: 1.7;
+    margin-bottom: 14px;
+}
+.body-text strong {
+    color: var(--c-accent);
+    font-weight: 600;
+}
+
+/* === CARDS === */
+.card {
+    break-inside: avoid;
+    background: var(--c-card);
+    border: 1px solid rgba(6,182,212,0.15);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 14px;
+    position: relative;
+}
+.card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+.card-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--c-accent);
+    background: rgba(6,182,212,0.1);
+    border: 1px solid rgba(6,182,212,0.3);
+    border-radius: 6px;
+    padding: 2px 8px;
+    min-width: 28px;
+    text-align: center;
+}
+.card-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--c-text);
+    flex: 1;
+}
+.card-icon {
+    font-size: 18px;
+}
+.card-desc {
+    font-size: 12.5px;
+    color: var(--c-muted);
+    line-height: 1.6;
+}
+.card-desc strong {
+    color: var(--c-accent2);
+    font-weight: 500;
+}
+
+/* === TABLE === */
+.spec-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 16px;
+    break-inside: avoid;
+}
+.spec-table th {
+    background: var(--c-card);
+    color: var(--c-accent);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 2px solid rgba(6,182,212,0.3);
+}
+.spec-table td {
+    font-size: 12px;
+    color: var(--c-text);
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.spec-table tr:last-child td {
+    border-bottom: none;
+}
+
+/* === BADGE === */
+.badge {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 20px;
+    margin-right: 6px;
+    margin-bottom: 4px;
+}
+.badge-cyan { background: rgba(6,182,212,0.15); color: var(--c-accent); border: 1px solid rgba(6,182,212,0.3); }
+.badge-teal { background: rgba(20,184,166,0.15); color: var(--c-accent2); border: 1px solid rgba(20,184,166,0.3); }
+.badge-warm { background: rgba(245,158,11,0.15); color: var(--c-warm); border: 1px solid rgba(245,158,11,0.3); }
+.badge-red { background: rgba(239,68,68,0.15); color: var(--c-danger); border: 1px solid rgba(239,68,68,0.3); }
+
+/* === ARCHITECTURE DIAGRAM === */
+.arch {
+    background: var(--c-card);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+    break-inside: avoid;
+}
+.arch-layer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.arch-layer:last-child { border-bottom: none; }
+.arch-layer-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--c-accent);
+    min-width: 60px;
+    font-weight: 600;
+}
+.arch-layer-content {
+    font-size: 12px;
+    color: var(--c-text);
+    flex: 1;
+}
+.arch-layer-content strong { color: var(--c-accent2); }
+
+/* === VISION GRID === */
+.vision-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+}
+.vision-card {
+    break-inside: avoid;
+    background: var(--c-card);
+    border-left: 3px solid var(--c-accent);
+    border-radius: 0 12px 12px 0;
+    padding: 16px 18px;
+    margin-bottom: 12px;
+}
+.vision-card:nth-child(odd) { border-left-color: var(--c-accent2); }
+.vision-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--c-muted);
+    margin-bottom: 4px;
+}
+.vision-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--c-text);
+    margin: 0 0 6px 0;
+}
+.vision-desc {
+    font-size: 12px;
+    color: var(--c-muted);
+    line-height: 1.6;
+    margin: 0;
+}
+.vision-desc strong { color: var(--c-accent); font-weight: 500; }
+.vision-benefit {
+    font-size: 11px;
+    color: var(--c-accent2);
+    margin-top: 6px;
+    font-style: italic;
+}
+
+/* === ENDING === */
+.ending {
+    width: 720px;
+    height: 1020px;
+    box-sizing: border-box;
+    break-before: page;
+    overflow: hidden;
+    background: linear-gradient(145deg, #050810 0%, #0a0e1a 50%, #0d1424 100%);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 70px;
+    text-align: center;
+    position: relative;
+}
+.ending::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 500px;
+    height: 500px;
+    background: radial-gradient(circle, rgba(6,182,212,0.08) 0%, transparent 70%);
+    border-radius: 50%;
+}
+.ending-big {
+    font-size: 36px;
+    font-weight: 900;
+    background: linear-gradient(135deg, #06b6d4 0%, #14b8a6 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 16px;
+    position: relative;
+    z-index: 1;
+}
+.ending-sub {
+    font-size: 14px;
+    color: var(--c-muted);
+    max-width: 400px;
+    line-height: 1.7;
+    position: relative;
+    z-index: 1;
+}
+.ending-footer {
+    position: absolute;
+    bottom: 50px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--c-muted);
+    z-index: 1;
+}
+</style>
+</head>
+<body>
+
+<!-- ============ COVER ============ -->
+<div class="cover">
+    <div class="cover-line"></div>
+    <div class="cover-tag">Sovereign AI Cloud OS</div>
+    <div class="cover-title">SCARLIX OS</div>
+    <div class="cover-subtitle">Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu</div>
+    <div class="cover-version">v18.8.5 — EndeavourOS Edition</div>
+    <div class="cover-stats">
+        <div class="stat">
+            <div class="stat-num">99+</div>
+            <div class="stat-label">Commits</div>
+        </div>
+        <div class="stat">
+            <div class="stat-num">26</div>
+            <div class="stat-label">Tags</div>
+        </div>
+        <div class="stat">
+            <div class="stat-num">12</div>
+            <div class="stat-label">CI Tests</div>
+        </div>
+        <div class="stat">
+            <div class="stat-num">15</div>
+            <div class="stat-label">Go Tests</div>
+        </div>
+    </div>
+    <div class="cover-footer">
+        <span>ScaRgeN Vision Document</span>
+        <span>2025</span>
+    </div>
+</div>
+
+<!-- ============ MAIN CONTENT ============ -->
+<div class="main-content">
+
+    <!-- === CHAPTER 1: CURRENT SYSTEM === -->
+    <div class="chapter-header" style="margin-top: 0;">
+        <div class="section-tag">Chapter 01</div>
+        <div class="section-title">Aktuálny systém v18.8.5</div>
+        <div class="divider"></div>
+    </div>
+
+    <div class="body-text">
+        SCARLIX OS je <strong>bootstrap installer</strong> — žiadne ISO. Spustí sa <code>bash install.sh</code> na čistej EndeavourOS inštalácii a za 5 fáz postaví kompletný AI stack s GPU podporou, Dockerom, a ScarliHQ dashboardom. Všetko je <strong>fail-closed</strong> — ak niečo zlyhá, systém to povie, nie ticho pokračuje.
+    </div>
+
+    <div class="arch">
+        <div class="arch-layer">
+            <div class="arch-layer-label">TIER 1</div>
+            <div class="arch-layer-content"><strong>SGLang</strong> v0.4.4-cu128 — GPU 0, RadixAttention, --disable-flashinfer (Blackwell sm_120 safe)</div>
+        </div>
+        <div class="arch-layer">
+            <div class="arch-layer-label">TIER 2</div>
+            <div class="arch-layer-content"><strong>vLLM</strong> v0.8.0 — GPU 1, TP=1 (experimental, .experimental gate)</div>
+        </div>
+        <div class="arch-layer">
+            <div class="arch-layer-label">TIER 4</div>
+            <div class="arch-layer-content"><strong>BeeLlama</strong> / llama.cpp — CPU offline fallback, Q4_K_M GGUF</div>
+        </div>
+        <div class="arch-layer">
+            <div class="arch-layer-label">FALLBACK</div>
+            <div class="arch-layer-content"><strong>Ollama</strong> 0.5.4 — CPU tertiary, qwen2.5:3b starter model</div>
+        </div>
+        <div class="arch-layer">
+            <div class="arch-layer-label">GATEWAY</div>
+            <div class="arch-layer-content"><strong>LiteLLM</strong> v1.16.19 — unified OpenAI API na :4001, dynamic config z models.yaml</div>
+        </div>
+        <div class="arch-layer">
+            <div class="arch-layer-label">DASH</div>
+            <div class="arch-layer-content"><strong>ScarliHQ</strong> — Go binary, Alpine, token auth, WS ticket system, host-bridge architecture</div>
+        </div>
+    </div>
+
+    <div class="body-text">
+        <strong>Bezpečnostná architektúra:</strong> ScarliHQ kontajner NEMÁ docker.sock, NEMÁ nvidia runtime. Komunikuje len cez súborový bridge — zapisuje <code>desired-mode</code> do <code>bridge-input/</code> (UID 65532), root host-bridge timer (5s) číta cez <strong>Go O_NOFOLLOW atomic reader</strong> a vykonáva privileged operácie. Žiadny TOCTOU, žiadny symlink attack.
+    </div>
+
+    <div class="body-text">
+        <strong>Mode lifecycle:</strong> <code>scarlix-mode ai</code> spustí SGLang → vLLM → BeeLlama → Ollama fallback chain + LiteLLM gateway. <code>scarlix-mode stop</code> zastaví všetko vrátane LiteLLM. Game/Creative/TV módy zastavia AI + uvoľnia VRAM. Healthcheck kontroluje všetky kontajnery + API endpoints.
+    </div>
+
+    <!-- === CHAPTER 2: KEY ACHIEVEMENTS === -->
+    <div class="chapter-header">
+        <div class="section-tag">Chapter 02</div>
+        <div class="section-title">Čo v18.8.5 prináša</div>
+        <div class="divider"></div>
+    </div>
+
+    <table class="spec-table">
+        <tr><th>Oblasť</th><th>Riešenie</th></tr>
+        <tr><td><strong>CI Pipeline</strong></td><td>12 integration testov, Go unit testy, shellcheck, YAML validácia, Docker build, WS lifecycle test, LiteLLM E2E routing + fallback test</td></tr>
+        <tr><td><strong>LiteLLM Dynamic</strong></td><td>generate-litellm-config.sh číta models.yaml → generuje config.yaml pri každom AI štarte. Model-agnostic gateway.</td></tr>
+        <tr><td><strong>SGLang Tuning</strong></td><td>context_length, chunked_prefill_size, max_running_requests z models.yaml → .env → compose. Konfigurovateľné bez zmeny image.</td></tr>
+        <tr><td><strong>Image Pinning</strong></td><td>Všetky Docker images pinned: SGLang v0.4.4-cu128, vLLM v0.8.0, Ollama 0.5.4, llama.cpp digest, LiteLLM main-v1.16.19</td></tr>
+        <tr><td><strong>Self-Healing</strong></td><td>healthcheck_and_restart() kontroluje + opravuje aj LiteLLM gateway. wait_for_healthy v recreate path s API probe.</td></tr>
+        <tr><td><strong>Backup</strong></td><td>restic init kontroluje config file (nielen dir), BACKUP_STATUS tracking, RESTIC_PASSWORD check, early return on init fail</td></tr>
+        <tr><td><strong>Reproducibility</strong></td><td>MusicGen requirements.lock, Video constraints.txt, Wan2GP git commit pin, CI artifact reuse medzi jobmi</td></tr>
+    </table>
+
+    <div class="body-text">
+        <span class="badge badge-cyan">CI GREEN</span>
+        <span class="badge badge-teal">FAIL-CLOSED</span>
+        <span class="badge badge-warm">REPRODUCIBLE</span>
+        <span class="badge badge-cyan">SELF-HEALING</span>
+    </div>
+
+</div>
+
+
+    <!-- === CHAPTER 3: EXISTING VISIONS (1-10) === -->
+    <div class="chapter-header">
+        <div class="section-tag">Chapter 03</div>
+        <div class="section-title">ScaRgeN Visions 1-10</div>
+        <div class="divider"></div>
+    </div>
+
+    <div class="body-text">
+        Pôvodných 10 vízií pre SCARLIX OS v20+ — AI-native operacný systém, kde AI nie je aplikácia ale vrstva ako networking alebo filesystem.
+    </div>
+
+    <div class="vision-grid">
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 01</div>
+            <div class="vision-title">AI-Native Kernel Scheduler</div>
+            <p class="vision-desc">Nahradí systemd timer pre AI workload. <strong>eBPF programy</strong> sledujú nvidia-smi + /proc/meminfo + AI API latency. Keď GPU memory pressure stúpne, scheduler automaticky zníži --max-running-requests bez reštartu. Žiadny AI request nezaseknutý kvôli pacman -Syu.</p>
+            <div class="vision-benefit">Pre nás: zero-latency AI scheduling. Pre iných: AI workload nikdy nezaseknutý OS update.</div>
+        </div>
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 02</div>
+            <div class="vision-title">Neural Model Router (NMR)</div>
+            <p class="vision-desc">Trénujúci router ktorý sa učí latency/cost/quality tradeoff per-user. <strong>Malý ML model</strong> (LogisticRegression) beží na CPU. Analyzuje TTFT + tok/s + context usage a dynamicky routuje. Krátke chaty → Ollama (rýchlejšie), dlhé kontexty → SGLang (lepšie KV cache).</p>
+            <div class="vision-benefit">Pre nás: automaticky najrýchlejší backend. Pre iných: žiadne manuálne prepínanie modelov.</div>
+        </div>
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 03</div>
+            <div class="vision-title">Homomorphic Encryption Layer</div>
+            <p class="vision-desc"><strong>FHE (fully homomorphic encryption)</strong> vrstva medzi klient a AI inference. Requesty sú encrypted end-to-end — ani host nemôže čítať prompt obsah. Pre zdravotné otázky, finančné poradenstvo. OpenFHE alebo Concrete-ML. Optional: scarlix-mode ai --private.</p>
+            <div class="vision-benefit">Pre nás: 100% private AI pre rodinu. Pre iných: first OS s encrypted inference — GDPR-ready.</div>
+        </div>
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 04</div>
+            <div class="vision-title">Federated Learning Mesh</div>
+            <p class="vision-desc">Viacero SCARLIX inštalácií (doma, v chate, u kamaráta) zdieľajú <strong>KV cache fragmenty</strong> cez Tailscale mesh bez zdieľania modelov. Latencia klesá, privacy zostáva. 3 nodes = 3x viac KV cache kapacity bez ďalšej VRAM.</p>
+            <div class="vision-benefit">Pre nás: AI na chate rovnako rýchla ako doma. Pre iných: komunita bez cloud dependency.</div>
+        </div>
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 05</div>
+            <div class="vision-title">Voice-First OS Shell</div>
+            <p class="vision-desc"><strong>Whisper STT + Piper TTS</strong> integrované do shell úrovne. "Scarlix, spusti AI" nahlas. Chybové hlášky sa čítajú nahlas. Dashboard ovládaný hlasom — žiadny monitor nepotrebný pre základné operácie. Wake word: "Scarlix".</p>
+            <div class="vision-benefit">Pre nás: deti a starí rodičia môžu používať AI bez klávesnice. Pre iných: first voice-native Linux OS.</div>
+        </div>
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 06</div>
+            <div class="vision-title">Self-Healing BTRFS Snapshots</div>
+            <p class="vision-desc"><strong>BTRFS send/receive</strong> pre incremental AI model snapshots. Keď healthcheck zlyhá 3x po sebe, ScaRgeN automaticky rollbackne /models na funkčný snapshot + reštartuje engine. Zero-downtime recovery. Snapper pre /models subvolume.</p>
+            <div class="vision-benefit">Pre nás: žiadne manuálne opravy po update. Pre iných: self-healing OS ako Kubernetes pre kontajnery.</div>
+        </div>
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 07</div>
+            <div class="vision-title">Quantum-Safe Authentication</div>
+            <p class="vision-desc"><strong>Kyber/Dilithium</strong> post-quantum kryptografia. Bearer token auth nahradený PQ signatures + WebAuthn (fingerprint/FaceID). Future-proof proti quantum hrozbám. Každý rodinný člen má vlastný PQ keypair. liboqs (Open Quantum Safe).</p>
+            <div class="vision-benefit">Pre nás: 10+ rokov lifetime zabezpečené. Pre iných: first quantum-safe home OS.</div>
+        </div>
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 08</div>
+            <div class="vision-title">Edge AI Cache (EAC)</div>
+            <p class="vision-desc"><strong>Semantic deduplication cache</strong> — embedding similarity > 0.95 = cache hit. Rodinné otázky sa opakujú ("aký je recept na..."). Cache odpovede pri Tailscale gateway. TTS odpovede sa tiež cacheujú. Cache invalidácia pri model update (hash check).</p>
+            <div class="vision-benefit">Pre nás: instant odpoveď na opakované otázky. Pre iných: 10x nižšie GPU využitie pre rodinné použitie.</div>
+        </div>
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 09</div>
+            <div class="vision-title">GPU Composable Fabric</div>
+            <p class="vision-desc"><strong>Dynamic multi-GPU workload balancing</strong>. 2 GPU (RTX 5060 Ti + RTX 4060 Ti) — SGLang na GPU0 pre chat, vLLM na GPU1 pre code generation. NMR posiela GPU affinity s requestom. Docker compose s NVIDIA_VISIBLE_DEVICES sa dynamicky mení.</p>
+            <div class="vision-benefit">Pre nás: oba GPU využité efektívne. Pre iných: automatické škálovanie AI podľa load.</div>
+        </div>
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 10</div>
+            <div class="vision-title">Zero-Knowledge Telemetry</div>
+            <p class="vision-desc"><strong>Differential privacy</strong> — každá metrika má pridaný noise (Laplace mechanism). avg_latency = real_avg + noise(ε=0.1). Trend je viditeľný, konkrétne hodnoty nie. Lokálny Grafana bez privacy leaku. Optional: --telemetry=strict vypne aj ZK.</p>
+            <div class="vision-benefit">Pre nás: vieme ako systém funguje bez leaku. Pre iných: first privacy-preserving telemetry OS.</div>
+        </div>
+
+    </div>
+
+    <!-- === CHAPTER 4: NEW VISIONS (11-15) === -->
+    <div class="chapter-header">
+        <div class="section-tag">Chapter 04</div>
+        <div class="section-title">ScaRgeN Visions 11-15</div>
+        <div class="divider"></div>
+    </div>
+
+    <div class="body-text">
+        5 nových vízií — rozšírenie smerom k <strong>multi-modal AI</strong>, <strong>decentralizovanej autonómii</strong>, a <strong>učiacej sa infraštruktúre</strong>.
+    </div>
+
+    <div class="vision-grid">
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 11</div>
+            <div class="vision-title">Autonomous Agent Orchestrator (AAO)</div>
+            <p class="vision-desc"><strong>Meta-agent ktorý koordinuje ostatných agentov</strong> (Hermes, OpenCode, Jarvis). AAO má prístup ku všetkým systémovým metrikám a dokáže sám rozhodnúť: "GPU je voľné, spustím background fine-tuning", alebo "Ollama pomalá, prepni na BeeLlama". Agenti komunikujú cez <strong>MCP (Model Context Protocol)</strong> — štandardizovaný tool-calling. AAO učí sa z úspešných akcií a vytvára runbooky pre budúce situácie.</p>
+            <div class="vision-benefit">Pre nás: OS sa sám optimalizuje bez zásahu. Pre iných: first self-managing AI infrastructure — ako Kubernetes operator alebo pre domáci AI stack.</div>
+        </div>
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 12</div>
+            <div class="vision-title">Multi-Modal Pipeline Studio</div>
+            <p class="vision-desc"><strong>Vizuálny drag-and-drop editor</strong> pre AI pipeline (podobne ako ComfyUI ale pre celý stack). Spoj SGLang (text) + ComfyUI (image) + MusicGen (audio) + Whisper (STT) do jedného workflow. "Nahraj fotku → AI popíše → vygeneruj hudbu na základe popisu → TTS prečíta". Pipeline sa ukladá ako <strong>DAG (Directed Acyclic Graph)</strong> — možno zdieľať ako "recepty". Verzovanie pipeline ako git.</p>
+            <div class="vision-benefit">Pre nás: komplexné multi-modal workflows bez kódovania. Pre iných: first visual AI pipeline OS — creator-friendly.</div>
+        </div>
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 13</div>
+            <div class="vision-title">Adaptive Resource Governor (ARG)</div>
+            <p class="vision-desc"><strong>AI-driven resource allocation</strong> ktorý sa učí z usage patternov. ARG vie: "po večeri rodina pozerá film → CPU na Jellyfin, GPU idle na background training". "Ráno coding session → GPU na vLLM, CPU na indexovanie". Reinforcement learning model (PPO) na CPU ktorý optimalizuje <strong>QoS (Quality of Service)</strong> pre každého používateľa. Automaticky nastavuje cgroups, Docker resource limits, GPU affinity.</p>
+            <div class="vision-benefit">Pre nás: systém sa prispôsobí denným rutinám. Pre iných: first OS ktorý sám riadi zdroje podľa toho kto ho používa.</div>
+        </div>
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 14</div>
+            <div class="vision-title">Decentralized Model Marketplace</div>
+            <p class="vision-desc"><strong>P2P model sharing</strong> cez IPFS/WebTorrent — komunita SCARLIX používateľov zdieľa fine-tuned modely bez centrálneho hubu. "Natrénoval som model na slovenské recipes — zdieľam ako SCARLIX pack". Model integrity overená cez <strong>content addressing (CIDs)</strong> + podpisy. Stiahnutie modelu = automatické healthcheck + benchmark + integrácia do NMR. žiadny App Store, žiadny vendor lock-in.</p>
+            <div class="vision-benefit">Pre nás: slovenská AI komunita môže zdieľať models. Pre iných: first decentralized AI model ecosystem — ako Homebrew ale pre AI.</div>
+        </div>
+
+        <div class="vision-card">
+            <div class="vision-num">VISION 15</div>
+            <div class="vision-title">Predictive Maintenance Engine</div>
+            <p class="vision-desc"><strong>ML model ktorý predpovedá systémové problémy</strong> skôr ako nastanú. Analyzuje: GPU teplotu trend, VRAM fragmentáciu, disk I/O latency, Docker container restart count, SGLang TTFT degradation. "GPU temp stúpa 2°C/hod + VRAM 92% → OOM za ~4 hodiny". Automaticky: zníži max_running_requests, upozorní používateľa, pripraví BeeLlama fallback. <strong>Time-series forecasting</strong> (Prophet alebo LSTM) na historických metrikách.</p>
+            <div class="vision-benefit">Pre nás: problémy riešené skôr ako nastanú. Pre iných: first predictive home server OS — ako Tesla preventative maintenance ale pre AI.</div>
+        </div>
+
+    </div>
+
+    <!-- === CHAPTER 5: ROADMAP === -->
+    <div class="chapter-header">
+        <div class="section-tag">Chapter 05</div>
+        <div class="section-title">Implementation Roadmap</div>
+        <div class="divider"></div>
+    </div>
+
+    <table class="spec-table">
+        <tr><th>Fáza</th><th>Vízie</th><th>Timeline</th></tr>
+        <tr><td><strong>v20.0</strong></td><td>#5 Voice Shell + #6 Self-Healing + #8 Edge Cache</td><td>2026 Q2</td></tr>
+        <tr><td><strong>v21.0</strong></td><td>#1 Kernel Scheduler + #2 Neural Router + #9 GPU Fabric</td><td>2026 Q4</td></tr>
+        <tr><td><strong>v22.0</strong></td><td>#11 AAO + #12 Pipeline Studio + #15 Predictive</td><td>2027 Q2</td></tr>
+        <tr><td><strong>v23.0</strong></td><td>#3 FHE + #7 Quantum-Safe + #13 ARG</td><td>2027 Q4</td></tr>
+        <tr><td><strong>v24.0</strong></td><td>#4 Federated Mesh + #10 ZK Telemetry + #14 Marketplace</td><td>2028 Q2</td></tr>
+    </table>
+
+    <div class="body-text">
+        <strong>ScaRgeN Manifesto:</strong> ScaRgeN nie je len ďalšia verzia SCARLIX OS. Je to <strong>prvý OS navrhnutý od základov pre AI</strong> — AI nie je aplikácia, je vrstva ako networking alebo filesystem. Privacy je default. Self-healing je štandard. Voice je first-class. Quantum-ready.
+    </div>
+
+</div>
+
+<!-- ============ ENDING ============ -->
+<div class="ending">
+    <div class="ending-big">ScaRgeN</div>
+    <div class="ending-sub">
+        Scar + Generation — nová generácia AI-native OS.<br>
+        v20.0 target: 2026 Q2.<br>
+        Začneme s Voice Shell, Self-Healing Snapshots, a Edge AI Cache.
+    </div>
+    <div class="ending-footer">SCARLIX OS v18.8.5 · ScaRgeN Vision · 2025</div>
+</div>
+
+</body>
+</html>

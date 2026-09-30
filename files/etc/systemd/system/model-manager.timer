@@ -1,5 +1,5 @@
 [Unit]
-Description=SCARLIX OS v18.8.5 — Weekly Model Manager Timer
+Description=SCARLIX OS v18.8.6 — Weekly Model Manager Timer
 Requires=model-manager.service
 
 [Timer]

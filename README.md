@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.8.5 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.8.6 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v18.8.5</h1>
+<h1 align="center">SCARLIX OS v18.8.6</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.8.5"><img alt="Version" src="https://img.shields.io/badge/version-v18.8.5-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.8.6"><img alt="Version" src="https://img.shields.io/badge/version-v18.8.6-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -20,9 +20,9 @@
 
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
-> **LiteLLM Gateway** (v18.8.5+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
+> **LiteLLM Gateway** (v18.8.6+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v18.8.5 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v18.8.6 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v18.8.5   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v18.8.6   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -52,14 +52,14 @@ scarlix-mode ai
 
 ---
 
-## 🆕 What's New in v18.8.5 (vs v18.8.5)
+## 🆕 What's New in v18.8.6 (vs v18.8.6)
 
 **Dynamic LiteLLM config + offline mode + backup hardening + Arch risk docs.** 7 fixes from P0/P1 review.
 
-v18.8.5 introduced `generate-litellm-config.sh` (generates LiteLLM `config.yaml` from `models.yaml`), but **CI Test 12 still validated the *committed static* `ai/litellm/config.yaml`** — production could be stale while CI passed. Also `offline` mode had a broken `api_url`, `restic-backup` continued after init failure, and `doctor fix_generate_env` had a wrong fallback path.
+v18.8.6 introduced `generate-litellm-config.sh` (generates LiteLLM `config.yaml` from `models.yaml`), but **CI Test 12 still validated the *committed static* `ai/litellm/config.yaml`** — production could be stale while CI passed. Also `offline` mode had a broken `api_url`, `restic-backup` continued after init failure, and `doctor fix_generate_env` had a wrong fallback path.
 
-### v18.8.5 fixes (7)
-| # | Fix | v18.8.5 Problem | v18.8.5 Solution |
+### v18.8.6 fixes (7)
+| # | Fix | v18.8.6 Problem | v18.8.6 Solution |
 |---|-----|-----------------|-------------------|
 | P0 | **CI Test 12 validates GENERATED config** | Test 12 read committed `ai/litellm/config.yaml` → could pass while production config was stale (generator output never tested) | Run `generate-litellm-config.sh` with a test `models.yaml`, validate generated `config.yaml` + assert model IDs match input |
 | P1 | **Dynamic LiteLLM config from `models.yaml`** | `ai/litellm/config.yaml` had hardcoded model IDs — changing model in `models.yaml` didn't update routing | `generate-litellm-config.sh` derives IDs (SGLang `basename`, BeeLlama `hf_file`, Ollama `model`) from `models.yaml` |
@@ -69,7 +69,7 @@ v18.8.5 introduced `generate-litellm-config.sh` (generates LiteLLM `config.yaml`
 | P2 | **CI Test 12 `KeyError` on missing `model_name`** | `m['model_name']` → cryptic traceback if any entry missing the field | `m.get('model_name', '<MISSING>')` → clean FAIL line |
 | P2 | **Arch-specific risks documented** | Calamares BTRFS default, AUR `nvidia-container-toolkit`, etc. undocumented → users hit known pitfalls | Docs section listing Arch-specific risks + workarounds (Calamares BTRFS, AUR nvidia-container-toolkit, host-bridge `/var/lock` `mkdir`) |
 
-### Dynamic config flow (v18.8.5+, hardened v18.8.5)
+### Dynamic config flow (v18.8.6+, hardened v18.8.6)
 ```
 models.yaml  →  generate-litellm-config.sh  →  ai/litellm/config.yaml
                        ↑ (called by install.sh + scarlix-mode generate_env_file())
