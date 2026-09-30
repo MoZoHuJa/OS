@@ -154,7 +154,12 @@ ok "Repo at $REPO_DIR"
 
 # Detect NVIDIA GPUs
 # P0 FIX v17.9: NVIDIA_COUNT without double-0 (grep -c returns 0 + || echo 0 = "0\n0")
-NVIDIA_GPUS=$(lspci -nn 2>/dev/null | grep -iE 'NVIDIA.*(VGA|3D)' || true)
+# v18.8.6 P0-1: lspci must be present (was: silent failure → NVIDIA_COUNT=0 → driver skipped)
+command -v lspci >/dev/null 2>&1 || crit "lspci not found — install pciutils before GPU detection"
+# v18.8.6 P0-1: lspci emits "VGA compatible controller: NVIDIA Corporation ..."
+#   (NVIDIA comes AFTER controller type). Old regex required NVIDIA before VGA/3D
+#   → matched nothing → NVIDIA_COUNT=0 → driver skipped → no GPU.
+NVIDIA_GPUS=$(lspci -nn 2>/dev/null | grep -iE '(VGA compatible controller|3D controller|Display controller).*NVIDIA' || true)
 NVIDIA_COUNT=$(echo "$NVIDIA_GPUS" | grep -c . 2>/dev/null || true)
 NVIDIA_COUNT=${NVIDIA_COUNT:-0}
 # Ensure it's a single integer
@@ -331,16 +336,26 @@ else
     # Atomic install: driver + both kernels + headers
     log "Installing NVIDIA driver (atomic: driver + linux-lts + headers)..."
     if [ "$GPU_IS_TURING_PLUS" = true ]; then
-      pacman -S --noconfirm --needed nvidia-open nvidia-open-lts nvidia-utils lib32-nvidia-utils nvidia-settings linux-lts linux-lts-headers >> "$LOG_FILE" 2>&1 && ok "NVIDIA open + linux-lts + headers" || {
-        crit "NVIDIA open driver install failed"
-        pacman -S --noconfirm --needed nvidia nvidia-lts nvidia-utils lib32-nvidia-utils linux-lts linux-lts-headers >> "$LOG_FILE" 2>&1 && ok "NVIDIA proprietary (fallback)" || crit "NVIDIA proprietary"
-      }
+      # v18.8.6 P0-2: was `pacman ... && ok || { crit ...; pacman ... && ok || crit ... }`
+      #   crit() exits 1 → fallback pacman never ran. Now: if/else — crit ONLY if BOTH fail.
+      if pacman -S --noconfirm --needed nvidia-open nvidia-open-lts nvidia-utils lib32-nvidia-utils linux-lts linux-lts-headers >> "$LOG_FILE" 2>&1; then
+        ok "NVIDIA open (Turing+) + nvidia-open-lts + linux-lts + headers (atomic)"
+      else
+        warn "NVIDIA open failed — trying proprietary NVIDIA driver (fallback)"
+        if pacman -S --noconfirm --needed nvidia nvidia-lts nvidia-utils lib32-nvidia-utils linux-lts linux-lts-headers >> "$LOG_FILE" 2>&1; then
+          ok "NVIDIA proprietary (fallback) + linux-lts + headers"
+        else
+          crit "Both NVIDIA open and proprietary driver installation failed"
+        fi
+      fi
     else
       pacman -S --noconfirm --needed nvidia nvidia-lts nvidia-utils lib32-nvidia-utils nvidia-settings linux-lts linux-lts-headers >> "$LOG_FILE" 2>&1 && ok "NVIDIA proprietary + linux-lts + headers" || crit "NVIDIA install"
     fi
 
     log "Installing CUDA + cuDNN..."
-    pacman -S --noconfirm --needed cuda cudnn >> "$LOG_FILE" 2>&1 && ok "CUDA + cuDNN" || fail "CUDA + cuDNN"
+    # v18.8.6 P1-1: CUDA install is crit (was: fail → checkpoint written despite CUDA missing
+    #   → AI inference broken). If NVIDIA is present, CUDA is required for AI.
+    pacman -S --noconfirm --needed cuda cudnn >> "$LOG_FILE" 2>&1 && ok "CUDA + cuDNN" || crit "CUDA + cuDNN installation failed (required for AI inference)"
 
     pacman -Q linux-lts >/dev/null 2>&1 && info "linux-lts: $(pacman -Q linux-lts)" || crit "linux-lts not installed"
 
@@ -386,14 +401,15 @@ else
   if command -v yay >/dev/null 2>&1; then
     ok "yay already installed"
   else
-    YAY_BUILD="/tmp/yay-build"
-    rm -rf "$YAY_BUILD"
-    if sudo -u "$REAL_USER" git clone https://aur.archlinux.org/yay.git "$YAY_BUILD" >> "$LOG_FILE" 2>&1; then
-      sudo -u "$REAL_USER" bash -c "cd $YAY_BUILD && makepkg -si --noconfirm" >> "$LOG_FILE" 2>&1 && ok "yay installed" || fail "yay makepkg"
+    # v18.8.6 P1-3: Use mktemp -d for AUR build dir (was: /tmp/yay-build predictable path
+    #   → symlink-race / pre-populated dir could inject modified PKGBUILD).
+    YAY_BUILD_DIR=$(mktemp -d) || crit "Cannot create temp dir for AUR build"
+    if sudo -u "$REAL_USER" git clone https://aur.archlinux.org/yay.git "$YAY_BUILD_DIR" >> "$LOG_FILE" 2>&1; then
+      sudo -u "$REAL_USER" bash -c "cd $YAY_BUILD_DIR && makepkg -si --noconfirm" >> "$LOG_FILE" 2>&1 && ok "yay installed" || fail "yay makepkg"
     else
       fail "yay git clone"
     fi
-    rm -rf "$YAY_BUILD"
+    rm -rf "$YAY_BUILD_DIR"
   fi
 
   # Q5a: nvidia-container-toolkit fail → CRIT (before Docker start)
@@ -417,8 +433,13 @@ else
   # v17.8: Restart Docker to ensure nvidia-ctk runtime is loaded
   if [ "$NVIDIA_COUNT" -gt 0 ]; then
     log "Restarting Docker to apply NVIDIA runtime..."
-    systemctl restart docker >> "$LOG_FILE" 2>&1 || true
-    sleep 2
+    # v18.8.6 P1-2: Docker restart fail-closed (was: || true → GPU runtime not active → SGLang/vLLM fail later)
+    if ! systemctl restart docker >> "$LOG_FILE" 2>&1; then
+      log "Docker restart failed — retrying in 3s..."
+      sleep 3
+      systemctl restart docker >> "$LOG_FILE" 2>&1 || crit "Docker restart failed after NVIDIA runtime configuration"
+    fi
+    sleep 2  # Wait for Docker socket to be ready
     # Verify GPU visibility in Docker
     if docker info 2>/dev/null | grep -qi "Runtimes.*nvidia"; then
       ok "Docker NVIDIA runtime verified"
