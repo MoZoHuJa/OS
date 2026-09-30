@@ -28,8 +28,8 @@ if [ -f /etc/scarlix/.env ]; then
   grep -q "^RESTIC_PASSWORD=" /etc/scarlix/.env || echo "RESTIC_PASSWORD=$(openssl rand -base64 24)" >> /etc/scarlix/.env
   grep -q "^BUZZ_POSTGRES_PASSWORD=" /etc/scarlix/.env || echo "BUZZ_POSTGRES_PASSWORD=$(openssl rand -base64 24)" >> /etc/scarlix/.env
   grep -q "^BUZZ_MINIO_PASSWORD=" /etc/scarlix/.env || echo "BUZZ_MINIO_PASSWORD=$(openssl rand -base64 24)" >> /etc/scarlix/.env
-  grep -q "^JWT_SECRET=" /etc/scarlix/.env || echo "JWT_SECRET=$(openssl rand -base64 64)" >> /etc/scarlix/.env
-  grep -q "^STORAGE_ENCRYPTION_KEY=" /etc/scarlix/.env || echo "STORAGE_ENCRYPTION_KEY=$(openssl rand -base64 64)" >> /etc/scarlix/.env
+  grep -q "^JWT_SECRET=" /etc/scarlix/.env || echo "JWT_SECRET=$(openssl rand -hex 32)" >> /etc/scarlix/.env
+  grep -q "^STORAGE_ENCRYPTION_KEY=" /etc/scarlix/.env || echo "STORAGE_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> /etc/scarlix/.env
   grep -q "^STEAM_PASSWORD=" /etc/scarlix/.env || echo "STEAM_PASSWORD=$(openssl rand -base64 24)" >> /etc/scarlix/.env
   grep -q "^SCARLIHQ_TOKEN=" /etc/scarlix/.env || echo "SCARLIHQ_TOKEN=$(openssl rand -hex 32)" >> /etc/scarlix/.env
   # v18.8.2 P0: LITELLM_MASTER_KEY (was: missing → LiteLLM compose got empty value
@@ -70,8 +70,8 @@ N8N_PASSWORD=$(openssl rand -base64 24)
 RESTIC_PASSWORD=$(openssl rand -base64 24)
 BUZZ_POSTGRES_PASSWORD=$(openssl rand -base64 24)
 BUZZ_MINIO_PASSWORD=$(openssl rand -base64 24)
-JWT_SECRET=$(openssl rand -base64 64)
-STORAGE_ENCRYPTION_KEY=$(openssl rand -base64 64)
+JWT_SECRET=$(openssl rand -hex 32)
+STORAGE_ENCRYPTION_KEY=$(openssl rand -hex 32)
 STEAM_PASSWORD=$(openssl rand -base64 24)
 SCARLIHQ_TOKEN=$(openssl rand -hex 32)
 LITELLM_MASTER_KEY=sk-scarlix-$(openssl rand -hex 32)

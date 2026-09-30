@@ -7,6 +7,9 @@
 
 set -euo pipefail
 
+# v18.8.6 P1: Default trigger if no arg (was: $1 empty → tag "Trigger: " with empty value)
+TRIGGER="${1:-pacman}"
+
 BACKUP_REPO="/mnt/backup/restic/docker-volumes"
 BACKUP_TARGET="/var/lib/docker/volumes"
 TIMESTAMP=$(date '+%Y-%m-%d_%H%M%S')
@@ -19,7 +22,7 @@ log() {
 }
 
 log "=== SCARLIX Docker Volume Backup (pre-pacman) ==="
-log "Trigger: $1 (triggered by pacman hook)"
+log "Trigger: $TRIGGER (triggered by pacman hook)"
 
 # Check if Docker is running
 if ! docker info >/dev/null 2>&1; then
@@ -54,6 +57,18 @@ if [ -z "${RESTIC_PASSWORD:-}" ]; then
 fi
 export RESTIC_PASSWORD
 
+# v18.8.6 P1: Verify backup disk is mounted (was: wrote to root filesystem
+#   if /mnt/backup not mounted — restic would silently create the repo dir on
+#   the root filesystem, filling /. Now: check parent is a mountpoint, exit
+#   early with NO_MOUNTPOINT status so root filesystem is never written to.)
+if ! mountpoint -q "$(dirname "$BACKUP_REPO")" 2>/dev/null; then
+  log "⚠ Backup directory parent not a mountpoint — backup may write to root filesystem"
+  log "  (expected: /mnt/backup mounted. Got: $(df "$(dirname "$BACKUP_REPO")" 2>/dev/null | tail -1 | awk '{print $1}'))"
+  BACKUP_STATUS="NO_MOUNTPOINT"
+  log "Backup status: $BACKUP_STATUS"
+  exit 0
+fi
+
 # Check if restic backup repo exists, init if not
 # v18.8.5 P0 (P0-3): Check for restic config file, not directory (was: [ ! -d ]
 #   → mkdir -p created the dir → next run [ ! -d ] was false → restic init was
@@ -79,7 +94,7 @@ fi
 log "Backing up $BACKUP_TARGET → $BACKUP_REPO"
 if restic backup --repo "$BACKUP_REPO" "$BACKUP_TARGET" \
   --tag "pre-pacman" \
-  --tag "$1" \
+  --tag "$TRIGGER" \
   --tag "timestamp-$TIMESTAMP" >> "$LOG_FILE" 2>&1; then
   log "✓ Docker volumes backed up successfully"
 
