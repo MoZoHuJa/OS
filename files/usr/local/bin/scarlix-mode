@@ -234,7 +234,12 @@ dump_vram() {
     ollama_model=$(yq -r '.ollama.model // "qwen2.5:3b"' "$MODELS_YAML" 2>/dev/null || echo "qwen2.5:3b")
     [ "$ollama_model" = "null" ] && ollama_model="qwen2.5:3b"
   fi
-  curl -s -X POST "http://localhost:11435/api/generate" -d "{\"model\":\"$ollama_model\",\"keep_alive\":0}" >/dev/null 2>&1 || true
+  # v18.8.5 P0: Fallback to default Ollama port 11434 (was: only 11435 — our
+  #   mapped port. If Ollama is listening on 11434 instead, keep_alive:0 never
+  #   got sent → model stayed in RAM → VRAM leak on mode switch. Now: try 11435
+  #   first, fall back to 11434, then `|| true` so dump_vram never aborts.)
+  curl -s -X POST "http://localhost:11435/api/generate" -d "{\"model\":\"$ollama_model\",\"keep_alive\":0}" >/dev/null 2>&1 || \
+    curl -s -X POST "http://localhost:11434/api/generate" -d "{\"model\":\"$ollama_model\",\"keep_alive\":0}" >/dev/null 2>&1 || true
   # v18.8.2 P1: Also stop LiteLLM gateway (was: only AI engines stopped → LiteLLM
   #   kept running pointing to dead backends → /v1/chat/completions would hang.)
   docker stop sglang vllm beellama ollama-agent litellm 2>/dev/null || true
@@ -739,6 +744,11 @@ case "$MODE" in
       # v18.8 P0: Removed `local` (was: SC2168 — 'local' is only valid in functions;
       #   creative) is a top-level case branch, not a function. shellcheck -S error
       #   failed CI. Now: plain assignment without local.)
+      # v18.8.5 P2: comfyui_status/comfyui_health are intentionally global (case
+      #   branch, not function — `local` would be SC2168). They leak into global
+      #   scope but are overwritten on every creative-mode invocation, so no stale
+      #   state persists across runs. Wrapping in a subshell `( )` would also work
+      #   but adds an extra fork for no real benefit here.
       comfyui_status=""
       comfyui_health=""
       comfyui_status=$(docker inspect -f '{{.State.Status}}' comfyui 2>/dev/null || echo "missing")
@@ -876,7 +886,11 @@ case "$MODE" in
     fi
     if $DC -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
       # v18.6 P1: Wait for healthy before writing state (was: up -d → immediate "offline")
-      if wait_for_healthy "beellama" 120; then
+      # v18.8.5 P0: Pass api_url (http://127.0.0.1:11438/health) so wait_for_healthy
+      #   actually probes the BeeLlama HTTP API. Without it, when BeeLlama has no
+      #   HEALTHCHECK (health=none), wait_for_healthy accepts none+running as OK
+      #   WITHOUT probing the API → container could be running but API deadlocked.
+      if wait_for_healthy "beellama" 120 http://127.0.0.1:11438/health; then
         log "  ✓ BeeLlama started"
         echo "offline" | tee "$STATE_FILE" >/dev/null
       else
