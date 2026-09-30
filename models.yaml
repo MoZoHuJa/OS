@@ -1,4 +1,4 @@
-# SCARLIX OS v18.8.3 — EndeavourOS Edition — Model-Agnostic Configuration
+# SCARLIX OS v18.8.5 — EndeavourOS Edition — Model-Agnostic Configuration
 #
 # v17.9.7: flashinfer disabled in SGLang compose (--disable-flashinfer) — Blackwell sm_120 safe.
 #   `flashinfer: false` documents this (compose is the source of truth for the flag).
