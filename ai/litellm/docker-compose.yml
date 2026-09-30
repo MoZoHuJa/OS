@@ -17,7 +17,10 @@ services:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
     networks: [scarlix-net]
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:4000/health"]
+      # v18.8.6 P0: /health requires auth when master_key is set → 401 → container
+      #   marked unhealthy → healthcheck_and_restart recreates it every cycle.
+      #   /health/liveliness is a liveness probe that does NOT require auth.
+      test: ["CMD", "curl", "-sf", "http://localhost:4000/health/liveliness"]
       interval: 15s
       timeout: 5s
       retries: 5

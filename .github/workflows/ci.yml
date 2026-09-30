@@ -95,6 +95,30 @@ jobs:
           done
           echo "All compose files validated"
 
+      - name: Validate Docker Compose configs
+        run: |
+          # v18.8.6 P2: docker compose config validation (was: only YAML syntax checked,
+          #   not interpolation/profiles/env references)
+          # Create a test .env with all required vars
+          cat > /tmp/test-scarlix.env << 'TESTEOF'
+          SCARLIHQ_TOKEN=test-token
+          LITELLM_MASTER_KEY=sk-test-key
+          SCARLIX_VERSION=18.8.6
+          SGLANG_MODEL_PATH=/models/test
+          VLLM_MODEL_PATH=/models/test
+          LLAMACPP_MODEL_PATH=/models/test.gguf
+          SGLANG_MEM_FRACTION=0.85
+          VLLM_GPU_UTIL=0.85
+          SGLANG_CONTEXT_LENGTH=32768
+          SGLANG_CHUNKED_PREFILL=4096
+          SGLANG_MAX_RUNNING=4
+          TESTEOF
+          find . -name 'docker-compose*.yml' -not -path './.git/*' | while read f; do
+            echo "Validating $f..."
+            docker compose --env-file /tmp/test-scarlix.env -f "$f" config --quiet 2>&1 || { echo "FAIL: $f"; exit 1; }
+          done
+          echo "All compose configs valid"
+
   # v17.9.8 P2: Go build + vet + test for ScarliHQ (catches compile errors before release)
   go-build:
     runs-on: ubuntu-latest
@@ -576,9 +600,25 @@ jobs:
           model_names = [m.get('model_name', '<MISSING>') for m in model_list]
 
           # Verify model IDs match models.yaml input (generated config must
-          # reflect the source models.yaml, not a stale committed snapshot)
-          sglang_entry = [m for m in model_list if m.get('model_name') == 'scarlix-default'][0]
-          assert 'TestModel-AWQ' in sglang_entry['litellm_params']['model'], f"expected TestModel-AWQ, got {sglang_entry['litellm_params']['model']}"
+          # reflect the source models.yaml, not a stale committed snapshot).
+          # v18.8.6 P1-1: safe access — if scarlix-default is missing, this
+          #   previously crashed with IndexError before reaching the clean
+          #   `errors`-based FAIL below, producing an opaque traceback instead
+          #   of a clear test failure message.
+          sglang_entries = [m for m in model_list if m.get('model_name') == 'scarlix-default']
+          if not sglang_entries:
+              errors.append("scarlix-default not found in model_list (cannot verify model ID)")
+          else:
+              assert 'TestModel-AWQ' in sglang_entries[0]['litellm_params']['model'], f"expected TestModel-AWQ, got {sglang_entries[0]['litellm_params']['model']}"
+              # v18.8.6 P1-1: also assert Ollama + BeeLlama backend model IDs,
+              #   not just SGLang (was: only SGLang ID verified → silent drift
+              #   of ollama/beellama model strings could pass CI).
+              ollama_entries = [m for m in model_list if m.get('model_name') == 'scarlix-ollama']
+              if ollama_entries:
+                  assert 'test-model:3b' in ollama_entries[0]['litellm_params']['model'], f"expected test-model:3b, got {ollama_entries[0]['litellm_params']['model']}"
+              bee_entries = [m for m in model_list if m.get('model_name') == 'scarlix-beellama']
+              if bee_entries:
+                  assert 'TestModel-Q4_K_M.gguf' in bee_entries[0]['litellm_params']['model'], f"expected TestModel-Q4_K_M.gguf, got {bee_entries[0]['litellm_params']['model']}"
 
           # Check scarlix-default exists
           if 'scarlix-default' not in model_names:

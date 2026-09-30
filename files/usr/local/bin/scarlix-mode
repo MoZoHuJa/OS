@@ -238,8 +238,10 @@ dump_vram() {
   #   mapped port. If Ollama is listening on 11434 instead, keep_alive:0 never
   #   got sent → model stayed in RAM → VRAM leak on mode switch. Now: try 11435
   #   first, fall back to 11434, then `|| true` so dump_vram never aborts.)
-  curl -s -X POST "http://localhost:11435/api/generate" -d "{\"model\":\"$ollama_model\",\"keep_alive\":0}" >/dev/null 2>&1 || \
-    curl -s -X POST "http://localhost:11434/api/generate" -d "{\"model\":\"$ollama_model\",\"keep_alive\":0}" >/dev/null 2>&1 || true
+  # v18.8.6 P1: --max-time 10 (was: no timeout → curl could hang on dead Ollama
+  #   API → mode switch blocked indefinitely. Now: bounded 10s per attempt.)
+  curl -s --max-time 10 -X POST "http://localhost:11435/api/generate" -d "{\"model\":\"$ollama_model\",\"keep_alive\":0}" >/dev/null 2>&1 || \
+    curl -s --max-time 10 -X POST "http://localhost:11434/api/generate" -d "{\"model\":\"$ollama_model\",\"keep_alive\":0}" >/dev/null 2>&1 || true
   # v18.8.2 P1: Also stop LiteLLM gateway (was: only AI engines stopped → LiteLLM
   #   kept running pointing to dead backends → /v1/chat/completions would hang.)
   docker stop sglang vllm beellama ollama-agent litellm 2>/dev/null || true
@@ -265,6 +267,15 @@ wait_for_healthy() {
   log "  Waiting for $container to become healthy (max ${timeout}s)..."
   local deadline=$((SECONDS + timeout))
   while [ "$SECONDS" -lt "$deadline" ]; do
+    # v18.8.6 P1: Early exit on exited/dead (was: waited full 300s for dead container)
+    local run_status
+    run_status=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo "not_found")
+    case "$run_status" in
+      exited|dead|not_found)
+        log "  ✗ $container: $run_status — not waiting (exited/dead)"
+        return 1
+        ;;
+    esac
     local health status
     health=$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null || echo "none")
     case "$health" in
@@ -384,7 +395,7 @@ healthcheck_and_restart() {
           vllm) hc_timeout=300; hc_url="http://127.0.0.1:8089/v1/models" ;;
           beellama) hc_timeout=120; hc_url="http://127.0.0.1:11438/health" ;;
         esac
-        wait_for_healthy "$container" "$hc_timeout" "$hc_url" 2>/dev/null || true
+        wait_for_healthy "$container" "$hc_timeout" "$hc_url" 2>/dev/null || recreate_success=false
       else
         log "  ✗ $container start failed"
       fi
@@ -406,7 +417,7 @@ healthcheck_and_restart() {
           vllm) rc_timeout=300; rc_url="http://127.0.0.1:8089/v1/models" ;;
           beellama) rc_timeout=120; rc_url="http://127.0.0.1:11438/health" ;;
         esac
-        wait_for_healthy "$container" "$rc_timeout" "$rc_url" 2>/dev/null || true
+        wait_for_healthy "$container" "$rc_timeout" "$rc_url" 2>/dev/null || recreate_success=false
       else
         log "  ✗ $container recreate failed"
         recreate_success=false
@@ -433,7 +444,7 @@ healthcheck_and_restart() {
             vllm) uh_timeout=300; uh_url="http://127.0.0.1:8089/v1/models" ;;
             beellama) uh_timeout=120; uh_url="http://127.0.0.1:11438/health" ;;
           esac
-          wait_for_healthy "$container" "$uh_timeout" "$uh_url" 2>/dev/null || true
+          wait_for_healthy "$container" "$uh_timeout" "$uh_url" 2>/dev/null || recreate_success=false
         else
           log "  ✗ $container recreate failed"
           # v18.5.2 P2: Update recreate_success (was: only logged, didn't update flag)
@@ -478,14 +489,14 @@ healthcheck_and_restart() {
     if [ "$litellm_status" != "running" ]; then
       log "  litellm: $litellm_status — restarting..."
       $DC -f /opt/scarlix/ai/litellm/docker-compose.yml up -d >> "$LOG_FILE" 2>&1 && log "  ✓ litellm restarted" || log "  ✗ litellm restart failed"
-      wait_for_healthy "litellm" 60 http://127.0.0.1:4001/health 2>/dev/null || true
+      wait_for_healthy "litellm" 60 http://127.0.0.1:4001/health/liveliness 2>/dev/null || true
     else
       local litellm_health
       litellm_health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' litellm 2>/dev/null || echo "none")
       if [ "$litellm_health" = "unhealthy" ]; then
         log "  litellm: unhealthy — recreating..."
         $DC -f /opt/scarlix/ai/litellm/docker-compose.yml up -d --force-recreate >> "$LOG_FILE" 2>&1 && log "  ✓ litellm recreated" || log "  ✗ litellm recreate failed"
-        wait_for_healthy "litellm" 60 http://127.0.0.1:4001/health 2>/dev/null || true
+        wait_for_healthy "litellm" 60 http://127.0.0.1:4001/health/liveliness 2>/dev/null || true
       else
         log "  ✓ litellm: running ($litellm_health)"
       fi

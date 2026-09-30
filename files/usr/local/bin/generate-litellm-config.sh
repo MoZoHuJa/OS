@@ -93,10 +93,11 @@ general_settings:
 EOF
 
 mv -f "$TMP" "$OUTPUT"
-# v18.8.5 P2: Tighten perms to 640 (was: mktemp+mv left 644 world-readable).
-#   File references os.environ/LITELLM_MASTER_KEY (not the secret itself, but
-#   consistent with the project's security posture on routing config).
-chmod 640 "$OUTPUT" 2>/dev/null || true
+# v18.8.6 P1-2: chmod 600 (was: 640 — but mktemp creates files with 600, so
+#   640 actually LOOSENED permissions by adding group read). Keep mktemp's
+#   strict default; do not loosen. File references os.environ/LITELLM_MASTER_KEY
+#   (not the secret itself, but consistent with the project's security posture).
+chmod 600 "$OUTPUT" 2>/dev/null || true
 echo "✓ LiteLLM config generated: $OUTPUT"
 echo "  scarlix-default → SGLang ($SGLANG_MODEL_ID)"
 echo "  scarlix-ollama → Ollama ($OLLAMA_MODEL_ID)"

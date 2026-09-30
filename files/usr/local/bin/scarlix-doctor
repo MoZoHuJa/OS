@@ -360,11 +360,13 @@ else
       fail "litellm: unhealthy"
       ;;
     *)
-      # No healthcheck — probe /health directly
-      if http_ok http://127.0.0.1:4001/health; then
+      # No healthcheck — probe /health/liveliness directly (v18.8.6 P0:
+      #   /health requires auth when master_key is set → 401 false-negative;
+      #   /health/liveliness is unauthed liveness probe).
+      if http_ok http://127.0.0.1:4001/health/liveliness; then
         pass "litellm: API healthy"
       else
-        warn "litellm: running, /health not responding"
+        warn "litellm: running, /health/liveliness not responding"
       fi
       ;;
   esac
