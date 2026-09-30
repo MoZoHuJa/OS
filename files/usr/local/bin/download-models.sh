@@ -101,7 +101,7 @@ validate_models_yaml() {
   echo "  Validating models.yaml schema..." | tee -a "$LOG_FILE"
   for key in "${required_keys[@]}"; do
     local val
-    val=$(yq "$key // empty" "$MODELS_CONFIG" 2>/dev/null || echo "")
+    val=$(yq -r "$key // empty" "$MODELS_CONFIG" 2>/dev/null || echo "")
     if [ -z "$val" ] || [ "$val" = "null" ]; then
       echo "  ✗ Missing or invalid: $key" | tee -a "$LOG_FILE"
       errors=$((errors + 1))
@@ -132,13 +132,13 @@ progress() {
 # v17.9.5 FIX: Use hf_repo field (not model_path which is local)
 # v18.5 FIX: missing hf_repo = FAILED (was: warn only → false "complete")
 progress "SGLang model (safetensors)"
-SGLANG_HF_REPO=$(yq '.sglang.hf_repo // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
+SGLANG_HF_REPO=$(yq -r '.sglang.hf_repo // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
 if [ -z "$SGLANG_HF_REPO" ]; then
   echo "  ✗ No .sglang.hf_repo in models.yaml — SGLang is REQUIRED (Tier-1 engine)" | tee -a "$LOG_FILE"
   echo "  To enable: add 'hf_repo: Qwen/Qwen3-14B-AWQ' to .sglang section" | tee -a "$LOG_FILE"
   FAILED=$((FAILED+1))
 else
-  SGLANG_LOCAL_PATH=$(yq '.sglang.model_path' "$MODELS_CONFIG" 2>/dev/null || echo "/models/$SGLANG_HF_REPO")
+  SGLANG_LOCAL_PATH=$(yq -r '.sglang.model_path // empty' "$MODELS_CONFIG" 2>/dev/null || echo "/models/$SGLANG_HF_REPO")
   # v18.5.3 P0: Check disk space before EACH download (was: only checked once at start)
   check_disk_space 12000 || { FAILED=$((FAILED+1)); continue_skipped=1; }
   if [ -z "${continue_skipped:-}" ]; then
@@ -156,8 +156,8 @@ fi
 # === Step 2: BeeLlama / llama.cpp GGUF model (CPU offline) ===
 # v17.9.5 FIX: Uses .beellama.* keys (not .llamacpp.*)
 progress "BeeLlama/llama.cpp GGUF model (CPU offline)"
-BEE_HF_REPO=$(yq '.beellama.hf_repo // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
-BEE_HF_FILE=$(yq '.beellama.hf_file // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
+BEE_HF_REPO=$(yq -r '.beellama.hf_repo // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
+BEE_HF_FILE=$(yq -r '.beellama.hf_file // empty' "$MODELS_CONFIG" 2>/dev/null || echo "")
 if [ -z "$BEE_HF_REPO" ] || [ -z "$BEE_HF_FILE" ]; then
   # v18.8 P1: BeeLlama is Tier-4 CPU fallback — optional but warned (was: silent
   #   "NOT downloaded" → download-models.sh exited SUCCESS even though offline
@@ -186,7 +186,7 @@ fi
 # v17.9.5 FIX: Uses .ollama.model (not .ollama_main.model), correct container name
 # v18.5 FIX: missing compose file = FAILED (was: silently skipped → false "complete")
 progress "Ollama model"
-OLLAMA_MODEL=$(yq '.ollama.model // "qwen2.5:3b"' "$MODELS_CONFIG" 2>/dev/null || echo "qwen2.5:3b")
+OLLAMA_MODEL=$(yq -r '.ollama.model // "qwen2.5:3b"' "$MODELS_CONFIG" 2>/dev/null || echo "qwen2.5:3b")
 echo "  Pulling Ollama model: $OLLAMA_MODEL" | tee -a "$LOG_FILE"
 # Start Ollama container
 if ! command -v docker >/dev/null 2>&1; then

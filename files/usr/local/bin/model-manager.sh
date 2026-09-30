@@ -123,8 +123,8 @@ update_hf_model() {
 }
 
 if command -v yq >/dev/null 2>&1; then
-  LLAMACPP_REPO=$(yq '.beellama.hf_repo' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || true)
-  LLAMACPP_FILE=$(yq '.beellama.hf_file' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || true)
+  LLAMACPP_REPO=$(yq -r '.beellama.hf_repo // empty' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || true)
+  LLAMACPP_FILE=$(yq -r '.beellama.hf_file // empty' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || true)
   if [ -n "$LLAMACPP_REPO" ] && [ -n "$LLAMACPP_FILE" ]; then
     update_hf_model "$LLAMACPP_REPO" "$LLAMACPP_FILE" "/models"
   fi
@@ -149,7 +149,7 @@ else
     log "  ℹ ollama-agent stopped (status: $OLLAMA_STATUS) — skipping (SGLang primary?)"
     # Don't increment OLLAMA_FAILED — stopped ≠ failed
   else
-    OLLAMA_MODEL=$(yq '.ollama.model' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "")
+    OLLAMA_MODEL=$(yq -r '.ollama.model // empty' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || echo "")
     # v18.7.1: fix SC2066 (was: `for model in "$OLLAMA_MODEL"` — double-quoted = no word-split = loop runs once)
     for model in $OLLAMA_MODEL; do
       [ -n "$model" ] || continue
