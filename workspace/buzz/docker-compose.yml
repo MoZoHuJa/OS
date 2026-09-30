@@ -1,6 +1,9 @@
 services:
   buzz-relay:
     # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
+        # v18.8.1 P1: Supply-chain risk — NOT YET PINNED (was: :latest).
+    #   GHCR anonymous token returned NO_ACCESS. Before FINAL, manually check
+    #   https://github.com/block/buzz-relay/pkgs/container/buzz-relay for tags.
     image: ghcr.io/block/buzz-relay:latest
     container_name: buzz-relay
     restart: unless-stopped
@@ -42,6 +45,10 @@ services:
 
   buzz-minio:
     # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
+        # v18.8.1 P1: Supply-chain risk — NOT YET PINNED (was: :latest).
+    #   Docker Hub API returned no tags. Before FINAL, manually check
+    #   https://hub.docker.com/r/minio/minio/tags then replace :latest with a
+    #   RELEASE.YYYY-MM-DDTHH-MM-SSZ tag (MinIO uses date-based release tags).
     image: minio/minio:latest
     container_name: buzz-minio
     restart: unless-stopped

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.8 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v18.8.1 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.7.7 FIXES:
 #   P0: TV mode uses systemctl restart (was: start on RemainAfterExit=yes oneshot
 #       → service stays 'active' after first run → start doesn't re-run healthcheck
@@ -262,7 +262,7 @@ wait_for_healthy() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v18.8 — VRAM Check ==="
+  echo "=== SCARLIX OS v18.8.1 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
@@ -396,18 +396,32 @@ healthcheck_and_restart() {
 
   # v18.5.2 P1: Return 1 if no inference engine running (was: always implicit 0)
   local any_ok=0
-  # v18.6 P1: Check healthy, not just running (was: running+unhealthy counted as OK)
+  # v18.6 P1: Check healthy, not just Running (was: running+unhealthy counted as OK)
+  # v18.8.1 P1: Require "healthy" not just "not unhealthy" (was: running+starting
+  #   counted as OK → "starting" means model still loading, not ready to serve →
+  #   scarlix-mode ai returned SUCCESS but inference would fail. Now: only
+  #   "healthy" OR "none"+running (no healthcheck configured) = OK.)
   for c in sglang vllm beellama ollama-agent; do
     st=$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo "not_found")
     [ "$st" = "not_found" ] && continue
     health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null || echo "none")
-    # unhealthy → NOT ok; healthy or no healthcheck → ok if running
-    if [ "$st" = "running" ] && [ "$health" != "unhealthy" ]; then
-        any_ok=1
+    # v18.8.1 P1: "starting" is NOT OK (model still loading). Only "healthy" or
+    # "none"+running (no healthcheck) count as ready to serve inference.
+    if [ "$st" = "running" ]; then
+      case "$health" in
+        healthy)
+          any_ok=1
+          ;;
+        none)
+          # No healthcheck — accept running (consistent with wait_for_healthy)
+          any_ok=1
+          ;;
+        # "starting" and "unhealthy" → NOT ok
+      esac
     fi
   done
   if [ "$any_ok" -eq 0 ]; then
-    log "ERROR: healthcheck — no inference engine running"
+    log "ERROR: healthcheck — no inference engine healthy (all starting/unhealthy/down)"
     return 1
   fi
   return 0
@@ -658,8 +672,19 @@ case "$MODE" in
     #   state = failed, exit 1. Consistent with AI mode's wait_for_healthy pattern.)
     if [ "$creative_ok" -eq 1 ]; then
       if wait_for_healthy "comfyui" 120; then
-        log "  ✓ ComfyUI healthy — Creative mode active"
-        echo "creative" | tee "$STATE_FILE" >/dev/null
+        # v18.8.1 P1: API probe after healthy (was: wait_for_healthy accepts
+        #   none+running, but ComfyUI image may not have HEALTHCHECK → "running"
+        #   but API not ready. Now: explicit curl :8188 to verify HTTP server
+        #   actually responds before writing "creative" state. Matches the
+        #   "already in creative" path which already does this probe.)
+        if curl -sf --max-time 5 http://127.0.0.1:8188/ >/dev/null 2>&1; then
+          log "  ✓ ComfyUI healthy + API reachable — Creative mode active"
+          echo "creative" | tee "$STATE_FILE" >/dev/null
+        else
+          log "ERROR: ComfyUI healthy but API not responding (port 8188) — Creative mode FAILED"
+          echo "failed" | tee "$STATE_FILE" >/dev/null
+          exit 1
+        fi
       else
         log "ERROR: ComfyUI not healthy after 120s — Creative mode FAILED"
         echo "failed" | tee "$STATE_FILE" >/dev/null
@@ -673,6 +698,16 @@ case "$MODE" in
     ;;
   turbo)
     log "=== TURBO mode (SGLang + vLLM + BeeLlama, max) ==="
+    # v18.8.1 P1: Stale-state repair parity (was: only game/creative had this.
+    #   If current-mode=turbo and AI engines are already healthy, short-circuit
+    #   instead of dump_vram + restart everything — saves VRAM churn.)
+    if [[ "$CURRENT_MODE" = "turbo" ]]; then
+      if healthcheck_and_restart; then
+        log "Already in Turbo mode — AI engines healthy."
+        exit 0
+      fi
+      log "Mode says 'turbo' but AI not healthy — repairing..."
+    fi
     # v18.5 P1: dump_vram before turbo (was: missing → CUDA OOM if creative/game still held VRAM)
     dump_vram
     # v18.5 P1: check return value
@@ -686,6 +721,24 @@ case "$MODE" in
     ;;
   offline)
     log "=== OFFLINE mode (BeeLlama CPU, q4_0 KV) ==="
+    # v18.8.1 P1: Stale-state repair parity (was: only game/creative had this.
+    #   If current-mode=offline and BeeLlama had crashed, re-running
+    #   `scarlix-mode offline` would just start fresh anyway (no "already in"
+    #   short-circuit). But for consistency + to avoid unnecessary dump_vram
+    #   when BeeLlama is already healthy, check + short-circuit.)
+    if [[ "$CURRENT_MODE" = "offline" ]]; then
+      beellama_status=$(docker inspect -f '{{.State.Status}}' beellama 2>/dev/null || echo "missing")
+      if [[ "$beellama_status" = "running" ]]; then
+        beellama_health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' beellama 2>/dev/null || echo "none")
+        if [[ "$beellama_health" = "healthy" ]] || [[ "$beellama_health" = "none" ]]; then
+          log "Already in Offline mode — BeeLlama healthy."
+          exit 0
+        fi
+        log "BeeLlama running but $beellama_health — repairing..."
+      else
+        log "Mode says 'offline' but BeeLlama is not running ($beellama_status) — repairing..."
+      fi
+    fi
     dump_vram
     if [ "$(id -u)" -eq 0 ]; then
       systemctl stop sunshine 2>/dev/null || true
@@ -748,7 +801,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v18.8 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v18.8.1 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"

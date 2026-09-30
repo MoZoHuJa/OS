@@ -21,7 +21,8 @@ services:
 
   otel-collector:
     # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
-    image: otel/opentelemetry-collector-contrib:latest
+        # v18.8.1 P1: Pinned to stable version (was: :latest. Verified via Docker Hub API.)
+    image: otel/opentelemetry-collector-contrib:0.161.0
     container_name: otel-collector
     restart: unless-stopped
     ports: ["100.64.0.1:4317:4317", "100.64.0.1:4318:4318"]
@@ -30,6 +31,10 @@ services:
 
   openlit:
     # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
+        # v18.8.1 P1: Supply-chain risk — NOT YET PINNED (was: :latest).
+    #   Docker Hub API returned no tags (private/empty repo?). Before FINAL,
+    #   manually check https://hub.docker.com/r/openlit/openlit/tags then replace
+    #   :latest with verified :vX.Y.Z tag.
     image: openlit/openlit:latest
     container_name: openlit
     restart: unless-stopped
@@ -40,7 +45,8 @@ services:
 
   alertmanager:
     # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
-    image: prom/alertmanager:latest
+        # v18.8.1 P1: Pinned to stable version (was: :latest. Verified via Docker Hub API.)
+    image: prom/alertmanager:v0.34.1
     container_name: alertmanager
     restart: unless-stopped
     ports: ["100.64.0.1:9093:9093"]

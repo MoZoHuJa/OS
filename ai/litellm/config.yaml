@@ -1,43 +1,61 @@
-# SCARLIX OS v18.8 — LiteLLM routing config
-# v18.8 P0: Unified model routing identity (was: 3 different names —
-#   qwen3.6:14b, qwen2.5:3b, Qwen3-14B-AWQ — across LiteLLM, models.yaml, and
-#   Ollama → routing integrity bug). Now: single canonical logical model name
-#   `scarlix-default` that maps to each backend's actual model identity:
-#     - SGLang: serves Qwen3-14B-AWQ (from models.yaml sglang.model_path)
-#     - Ollama: serves qwen2.5:3b (from models.yaml ollama.model)
-#     - BeeLlama: serves Qwen3-14B-Q4_K_M.gguf (from models.yaml beellama.hf_file)
-# v18.8 P0: Fix hostname (was: `llamacpp:8080` — service doesn't exist; the
-#   llama.cpp container is named `beellama` and listens on port 8080 internally).
-#   Now: `beellama:8080` (matches docker-compose.yml service name).
+# SCARLIX OS v18.8.1 — LiteLLM routing config
+#
+# v18.8 P0: Fixed hostname (was: llamacpp → beellama) + unified model name.
+# v18.8.1 P0: Fixed model mapping (was: `model: openai/scarlix-default` — but
+#   LiteLLM's `model` field is the ACTUAL backend model ID, not the logical alias.
+#   SGLang serves Qwen3-14B-AWQ (from --model-path), Ollama serves qwen2.5:3b,
+#   BeeLlama serves the GGUF file. Using `scarlix-default` as the backend model
+#   name meant SGLang/Ollama would reject the request with "model not found".
+#   Now: `model_name` = logical alias (what clients request), `litellm_params.model`
+#   = real backend model ID (what the backend actually serves).
+#
+# v18.8.1 P0: Fixed fallback chain (was: `scarlix-default: ["scarlix-default"]` —
+#   self-referencing, not a real fallback. LiteLLM fallbacks move to a DIFFERENT
+#   model group on failure). Now: scarlix-default (SGLang) → scarlix-ollama →
+#   scarlix-beellama — a real 3-tier chain matching scarlix-mode's fallback order.
+#
+# v18.8.1 P1: Fixed SQLite DB persistence (was: `sqlite:///litellm.db` → stored
+#   at /app/litellm.db, but volume mounts ./data:/app/data → DB lost on recreate.
+#   Now: `sqlite:////app/data/litellm.db` (4 slashes = absolute path) → persisted.
+#
+# Backend model IDs verified from models.yaml:
+#   - SGLang: --model-path /models/Qwen3-14B-AWQ → OpenAI model ID = "Qwen3-14B-AWQ"
+#   - Ollama: ollama pull qwen2.5:3b → model ID = "qwen2.5:3b"
+#   - BeeLlama: --model /models/Qwen3-14B-Q4_K_M.gguf → llama.cpp /v1/models
+#     returns the filename; LiteLLM openai/ prefix passes it through.
+
 model_list:
-  # Tier-1: SGLang (GPU0) — primary
+  # PRIMARY: SGLang (GPU0) — Tier-1
   - model_name: scarlix-default
     litellm_params:
-      model: openai/scarlix-default
+      model: openai/Qwen3-14B-AWQ
       api_base: http://sglang:30000/v1
       api_key: not-needed
-  # Fallback-1: Ollama (CPU, qwen2.5:3b starter model)
-  - model_name: scarlix-default
+
+  # FALLBACK-1: Ollama (CPU, qwen2.5:3b starter) — separate model group
+  - model_name: scarlix-ollama
     litellm_params:
-      model: ollama/scarlix-default
+      model: ollama/qwen2.5:3b
       api_base: http://ollama-agent:11434
-  # Fallback-2: BeeLlama / llama.cpp (CPU, Qwen3-14B-Q4_K_M.gguf)
-  # v18.8 P0: Fixed hostname llamacpp → beellama (was: DNS fail → fallback broken)
-  - model_name: scarlix-default
+
+  # FALLBACK-2: BeeLlama / llama.cpp (CPU, Qwen3-14B-Q4_K_M.gguf) — separate group
+  - model_name: scarlix-beellama
     litellm_params:
-      model: openai/scarlix-default
+      model: openai/Qwen3-14B-Q4_K_M.gguf
       api_base: http://beellama:8080/v1
       api_key: not-needed
 
 router_settings:
   routing_strategy: simple-shuffle
   num_retries: 2
-  # v18.8 P0: Unified fallback chain under scarlix-default
-  # (was: qwen3.6:14b → qwen3.6:14b-ollama → qwen3.6:14b-cpu, but the model
-  # names didn't match what the backends actually served → routing failures)
+  # v18.8.1 P0: Real fallback chain (was: self-referencing scarlix-default→scarlix-default).
+  # On SGLang failure → try Ollama → try BeeLlama. Matches scarlix-mode's
+  # start_verified_ai() fallback order (SGLang → vLLM → BeeLlama → Ollama).
   fallbacks:
-    - scarlix-default: ["scarlix-default"]
+    - scarlix-default: ["scarlix-ollama", "scarlix-beellama"]
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
-  database_url: sqlite:///litellm.db
+  # v18.8.1 P1: Absolute path under mounted volume (was: sqlite:///litellm.db
+  # → /app/litellm.db, not persisted). 4 slashes = absolute path in SQLite URI.
+  database_url: sqlite:////app/data/litellm.db

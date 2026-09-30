@@ -89,7 +89,10 @@ services:
 
   photoprism:
     # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
-    image: photoprism/photoprism:latest
+        # v18.8.1 P1: Pinned to date-based tag (was: :latest — non-reproducible.
+    #   PhotoPrism uses date tags YYYYMMDD, no semver. Verified via Docker Hub API.
+    #   Update deliberately when upgrading.)
+    image: photoprism/photoprism:260919
     container_name: photoprism
     restart: unless-stopped
     ports:
@@ -106,7 +109,9 @@ services:
 
   n8n:
     # v18.7.4 P2 TODO: Pin to specific version tag (was: :latest → supply-chain risk)
-    image: n8nio/n8n:latest
+        # v18.8.1 P1: Pinned to stable version (was: :latest — non-reproducible.
+    #   Verified via Docker Hub API — latest stable is 2.42.1.)
+    image: n8nio/n8n:2.42.1
     container_name: n8n
     restart: unless-stopped
     ports:

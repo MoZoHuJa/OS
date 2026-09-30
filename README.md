@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.8 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.8.1 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v18.8</h1>
+<h1 align="center">SCARLIX OS v18.8.1</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.8"><img alt="Version" src="https://img.shields.io/badge/version-v18.8-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.8.1"><img alt="Version" src="https://img.shields.io/badge/version-v18.8.1-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -21,7 +21,7 @@
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 
-**Version:** v18.8 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v18.8.1 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -29,7 +29,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v18.8   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v18.8.1   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -46,34 +46,36 @@ download-models.sh
 scarlix-mode ai
 
 # 4. (optional) Open dashboard — token printed by install.sh
-#    http://<this-ip>:8090/  (login with SCARLIHQ_TOKEN from /etc/scarlix/.env)
+#    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
 
 ---
 
-## 🆕 What's New in v18.5 (vs v18.4)
+## 🆕 What's New in v18.8.1 (vs v18.7.8)
 
-**Parent directory boundary + user CLI + WebSocket DoS hardening.** 10 fixes from 2 expert reviews.
+**CI fail fix + LiteLLM routing + image pinning.** 12 fixes from 3 expert reviews.
 
-v18.4 had a **P0 parent directory ownership bug**: `/var/lib/scarlix` was `chown -R REAL_USER` → user could `rm -rf bridge-state && ln -s /etc bridge-state` → root follows symlink. Also v18.4's LPE fix killed user CLI (scarlix-mode can't write root:root 600 .env as user).
+v18.7.8 had a **CI that always failed**: shellcheck SC2168 (`local` outside function), WS test used wrong exception class (websockets 13.1 API), `curl || echo 000` → 000000 bug, and missing `setup-python` (PEP 668). Also LiteLLM fallback pointed to non-existent hostname `llamacpp` (should be `beellama`).
 
-### P0 — security (5)
-| # | Fix | v18.4 Problem | v18.5 Solution |
-|---|-----|---------------|-------------------|
-| P0 | **/var/lib/scarlix root:root 755** | `chown -R REAL_USER /var/lib/scarlix` → user owns parent of bridge-state/input → can replace with symlinks → root follows → LPE | Only `/mnt` is user-owned. `/var/lib/scarlix` stays `root:root 755`. Phase 5 re-enforces before creating bridge dirs. |
-| P0 | **scarlix-mode sudo re-exec** | v18.4 made .env root:root 600 (LPE fix) → user `scarlix-mode ai` fails "Permission denied" on `cat > .env` → CLI dead | `if [ "$(id -u)" -ne 0 ]; then exec sudo -E /usr/local/bin/scarlix-mode "$@"; fi` at top (before flock) |
-| P0 | **download-models.sh sudo re-exec** | `/var/lock` 0755 root:root on Arch → EACCES → `set -e` → script dies | `exec sudo -E` + lock path moved to `/var/lib/scarlix/.models.lock` (root-owned 755) |
-| P0 | **/opt/scarlix/.env chowned root on upgrade** | v18.4 only fixed /etc/scarlix/.env → systems upgraded from v18.0-18.3 still had user-owned .env → LPE still open | Phase 4: `if [ -f /opt/scarlix/.env ]; then chown root:root; chmod 600; fi` |
-| P0 | **flock -n (non-blocking)** | `flock -x 9` (without -n) blocked for hours during model download → dashboard frozen (host-bridge can't get FD 200 lock) | `flock -n -x 9` — fail-fast with clear error message |
+### P0 — CI fail + routing (4)
+| # | Fix | v18.7.8 Problem | v18.8.1 Solution |
+|---|-----|-----------------|-------------------|
+| P0 | **shellcheck SC2168** | `local comfyui_status` in top-level case branch (not function) → CI failed | Plain assignment without `local` |
+| P0 | **WS test exception class** | Expected `InvalidStatus` but websockets==13.1 raises `InvalidStatusCode` (different attribute) → server returned 401 correctly but test failed | Version-compatible `getattr()` extracts status_code from either API |
+| P0 | **curl `|| echo 000` → 000000** | curl fail prints 000 AND exits 1 → `|| echo 000` adds another → code=000000 → false healthy | Separate assignment + fallback `|| code="000"` (6 sites) |
+| P0 | **LiteLLM routing** | `api_base: http://llamacpp:8080` — service doesn't exist (container is `beellama`) → CPU fallback always failed with DNS error. Also 3 different model names | `beellama:8080` + unified `scarlix-default` logical model |
 
-### P1 — reliability (5)
-| # | Fix | v18.4 Problem | v18.5 Solution |
-|---|-----|---------------|-------------------|
-| P1 | **models.yaml preserved on upgrade** | Phase 4 unconditionally `cp models.yaml` → kernel update invalidated checkpoint → Phase 4 re-ran → user's custom model config overwritten | Only copy if file doesn't exist. If exists: preserve + show diff info. |
-| P1 | **Exclusive locks for model WRITES** | model-manager + download-models used `flock -s` (shared) for WRITE operations → both could write /models simultaneously → race condition | `flock -n -x 9` (exclusive) in all 3 scripts. Unified lock path `/var/lib/scarlix/.models.lock`. |
-| P1 | **WebSocket write deadline + connection limit** | No `SetWriteDeadline` → blocked client leaks goroutine forever. No max connections. | `SetWriteDeadline(10s)` before each write. Max 16 concurrent WS via buffered channel. 503 on full. |
-| P1 | **status.Read() real stale check** | Comment said "> 60s old" but code only checked `timestamp == ""` → yesterday's status considered fresh | `time.Parse(time.RFC3339)` + `time.Since(t) > 60s` → Stale=true. Also rejects future timestamps (clock skew). |
-| P1 | **mem_fraction in hash** | Hash only included model_path/hf_file/ollama.model → changing mem_fraction had no effect (no force-recreate) | Added `.sglang.mem_fraction` + `.vllm.gpu_memory_utilization` to hash input |
+### P1 — reliability (8)
+| # | Fix | v18.7.8 Problem | v18.8.1 Solution |
+|---|-----|-----------------|-------------------|
+| P1 | **setup-python before pip** | bare `pip install` on ubuntu 24.04 → PEP 668 "externally-managed" → job failed | `actions/setup-python@v5` with python 3.12 |
+| P1 | **Creative start health wait** | `up -d` exit 0 → immediately wrote "creative" to state — container could still be starting | `wait_for_healthy comfyui 120` before writing state |
+| P1 | **Fail-closed mkdir parity** | model-manager + download-models still had `mkdir \|\| true` | Explicit FATAL + exit 1 (same as scarlix-mode) |
+| P1 | **Pin SMG + LiteLLM** | `:latest` and `:main-latest` (dev branch) | SMG `:v1.4.1.post1-sglang-v0.5.10`, LiteLLM `:main-v1.16.19` |
+| P1 | **MusicGen pip pinned** | `pip install audiocraft fastapi...` no versions | audiocraft==0.0.2, fastapi==0.115.0, etc. |
+| P1 | **Video Wan2GP pinned** | `git clone ... .` no commit | Shallow clone + checkout f3f204e50f6e |
+| P1 | **download-models sudo -E → sudo** | Inconsistent with scarlix-mode v18.7.7 fix | `exec sudo` without -E |
+| P1 | **BeeLlama missing warning** | Silent "NOT downloaded" → SUCCESS exit even though offline fallback missing | Explicit "OFFLINE MODE WILL NOT WORK" warning |
 | P1 | **Fallback JSON has Error field** | When python3 failed, fallback JSON `{"error":"python3 unavailable"}` was valid but Go struct had no Error field → looked like valid status | Added `Error string` to HostStatus struct + `stale:true` in fallback JSON |
 
 ### Lock path unification
@@ -564,5 +566,5 @@ Host-bridge architecture: dashboard reads JSON status, writes desired-mode. No p
 
 ## 🗺️ Roadmap
 
-- **v17.10**: ScarliHQ — per-user auth (OIDC/LDAP), real GPU telemetry via DCGM, mode-switch history.
-- **v18.0**: Incus dev workspaces, ScarliHQ Rust refactor, profile-based stack selection.
+- **v18.9**: LiteLLM E2E inference CI test, Go unit tests (ReserveWSTicket, Mode.Set O_EXCL), CI artifact sharing between jobs (faster), scarlix-doctor LiteLLM + model identity checks.
+- **v19.0**: Per-user auth (OIDC/LDAP), real GPU telemetry via DCGM, mode-switch history, Incus dev workspaces.

@@ -1,5 +1,13 @@
 # AgentVerse-OS-ScarLiX-1s → SCARLIX OS Merge Plan
 
+> ⚠️ **DEPRECATED — HISTORICAL DOCUMENT**
+> This document describes SCARLIX OS v15/v16.1 (Garuda Linux ISO build).
+> SCARLIX OS is now **EndeavourOS + install.sh bootstrap** (no ISO).
+> Kept for historical reference only. Current version: see /VERSION + README.md.
+> Do NOT follow these instructions — they will not work with v18.x+.
+
+
+
 **Document ID:** AV-MERGE-PLAN-1
 **Author:** research-agent (Task ID AV-MERGE)
 **Date:** 2026-09-27

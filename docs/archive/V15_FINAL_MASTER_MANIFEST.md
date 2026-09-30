@@ -1,5 +1,13 @@
 # SCARLIX OS v15 — KOMPLETNÝ SELF-CONTAINED BUILD MANIFEST
 
+> ⚠️ **DEPRECATED — HISTORICAL DOCUMENT**
+> This document describes SCARLIX OS v15/v16.1 (Garuda Linux ISO build).
+> SCARLIX OS is now **EndeavourOS + install.sh bootstrap** (no ISO).
+> Kept for historical reference only. Current version: see /VERSION + README.md.
+> Do NOT follow these instructions — they will not work with v18.x+.
+
+
+
 **Verzia:** 15.0.0-FINAL | **Účel:** Tento jediný dokument obsahuje ÚPLNE VŠETKO potrebné na vytvorenie bootovateľného ISO, ktoré nainštaluje celý SCARLIX OS na dva PC servery. Žiadne externé odkazy. Žiadne TODO. Každý blok kódu je finálny.
 
 **Model-agnostic:** Podporuje akýkoľvek HuggingFace model (safetensors aj GGUF), nielen Qwen.

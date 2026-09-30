@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.8 — Self-Diagnostic (scarlix-doctor)
+# SCARLIX OS v18.8.1 — Self-Diagnostic (scarlix-doctor)
 # v18.5: http_ok() with -k/--no-check-certificate fallback; host-bridge check; version unified
 # v17.9.2: unhealthy = FAIL (not PASS), --fix mode, API healthcheck, docker group check
 
@@ -47,7 +47,7 @@ fix() {
 }
 
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║  SCARLIX OS v18.8 — System Diagnostic                      ║${NC}"
+echo -e "${CYAN}║  SCARLIX OS v18.8.1 — System Diagnostic                      ║${NC}"
 [ "$FIX_MODE" -eq 1 ] && echo -e "${CYAN}║  (--fix mode: will attempt automatic fixes)                  ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
@@ -264,6 +264,51 @@ for c in sglang vllm beellama ollama-agent; do
       ;;
   esac
 done
+
+# v18.8.1 P1: LiteLLM gateway check (was: doctor only checked individual engines,
+#   not the unified gateway. If LiteLLM is down or routing is broken, clients
+#   can't reach any backend even though SGLang/Ollama are healthy. Now: check
+#   container + /health + /v1/models + logical model scarlix-default exists.)
+echo ""
+echo "=== LiteLLM Gateway ==="
+LITELLM_STATUS=$(docker inspect -f '{{.State.Status}}' litellm 2>/dev/null || echo "not_found")
+if [ "$LITELLM_STATUS" = "not_found" ]; then
+  warn "litellm: not created (optional — unified gateway. Run: docker compose -f /opt/scarlix/ai/litellm/docker-compose.yml up -d)"
+elif [ "$LITELLM_STATUS" != "running" ]; then
+  warn "litellm: $LITELLM_STATUS (not running — gateway unavailable, direct backend access still works)"
+else
+  LITELLM_HEALTH=$(docker inspect -f '{{.State.Health.Status}}' litellm 2>/dev/null || echo "none")
+  case "$LITELLM_HEALTH" in
+    healthy)
+      pass "litellm: healthy"
+      ;;
+    starting)
+      warn "litellm: starting"
+      ;;
+    unhealthy)
+      fail "litellm: unhealthy"
+      ;;
+    *)
+      # No healthcheck — probe /health directly
+      if http_ok http://127.0.0.1:4001/health; then
+        pass "litellm: API healthy"
+      else
+        warn "litellm: running, /health not responding"
+      fi
+      ;;
+  esac
+  # Check logical model scarlix-default exists in LiteLLM routing
+  if [ -n "${LITELLM_MASTER_KEY:-}" ] || [ -f /opt/scarlix/.env ]; then
+    LITELLM_KEY="${LITELLM_MASTER_KEY:-$(grep '^LITELLM_MASTER_KEY=' /opt/scarlix/.env 2>/dev/null | cut -d= -f2 || echo '')}"
+    if [ -n "$LITELLM_KEY" ]; then
+      if curl -sf --max-time 3 -H "Authorization: Bearer $LITELLM_KEY" http://127.0.0.1:4001/v1/models 2>/dev/null | grep -q "scarlix-default"; then
+        pass "litellm: logical model 'scarlix-default' available"
+      else
+        warn "litellm: 'scarlix-default' not in /v1/models (routing config issue?)"
+      fi
+    fi
+  fi
+fi
 
 # === Disk ===
 echo ""
