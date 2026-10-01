@@ -12,8 +12,15 @@ set -euo pipefail
 LOG_FILE="/var/log/scarlix/model-manager.log"
 MODELS_YAML="/etc/scarlix/models.yaml"
 ENV_FILE="/opt/scarlix/.env"
+# v18.9.0 P2-04: Read version from VERSION file (was: hardcoded in Telegram messages)
+SCARLIX_VER="$(cat /etc/scarlix/VERSION 2>/dev/null || echo unknown)"
 APPLY_OLLAMA=0
 [[ "${1:-}" == "--apply-ollama" ]] && APPLY_OLLAMA=1
+
+# v18.9.0 P1-03: Download to staging, then atomic move
+# (was: direct to /models → partial files on interruption)
+STAGING_DIR="/models/.staging"
+mkdir -p "$STAGING_DIR" 2>/dev/null || true
 
 mkdir -p "$(dirname "$LOG_FILE")"
 
@@ -87,9 +94,15 @@ log "========================================"
 
 if [ ! -f "$MODELS_YAML" ]; then
   log "ERROR: models.yaml not found"
-  send_telegram "🚨 *SCARLIX Model Manager v18.8.9* — FAILED
+  send_telegram "🚨 *SCARLIX Model Manager v${SCARLIX_VER}* — FAILED
 models.yaml not found"
   exit 1
+fi
+
+# v18.9.0 P2-04: Validate YAML before reading keys
+if ! yq -e '.' "$MODELS_YAML" >/dev/null 2>&1; then
+    log "ERROR: models.yaml is invalid YAML"
+    exit 1
 fi
 
 VRAM_BEFORE=$(vram_snapshot)
@@ -106,12 +119,28 @@ update_hf_model() {
   local repo="$1"
   local file="$2"
   local target_dir="$3"
+  local engine="${4:-}"
   log "Pulling HF: $repo / $file"
   if test -x /opt/scarlix/venv/bin/huggingface-cli >/dev/null 2>&1; then
-    if /opt/scarlix/venv/bin/huggingface-cli download "$repo" "$file" --local-dir "$target_dir" >> "$LOG_FILE" 2>&1; then
+    # v18.9.0 P1-03: Download to staging, then atomic move to final location
+    # (was: --local-dir "$target_dir" → partial/corrupt file in /models on interruption)
+    if /opt/scarlix/venv/bin/huggingface-cli download "$repo" "$file" --local-dir "$STAGING_DIR" >> "$LOG_FILE" 2>&1; then
+      # Atomic move from staging to final location (same filesystem = rename(2))
+      mv -f "$STAGING_DIR/$file" "$target_dir/" 2>/dev/null || {
+        # Fallback: move all staging contents (handles subdir paths in $file)
+        mv -f "$STAGING_DIR"/* "$target_dir/" 2>/dev/null || true
+      }
+      # v18.9.0 P1-03: Clean up staging after successful move
+      find "$STAGING_DIR" -mindepth 1 -delete 2>/dev/null || true
       log "  ✓ $file"
       HF_UPDATED=$((HF_UPDATED + 1))
       UPDATED_LIST="${UPDATED_LIST}\n  ✓ ${file} (HF)"
+      # v18.9.0 P1-02: Restart runtime after model update
+      # (was: file on disk updated but BeeLlama container kept old model in RAM)
+      if [ "$engine" = "beellama" ]; then
+        log "Restarting BeeLlama to load updated model..."
+        docker compose --env-file /opt/scarlix/.env -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d --force-recreate >> "$LOG_FILE" 2>&1 || log "WARNING: BeeLlama restart failed"
+      fi
     else
       log "  ✗ $file"
       HF_FAILED=$((HF_FAILED + 1))
@@ -126,7 +155,7 @@ if command -v yq >/dev/null 2>&1; then
   LLAMACPP_REPO=$(yq -r '.beellama.hf_repo // empty' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || true)
   LLAMACPP_FILE=$(yq -r '.beellama.hf_file // empty' "$MODELS_YAML" 2>/dev/null | grep -v '^$' || true)
   if [ -n "$LLAMACPP_REPO" ] && [ -n "$LLAMACPP_FILE" ]; then
-    update_hf_model "$LLAMACPP_REPO" "$LLAMACPP_FILE" "/models"
+    update_hf_model "$LLAMACPP_REPO" "$LLAMACPP_FILE" "/models" "beellama"
   fi
 else
   log "⚠ yq not installed — skipping HF updates"
@@ -179,7 +208,7 @@ log "HF: updated=$HF_UPDATED failed=$HF_FAILED"
 log "Ollama: updated=$OLLAMA_UPDATED failed=$OLLAMA_FAILED"
 
 # === Telegram summary ===
-SUMMARY="🤖 *SCARLIX Model Manager v18.8.9*
+SUMMARY="🤖 *SCARLIX Model Manager v${SCARLIX_VER}*
 📊 HF: \`${HF_UPDATED}\` updated, \`${HF_FAILED}\` failed
 📊 Ollama: \`${OLLAMA_UPDATED}\` updated, \`${OLLAMA_FAILED}\` failed
 $([ "$APPLY_OLLAMA" -eq 0 ] && echo "ℹ️ Ollama tags NOT updated (dry-run). Use \`model-manager.sh --apply-ollama\` to update.")

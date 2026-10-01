@@ -182,7 +182,7 @@ else
   unset continue_skipped 2>/dev/null || true
 fi
 
-# === Step 3: Ollama model (GGUF, GPU) ===
+# === Step 3: Ollama model (CPU fallback) ===
 # v17.9.5 FIX: Uses .ollama.model (not .ollama_main.model), correct container name
 # v18.5 FIX: missing compose file = FAILED (was: silently skipped → false "complete")
 progress "Ollama model"
