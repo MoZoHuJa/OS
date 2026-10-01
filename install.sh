@@ -149,15 +149,16 @@ ok "Repo at $REPO_DIR"
 #   pciutils was in Phase 1 packages → chicken-and-egg: lspci checked before it could
 #   be installed. Now: install pciutils first, then check.)
 if ! command -v lspci >/dev/null 2>&1; then
-  log "Installing bootstrap dependency: pciutils (required for GPU detection)..."
-  # v18.9.8 P0-1: Validate pacman DB before install (was: pacman -Sy pciutils on
-  #   corrupted DB → silent failure → lspci still missing → crit)
-  if ! pacman -Sy --noconfirm --needed pciutils >> "$LOG_FILE" 2>&1; then
-    log "pacman -Sy pciutils failed — attempting DB repair..."
+  log "Bootstrap: full system sync + pciutils install..."
+  # v19.0.0 P1-1: Full pacman -Syu BEFORE pciutils install (was: pacman -Sy
+  #   pciutils only = partial upgrade → Arch breakage risk on lib mismatch).
+  #   Now: full -Syu first, then pciutils.
+  if ! pacman -Syu --noconfirm >> "$LOG_FILE" 2>&1; then
+    log "pacman -Syu failed — attempting DB repair..."
     pacman-key --init >> "$LOG_FILE" 2>&1 || true
-    pacman -Sy --noconfirm >> "$LOG_FILE" 2>&1 || crit "pacman DB is corrupted — run 'pacman-key --init && pacman -Syu' manually, then re-run install.sh"
-    pacman -S --noconfirm --needed pciutils >> "$LOG_FILE" 2>&1 || crit "Cannot install pciutils even after DB repair — GPU detection cannot continue"
+    pacman -Syu --noconfirm >> "$LOG_FILE" 2>&1 || crit "pacman DB corrupted — run 'pacman-key --init && pacman -Syu' manually, then re-run install.sh"
   fi
+  pacman -S --noconfirm --needed pciutils >> "$LOG_FILE" 2>&1 || crit "Cannot install pciutils"
 fi
 command -v lspci >/dev/null 2>&1 || crit "lspci still not found after pciutils install"
 # v18.8.6 P0-1: lspci emits "VGA compatible controller: NVIDIA Corporation ..."
@@ -208,7 +209,9 @@ else
   # P1 v17.9.8: Ensure [multilib] is enabled BEFORE installing steam/wine/lib32-*
   # (clean EndeavourOS may have multilib commented out → lib32-nvidia-utils install fails)
   # v17.9.8 FIX: scoped awk (was aggressive sed that uncommented EVERY Include line in pacman.conf)
-  #           + explicit pacman -Sy after enable (without it: "target not found" for lib32-*)
+  # v19.0.0 P1-1: removed standalone `pacman -Sy` after enable (partial upgrade
+  #   risk on Arch — relies on the initial `-Syu` instead; package install later
+  #   will refresh repo state as needed).
   log "Ensuring [multilib] repository is enabled..."
   MULTILIB_OK=false
   if grep -q '^\[multilib\]' /etc/pacman.conf 2>/dev/null; then
@@ -223,7 +226,7 @@ else
       { print }
     ' /etc/pacman.conf > /tmp/pacman.conf.ml && mv /tmp/pacman.conf.ml /etc/pacman.conf
     if grep -q '^\[multilib\]' /etc/pacman.conf 2>/dev/null; then
-      pacman -Sy >> "$LOG_FILE" 2>&1 && ok "[multilib] enabled + db synced" || fail "Enable [multilib]"
+      ok "[multilib] enabled (db synced by initial -Syu)"
       MULTILIB_OK=true
     else
       fail "[multilib] enable (awk)"
@@ -231,7 +234,7 @@ else
   else
     # Append multilib section if not present at all
     printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
-    pacman -Sy >> "$LOG_FILE" 2>&1 && ok "[multilib] added + db synced" || fail "Add [multilib]"
+    ok "[multilib] added (db synced by initial -Syu)"
     MULTILIB_OK=true
   fi
   # Hard-fail if multilib still not active (Steam/Wine/lib32-* will break otherwise)
@@ -469,8 +472,12 @@ else
     # v18.9.7 P1-03: Save GPU topology for diagnostics (was: no record of GPU layout →
     #   debugging SGLang/vLLM device assignment was guesswork. Now: saved to
     #   /var/lib/scarlix/gpu-layout for scarlix-doctor + future use.)
-    nvidia-smi --query-gpu=index,name,pci.bus_id,compute_cap,memory.total --format=csv,noheader > /var/lib/scarlix/gpu-layout 2>/dev/null || true
-    log "GPU topology saved to /var/lib/scarlix/gpu-layout"
+    nvidia-smi --query-gpu=index,name,pci.bus_id,compute_cap,memory.total --format=csv,noheader > /var/lib/scarlix/gpu-layout 2>/dev/null
+    if [ -s /var/lib/scarlix/gpu-layout ]; then
+      log "GPU topology saved to /var/lib/scarlix/gpu-layout"
+    else
+      warn "Failed to save GPU topology (non-critical, but scarlix-doctor diagnostics will be limited)"
+    fi
   fi
   sleep 2
 
@@ -614,9 +621,10 @@ else
   # v17.9.8: Copy VERSION file to /etc/scarlix/ + /usr/local/share/scarlix/
   # (host-bridge reads it for host-status.json "scarlix_version" field)
   if [ -f "$REPO_DIR/VERSION" ]; then
-    cp "$REPO_DIR/VERSION" /etc/scarlix/VERSION 2>/dev/null || true
+    cp "$REPO_DIR/VERSION" /etc/scarlix/VERSION 2>/dev/null || crit "Cannot copy VERSION file to /etc/scarlix/"
     mkdir -p /usr/local/share/scarlix
-    cp "$REPO_DIR/VERSION" /usr/local/share/scarlix/VERSION 2>/dev/null || true
+    cp "$REPO_DIR/VERSION" /usr/local/share/scarlix/VERSION 2>/dev/null || crit "Cannot copy VERSION file to /usr/local/share/scarlix/"
+    [ -s /etc/scarlix/VERSION ] || crit "VERSION file is empty or missing"
     ok "VERSION file installed ($(cat "$REPO_DIR/VERSION"))"
   fi
 
@@ -667,7 +675,7 @@ else
         # Fallback: rm + cp if rsync not available
         rm -rf "/opt/scarlix/$dir"
         mkdir -p "/opt/scarlix/$dir"
-        if cp -r "$REPO_DIR/$dir/"* "/opt/scarlix/$dir/" 2>/dev/null; then
+        if cp -a "$REPO_DIR/$dir/." "/opt/scarlix/$dir/" 2>/dev/null; then
           ok "/opt/scarlix/$dir/ (rm+cp fallback)"
         else
           crit "Failed to copy $dir/ to /opt/scarlix/"
@@ -729,7 +737,7 @@ else
 
   # v17.9.8: Enable host-bridge timer (writes host-status.json every 5s for ScarliHQ)
   if [ -f /etc/systemd/system/scarlix-host-bridge.timer ]; then
-    systemctl enable --now scarlix-host-bridge.timer >> "$LOG_FILE" 2>&1 && ok "scarlix-host-bridge.timer enabled + started" || fail "host-bridge.timer"
+    systemctl enable --now scarlix-host-bridge.timer >> "$LOG_FILE" 2>&1 && ok "scarlix-host-bridge.timer enabled + started" || crit "scarlix-host-bridge.timer failed — dashboard will not receive updates"
     # v18.0.0 P0: SEPARATE bridge-input/ (65532 writable) from bridge-state/ (root 700)
     # Was (v17.9.9): single bridge/ dir owned by 65532 + root wrote .retry there = symlink attack.
     # Now: ScarliHQ can ONLY write to bridge-input/desired-mode. Root writes ALL state to
