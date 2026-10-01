@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v18.9.3 — Docker Volume Backup Script (pacman hook)
+# SCARLIX OS v18.9.4 — Docker Volume Backup Script (pacman hook)
 # FIX Q7a: Called by scarlix-docker-backup.hook before kernel/NVIDIA updates.
 #
 # Uses restic to snapshot /var/lib/docker/volumes to /mnt/backup/restic/.
@@ -35,14 +35,13 @@ fi
 #   Now: BACKUP_STATUS tracks init + backup result, logged at end.)
 BACKUP_STATUS="OK"
 
-# v18.8.5 P1 (P1-2): Source /etc/scarlix/.env so RESTIC_PASSWORD is available
-#   to restic init/backup. (was: no sourcing → restic prompted for password
-#   interactively in pacman hook (no TTY) → init/backup silently failed.)
+# v18.8.5 P1 (P1-2): Read RESTIC_PASSWORD from /etc/scarlix/.env
+# v18.9.4 P2-07: Safe parse instead of source (was: `. /etc/scarlix/.env` →
+#   shell execution of potentially user-modifiable file. Now: grep + cut,
+#   same pattern as model-manager's load_env_safe().)
 if [ -f /etc/scarlix/.env ]; then
-  set -a
-  # shellcheck source=/dev/null
-  . /etc/scarlix/.env
-  set +a
+  RESTIC_PASSWORD=$(grep '^RESTIC_PASSWORD=' /etc/scarlix/.env 2>/dev/null | cut -d= -f2- || echo "")
+  export RESTIC_PASSWORD
 fi
 
 # v18.8.5 P1 (P1-2): restic needs RESTIC_PASSWORD (was: interactive prompt

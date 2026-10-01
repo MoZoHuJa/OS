@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.3 — Self-Diagnostic (scarlix-doctor)
+# SCARLIX OS v18.9.4 — Self-Diagnostic (scarlix-doctor)
 # v18.5: http_ok() with -k/--no-check-certificate fallback; host-bridge check; version unified
 # v17.9.2: unhealthy = FAIL (not PASS), --fix mode, API healthcheck, docker group check
 
@@ -98,8 +98,20 @@ fix_generate_env() {
       > /etc/scarlix/.env && chmod 600 /etc/scarlix/.env
   fi
 }
+# v18.9.4 P2-06: Delegate to generate-env.sh (was: direct echo >> → bypassed atomic writer)
 fix_add_scarlihq_token() {
-  echo "SCARLIHQ_TOKEN=$(openssl rand -hex 32)" >> /etc/scarlix/.env
+  if [ -f /etc/systemd/system/generate-env.sh ]; then
+    /etc/systemd/system/generate-env.sh
+  else
+    # Fallback: atomic write of just the token
+    local tmp
+    tmp=$(mktemp /etc/scarlix/.env.XXXXXX) || return 1
+    grep -E '^([A-Z_][A-Z0-9_]*=|#|$)' /etc/scarlix/.env > "$tmp" 2>/dev/null || true
+    echo "SCARLIHQ_TOKEN=$(openssl rand -hex 32)" >> "$tmp"
+    chmod 600 "$tmp" || { rm -f "$tmp"; return 1; }
+    chown root:root "$tmp" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" /etc/scarlix/.env || { rm -f "$tmp"; return 1; }
+  fi
 }
 # v18.9.0 P1: Regenerate /etc/scarlix/.env when it contains orphan lines (was: old
 #   base64-64 multiline writes left orphan lines that broke backup hook sourcing
@@ -138,7 +150,7 @@ fix() {
 }
 
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║  SCARLIX OS v18.9.3 — System Diagnostic                      ║${NC}"
+echo -e "${CYAN}║  SCARLIX OS v18.9.4 — System Diagnostic                      ║${NC}"
 [ "$FIX_MODE" -eq 1 ] && echo -e "${CYAN}║  (--fix mode: will attempt automatic fixes)                  ║${NC}"
 [ "$STRICT_MODE" -eq 1 ] && echo -e "${CYAN}║  (--strict mode: WARN → FAIL, exit 1 on any warning)         ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"

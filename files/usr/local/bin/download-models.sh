@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.3 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v18.9.4 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
 # v18.5 FIXES:
 #   - Missing Ollama compose file = FAILED (was: silently skipped → false "complete")
@@ -49,7 +49,7 @@ exec 9>"$MODELS_LOCK"
 flock -n -x 9 || { echo "ERROR: cannot acquire models lock (scarlix-mode or model-manager running?)" >&2; exit 1; }
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v18.9.3 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v18.9.4 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing
@@ -147,25 +147,59 @@ else
     #   → if mv failed after rm -rf, user lost both old and new model. Now: unique
     #   staging via mktemp -d, swap via mv to .new then rename, old model preserved
     #   as .previous for rollback)
+    # v18.9.4 P2-03: Explicit permissions on staging dir (was: mkdir without chown/chmod)
+    # v18.9.4 P2-04: Fail-closed mkdir (was: || true → mktemp fails silently later)
     STAGING_DIR="/models/.staging"
-    mkdir -p "$STAGING_DIR" 2>/dev/null || true
+    if ! mkdir -p "$STAGING_DIR" 2>/dev/null; then
+      echo "  ✗ FATAL: cannot create staging directory $STAGING_DIR" | tee -a "$LOG_FILE"
+      FAILED=$((FAILED+1)); continue_skipped=1
+    else
+      chown root:root "$STAGING_DIR" 2>/dev/null || true
+      chmod 700 "$STAGING_DIR" 2>/dev/null || true
+    fi
     MODEL_NAME=$(basename "$SGLANG_LOCAL_PATH")
     STAGING_PATH=$(mktemp -d "${STAGING_DIR}/${MODEL_NAME}.XXXXXX") || { echo "  ✗ Cannot create staging dir" | tee -a "$LOG_FILE"; FAILED=$((FAILED+1)); continue_skipped=1; }
     if [ -z "${continue_skipped:-}" ]; then
     if "$HF_CLI" download "$SGLANG_HF_REPO" --local-dir "$STAGING_PATH" >> "$LOG_FILE" 2>&1; then
       # v18.9.3 P2: Verify model has config.json + at least one safetensors/index
       if [ -f "$STAGING_PATH/config.json" ]; then
-        # Check for safetensors (sharded or single)
-        if ls "$STAGING_PATH"/*.safetensors 1>/dev/null 2>&1 || [ -f "$STAGING_PATH/model.safetensors.index.json" ]; then
+        # v18.9.4 P1-04: Full shard verification (was: only checked *.safetensors exists →
+        #   partial model with missing shards accepted. Now: if index.json exists,
+        #   parse it and verify ALL shards are present.)
+        verify_safetensors() {
+          local model_dir="$1"
+          if [ -f "$model_dir/model.safetensors.index.json" ]; then
+            # v18.9.4 P1-04: Parse index and verify all shards
+            python3 -c "
+import json, os, sys
+with open(os.path.join('$model_dir', 'model.safetensors.index.json')) as f:
+    idx = json.load(f)
+shards = set(idx.get('weight_map', {}).values())
+missing = [s for s in shards if not os.path.exists(os.path.join('$model_dir', s))]
+if missing:
+    print(f'MISSING_SHARDS:{missing}', file=sys.stderr)
+    sys.exit(1)
+print(f'Verified {len(shards)} shards', file=sys.stderr)
+" 2>&1 | tee -a "$LOG_FILE"
+            return $?
+          elif ls "$model_dir"/*.safetensors 1>/dev/null 2>&1; then
+            # Single safetensors file — OK
+            return 0
+          else
+            return 1
+          fi
+        }
+        if verify_safetensors "$STAGING_PATH"; then
           # v18.9.3 P2: Atomic swap — rename old to .previous, mv new to target
           # If mv fails, old model is preserved as .previous and can be restored
           if [ -d "$SGLANG_LOCAL_PATH" ]; then
             mv -f "$SGLANG_LOCAL_PATH" "${SGLANG_LOCAL_PATH}.previous" 2>/dev/null || true
           fi
           if mv -f "$STAGING_PATH" "$SGLANG_LOCAL_PATH" 2>/dev/null; then
-            echo "  ✓ SGLang model downloaded + verified (safetensors confirmed)" | tee -a "$LOG_FILE"
-            # Clean up old previous on success
-            rm -rf "${SGLANG_LOCAL_PATH}.previous" 2>/dev/null || true
+            echo "  ✓ SGLang model downloaded + verified (all shards present)" | tee -a "$LOG_FILE"
+            # v18.9.4 P2-01: Keep .previous for rollback (was: rm -rf .previous on success
+            #   → if new model fails at runtime, no rollback available. Now: .previous
+            #   is kept and can be manually restored. Cleaned up on next successful update.)
           else
             echo "  ✗ SGLang staging move FAILED — restoring previous model" | tee -a "$LOG_FILE"
             # Restore old model if it was moved to .previous

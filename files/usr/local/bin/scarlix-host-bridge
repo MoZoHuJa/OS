@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v18.9.3 — Host Bridge (privileged ops for ScarliHQ dashboard)
+# SCARLIX OS v18.9.4 — Host Bridge (privileged ops for ScarliHQ dashboard)
 #
 # ARCHITECTURE (v18.0.0): ScarliHQ container has NO docker.sock, NO nvidia runtime.
 # It writes ONLY to /var/lib/scarlix/bridge-input/desired-mode (writable by nonroot 65532).

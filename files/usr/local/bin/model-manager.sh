@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.3 — Model Manager
+# SCARLIX OS v18.9.4 — Model Manager
 # v18.7 FIX: Ollama pulls via `docker exec ollama-agent` (was: host `ollama` binary — never installed)
 # FIX Q8b: Split — HF model pulls = auto (safe), Ollama tag pulls = manual (--apply only)
 #
@@ -88,7 +88,7 @@ vram_snapshot() {
 }
 
 log "========================================"
-log "  SCARLIX OS v18.9.3 — Model Manager"
+log "  SCARLIX OS v18.9.4 — Model Manager"
 [ "$APPLY_OLLAMA" -eq 1 ] && log "  (--apply-ollama: will update Ollama tags)" || log "  (HF auto-pull + Ollama dry-run report only)"
 log "========================================"
 
@@ -125,21 +125,38 @@ update_hf_model() {
     # v18.9.0 P1-03: Download to staging, then atomic move to final location
     # (was: --local-dir "$target_dir" → partial/corrupt file in /models on interruption)
     if /opt/scarlix/venv/bin/huggingface-cli download "$repo" "$file" --local-dir "$STAGING_DIR" >> "$LOG_FILE" 2>&1; then
-      # Atomic move from staging to final location (same filesystem = rename(2))
-      mv -f "$STAGING_DIR/$file" "$target_dir/" 2>/dev/null || {
-        # Fallback: move all staging contents (handles subdir paths in $file)
-        mv -f "$STAGING_DIR"/* "$target_dir/" 2>/dev/null || true
-      }
-      # v18.9.0 P1-03: Clean up staging after successful move
-      find "$STAGING_DIR" -mindepth 1 -delete 2>/dev/null || true
-      log "  ✓ $file"
-      HF_UPDATED=$((HF_UPDATED + 1))
-      UPDATED_LIST="${UPDATED_LIST}\n  ✓ ${file} (HF)"
-      # v18.9.0 P1-02: Restart runtime after model update
-      # (was: file on disk updated but BeeLlama container kept old model in RAM)
-      if [ "$engine" = "beellama" ]; then
-        log "Restarting BeeLlama to load updated model..."
-        docker compose --env-file /opt/scarlix/.env -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d --force-recreate >> "$LOG_FILE" 2>&1 || log "WARNING: BeeLlama restart failed"
+      # v18.9.4 P1-02: Capture mv exit code (was: || true → false success reported)
+      # v18.9.4 P1-03: Use .previous rollback pattern (was: direct mv, no rollback)
+      local target_file="$target_dir/$file"
+      local mv_rc=0
+      # If target exists, move to .previous for rollback
+      if [ -e "$target_file" ]; then
+        mv -f "$target_file" "${target_file}.previous" 2>/dev/null || mv_rc=1
+      fi
+      if [ "$mv_rc" -eq 0 ]; then
+        mv -f "$STAGING_DIR/$file" "$target_file" 2>/dev/null || {
+          # Fallback: try moving all staging contents
+          mv -f "$STAGING_DIR"/* "$target_dir/" 2>/dev/null || mv_rc=1
+        }
+      fi
+      if [ "$mv_rc" -eq 0 ]; then
+        # Success — clean up staging + .previous
+        find "$STAGING_DIR" -mindepth 1 -delete 2>/dev/null || true
+        rm -f "${target_file}.previous" 2>/dev/null || true
+        log "  ✓ $file"
+        HF_UPDATED=$((HF_UPDATED + 1))
+        UPDATED_LIST="${UPDATED_LIST}\n  ✓ ${file} (HF)"
+        # v18.9.0 P1-02: Restart runtime after model update
+        if [ "$engine" = "beellama" ]; then
+          log "Restarting BeeLlama to load updated model..."
+          docker compose --env-file /opt/scarlix/.env -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d --force-recreate >> "$LOG_FILE" 2>&1 || log "WARNING: BeeLlama restart failed"
+        fi
+      else
+        # v18.9.4 P1-02: mv failed — restore .previous if available
+        log "  ✗ $file — model promotion FAILED, restoring previous"
+        [ -e "${target_file}.previous" ] && mv -f "${target_file}.previous" "$target_file" 2>/dev/null || true
+        find "$STAGING_DIR" -mindepth 1 -delete 2>/dev/null || true
+        HF_FAILED=$((HF_FAILED + 1))
       fi
     else
       log "  ✗ $file"

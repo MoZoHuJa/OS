@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.3 — Generate .env (fully atomic for both first-run and existing)
+# SCARLIX OS v18.9.4 — Generate .env (fully atomic for both first-run and existing)
 # v17.9.5 FIX: If .env exists, only add missing keys (don't overwrite existing passwords)
 # v18.9.3 P1: Fully atomic for existing .env (was: echo >> + sed -i → partial on crash)
 #   Now: read existing → add missing → write to mktemp → chmod → chown → mv
@@ -9,9 +9,12 @@ set -euo pipefail
 mkdir -p /etc/scarlix/secrets
 
 # v18.9.3 P1: Helper to generate a missing key with default value
+# v18.9.4 P1-01: Check SECRETS_TMP not ENV_FILE (was: checked ENV_FILE →
+#   keys already in SECRETS_TMP from previous gen_if_missing were invisible
+#   → duplicate entries possible)
 gen_if_missing() {
   local key="$1" val="$2"
-  if ! grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+  if ! grep -q "^${key}=" "$SECRETS_TMP" 2>/dev/null; then
     echo "${key}=${val}"
   fi
 }
@@ -60,9 +63,17 @@ gen_if_missing "SCARLIX_VERSION" "$SCARLIX_VER_FILE" >> "$SECRETS_TMP"
 # Update SCARLIX_VERSION to current (always, not just if missing)
 sed -i "s|^SCARLIX_VERSION=.*|SCARLIX_VERSION=$SCARLIX_VER_FILE|" "$SECRETS_TMP"
 
-# Update Telegram tokens if new ones provided
-[ -n "${TELEGRAM_BOT_TOKEN:-}" ] && sed -i "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN|" "$SECRETS_TMP" || true
-[ -n "${TELEGRAM_ZMOR_CHAT_ID:-}" ] && sed -i "s|^TELEGRAM_ZMOR_CHAT_ID=.*|TELEGRAM_ZMOR_CHAT_ID=$TELEGRAM_ZMOR_CHAT_ID|" "$SECRETS_TMP" || true
+# Update Telegram tokens if new ones provided (v18.9.4 P2-05: use awk for safe interpolation)
+[ -n "${TELEGRAM_BOT_TOKEN:-}" ] && awk -v k="TELEGRAM_BOT_TOKEN" -v v="$TELEGRAM_BOT_TOKEN" 'BEGIN{FS=OFS="="} $1==k{$2=v}1' "$SECRETS_TMP" > "${SECRETS_TMP}.awk" && mv -f "${SECRETS_TMP}.awk" "$SECRETS_TMP" || true
+[ -n "${TELEGRAM_ZMOR_CHAT_ID:-}" ] && awk -v k="TELEGRAM_ZMOR_CHAT_ID" -v v="$TELEGRAM_ZMOR_CHAT_ID" 'BEGIN{FS=OFS="="} $1==k{$2=v}1' "$SECRETS_TMP" > "${SECRETS_TMP}.awk" && mv -f "${SECRETS_TMP}.awk" "$SECRETS_TMP" || true
+
+# v18.9.4 P1-01: Validate no duplicate keys (was: gen_if_missing checked wrong file → dupes)
+DUPES=$(cut -d= -f1 "$SECRETS_TMP" | sort | uniq -d)
+if [ -n "$DUPES" ]; then
+  echo "ERROR: Duplicate env keys detected: $DUPES" >&2
+  rm -f "$SECRETS_TMP"
+  exit 1
+fi
 
 # v18.9.3 P1: Atomic write — chmod + chown + mv (no direct writes to .env)
 chmod 600 "$SECRETS_TMP" || { rm -f "$SECRETS_TMP"; exit 1; }
