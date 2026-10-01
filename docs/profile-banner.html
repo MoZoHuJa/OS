@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ScarLiXoS v19 — Banner</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#111622; --panel2:#161c2c; --border:#232b40;
+    --text:#e6e9f0; --muted:#8892a8;
+    --accent:#10b981; --accent2:#f59e0b;
+    --cyan:#06b6d4; --violet:#8b5cf6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  body{
+    width:1920px;height:480px;overflow:hidden;position:relative;
+    background:
+      radial-gradient(circle at 12% 50%, rgba(16,185,129,.10), transparent 35%),
+      radial-gradient(circle at 88% 50%, rgba(139,92,246,.10), transparent 35%),
+      linear-gradient(135deg,#0b0e14 0%,#0d1320 100%);
+  }
+  /* Subtle grid backdrop (like the dashboard dark theme) */
+  body::before{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background-image:
+      linear-gradient(rgba(35,43,64,.25) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(35,43,64,.25) 1px,transparent 1px);
+    background-size:48px 48px;mask-image:radial-gradient(circle at 50% 50%, #000 30%, transparent 75%);
+  }
+  .stage{
+    position:relative;width:100%;height:100%;display:flex;align-items:center;
+    padding:0 80px;gap:48px;
+  }
+  /* Logo block — same conic-gradient as ScarliHQ .logo */
+  .logo-wrap{display:flex;align-items:center;gap:36px;flex-shrink:0}
+  .logo{
+    width:148px;height:148px;border-radius:34px;
+    background:conic-gradient(from 180deg,var(--accent),var(--cyan),var(--violet),var(--accent));
+    display:flex;align-items:center;justify-content:center;
+    font-weight:800;color:#0b0e14;font-size:84px;
+    box-shadow:0 0 60px rgba(16,185,129,.25), 0 0 120px rgba(139,92,246,.15);
+    letter-spacing:-2px;
+  }
+  .title-block{display:flex;flex-direction:column;gap:10px}
+  .title{
+    font-size:92px;font-weight:800;letter-spacing:-1px;line-height:1;
+    background:linear-gradient(135deg,#e6e9f0 0%,#10b981 60%,#06b6d4 100%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .subtitle{
+    font-size:24px;color:var(--muted);font-weight:500;letter-spacing:.3px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  /* Right cluster — mode pills echoing the dashboard mode switcher */
+  .pills{
+    position:absolute;right:80px;top:50%;transform:translateY(-50%);
+    display:flex;flex-direction:column;gap:14px;align-items:flex-end;
+  }
+  .pill-row{display:flex;gap:10px}
+  .pill{
+    padding:10px 18px;border-radius:12px;font-size:18px;font-weight:700;
+    background:var(--panel2);border:1px solid var(--border);color:var(--text);
+    min-width:96px;text-align:center;font-family:ui-monospace,monospace;
+  }
+  .pill.ai{background:linear-gradient(135deg,var(--accent),#0c8a5e);color:#0b0e14;border-color:transparent}
+  .pill.turbo{background:linear-gradient(135deg,var(--accent2),#b45309);color:#0b0e14;border-color:transparent}
+  .pill.creative{background:linear-gradient(135deg,var(--violet),#6d28d9);color:#fff;border-color:transparent}
+  .pill.tv{background:linear-gradient(135deg,var(--cyan),#0e7490);color:#0b0e14;border-color:transparent}
+  .pill.game{background:var(--panel2);border:1px solid var(--border)}
+  .pill.offline{background:var(--panel2);border:1px solid var(--border);color:var(--muted)}
+  .stack-tag{
+    font-size:14px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;
+    font-family:ui-monospace,monospace;margin-top:8px;
+  }
+  /* Footer ribbon — like the dashboard footer */
+  .ribbon{
+    position:absolute;left:0;bottom:0;width:100%;
+    padding:14px 80px;display:flex;justify-content:space-between;align-items:center;
+    background:linear-gradient(180deg,transparent,rgba(0,0,0,.25));
+    border-top:1px solid var(--border);
+    font-size:16px;color:var(--muted);font-family:ui-monospace,monospace;
+  }
+  .ribbon .accent{color:var(--accent)}
+  .ribbon .right{display:flex;gap:24px}
+  .badge{
+    display:inline-flex;align-items:center;gap:8px;padding:5px 14px;border-radius:99px;
+    background:rgba(16,185,129,.12);color:var(--accent);font-size:14px;font-weight:600;
+    border:1px solid rgba(16,185,129,.25);
+  }
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="logo-wrap">
+    <div class="logo">S</div>
+    <div class="title-block">
+      <div class="title">ScarLiXoS v19</div>
+      <div class="subtitle">Sovereign AI Cloud · EndeavourOS Edition</div>
+      <div class="stack-tag">SGLang · vLLM · BeeLlama · Ollama · LiteLLM · ScarliHQ</div>
+    </div>
+  </div>
+
+  <div class="pills">
+    <div class="pill-row">
+      <span class="pill ai">AI</span>
+      <span class="pill turbo">Turbo</span>
+      <span class="pill creative">Creative</span>
+    </div>
+    <div class="pill-row">
+      <span class="pill tv">TV</span>
+      <span class="pill game">Game</span>
+      <span class="pill offline">Offline</span>
+    </div>
+  </div>
+
+  <div class="ribbon">
+    <span><span class="accent">●</span> Secure Host-Bridge · Token Auth · 4-tier AI failover</span>
+    <span class="right">
+      <span class="badge"><span class="dot"></span>scarlix-mode</span>
+      <span>github.com/MoZoHuJa/OS</span>
+    </span>
+  </div>
+</div>
+</body>
+</html>
