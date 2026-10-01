@@ -6,6 +6,9 @@ Requires=scarlix-host-bridge.service
 # Every 5 seconds — ScarliHQ dashboard reads host-status.json (fresh data)
 OnBootSec=10s
 OnUnitActiveSec=5s
+# v19.0.0 P1-13: Oneshot + flock prevents overlap (was: concern about stacking
+#   instances — but flock -n in the script already exits 0 if another instance
+#   is running. This is intentional and documented.)
 AccuracySec=1s
 Unit=scarlix-host-bridge.service
 

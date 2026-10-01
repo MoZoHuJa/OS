@@ -5,6 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# v19.0.0 P1-13: flock in script already prevents overlap, but document it
+# If the script is already running, the timer's start request is queued
+# and executed after the current run completes.
 ExecStart=/usr/local/bin/scarlix-host-bridge
 # Runs as root (needs nvidia-smi, docker, scarlix-mode)
 User=root

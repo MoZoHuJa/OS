@@ -36,6 +36,23 @@ DC="docker compose --env-file $ENV_FILE"
 # v18.5 P0: Non-fatal log (was: tee fails on root-owned log → set -e abort)
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE" 2>/dev/null || echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
+# v19.0.0 P1-9: Ensure scarlix-net exists before any compose operation
+#   (was: if a user/admin manually `docker network rm scarlix-net`'d it — or
+#   it never got created on a fresh install — every `$DC up/down` failed with
+#   a confusing "network scarlix-net declared as external, but could not be
+#   found" error from compose, with no hint about how to recover. Now: inspect
+#   → create if missing → fail loud if Docker itself is down.)
+ensure_scarlix_net() {
+  if ! docker network inspect scarlix-net >/dev/null 2>&1; then
+    log "⚠ scarlix-net not found — creating..."
+    docker network create scarlix-net >/dev/null 2>&1 || {
+      log "ERROR: Cannot create scarlix-net — Docker may be down"
+      return 1
+    }
+    log "  ✓ scarlix-net created"
+  fi
+}
+
 # P0 FIX v17.9.1: MODE assigned BEFORE flock check (was after → set -u crash)
 MODE="${1:-status}"
 CURRENT_MODE=$(cat "$STATE_FILE" 2>/dev/null || echo "unknown")
@@ -868,6 +885,21 @@ start_verified_ai() {
 
   return 0
 }
+
+# v19.0.0 P1-9: Ensure scarlix-net exists before any compose-using mode
+#   (ai/stop/creative/game/tv/turbo/offline). One call here at the top of the
+#   dispatch covers all 7 modes — simpler than adding the call to each branch.
+#   status/vram/vram-check are read-only and explicitly skipped: they must
+#   keep working when Docker is down (the dashboard's `scarlix-mode status`
+#   is the diagnostic users reach for when compose is broken — aborting it
+#   on `docker network inspect` failure would hide the very information they
+#   need). The unknown-mode `*)` branch is also skipped so usage text prints
+#   cleanly without a spurious "Cannot create scarlix-net" error first.
+case "$MODE" in
+  ai|stop|creative|game|tv|turbo|offline)
+    ensure_scarlix_net || { log "FATAL: scarlix-net unavailable — aborting mode switch"; exit 1; }
+    ;;
+esac
 
 case "$MODE" in
   ai)
