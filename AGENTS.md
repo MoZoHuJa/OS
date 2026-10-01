@@ -1,13 +1,19 @@
-# SCARLIX OS v19.0.0 — Agent Architecture
+# SCARLIX OS v19.0.2 — Agent Architecture
 
 ## Inference Stack
 
 | Tier | Engine | Port | GPU | Use Case |
 |------|--------|------|-----|----------|
-| 1 | SGLang v0.4.4-cu128 | 30000 | GPU 0 | Agents, RadixAttention, default |
-| 2 | vLLM v0.8.0 | 8089 | GPU 1 (TP=1) | High throughput, experimental (--profile experimental) |
-| 4 | llama.cpp (official) | 11438 | CPU | Offline fallback, q4_0 KV cache |
-| Fallback | Ollama 0.5.4 | 11435 | CPU | Starter model qwen2.5:3b (auto-downloaded) |
+| 1 | SGLang v0.4.6.post1-cu128 (`--disable-flashinfer`) | 30000 | GPU 0 | Agents, RadixAttention, default (Qwen3-14B-AWQ) |
+| 2 | vLLM v0.8.5 | 8089 | GPU 1 (TP=1) | High throughput, experimental (`.experimental` flag only) |
+| 3 | BeeLlama (llama.cpp, CPU) | 11438 | CPU | Offline fallback, GGUF Q4_K_M |
+| Fallback | Ollama | 11435 | CPU | Starter model qwen2.5:3b (auto-downloaded) |
+
+> **v19.0.2:** SGLang bumped v0.4.4 → v0.4.6.post1 (Qwen3 arch support) and vLLM
+> v0.8.0 → v0.8.5 in v18.9.6/v0.8.5. BeeLlama is the llama.cpp CPU tier (renamed
+> from `llamacpp` in v18.5). Service names on `scarlix-net`: `sglang`, `vllm`,
+> `beellama`, `ollama-agent` — NOT `ollama-main`/`llamacpp` (those were removed
+> in v19.0.2 P0-6 as dead config references).
 
 All inference endpoints bound to 127.0.0.1 (localhost only).
 

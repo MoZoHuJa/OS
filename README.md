@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.1 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.2 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.0.1</h1>
+<h1 align="center">SCARLIX OS v19.0.2</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.1"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.1-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.2"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.2-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.0.1 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.0.2 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.0.1   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.0.2   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -48,6 +48,45 @@ scarlix-mode ai
 
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
+```
+
+---
+
+## 🆕 What's New in v19.0.2 (vs v19.0.1)
+
+**Verified fixes from an independent code review + stale-docs cleanup.** 6 fixes.
+
+An independent review of the v19.0.0 ZIP surfaced ~23 claimed bugs. On verification against the live repo (post-v19.0.1), **only 3 were real** (~74% false positives — the review was run on a stale snapshot and didn't check runtime facts like HuggingFace/Docker Hub APIs). v19.0.2 fixes the 3 real bugs + rewrites stale v12-era docs.
+
+### v19.0.2 fixes (6)
+
+| # | Severity | Fix | Was | Now |
+|---|----------|-----|-----|-----|
+| 1 | **P1** | **`scarlix-wizard` Telegram token silently lost via `sudo env_reset`** | `sudo /etc/systemd/system/generate-env.sh` — sudo's default `env_reset` strips `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ZMOR_CHAT_ID` (not in `env_keep`) → generate-env.sh saw them EMPTY → token the user typed into the wizard was silently discarded | `sudo --preserve-env=TELEGRAM_BOT_TOKEN,TELEGRAM_ZMOR_CHAT_ID` (scoped, not bare `-E` which would leak the whole env) |
+| 2 | **P0** | **`smg/config.yaml` dead upstream hostnames** | Referenced `ollama-main` (no such service — only `ollama-agent` exists) and `llamacpp` (renamed to `beellama` in v18.5) → 2 of 4 fallback targets never resolved on `scarlix-net` | Removed dead `ollama-main`; `llamacpp-cpu` → `beellama-cpu` (`http://beellama:8080`); `fallback_chain` now `[sglang-main, ollama-agent, beellama-cpu]` (matches the actual service names, consistent with the v18.8 LiteLLM config fix) |
+| 3 | **P0** | **`docs/ARCHITECTURE.md` rewritten (was v12/Ubuntu)** | Said "v12 / Ubuntu 24.04 LTS / Ollama GPU 1 qwen3.6:14b / llama.cpp" — completely stale from the abandoned Ubuntu-ISO era | Rewritten for v19 EndeavourOS/Arch: real inference tiers (SGLang AWQ + vLLM TP=1 + BeeLlama + Ollama CPU), Secure Host-Bridge architecture, 4-tier + 3-tier failover diagrams, GPU arbitration table matching actual `scarlix-mode` modes |
+| 4 | **P2** | **`docs/COMPLETE_INSTALL_GUIDE.md` deprecation banner** | 2364-line guide describing the obsolete v12 Ubuntu-ISO workflow (Rufus, Ubuntu 24.04 Server ISO, apt steps) — misleading for v19 users | Prominent DEPRECATED banner at top pointing to README.md "🚀 Install (NO ISO)"; header metadata marked zastarané. Full body retained as historical reference (rewriting 2364 lines of dead Ubuntu steps has no value) |
+| 5 | **P2** | **`AGENTS.md` inference-stack table stale image versions** | Table said SGLang `v0.4.4-cu128`, vLLM `v0.8.0`, Ollama `0.5.4`, "llama.cpp official" | Updated to SGLang `v0.4.6.post1-cu128` (--disable-flashinfer), vLLM `v0.8.5`, BeeLlama (the llama.cpp tier), real service names (`sglang`/`vllm`/`beellama`/`ollama-agent`); added note that `ollama-main`/`llamacpp` were removed as dead references |
+| 6 | **P2** | **`VERSION` + `install.sh` header → v19.0.2** | v19.0.1 | v19.0.2 |
+
+### Review-claims verified FALSE (not bugs — left unchanged)
+
+| Claim | Verdict | Evidence |
+|-------|---------|----------|
+| `/etc/scarlix/VERSION` never created | **FALSE** | `install.sh:679` creates it (v19.0.0 P1-7) |
+| host-bridge timer `flock -n` silent skip | **FALSE** | Intentional oneshot+flock design (v19.0.0 P1-13 documented) |
+| HF model IDs `Qwen/Qwen3-14B-AWQ` / `-GGUF` don't exist | **FALSE** | HuggingFace API confirms both repos + files exist |
+| download-models.sh Ollama pull race | **FALSE** | `download-models.sh:298-312` waits for Ollama API (max 60s) |
+| Video Dockerfile Wan2GP clone needs auth | **FALSE** | Public repo, commit pinned (`f3f204e50f6e`) |
+| bridge-reader UID 65532 may not exist | **FALSE** | `scarlihq/Dockerfile:46,57` creates nonroot UID 65532 (intentional security design) |
+| scarlix-doctor checks `ollama-main` | **FALSE** | `scarlix-doctor:336` checks `ollama-agent` (correct) |
+| jellyfin 12.1 doesn't exist | **FALSE** | Docker Hub API confirms tag `12.1` exists |
+
+### Verification (v19.0.2)
+```
+bash -n  install.sh scarlix-wizard scarlix-mode generate-env.sh ...  → PASS
+python3 yaml.safe_load ai/smg/config.yaml                            → OK
+git grep -n "ollama-main\|http://llamacpp:" ai/ docs/ AGENTS.md       → 0 matches (dead refs removed)
 ```
 
 ---

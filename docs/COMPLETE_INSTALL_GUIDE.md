@@ -1,9 +1,22 @@
-# SCARLIX OS v12 — KOMPLETNÝ INŠTALAČNÝ NÁVOD
-## Od BIOSu po Dashboard na TV — Krok za Krokom
+<!-- v19.0.2: This guide describes the OBSOLETE v12 Ubuntu-ISO install workflow.
+     SCARLIX OS v19+ uses EndeavourOS (Arch) with NO ISO: `git clone` + `bash install.sh`.
+     For the current install procedure see README.md (🚀 Install section).
+     This file is retained for historical reference only — do NOT follow these steps
+     on a v19 system (Ubuntu apt steps, Rufus ISO, Ubuntu 24.04 LTS Server do not apply). -->
 
-**Verzia:** v12.0 | **Dátum:** August 2026 | **Autor:** MoZoHuJa
+# SCARLIX OS v12 — KOMPLETNÝ INŠTALAČNÝ NÁVOD *(ZASTARANÉ — pozri README.md)*
+
+> ⚠️ **DEPRECATED v v19+:** Tento návod popisuje starý v12 Ubuntu-ISO inštalačný
+> workflow, ktorý už **neplatí** pre SCARLIX OS v19+. Aktuálna inštalácia je
+> EndeavourOS (Arch) bez ISO: `git clone https://github.com/MoZoHuJa/OS.git &&
+> cd OS && git checkout v19.0.2 && bash install.sh`. Pozri **README.md** sekciu
+> „🚀 Install (NO ISO)". Tento súbor ostáva len ako historická referencia.
+
+## Od BIOSu po Dashboard na TV — Krok za Krokom *(zastarané)*
+
+**Verzia:** v12.0 *(zastarané)* | **Dátum:** August 2026 | **Autor:** MoZoHuJa
 **Stack:** ScarliHQ · Hermes · OpenCode · Buzz · SGLang · LiteLLM · Docker
-**Hardvér:** 2× PC (Main + HP Agent) · 2× NVIDIA GPU · Ubuntu 24.04 LTS
+**Hardvér:** 2× PC (Main + HP Agent) · 2× NVIDIA GPU · ~~Ubuntu 24.04 LTS~~ → v19: EndeavourOS (Arch)
 
 > ⚠️ **Dôležité:** Tento návod je finálny pred nasadením. Postupuj KROK ZA KROKOM,
 > nepreskakuj žiadny krok. Každý krok má overenie — ak overenie zlyhá, NEPOKRAČUJ.

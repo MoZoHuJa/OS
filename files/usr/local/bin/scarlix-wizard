@@ -135,7 +135,15 @@ fi
 
 export TELEGRAM_BOT_TOKEN="$TG_TOKEN"
 export TELEGRAM_ZMOR_CHAT_ID="$TG_CHAT_ID"
-sudo /etc/systemd/system/generate-env.sh
+# v19.0.2 P1-3: sudo default policy is `env_reset` — it strips ALL env vars except
+#   those in env_keep. TELEGRAM_BOT_TOKEN / TELEGRAM_ZMOR_CHAT_ID are NOT in the
+#   default env_keep list, so the previous plain `sudo generate-env.sh` meant
+#   generate-env.sh saw those vars as EMPTY → the token the user just typed into
+#   the wizard was SILENTLY LOST (gen_if_missing wrote an empty value, and the
+#   update block was skipped because `[ -n "${TELEGRAM_BOT_TOKEN:-}" ]` is false
+#   for empty). Fix: --preserve-env with an explicit, scoped var list (NOT bare
+#   `-E`, which would leak the entire user environment — security risk).
+sudo --preserve-env=TELEGRAM_BOT_TOKEN,TELEGRAM_ZMOR_CHAT_ID /etc/systemd/system/generate-env.sh
 
 if [ -d /opt/scarlix-src ]; then
   # v19.0.1 P2-1: was `cp -r /opt/scarlix-src/* /opt/scarlix/ 2>/dev/null || true`
