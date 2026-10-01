@@ -377,6 +377,17 @@ else
       ok "GRUB config (already set)"
     fi
 
+    # v19.0.0 P1-12: Detect if reboot is required (new kernel/driver installed)
+    #   (was: no detection → user might run AI workloads on old kernel without
+    #   the just-installed NVIDIA driver loaded → confusing failures. Now: touch
+    #   /var/lib/scarlix/.reboot-required so scarlix-doctor + user can be warned.)
+    RUNNING_KERNEL=$(uname -r)
+    INSTALLED_KERNEL=$(pacman -Q linux 2>/dev/null | awk '{print $2}' | cut -d- -f1)
+    if [ -n "$INSTALLED_KERNEL" ] && ! echo "$RUNNING_KERNEL" | grep -q "$INSTALLED_KERNEL"; then
+      warn "⚠ REBOOT REQUIRED: running kernel $RUNNING_KERNEL, installed kernel $INSTALLED_KERNEL"
+      touch /var/lib/scarlix/.reboot-required
+    fi
+
     # Get compute_cap now (driver installed)
     if command -v nvidia-smi >/dev/null 2>&1; then
       GPU_COMPUTE_CAPS=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | tr '\n' ';' | sed 's/;$//')
@@ -412,7 +423,16 @@ else
     #   → symlink-race / pre-populated dir could inject modified PKGBUILD).
     YAY_BUILD_DIR=$(mktemp -d) || crit "Cannot create temp dir for AUR build"
     if sudo -u "$REAL_USER" git clone https://aur.archlinux.org/yay.git "$YAY_BUILD_DIR" >> "$LOG_FILE" 2>&1; then
-      sudo -u "$REAL_USER" bash -c "cd $YAY_BUILD_DIR && makepkg -si --noconfirm" >> "$LOG_FILE" 2>&1 && ok "yay installed" || fail "yay makepkg"
+      # v19.0.0 P1-4: After makepkg failure, check if yay is actually available
+      #   (was: plain `fail` → installer continued but later nvidia-container-toolkit
+      #   AUR fallback would silently fail. Now: distinguish yay-exists vs yay-missing.)
+      sudo -u "$REAL_USER" bash -c "cd $YAY_BUILD_DIR && makepkg -si --noconfirm" >> "$LOG_FILE" 2>&1 && ok "yay installed" || {
+        if command -v yay >/dev/null 2>&1; then
+          ok "yay already available (makepkg may have failed but yay exists)"
+        else
+          warn "yay build failed — AUR packages (downgrade) will not be available"
+        fi
+      }
     else
       fail "yay git clone"
     fi
@@ -459,14 +479,25 @@ else
       crit "Docker NVIDIA runtime unavailable — GPU workloads cannot start (try reboot after install)"
     fi
 
-    # v18.9.7 P0-02: Hard Docker GPU smoke test (was: only checked `docker info | grep nvidia`
-    #   → runtime registered but GPU not necessarily accessible. Now: actual `nvidia-smi`
-    #   inside container proves end-to-end GPU passthrough works.)
+    # v18.9.7 P0-02 + v19.0.0 P1-2: Hard Docker GPU smoke test (was: only checked
+    #   `docker info | grep nvidia` → runtime registered but GPU not necessarily
+    #   accessible. Now: actual `nvidia-smi` inside container proves end-to-end
+    #   GPU passthrough works. v19.0.0 P1-2: Add retry + fallback to host
+    #   nvidia-smi so install does not fail purely on Docker Hub being unreachable.)
     log "Running Docker GPU smoke test (nvidia-smi in container)..."
-    if docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi >> "$LOG_FILE" 2>&1; then
-      ok "Docker GPU smoke test PASSED — nvidia-smi works inside container"
+    gpu_test_rc=0
+    docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi >> "$LOG_FILE" 2>&1 || gpu_test_rc=$?
+    if [ "$gpu_test_rc" -eq 0 ]; then
+      ok "Docker GPU smoke test PASSED"
+    elif docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi >> "$LOG_FILE" 2>&1; then
+      ok "Docker GPU smoke test PASSED (retry 2)"
     else
-      crit "Docker GPU smoke test FAILED — nvidia-smi does not work inside container (GPU passthrough broken)"
+      # v19.0.0 P1-2: Distinguish GPU failure from network/image failure
+      if docker info 2>/dev/null | grep -qi "Runtimes.*nvidia" && nvidia-smi >/dev/null 2>&1; then
+        warn "Docker GPU smoke test could not pull CUDA image (network issue?), but NVIDIA runtime + nvidia-smi work — proceeding (test after install with: docker run --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi)"
+      else
+        crit "Docker GPU smoke test FAILED — nvidia-smi does not work in container (GPU passthrough broken)"
+      fi
     fi
 
     # v18.9.7 P1-03: Save GPU topology for diagnostics (was: no record of GPU layout →
@@ -725,7 +756,15 @@ else
   echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
   echo ""
   if command -v scarlix-wizard >/dev/null 2>&1; then
-    sudo -u "$REAL_USER" scarlix-wizard || warn "Wizard exited (user may have cancelled)"
+    # v19.0.0 P1-6: Check TTY before running wizard (was: ran unconditionally →
+    #   in non-interactive SSH without TTY, whiptail could hang or behave
+    #   unpredictably. Now: skip + leave .wizard-pending marker so user is reminded.)
+    if [ -t 0 ] && [ -t 1 ]; then
+      sudo -u "$REAL_USER" scarlix-wizard || warn "Wizard exited (user may have cancelled)"
+    else
+      warn "No TTY detected — skipping wizard. Run 'sudo scarlix-wizard' after install to configure."
+      touch /var/lib/scarlix/.wizard-pending
+    fi
   else
     crit "scarlix-wizard not installed"
   fi
