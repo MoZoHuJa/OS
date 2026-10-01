@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.0 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.1 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.0.0</h1>
+<h1 align="center">SCARLIX OS v19.0.1</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.0"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.0-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.1"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.1-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.0.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.0.1 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.0.0   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.0.1   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -52,7 +52,41 @@ scarlix-mode ai
 
 ---
 
-## 🆕 What's New in v19.0.0 (vs v19.0.0)
+## 🆕 What's New in v19.0.1 (vs v19.0.0)
+
+**Sandbox-verified bug fixes + image hygiene.** 11 fixes from two independent sandbox reviews of v19.0.0.
+
+v19.0.0 passed `bash -n` and YAML lint, but live sandbox runs surfaced three real `generate-env.sh` data-corruption bugs, a multilib DB-sync ordering issue, stale image tags, and documentation drift. v19.0.1 closes all of them with the fixes verified in-sandbox.
+
+### v19.0.1 fixes (11)
+
+| # | Fix | Was (v19.0.0) | Now (v19.0.1) |
+|---|-----|---------------|----------------|
+| **P1** | **`generate-env.sh` duplicate detection ignores comments** | `cut -d= -f1` counted comments/blank lines → two identical `# note` lines → `ERROR` exit rc=1 → `scarlix-doctor` (calls this via `fix_regenerate_env`) infinite loop | `grep -E '^[A-Z_][A-Z0-9_]*='` before `cut`; duplicates auto-resolved keeping LAST occurrence (no hard-abort) |
+| **P1** | **Telegram token update preserves `=` in value** | `awk FS=OFS="=" $2=v` left field-3+ in place → token `abc=def=` became `NEW123=def=` | `index($0,k"=")==1` line-match + `ENVIRON[]` for value (also safe vs backslashes) |
+| **P1** | **Orphan-line / truncated-secret detection** | Old base64 multiline writes left orphan continuation lines; the orphan was dropped but the half `KEY=` stayed as a silently-valid (wrong) secret | WARN on orphan-after-assignment; `JWT_SECRET` auto-regenerated (rotate-safe); `STORAGE_ENCRYPTION_KEY` flagged for manual review (rotating breaks existing data) |
+| **P1** | **`[multilib]` enabled BEFORE first `pacman -Syu`** | Multilib enabled in Phase 1 AFTER the first `-Syu` → multilib DB never synced → `lib32-*` installs could fail on clean EndeavourOS (comment falsely claimed "db synced by initial -Syu") | New `ensure_multilib()` called in pre-flight before any `-Syu`; single full `-Syu` (Phase 1 skips if pre-flight already synced) |
+| **P1** | **`openlit` image: wrong registry** | `openlit/openlit:latest` (Docker Hub) — no official repo exists there → `docker pull` would fail on first start | `ghcr.io/openlit/openlit:1.5.0` (verified via ghcr API; latest stable) |
+| **P1** | **LiteLLM image bumped + false comment fixed** | `main-v1.16.19` with a comment falsely claiming "latest stable" (1.17–1.23 already existed) | `main-v1.21.7` (conservative bump, config schema unchanged); pre-release healthcheck note added |
+| **P1** | **SGLang image pre-release verification note** | `v0.4.6.post1-cu128` tag could not be verified (ghcr anonymous token returns 403); reviewer unsure about `cu128` variant | Tag left unchanged (changing CUDA suffix blindly risks GPU breakage); prominent pre-release `docker pull` + `--disable-flashinfer --help` check added |
+| **P2** | **`scarlix-wizard` `cp -r` glob copy** | `cp -r /opt/scarlix-src/* /opt/scarlix/ \|\| true` — (1) `*` skips dotfiles, (2) `\|\| true` masks copy failures | `cp -a /opt/scarlix-src/. /opt/scarlix/` (copies dotfiles, preserves attrs) + fail-closed |
+| **P2** | **`scarlix-mode` `.env` header version** | Hardcoded `v18.9.0` in the generated `.env` header — drifted from runtime version | Reads `/etc/scarlix/VERSION` (falls back to `unknown`) |
+| **P2** | **CI shellcheck severity `-S error` → `-S warning`** | Only shellcheck *errors* blocked CI; warnings (unused vars, redirect issues) silently passed | `-S warning` + all 6 resulting warnings fixed (4 unused loop vars, 1 `test -x` SC2065 real bug in model-manager, 1 false-positive SC2024 documented) |
+| **P2** | **`install.sh` header + VERSION** | Header comment said `v18.9.8`, `VERSION="19.0.0"` | Header `v19.0.1`, `VERSION="19.0.1"` (VERSION file also bumped) |
+
+### Sandbox verification (v19.0.1)
+```
+bash -n  install.sh scarlix-wizard scarlix-mode scarlix-doctor generate-env.sh ...  → PASS
+shellcheck -S warning <all CI scripts>                                              → CLEAN
+python3 yaml.safe_load <all docker-compose.yml>                                    → 25/25 OK
+generate-env.sh dup test (# note ×2 + dupe SCARLIHQ_TOKEN) → keeps last, no abort  → PASS
+generate-env.sh token test (TELEGRAM_BOT_TOKEN=abc=def= → NEW123:XY=Z=)            → PASS
+generate-env.sh orphan test (JWT_SECRET half + STORAGE_ENCRYPTION_KEY half)         → WARN + JWT regen
+```
+
+---
+
+## 🆕 What's New in v19.0.0 (vs v18.9.8)
 
 **Config validation, .env hardening, and README refresh.** 6 fixes from the v19.0.0 review (P1 + P2).
 

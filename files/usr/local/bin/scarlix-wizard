@@ -138,7 +138,13 @@ export TELEGRAM_ZMOR_CHAT_ID="$TG_CHAT_ID"
 sudo /etc/systemd/system/generate-env.sh
 
 if [ -d /opt/scarlix-src ]; then
-  sudo cp -r /opt/scarlix-src/* /opt/scarlix/ 2>/dev/null || true
+  # v19.0.1 P2-1: was `cp -r /opt/scarlix-src/* /opt/scarlix/ 2>/dev/null || true`
+  #   Two problems: (1) glob `*` skips dotfiles (.dockerignore, .env.example);
+  #   (2) `|| true` masks copy failures → silent incomplete install.
+  #   Now: `cp -a SRC/. DST/` copies ALL entries incl. dotfiles, preserves attrs;
+  #   fail-closed (no || true) — a copy failure aborts the wizard (user sees it).
+  sudo cp -a /opt/scarlix-src/. /opt/scarlix/ \
+    || { echo "ERROR: failed to copy /opt/scarlix-src → /opt/scarlix"; exit 1; }
 fi
 
 # Enable model-manager timer only (no first-boot service in v17.5)

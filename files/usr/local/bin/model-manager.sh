@@ -121,7 +121,10 @@ update_hf_model() {
   local target_dir="$3"
   local engine="${4:-}"
   log "Pulling HF: $repo / $file"
-  if test -x /opt/scarlix/venv/bin/huggingface-cli >/dev/null 2>&1; then
+  # v19.0.1: was `test -x file >/dev/null 2>&1` — the redirect is meaningless (test
+  #   emits no output) and shellcheck SC2065 flags it as a redirection-not-comparison.
+  #   Switched to `[ -x ]` for clarity; behavior unchanged.
+  if [ -x /opt/scarlix/venv/bin/huggingface-cli ]; then
     # v18.9.0 P1-03: Download to staging, then atomic move to final location
     # (was: --local-dir "$target_dir" → partial/corrupt file in /models on interruption)
     if /opt/scarlix/venv/bin/huggingface-cli download "$repo" "$file" --local-dir "$STAGING_DIR" >> "$LOG_FILE" 2>&1; then

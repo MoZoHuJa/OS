@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2024  # v19.0.1: script re-execs as root (line ~33); `sudo -u USER cmd >> LOG`
+                              #   intentionally redirects as root (root owns install.log). SC2024's
+                              #   `| sudo tee` suggestion would write the log as REAL_USER — wrong.
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v18.9.8 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v19.0.1 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
 # EndeavourOS/Arch bootstrap installer — NO ISO, runs on clean EndeavourOS.
@@ -12,11 +15,11 @@ set -euo pipefail
 # USAGE:
 #   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
-#   git checkout v18.9.8   # ALWAYS checkout specific tag (main may be ahead)
+#   git checkout v19.0.1   # ALWAYS checkout specific tag (main may be ahead)
 #   bash install.sh
 # ============================================================================
 
-VERSION="19.0.0"
+VERSION="19.0.1"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -54,6 +57,38 @@ crit()   {
 }
 info()   { echo -e "${CYAN}  ℹ${NC} $1" | tee -a "$LOG_FILE"; }
 warn()   { echo -e "${YELLOW}  ⚠${NC} $1" | tee -a "$LOG_FILE"; }
+
+# v19.0.1 P1-1: ensure_multilib() — enable [multilib] BEFORE any `pacman -Syu`.
+#   Was: multilib enabled in Phase 1 AFTER the first `pacman -Syu` → the multilib
+#   repo DB was never refreshed by that -Syu → subsequent `pacman -S lib32-*`
+#   could fail on a truly clean EndeavourOS where multilib was commented out.
+#   Comment in v19.0.0 falsely claimed "db synced by initial -Syu". Now multilib
+#   is enabled up-front so the single full -Syu syncs it too. Idempotent.
+SYSTEM_SYNCED=false
+ensure_multilib() {
+  if grep -q '^\[multilib\]' /etc/pacman.conf 2>/dev/null; then
+    ok "[multilib] already enabled"
+    return 0
+  fi
+  if grep -Eq '^#\s*\[multilib\]' /etc/pacman.conf 2>/dev/null; then
+    # Scoped: uncomment ONLY the [multilib] header + its Include line
+    awk '
+      /^#[[:space:]]*\[multilib\][[:space:]]*$/ { sub(/^#[[:space:]]*/,""); print; in_ml=1; next }
+      in_ml && /^#[[:space:]]*Include[[:space:]]*=/ { sub(/^#[[:space:]]*/,""); print; in_ml=0; next }
+      in_ml && /^\[/ { in_ml=0; print; next }
+      { print }
+    ' /etc/pacman.conf > /tmp/pacman.conf.ml && mv /tmp/pacman.conf.ml /etc/pacman.conf
+    if grep -q '^\[multilib\]' /etc/pacman.conf 2>/dev/null; then
+      ok "[multilib] enabled (uncommented)"
+    else
+      crit "[multilib] enable failed (awk) — Steam/Wine/lib32-* will not install"
+    fi
+  else
+    # Append multilib section if not present at all
+    printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+    ok "[multilib] added (appended)"
+  fi
+}
 
 write_checkpoint() {
   local name="$1"
@@ -148,16 +183,22 @@ ok "Repo at $REPO_DIR"
 # v18.9.7 P0: Bootstrap pciutils BEFORE lspci check (was: crit if lspci missing → but
 #   pciutils was in Phase 1 packages → chicken-and-egg: lspci checked before it could
 #   be installed. Now: install pciutils first, then check.)
+# v19.0.1 P1-1: enable [multilib] BEFORE the first `pacman -Syu` so the multilib
+#   repo DB is synced by that single full upgrade (was: enabled later in Phase 1 →
+#   multilib DB never refreshed → lib32-* installs could fail on clean EndeavourOS).
+ensure_multilib
 if ! command -v lspci >/dev/null 2>&1; then
   log "Bootstrap: full system sync + pciutils install..."
   # v19.0.0 P1-1: Full pacman -Syu BEFORE pciutils install (was: pacman -Sy
   #   pciutils only = partial upgrade → Arch breakage risk on lib mismatch).
-  #   Now: full -Syu first, then pciutils.
+  # v19.0.1 P1-1: This is now THE single full -Syu (multilib already enabled
+  #   above). SYSTEM_SYNCED is set so Phase 1 skips its redundant second -Syu.
   if ! pacman -Syu --noconfirm >> "$LOG_FILE" 2>&1; then
     log "pacman -Syu failed — attempting DB repair..."
     pacman-key --init >> "$LOG_FILE" 2>&1 || true
     pacman -Syu --noconfirm >> "$LOG_FILE" 2>&1 || crit "pacman DB corrupted — run 'pacman-key --init && pacman -Syu' manually, then re-run install.sh"
   fi
+  SYSTEM_SYNCED=true
   pacman -S --noconfirm --needed pciutils >> "$LOG_FILE" 2>&1 || crit "Cannot install pciutils"
 fi
 command -v lspci >/dev/null 2>&1 || crit "lspci still not found after pciutils install"
@@ -202,44 +243,27 @@ if is_checkpoint_valid phase1; then
   info "Phase 1 checkpoint valid — skipping."
 else
   log "Updating system..."
-  # v17.9.8 P1: system update + package install = crit (was fail → checkpoint written despite broken state)
-  pacman -Syu --noconfirm >> "$LOG_FILE" 2>&1 && ok "System updated" || crit "System update failed (fix pacman conflicts, re-run)"
+  # v19.0.1 P1-1: single full -Syu. If the pre-flight pciutils bootstrap already
+  #   ran a full -Syu (lspci was missing), skip the redundant second sync here.
+  #   If lspci was present (bootstrap skipped), this is THE single full -Syu.
+  #   [multilib] was already enabled by ensure_multilib before the bootstrap,
+  #   so either path now syncs the multilib DB too.
+  if [ "$SYSTEM_SYNCED" = true ]; then
+    ok "System already updated (pre-flight sync)"
+  else
+    pacman -Syu --noconfirm >> "$LOG_FILE" 2>&1 && ok "System updated" || crit "System update failed (fix pacman conflicts, re-run)"
+    SYSTEM_SYNCED=true
+  fi
 
   log "Installing SCARLIX packages..."
-  # P1 v17.9.8: Ensure [multilib] is enabled BEFORE installing steam/wine/lib32-*
-  # (clean EndeavourOS may have multilib commented out → lib32-nvidia-utils install fails)
-  # v17.9.8 FIX: scoped awk (was aggressive sed that uncommented EVERY Include line in pacman.conf)
-  # v19.0.0 P1-1: removed standalone `pacman -Sy` after enable (partial upgrade
-  #   risk on Arch — relies on the initial `-Syu` instead; package install later
-  #   will refresh repo state as needed).
-  log "Ensuring [multilib] repository is enabled..."
-  MULTILIB_OK=false
+  # v19.0.1 P1-1: [multilib] was enabled before the first -Syu (see ensure_multilib
+  #   at the top of the pre-flight section). Verify it is still active — do NOT
+  #   re-enable or re-sync here (would be a redundant partial -Sy risk).
+  log "Verifying [multilib] repository is enabled..."
   if grep -q '^\[multilib\]' /etc/pacman.conf 2>/dev/null; then
-    ok "[multilib] already enabled"
-    MULTILIB_OK=true
-  elif grep -Eq '^#\s*\[multilib\]' /etc/pacman.conf 2>/dev/null; then
-    # Scoped: uncomment ONLY the [multilib] header + its Include line (the 2 lines in that section)
-    awk '
-      /^#[[:space:]]*\[multilib\][[:space:]]*$/ { sub(/^#[[:space:]]*/,""); print; in_ml=1; next }
-      in_ml && /^#[[:space:]]*Include[[:space:]]*=/ { sub(/^#[[:space:]]*/,""); print; in_ml=0; next }
-      in_ml && /^\[/ { in_ml=0; print; next }
-      { print }
-    ' /etc/pacman.conf > /tmp/pacman.conf.ml && mv /tmp/pacman.conf.ml /etc/pacman.conf
-    if grep -q '^\[multilib\]' /etc/pacman.conf 2>/dev/null; then
-      ok "[multilib] enabled (db synced by initial -Syu)"
-      MULTILIB_OK=true
-    else
-      fail "[multilib] enable (awk)"
-    fi
+    ok "[multilib] enabled (db synced by full -Syu)"
   else
-    # Append multilib section if not present at all
-    printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
-    ok "[multilib] added (db synced by initial -Syu)"
-    MULTILIB_OK=true
-  fi
-  # Hard-fail if multilib still not active (Steam/Wine/lib32-* will break otherwise)
-  if [ "$MULTILIB_OK" = false ]; then
-    crit "[multilib] could not be enabled — Steam/Wine/lib32-* will fail to install"
+    crit "[multilib] not enabled — ensure_multilib should have set it. Steam/Wine/lib32-* will fail"
   fi
 
   PKGS=$(grep -vE '^\s*#|^\s*$' "$REPO_DIR/packages.x86_64" | grep -v '^yay$' | grep -v '^calamares$' || true)
@@ -877,7 +901,7 @@ else
         #   later. Now: poll /api/health for up to 30s; if no HTTP response,
         #   the dashboard is NOT actually running → set FAILED flag + dump logs).
         DASHBOARD_OK=0
-        for i in $(seq 1 30); do
+        for _ in $(seq 1 30); do
           # Any HTTP response (even 401) = server is up. 000 = connection refused.
           code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 --max-time 5 http://127.0.0.1:8090/api/health 2>/dev/null) || code="000"
           if [ "$code" != "000" ]; then
@@ -959,7 +983,7 @@ else
     # P1-8: Wait for Ollama API to be ready before pulling (max 60s)
     log "Waiting for Ollama API to be ready..."
     OLLAMA_READY=false
-    for i in $(seq 1 12); do
+    for _ in $(seq 1 12); do
       if curl -sf http://localhost:11435/api/tags >/dev/null 2>&1; then
         OLLAMA_READY=true
         break

@@ -299,7 +299,7 @@ else
       echo "  Waiting for Ollama API..." | tee -a "$LOG_FILE"
       # v18.5.3 P0: Track ready state (was: break from loop but continued to docker exec regardless)
       OLLAMA_API_READY=false
-      for i in $(seq 1 12); do
+      for _ in $(seq 1 12); do
         if curl -sf http://localhost:11435/api/tags >/dev/null 2>&1 || curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
           echo "  Ollama API ready" | tee -a "$LOG_FILE"
           OLLAMA_API_READY=true

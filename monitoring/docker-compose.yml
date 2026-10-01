@@ -30,10 +30,13 @@ services:
     networks: [scarlix-net]
 
   openlit:
-    # v18.8.3 P1: :latest — Docker Hub API returns NO_ACCESS, cannot pin.
-    #   Isolated to [tracing] profile (already had it) — won't start in default.
-    #   Before FINAL: manually check https://hub.docker.com/r/openlit/openlit/tags
-    image: openlit/openlit:latest
+    # v18.8.3 P1: was :latest on Docker Hub — Docker Hub has NO official openlit/openlit
+    #   repo (pull fails). The official OpenLit image lives on ghcr.io/openlit/openlit.
+    # v19.0.1 P1: Pinned to ghcr.io/openlit/openlit:1.5.0 (was openlit/openlit:latest —
+    #   non-existent on Docker Hub → container would fail to pull on first start).
+    #   Verified via ghcr.io/v2/openlit/openlit/tags/list: 1.5.0 is the latest stable
+    #   (others: 0.1.4, 1.0.0-1.4.0). Update deliberately when upgrading.
+    image: ghcr.io/openlit/openlit:1.5.0
     container_name: openlit
     restart: unless-stopped
     # v18.8.3 P1: experimental — only starts with --profile tracing (already had this)

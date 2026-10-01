@@ -7,6 +7,16 @@ services:
     # v18.9.6 P0-01: Upgraded to 0.4.6.post1 (was: v0.4.4 — Qwen3 requires
     #   SGLang >= 0.4.6.post1 per official Qwen documentation. v0.4.4 lacks
     #   Qwen3 architecture support → runtime failure on model load.)
+    # v19.0.1 P1: PRE-RELEASE TAG VERIFICATION NEEDED. The ghcr.io anonymous token
+    #   endpoint returns 403/DENIED for sgl-project/sglang, so the tag
+    #   v0.4.6.post1-cu128 could NOT be verified to exist via registry API in
+    #   sandbox. Before release, on a GPU host run:
+    #     docker pull ghcr.io/sgl-project/sglang:v0.4.6.post1-cu128
+    #   If that fails, check https://github.com/sgl-project/sglang/pkgs/container/sglang
+    #   for the correct tag (the cu128 CUDA-12.8 variant may be named differently,
+    #   e.g. v0.4.6.post1-cu121 or a plain v0.4.6.post1). Do NOT blindly change the
+    #   CUDA suffix — a wrong variant breaks GPU passthrough. Also confirm
+    #   --disable-flashinfer still exists in `sglang.launch_server --help`.
     image: ghcr.io/sgl-project/sglang:v0.4.6.post1-cu128
     container_name: sglang
     restart: unless-stopped

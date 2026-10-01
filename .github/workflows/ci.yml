@@ -17,16 +17,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Shellcheck
         run: |
-          shellcheck -S error install.sh
-          shellcheck -S error files/usr/local/bin/scarlix-mode
-          shellcheck -S error files/usr/local/bin/scarlix-wizard
-          shellcheck -S error files/usr/local/bin/scarlix-doctor
-          shellcheck -S error files/usr/local/bin/model-manager.sh
-          shellcheck -S error files/usr/local/bin/download-models.sh
-          shellcheck -S error files/usr/local/bin/scarlix-host-bridge
-          shellcheck -S error files/usr/local/bin/generate-sha256sums.sh
-          shellcheck -S error files/usr/local/bin/generate-litellm-config.sh
-          shellcheck -S error files/etc/systemd/system/generate-env.sh
+          shellcheck -S warning install.sh
+          shellcheck -S warning files/usr/local/bin/scarlix-mode
+          shellcheck -S warning files/usr/local/bin/scarlix-wizard
+          shellcheck -S warning files/usr/local/bin/scarlix-doctor
+          shellcheck -S warning files/usr/local/bin/model-manager.sh
+          shellcheck -S warning files/usr/local/bin/download-models.sh
+          shellcheck -S warning files/usr/local/bin/scarlix-host-bridge
+          shellcheck -S warning files/usr/local/bin/generate-sha256sums.sh
+          shellcheck -S warning files/usr/local/bin/generate-litellm-config.sh
+          shellcheck -S warning files/etc/systemd/system/generate-env.sh
 
   bash-syntax:
     runs-on: ubuntu-latest
