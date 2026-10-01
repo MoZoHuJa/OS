@@ -406,6 +406,10 @@ healthcheck_and_restart() {
 
   # P0-7 v17.9.2: Hash stored AFTER successful recreate (was before → failed recreate = no retry)
   local env_changed=false
+  # v18.8.9 P1-01: Track first-run-without-containers so hash is stored only
+  #   AFTER successful start (was: stored before recreate in the first-run
+  #   branch → broken state persisted silently.)
+  local first_run_no_containers=false
   local models_hash_file="/var/lib/scarlix/models.sha256"
   if [ -f "$MODELS_YAML" ]; then
     local current_hash stored_hash
@@ -461,15 +465,29 @@ healthcheck_and_restart() {
       # v18.8.8 P2-02: First run must verify existing containers (was: stored
       #   hash without checking if containers exist with old config. Now: if
       #   AI containers already exist, force-recreate to ensure config matches.)
-      local existing_container
-      existing_container=$(docker inspect -f '{{.State.Status}}' sglang 2>/dev/null || echo "not_found")
-      if [ "$existing_container" != "not_found" ]; then
-        log "First run — containers already exist, forcing recreate to verify config"
+      # v18.8.9 P2-01: Check ALL AI containers, not just sglang (was: only sglang
+      #   → if sglang was removed but vllm/beellama existed, system thought
+      #   "no containers" → stale config persisted without recreate.)
+      local any_existing=""
+      for c in sglang vllm beellama ollama-agent; do
+        if docker inspect "$c" >/dev/null 2>&1; then
+          any_existing="$c"
+          break
+        fi
+      done
+      if [ -n "$any_existing" ]; then
+        log "First run — container '$any_existing' already exists, forcing recreate to verify config"
         env_changed=true
       else
-        log "First run — no existing containers, storing models.yaml hash"
+        log "First run — no existing AI containers, will store hash after successful start"
+        first_run_no_containers=true
       fi
-      echo "$current_hash" > "$models_hash_file" 2>/dev/null || true
+      # v18.8.9 P1-01: Do NOT store hash here (was: `echo "$current_hash" >
+      #   "$models_hash_file"` ran BEFORE recreate → if recreate failed, hash
+      #   was already on disk → next run saw hash match → no retry → stale
+      #   config persisted forever. Now: hash stored ONLY after successful
+      #   recreate (existing block below) or successful start (new block below
+      #   for the first-install case.)
     fi
   fi
 
@@ -565,6 +583,18 @@ healthcheck_and_restart() {
   if [ "$env_changed" = true ] && [ "$recreate_success" = true ]; then
     echo "$current_hash" > "$models_hash_file" 2>/dev/null || true
     log "models.yaml hash stored (recreate successful)"
+  fi
+  # v18.8.9 P1-01: First-run with NO existing AI containers (first install) —
+  #   store hash AFTER the healthcheck loop confirmed nothing failed (was:
+  #   stored in the first-run branch BEFORE the healthcheck loop ran → if any
+  #   downstream start failed, hash was already on disk → next run saw hash
+  #   match → no retry → broken state persisted silently. Now: stored ONLY
+  #   when recreate_success is still true. env_changed is false here by
+  #   definition (first-install path), so this block is distinct from the
+  #   recreate-success block above.)
+  if [ "$first_run_no_containers" = true ] && [ "$recreate_success" = true ]; then
+    echo "$current_hash" > "$models_hash_file" 2>/dev/null || true
+    log "models.yaml hash stored (first run, no existing containers, start OK)"
   fi
 
   # Only check Ollama if it should be running (fallback mode)
