@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.6 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v18.9.7 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
 # v18.5 FIXES:
 #   - Missing Ollama compose file = FAILED (was: silently skipped → false "complete")
@@ -49,7 +49,7 @@ exec 9>"$MODELS_LOCK"
 flock -n -x 9 || { echo "ERROR: cannot acquire models lock (scarlix-mode or model-manager running?)" >&2; exit 1; }
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v18.9.6 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v18.9.7 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing
@@ -139,6 +139,12 @@ if [ -z "$SGLANG_HF_REPO" ]; then
   FAILED=$((FAILED+1))
 else
   SGLANG_LOCAL_PATH=$(yq -r '.sglang.model_path // empty' "$MODELS_CONFIG" 2>/dev/null || echo "/models/$SGLANG_HF_REPO")
+  # v18.9.7 P1-06: Validate model_path is under /models/ (was: no validation →
+  #   user could set arbitrary path → download to wrong location)
+  if [[ "$SGLANG_LOCAL_PATH" != /models/* ]]; then
+    echo "  ✗ ERROR: sglang.model_path must start with /models/ (got: $SGLANG_LOCAL_PATH)" | tee -a "$LOG_FILE"
+    FAILED=$((FAILED+1)); continue_skipped=1
+  fi
   # v18.5.3 P0: Check disk space before EACH download (was: only checked once at start)
   check_disk_space 12000 || { FAILED=$((FAILED+1)); continue_skipped=1; }
   if [ -z "${continue_skipped:-}" ]; then

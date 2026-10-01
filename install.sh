@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.9.6"
+VERSION="18.9.7"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -158,7 +158,15 @@ ok "Repo at $REPO_DIR"
 # Detect NVIDIA GPUs
 # P0 FIX v17.9: NVIDIA_COUNT without double-0 (grep -c returns 0 + || echo 0 = "0\n0")
 # v18.8.6 P0-1: lspci must be present (was: silent failure → NVIDIA_COUNT=0 → driver skipped)
-command -v lspci >/dev/null 2>&1 || crit "lspci not found — install pciutils before GPU detection"
+# v18.9.7 P0: Bootstrap pciutils BEFORE lspci check (was: crit if lspci missing → but
+#   pciutils was in Phase 1 packages → chicken-and-egg: lspci checked before it could
+#   be installed. Now: install pciutils first, then check.)
+if ! command -v lspci >/dev/null 2>&1; then
+  log "Installing bootstrap dependency: pciutils (required for GPU detection)..."
+  pacman -Sy --noconfirm --needed pciutils >> "$LOG_FILE" 2>&1 \
+    || crit "Cannot install pciutils — GPU detection cannot continue"
+fi
+command -v lspci >/dev/null 2>&1 || crit "lspci still not found after pciutils install"
 # v18.8.6 P0-1: lspci emits "VGA compatible controller: NVIDIA Corporation ..."
 #   (NVIDIA comes AFTER controller type). Old regex required NVIDIA before VGA/3D
 #   → matched nothing → NVIDIA_COUNT=0 → driver skipped → no GPU.
@@ -454,6 +462,22 @@ else
       # v18.9.5 P1-04: crit not warn (was: warn → install continues → GPU workloads fail later)
       crit "Docker NVIDIA runtime unavailable — GPU workloads cannot start (try reboot after install)"
     fi
+
+    # v18.9.7 P0-02: Hard Docker GPU smoke test (was: only checked `docker info | grep nvidia`
+    #   → runtime registered but GPU not necessarily accessible. Now: actual `nvidia-smi`
+    #   inside container proves end-to-end GPU passthrough works.)
+    log "Running Docker GPU smoke test (nvidia-smi in container)..."
+    if docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi >> "$LOG_FILE" 2>&1; then
+      ok "Docker GPU smoke test PASSED — nvidia-smi works inside container"
+    else
+      crit "Docker GPU smoke test FAILED — nvidia-smi does not work inside container (GPU passthrough broken)"
+    fi
+
+    # v18.9.7 P1-03: Save GPU topology for diagnostics (was: no record of GPU layout →
+    #   debugging SGLang/vLLM device assignment was guesswork. Now: saved to
+    #   /var/lib/scarlix/gpu-layout for scarlix-doctor + future use.)
+    nvidia-smi --query-gpu=index,name,pci.bus_id,compute_cap,memory.total --format=csv,noheader > /var/lib/scarlix/gpu-layout 2>/dev/null || true
+    log "GPU topology saved to /var/lib/scarlix/gpu-layout"
   fi
   sleep 2
 
