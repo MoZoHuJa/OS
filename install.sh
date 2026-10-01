@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.9.4"
+VERSION="18.9.5"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -360,12 +360,12 @@ else
     pacman -Q linux-lts >/dev/null 2>&1 && info "linux-lts: $(pacman -Q linux-lts)" || crit "linux-lts not installed"
 
     log "Rebuilding initramfs..."
-    mkinitcpio -P >> "$LOG_FILE" 2>&1 && ok "initramfs rebuild" || fail "initramfs rebuild"
+    mkinitcpio -P >> "$LOG_FILE" 2>&1 && ok "initramfs rebuild" || crit "initramfs rebuild FAILED — system must not be marked installed"
 
     # GRUB nvidia_drm.modeset=1
     if [ -f /etc/default/grub ] && ! grep -q "nvidia_drm.modeset=1" /etc/default/grub; then
       sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nvidia_drm.modeset=1"/' /etc/default/grub
-      grub-mkconfig -o /boot/grub/grub.cfg >> "$LOG_FILE" 2>&1 && ok "GRUB nvidia_drm.modeset=1" || fail "GRUB update"
+      grub-mkconfig -o /boot/grub/grub.cfg >> "$LOG_FILE" 2>&1 && ok "GRUB nvidia_drm.modeset=1" || crit "GRUB configuration FAILED — system may not boot correctly"
     else
       ok "GRUB config (already set)"
     fi
@@ -429,7 +429,7 @@ else
   # Q4a v17.8: NOW start Docker (after nvidia-container-toolkit configured)
   log "Starting Docker (after toolkit configured)..."
   systemctl start docker >> "$LOG_FILE" 2>&1 && ok "Docker started (with GPU runtime)" || crit "Docker start"
-  systemctl enable docker >> "$LOG_FILE" 2>&1 && ok "Docker enabled on boot" || fail "Docker enable"
+  systemctl enable docker >> "$LOG_FILE" 2>&1 && ok "Docker enabled on boot" || crit "Docker could not be enabled — AI stack will not survive reboot"
   # v17.8: Restart Docker to ensure nvidia-ctk runtime is loaded
   if [ "$NVIDIA_COUNT" -gt 0 ]; then
     log "Restarting Docker to apply NVIDIA runtime..."
@@ -444,7 +444,8 @@ else
     if docker info 2>/dev/null | grep -qi "Runtimes.*nvidia"; then
       ok "Docker NVIDIA runtime verified"
     else
-      warn "Docker NVIDIA runtime not detected — may need reboot"
+      # v18.9.5 P1-04: crit not warn (was: warn → install continues → GPU workloads fail later)
+      crit "Docker NVIDIA runtime unavailable — GPU workloads cannot start (try reboot after install)"
     fi
   fi
   sleep 2
@@ -464,7 +465,14 @@ else
     done
     docker network rm scarlix_net >> "$LOG_FILE" 2>&1 && warn "Removed old network scarlix_net (migrated to scarlix-net)" || info "scarlix_net removal deferred (will retry)"
   fi
-  docker network create scarlix-net 2>/dev/null && ok "scarlix-net created" || info "scarlix-net exists"
+  # v18.9.5 P0-03: Proper Docker network check (was: || info "exists" → any failure = "exists")
+  if docker network inspect scarlix-net >/dev/null 2>&1; then
+    ok "scarlix-net already exists"
+  elif docker network create scarlix-net >/dev/null 2>&1; then
+    ok "scarlix-net created"
+  else
+    crit "Cannot create required Docker network scarlix-net"
+  fi
 
   write_checkpoint phase3
 fi
@@ -737,7 +745,7 @@ else
   #   adds missing keys, never overwrites existing secrets.)
   if [ -f /etc/systemd/system/generate-env.sh ]; then
     log "Ensuring /etc/scarlix/.env has all keys (idempotent)..."
-    /etc/systemd/system/generate-env.sh >> "$LOG_FILE" 2>&1 && ok ".env keys ensured" || warn ".env generation (non-critical)"
+    /etc/systemd/system/generate-env.sh >> "$LOG_FILE" 2>&1 && ok ".env keys ensured" || crit ".env generation failed — required secrets were not created"
   fi
   # v18.8.3 P1 (A-a): Generate LiteLLM config from models.yaml (was: hardcoded
   #   config.yaml → model ID mismatch when user changed model. Now: dynamic.)

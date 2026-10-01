@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.4 — Model Manager
+# SCARLIX OS v18.9.5 — Model Manager
 # v18.7 FIX: Ollama pulls via `docker exec ollama-agent` (was: host `ollama` binary — never installed)
 # FIX Q8b: Split — HF model pulls = auto (safe), Ollama tag pulls = manual (--apply only)
 #
@@ -88,7 +88,7 @@ vram_snapshot() {
 }
 
 log "========================================"
-log "  SCARLIX OS v18.9.4 — Model Manager"
+log "  SCARLIX OS v18.9.5 — Model Manager"
 [ "$APPLY_OLLAMA" -eq 1 ] && log "  (--apply-ollama: will update Ollama tags)" || log "  (HF auto-pull + Ollama dry-run report only)"
 log "========================================"
 
@@ -140,16 +140,31 @@ update_hf_model() {
         }
       fi
       if [ "$mv_rc" -eq 0 ]; then
-        # Success — clean up staging + .previous
+        # v18.9.5 P1-06: Keep .previous until runtime health passes (was: rm .previous
+        #   before restart → if restart fails, no rollback available. Now: only delete
+        #   .previous after successful restart + healthcheck.)
         find "$STAGING_DIR" -mindepth 1 -delete 2>/dev/null || true
-        rm -f "${target_file}.previous" 2>/dev/null || true
         log "  ✓ $file"
         HF_UPDATED=$((HF_UPDATED + 1))
         UPDATED_LIST="${UPDATED_LIST}\n  ✓ ${file} (HF)"
         # v18.9.0 P1-02: Restart runtime after model update
         if [ "$engine" = "beellama" ]; then
           log "Restarting BeeLlama to load updated model..."
-          docker compose --env-file /opt/scarlix/.env -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d --force-recreate >> "$LOG_FILE" 2>&1 || log "WARNING: BeeLlama restart failed"
+          if docker compose --env-file /opt/scarlix/.env -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d --force-recreate >> "$LOG_FILE" 2>&1; then
+            # v18.9.5 P1-06: Runtime restart OK — now safe to delete .previous
+            rm -f "${target_file}.previous" 2>/dev/null || true
+            log "  ✓ BeeLlama restarted with new model, .previous cleaned up"
+          else
+            # v18.9.5 P1-06: Restart failed — restore .previous
+            log "  ✗ BeeLlama restart failed — restoring previous model"
+            [ -e "${target_file}.previous" ] && mv -f "${target_file}.previous" "$target_file" 2>/dev/null || true
+            docker compose --env-file /opt/scarlix/.env -f /opt/scarlix/ai/llamacpp/docker-compose.yml up -d --force-recreate >> "$LOG_FILE" 2>&1 || true
+            HF_FAILED=$((HF_FAILED + 1))
+            HF_UPDATED=$((HF_UPDATED - 1))
+          fi
+        else
+          # v18.9.5 P1-06: Non-beellama — no runtime restart needed, safe to clean up
+          rm -f "${target_file}.previous" 2>/dev/null || true
         fi
       else
         # v18.9.4 P1-02: mv failed — restore .previous if available

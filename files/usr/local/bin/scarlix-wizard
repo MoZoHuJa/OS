@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.4 — EndeavourOS Edition — Setup Wizard
+# SCARLIX OS v18.9.5 — EndeavourOS Edition — Setup Wizard
 # v18.5: gateway prompt (was hardcoded 192.168.1.1), version unified
 # v17.5: Creates .experimental if 2+ GPU (Q3a — vLLM starts without --profile gate)
 # v18.8.1 P1: Dynamic version from VERSION file (was: hardcoded v18.7.6 in
@@ -10,7 +10,7 @@ set -euo pipefail
 SCARLIX_VER="$(cat /etc/scarlix/VERSION 2>/dev/null || echo unknown)"
 TITLE="SCARLIX OS v${SCARLIX_VER} Setup"
 
-NVIDIA_DGPU_COUNT=$(lspci -nn 2>/dev/null | grep -iE 'NVIDIA.*(VGA|3D)' | wc -l || echo 0)
+NVIDIA_DGPU_COUNT=$(lspci -nn 2>/dev/null | grep -iE '(VGA compatible controller|3D controller|Display controller).*NVIDIA' | wc -l || echo 0)
 if [ "$NVIDIA_DGPU_COUNT" -gt 0 ]; then
   SUGGESTED_TYPE="ai_server"
   SUGGESTED_DESC="Auto-detected: ${NVIDIA_DGPU_COUNT} NVIDIA dGPU(s)"
