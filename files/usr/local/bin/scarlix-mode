@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.2 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v18.9.3 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.7.7 FIXES:
 #   P0: TV mode uses systemctl restart (was: start on RemainAfterExit=yes oneshot
 #       → service stays 'active' after first run → start doesn't re-run healthcheck
@@ -290,11 +290,13 @@ check_model_exists() {
 }
 
 # v18.9.2 P2: Atomic file write helper (was: echo > file → partial on crash)
+# v18.9.3 P3: Add chmod 600 (was: no permissions set → file could be world-readable)
 atomic_write() {
   local file="$1" content="$2"
   local tmp
   tmp=$(mktemp "${file}.XXXXXX") || return 1
   printf '%s\n' "$content" > "$tmp" || { rm -f "$tmp"; return 1; }
+  chmod 600 "$tmp" 2>/dev/null || true  # v18.9.3 P3: ensure 600 even if umask differs
   mv -f "$tmp" "$file" || { rm -f "$tmp"; return 1; }
 }
 
@@ -386,7 +388,7 @@ wait_for_healthy() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v18.9.2 — VRAM Check ==="
+  echo "=== SCARLIX OS v18.9.3 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
@@ -1157,7 +1159,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v18.9.2 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v18.9.3 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"

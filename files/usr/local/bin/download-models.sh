@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.2 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v18.9.3 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
 # v18.5 FIXES:
 #   - Missing Ollama compose file = FAILED (was: silently skipped → false "complete")
@@ -49,7 +49,7 @@ exec 9>"$MODELS_LOCK"
 flock -n -x 9 || { echo "ERROR: cannot acquire models lock (scarlix-mode or model-manager running?)" >&2; exit 1; }
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v18.9.2 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v18.9.3 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing
@@ -143,16 +143,43 @@ else
   check_disk_space 12000 || { FAILED=$((FAILED+1)); continue_skipped=1; }
   if [ -z "${continue_skipped:-}" ]; then
     echo "  Downloading: $SGLANG_HF_REPO → $SGLANG_LOCAL_PATH" | tee -a "$LOG_FILE"
-    # v18.9.2 P2: Staging dir for SGLang download (was: direct to production path
-    #   → interrupted download left partial/corrupt model in /models)
+    # v18.9.3 P2: Unique staging dir + atomic swap (was: fixed staging path + rm -rf old + mv
+    #   → if mv failed after rm -rf, user lost both old and new model. Now: unique
+    #   staging via mktemp -d, swap via mv to .new then rename, old model preserved
+    #   as .previous for rollback)
     STAGING_DIR="/models/.staging"
     mkdir -p "$STAGING_DIR" 2>/dev/null || true
-    STAGING_PATH="$STAGING_DIR/$(basename "$SGLANG_LOCAL_PATH")"
+    MODEL_NAME=$(basename "$SGLANG_LOCAL_PATH")
+    STAGING_PATH=$(mktemp -d "${STAGING_DIR}/${MODEL_NAME}.XXXXXX") || { echo "  ✗ Cannot create staging dir" | tee -a "$LOG_FILE"; FAILED=$((FAILED+1)); continue_skipped=1; }
+    if [ -z "${continue_skipped:-}" ]; then
     if "$HF_CLI" download "$SGLANG_HF_REPO" --local-dir "$STAGING_PATH" >> "$LOG_FILE" 2>&1; then
-      # Verify model has config.json before promoting (was: just checked dir exists)
+      # v18.9.3 P2: Verify model has config.json + at least one safetensors/index
       if [ -f "$STAGING_PATH/config.json" ]; then
-        rm -rf "$SGLANG_LOCAL_PATH" 2>/dev/null || true
-        mv -f "$STAGING_PATH" "$SGLANG_LOCAL_PATH" 2>/dev/null && echo "  ✓ SGLang model downloaded + verified" | tee -a "$LOG_FILE" || { echo "  ✗ SGLang staging move FAILED" | tee -a "$LOG_FILE"; FAILED=$((FAILED+1)); }
+        # Check for safetensors (sharded or single)
+        if ls "$STAGING_PATH"/*.safetensors 1>/dev/null 2>&1 || [ -f "$STAGING_PATH/model.safetensors.index.json" ]; then
+          # v18.9.3 P2: Atomic swap — rename old to .previous, mv new to target
+          # If mv fails, old model is preserved as .previous and can be restored
+          if [ -d "$SGLANG_LOCAL_PATH" ]; then
+            mv -f "$SGLANG_LOCAL_PATH" "${SGLANG_LOCAL_PATH}.previous" 2>/dev/null || true
+          fi
+          if mv -f "$STAGING_PATH" "$SGLANG_LOCAL_PATH" 2>/dev/null; then
+            echo "  ✓ SGLang model downloaded + verified (safetensors confirmed)" | tee -a "$LOG_FILE"
+            # Clean up old previous on success
+            rm -rf "${SGLANG_LOCAL_PATH}.previous" 2>/dev/null || true
+          else
+            echo "  ✗ SGLang staging move FAILED — restoring previous model" | tee -a "$LOG_FILE"
+            # Restore old model if it was moved to .previous
+            [ -d "${SGLANG_LOCAL_PATH}.previous" ] && mv -f "${SGLANG_LOCAL_PATH}.previous" "$SGLANG_LOCAL_PATH" 2>/dev/null || true
+            rm -rf "$STAGING_PATH" 2>/dev/null || true
+            FAILED=$((FAILED+1))
+          fi
+        else
+          echo "  ✗ SGLang download incomplete (no safetensors files found)" | tee -a "$LOG_FILE"
+          rm -rf "$STAGING_PATH" 2>/dev/null || true
+          # Restore old model if it was moved
+          [ -d "${SGLANG_LOCAL_PATH}.previous" ] && mv -f "${SGLANG_LOCAL_PATH}.previous" "$SGLANG_LOCAL_PATH" 2>/dev/null || true
+          FAILED=$((FAILED+1))
+        fi
       else
         echo "  ✗ SGLang download incomplete (no config.json in staging)" | tee -a "$LOG_FILE"
         rm -rf "$STAGING_PATH" 2>/dev/null || true
@@ -163,6 +190,7 @@ else
       rm -rf "$STAGING_PATH" 2>/dev/null || true
       FAILED=$((FAILED+1))
     fi
+    fi  # v18.9.3: close continue_skipped guard
   fi
   unset continue_skipped 2>/dev/null || true
 fi
