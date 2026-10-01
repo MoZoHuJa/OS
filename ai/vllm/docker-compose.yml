@@ -5,7 +5,9 @@
 
 services:
   vllm:
-    image: vllm/vllm-openai:v0.8.0
+    # v18.9.6 P0-02: Upgraded to v0.8.5 (was: v0.8.0 — Qwen3 requires
+    #   vLLM >= 0.8.5 per official Qwen documentation.)
+    image: vllm/vllm-openai:v0.8.5
     container_name: vllm
     restart: unless-stopped
     ports:

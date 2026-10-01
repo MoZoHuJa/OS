@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.9.5"
+VERSION="18.9.6"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -38,6 +38,12 @@ REPO_DIR="$SCRIPT_DIR"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 SUCCESS_COUNT=0; FAIL_COUNT=0; CRITICAL_FAIL=0
+
+# v18.9.6 P0-04: Root check MUST be first operation (was: mkdir/touch/chmod on
+#   /var/log before sudo re-exec → Permission denied → set -e → EXIT before sudo)
+if [ "$(id -u)" -ne 0 ]; then
+  exec sudo -E bash "$0" "$@"
+fi
 
 mkdir -p "$LOG_DIR" "$CHECKPOINT_DIR"
 # v18.5.2 P1: Create log file with correct perms (was: chmod on non-existent file → no effect)
@@ -132,10 +138,7 @@ log "=== Pre-checks ==="
 [ -f /etc/arch-release ] || { echo -e "${RED}ERROR: Requires Arch/EndeavourOS${NC}"; exit 1; }
 ok "Arch/EndeavourOS: $(grep '^PRETTY_NAME=' /etc/os-release | cut -d'"' -f2)"
 
-if [ "$(id -u)" -ne 0 ]; then
-  echo -e "${YELLOW}Re-running with sudo...${NC}"
-  exec sudo -E bash "$0" "$@"
-fi
+# v18.9.6 P0-04: Root check already done at top of script (line 44)
 ok "Running as root"
 
 # v17.8: ${SUDO_USER:-$USER} (logname fails without TTY)
@@ -415,12 +418,16 @@ else
   # Q5a: nvidia-container-toolkit fail → CRIT (before Docker start)
   if [ "$NVIDIA_COUNT" -gt 0 ]; then
     log "Installing nvidia-container-toolkit (CRITICAL — before Docker start)..."
-    if sudo -u "$REAL_USER" yay -S --noconfirm nvidia-container-toolkit >> "$LOG_FILE" 2>&1; then
-      ok "nvidia-container-toolkit"
-      nvidia-ctk runtime configure --runtime=docker >> "$LOG_FILE" 2>&1 && ok "Docker NVIDIA runtime configured" || crit "Docker NVIDIA runtime"
+    # v18.9.6 P1-01: Use pacman first (was: yay only — AUR dependency for a package
+    #   that is now in Arch Extra. Try pacman, fall back to yay only if needed.)
+    if pacman -S --noconfirm --needed nvidia-container-toolkit >> "$LOG_FILE" 2>&1; then
+      ok "nvidia-container-toolkit (pacman)"
+    elif sudo -u "$REAL_USER" yay -S --noconfirm nvidia-container-toolkit >> "$LOG_FILE" 2>&1; then
+      ok "nvidia-container-toolkit (AUR fallback)"
     else
-      crit "nvidia-container-toolkit (AUR) — Docker GPU won't work without it"
+      crit "nvidia-container-toolkit — Docker GPU won't work without it"
     fi
+    nvidia-ctk runtime configure --runtime=docker >> "$LOG_FILE" 2>&1 && ok "Docker NVIDIA runtime configured" || crit "Docker NVIDIA runtime"
 
     log "Installing downgrade (AUR)..."
     sudo -u "$REAL_USER" yay -S --noconfirm downgrade >> "$LOG_FILE" 2>&1 && ok "downgrade" || fail "downgrade (non-critical)"

@@ -4,7 +4,10 @@
 # v18.8.3 P1 (D): context-length + chunked-prefill + max-running from env (was: hardcoded)
 services:
   sglang:
-    image: ghcr.io/sgl-project/sglang:v0.4.4-cu128
+    # v18.9.6 P0-01: Upgraded to 0.4.6.post1 (was: v0.4.4 — Qwen3 requires
+    #   SGLang >= 0.4.6.post1 per official Qwen documentation. v0.4.4 lacks
+    #   Qwen3 architecture support → runtime failure on model load.)
+    image: ghcr.io/sgl-project/sglang:v0.4.6.post1-cu128
     container_name: sglang
     restart: unless-stopped
     ports:
