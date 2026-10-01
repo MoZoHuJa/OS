@@ -19,12 +19,12 @@ services:
       - /models:/models:ro
     command: >
       --model ${LLAMACPP_MODEL_PATH:-/models/Qwen3-14B-Q4_K_M.gguf}
-      --ctx-size 32768
-      --threads 16
+      --ctx-size ${LLAMACPP_CONTEXT_SIZE:-32768}
+      --threads ${LLAMACPP_THREADS:-16}
       --host 0.0.0.0
       --port 8080
-      --cache-type-k q4_0
-      --cache-type-v q4_0
+      --cache-type-k ${LLAMACPP_CACHE_TYPE_K:-q4_0}
+      --cache-type-v ${LLAMACPP_CACHE_TYPE_V:-q4_0}
     networks: [scarlix-net]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health 2>/dev/null || exit 1"]

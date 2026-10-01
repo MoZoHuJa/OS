@@ -115,6 +115,13 @@ generate_env_file() {
   # v18.8.8 P2-01: Ollama runtime config from models.yaml (was: hardcoded in compose)
   local ollama_keep_alive="15m"
   local ollama_num_parallel="2"
+  # v18.8.9 P1-02: vLLM + BeeLlama runtime params from models.yaml
+  local vllm_tensor_parallel="1"
+  local vllm_max_model_len="32768"
+  local beellama_context_size="32768"
+  local beellama_threads="16"
+  local beellama_cache_type_k="q4_0"
+  local beellama_cache_type_v="q4_0"
 
   if [ -f "$MODELS_YAML" ] && command -v yq >/dev/null 2>&1; then
     # v18.8.7 P1-02: If yaml_get fails (yq parse error), abort generate_env_file.
@@ -131,6 +138,13 @@ generate_env_file() {
     # v18.8.8 P2-01: Ollama runtime config from models.yaml
     ollama_keep_alive=$(yaml_get '.ollama.keep_alive' "$ollama_keep_alive") || return 1
     ollama_num_parallel=$(yaml_get '.ollama.num_parallel' "$ollama_num_parallel") || return 1
+    # v18.8.9 P1-02: vLLM + BeeLlama runtime params
+    vllm_tensor_parallel=$(yaml_get '.vllm.tensor_parallel_size' "$vllm_tensor_parallel") || return 1
+    vllm_max_model_len=$(yaml_get '.vllm.max_model_len' "$vllm_max_model_len") || return 1
+    beellama_context_size=$(yaml_get '.beellama.context_size' "$beellama_context_size") || return 1
+    beellama_threads=$(yaml_get '.beellama.threads' "$beellama_threads") || return 1
+    beellama_cache_type_k=$(yaml_get '.beellama.cache_type_k' "$beellama_cache_type_k") || return 1
+    beellama_cache_type_v=$(yaml_get '.beellama.cache_type_v' "$beellama_cache_type_v") || return 1
   elif [ ! -f "$MODELS_YAML" ]; then
     log "WARNING: models.yaml not found — using defaults"
   elif ! command -v yq >/dev/null 2>&1; then
@@ -178,6 +192,14 @@ SGLANG_SHM_SIZE=$sglang_shm_size
 # v18.8.8 P2-01: Ollama runtime config from models.yaml
 OLLAMA_KEEP_ALIVE=$ollama_keep_alive
 OLLAMA_NUM_PARALLEL=$ollama_num_parallel
+# v18.8.9 P1-02: vLLM runtime params
+VLLM_TENSOR_PARALLEL=$vllm_tensor_parallel
+VLLM_MAX_MODEL_LEN=$vllm_max_model_len
+# v18.8.9 P1-02: BeeLlama runtime params
+LLAMACPP_CONTEXT_SIZE=$beellama_context_size
+LLAMACPP_THREADS=$beellama_threads
+LLAMACPP_CACHE_TYPE_K=$beellama_cache_type_k
+LLAMACPP_CACHE_TYPE_V=$beellama_cache_type_v
 EOF
   then
     log "WARNING: cannot write $ENV_FILE (permission denied — run as root: scarlix-mode needs root to write root:root /opt/scarlix/.env)"
@@ -203,6 +225,12 @@ EOF
   export SGLANG_SHM_SIZE="$sglang_shm_size"
   export OLLAMA_KEEP_ALIVE="$ollama_keep_alive"
   export OLLAMA_NUM_PARALLEL="$ollama_num_parallel"
+  export VLLM_TENSOR_PARALLEL="$vllm_tensor_parallel"
+  export VLLM_MAX_MODEL_LEN="$vllm_max_model_len"
+  export LLAMACPP_CONTEXT_SIZE="$beellama_context_size"
+  export LLAMACPP_THREADS="$beellama_threads"
+  export LLAMACPP_CACHE_TYPE_K="$beellama_cache_type_k"
+  export LLAMACPP_CACHE_TYPE_V="$beellama_cache_type_v"
 
   # v18.8.3 P1 (A-a): Regenerate LiteLLM config from models.yaml (was: hardcoded
   #   config.yaml → model ID mismatch. Now: if generate-litellm-config.sh exists,
