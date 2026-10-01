@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.1 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v18.9.2 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
 # v18.5 FIXES:
 #   - Missing Ollama compose file = FAILED (was: silently skipped → false "complete")
@@ -49,7 +49,7 @@ exec 9>"$MODELS_LOCK"
 flock -n -x 9 || { echo "ERROR: cannot acquire models lock (scarlix-mode or model-manager running?)" >&2; exit 1; }
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v18.9.1 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v18.9.2 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing
@@ -143,10 +143,24 @@ else
   check_disk_space 12000 || { FAILED=$((FAILED+1)); continue_skipped=1; }
   if [ -z "${continue_skipped:-}" ]; then
     echo "  Downloading: $SGLANG_HF_REPO → $SGLANG_LOCAL_PATH" | tee -a "$LOG_FILE"
-    if "$HF_CLI" download "$SGLANG_HF_REPO" --local-dir "$SGLANG_LOCAL_PATH" >> "$LOG_FILE" 2>&1; then
-      echo "  ✓ SGLang model downloaded" | tee -a "$LOG_FILE"
+    # v18.9.2 P2: Staging dir for SGLang download (was: direct to production path
+    #   → interrupted download left partial/corrupt model in /models)
+    STAGING_DIR="/models/.staging"
+    mkdir -p "$STAGING_DIR" 2>/dev/null || true
+    STAGING_PATH="$STAGING_DIR/$(basename "$SGLANG_LOCAL_PATH")"
+    if "$HF_CLI" download "$SGLANG_HF_REPO" --local-dir "$STAGING_PATH" >> "$LOG_FILE" 2>&1; then
+      # Verify model has config.json before promoting (was: just checked dir exists)
+      if [ -f "$STAGING_PATH/config.json" ]; then
+        rm -rf "$SGLANG_LOCAL_PATH" 2>/dev/null || true
+        mv -f "$STAGING_PATH" "$SGLANG_LOCAL_PATH" 2>/dev/null && echo "  ✓ SGLang model downloaded + verified" | tee -a "$LOG_FILE" || { echo "  ✗ SGLang staging move FAILED" | tee -a "$LOG_FILE"; FAILED=$((FAILED+1)); }
+      else
+        echo "  ✗ SGLang download incomplete (no config.json in staging)" | tee -a "$LOG_FILE"
+        rm -rf "$STAGING_PATH" 2>/dev/null || true
+        FAILED=$((FAILED+1))
+      fi
     else
       echo "  ✗ SGLang download FAILED" | tee -a "$LOG_FILE"
+      rm -rf "$STAGING_PATH" 2>/dev/null || true
       FAILED=$((FAILED+1))
     fi
   fi

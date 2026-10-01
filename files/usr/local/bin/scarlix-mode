@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.1 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v18.9.2 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.7.7 FIXES:
 #   P0: TV mode uses systemctl restart (was: start on RemainAfterExit=yes oneshot
 #       → service stays 'active' after first run → start doesn't re-run healthcheck
@@ -289,6 +289,15 @@ check_model_exists() {
   return 1
 }
 
+# v18.9.2 P2: Atomic file write helper (was: echo > file → partial on crash)
+atomic_write() {
+  local file="$1" content="$2"
+  local tmp
+  tmp=$(mktemp "${file}.XXXXXX") || return 1
+  printf '%s\n' "$content" > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$file" || { rm -f "$tmp"; return 1; }
+}
+
 dump_vram() {
   log "Releasing VRAM..."
   # P1 v17.9.3: Read Ollama model from yaml (was hardcoded qwen2.5:3b)
@@ -377,7 +386,7 @@ wait_for_healthy() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v18.9.1 — VRAM Check ==="
+  echo "=== SCARLIX OS v18.9.2 — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
@@ -665,7 +674,7 @@ healthcheck_and_restart() {
       log "  litellm: config.yaml changed — restarting to load new routing config"
       $DC -f /opt/scarlix/ai/litellm/docker-compose.yml up -d --force-recreate >> "$LOG_FILE" 2>&1
       if wait_for_healthy "litellm" 60 http://127.0.0.1:4001/health/liveliness 2>/dev/null; then
-        echo "$litellm_config_hash" > /var/lib/scarlix/litellm-config.sha256 2>/dev/null || true
+        atomic_write /var/lib/scarlix/litellm-config.sha256 "$litellm_config_hash" 2>/dev/null || true
         log "  ✓ litellm restarted with new config"
       else
         log "  ✗ litellm not healthy after config restart"
@@ -675,14 +684,14 @@ healthcheck_and_restart() {
       log "  litellm: no stored config hash but LiteLLM running — force recreate to verify config"
       $DC -f /opt/scarlix/ai/litellm/docker-compose.yml up -d --force-recreate >> "$LOG_FILE" 2>&1
       if wait_for_healthy "litellm" 60 http://127.0.0.1:4001/health/liveliness 2>/dev/null; then
-        echo "$litellm_config_hash" > /var/lib/scarlix/litellm-config.sha256 2>/dev/null || true
+        atomic_write /var/lib/scarlix/litellm-config.sha256 "$litellm_config_hash" 2>/dev/null || true
         log "  ✓ litellm recreated + config hash stored"
       else
         log "  ✗ litellm not healthy after recreate"
       fi
     elif [ -n "$litellm_config_hash" ] && [ -z "$litellm_stored_hash" ]; then
       # First run — LiteLLM not running yet, store hash for future comparison
-      echo "$litellm_config_hash" > /var/lib/scarlix/litellm-config.sha256 2>/dev/null || true
+      atomic_write /var/lib/scarlix/litellm-config.sha256 "$litellm_config_hash" 2>/dev/null || true
     fi
   fi
 
@@ -824,21 +833,25 @@ start_verified_ai() {
   if [ -f /opt/scarlix/ai/litellm/docker-compose.yml ] && grep -q '^LITELLM_MASTER_KEY=' /etc/scarlix/.env 2>/dev/null; then
     # v18.9.1 P1-04: Check if LiteLLM config changed before starting (was: only
     #   checked in healthcheck_and_restart → start_verified_ai could start with stale config)
-    local litellm_cfg_hash litellm_cfg_stored
+    # v18.9.2 P1: Fix exit status check (was: if/else then separate `if [ $? -eq 0 ]`
+    #   → $? was from log() in else branch, not from docker compose → false success)
+    local litellm_cfg_hash litellm_cfg_stored litellm_up_rc
     litellm_cfg_hash=$(sha256sum /opt/scarlix/ai/litellm/config.yaml 2>/dev/null | awk '{print $1}')
     litellm_cfg_stored=$(cat /var/lib/scarlix/litellm-config.sha256 2>/dev/null || echo "")
     if [ -n "$litellm_cfg_hash" ] && [ "$litellm_cfg_hash" != "$litellm_cfg_stored" ]; then
       log "  LiteLLM config changed since last run — force recreate to load new routing"
       $DC -f /opt/scarlix/ai/litellm/docker-compose.yml up -d --force-recreate >> "$LOG_FILE" 2>&1
+      litellm_up_rc=$?
     else
       log "Starting LiteLLM gateway (unified API on :4001)..."
       $DC -f /opt/scarlix/ai/litellm/docker-compose.yml up -d >> "$LOG_FILE" 2>&1
+      litellm_up_rc=$?
     fi
-    if [ $? -eq 0 ]; then
+    if [ "$litellm_up_rc" -eq 0 ]; then
       # Wait for LiteLLM health (60s — LiteLLM starts fast, no model loading)
       if wait_for_healthy "litellm" 60 http://127.0.0.1:4001/health/liveliness 2>/dev/null; then
         # Store config hash after successful start
-        [ -n "$litellm_cfg_hash" ] && echo "$litellm_cfg_hash" > /var/lib/scarlix/litellm-config.sha256 2>/dev/null || true
+        [ -n "$litellm_cfg_hash" ] && atomic_write /var/lib/scarlix/litellm-config.sha256 "$litellm_cfg_hash" 2>/dev/null || true
         log "  ✓ LiteLLM gateway healthy (scarlix-default → backends)"
       else
         # Fail-soft: LiteLLM not healthy, but AI mode still succeeds
@@ -1144,7 +1157,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v18.9.1 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v18.9.2 (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"

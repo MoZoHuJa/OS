@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.1 — Generate .env (with guard for existing passwords)
+# SCARLIX OS v18.9.2 — Generate .env (with guard for existing passwords)
 # v17.9.5 FIX: If .env exists, only add missing keys (don't overwrite existing passwords)
 # v17.9.7: This handles /etc/scarlix/.env (SECRETS only). Model paths live in /opt/scarlix/.env
 #   which scarlix-mode ALWAYS regenerates (no guard) — model updates are picked up.
@@ -51,8 +51,10 @@ if [ -f /etc/scarlix/.env ]; then
   [ -n "${TELEGRAM_ZMOR_CHAT_ID:-}" ] && sed -i "s|^TELEGRAM_ZMOR_CHAT_ID=.*|TELEGRAM_ZMOR_CHAT_ID=$TELEGRAM_ZMOR_CHAT_ID|" /etc/scarlix/.env || true
 else
   # First run — generate all
+  # v18.9.2 P2: Atomic write (was: cat > direct → partial on crash/power loss)
   SMG_KEY="sk-scarlix-$(openssl rand -hex 16)"
-  cat > /etc/scarlix/.env << EOF
+  SECRETS_TMP=$(mktemp /etc/scarlix/.env.XXXXXX) || exit 1
+  cat > "$SECRETS_TMP" << EOF
 SMG_MASTER_KEY=$SMG_KEY
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
 TELEGRAM_ZMOR_CHAT_ID=${TELEGRAM_ZMOR_CHAT_ID:-}
@@ -79,6 +81,9 @@ SCARLIX_DEFAULT_PROFILE=zmor
 SCARLIX_DEFAULT_MODE=ai
 SCARLIX_VERSION=$(cat /etc/scarlix/VERSION 2>/dev/null || echo unknown)
 EOF
+  chmod 600 "$SECRETS_TMP" || { rm -f "$SECRETS_TMP"; exit 1; }
+  chown root:root "$SECRETS_TMP" || { rm -f "$SECRETS_TMP"; exit 1; }
+  mv -f "$SECRETS_TMP" /etc/scarlix/.env || { rm -f "$SECRETS_TMP"; exit 1; }
   # v18.5 P0: Don't print secrets to log (was: echo "SMG_MASTER_KEY: $SMG_KEY" → install.log)
   echo "SMG_MASTER_KEY: generated (in /etc/scarlix/.env, chmod 600)"
   echo "SCARLIHQ_TOKEN: (generated — for dashboard login at :8090)"

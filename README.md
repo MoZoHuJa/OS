@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.9.1 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v18.9.2 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v18.9.1</h1>
+<h1 align="center">SCARLIX OS v18.9.2</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.9.1"><img alt="Version" src="https://img.shields.io/badge/version-v18.9.1-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v18.9.2"><img alt="Version" src="https://img.shields.io/badge/version-v18.9.2-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -20,9 +20,9 @@
 
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
-> **LiteLLM Gateway** (v18.9.1+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
+> **LiteLLM Gateway** (v18.9.2+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v18.9.1 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v18.9.2 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v18.9.1   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v18.9.2   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -52,14 +52,14 @@ scarlix-mode ai
 
 ---
 
-## 🆕 What's New in v18.9.1 (vs v18.9.1)
+## 🆕 What's New in v18.9.2 (vs v18.9.2)
 
-**Config validation, .env hardening, and README refresh.** 6 fixes from the v18.9.1 review (P1 + P2).
+**Config validation, .env hardening, and README refresh.** 6 fixes from the v18.9.2 review (P1 + P2).
 
 This release tightens the dynamic-config pipeline (`models.yaml` → `generate-litellm-config.sh` → LiteLLM `config.yaml`) and the secrets file (`/etc/scarlix/.env`) that the backup hook sources under `set -euo pipefail`. Several latent issues inherited from v18.8.x sed rewrites are closed with explicit validation, atomic writes, and a doctor-side diagnostic.
 
-### v18.9.1 fixes (6)
-| # | Fix | Was (v18.8.x) | Now (v18.9.1) |
+### v18.9.2 fixes (6)
+| # | Fix | Was (v18.8.x) | Now (v18.9.2) |
 |---|-----|---------------|----------------|
 | P1 | **model-manager: restart after update + staging dir** | Updated model moved into place but the running engine kept serving the old one; no staging dir → in-place overwrite risk during download | Restart engine after a successful update; stage the new model in a temp dir, then atomic `mv` into final path |
 | P1 | **LiteLLM config change detection → restart** | `generate-litellm-config.sh` wrote `config.yaml` but LiteLLM kept the old routing in memory → routing stayed stale until manual restart | Detect config change (checksum/mtime) and restart the LiteLLM container so the new routing takes effect |
