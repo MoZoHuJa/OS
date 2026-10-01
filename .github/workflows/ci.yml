@@ -112,12 +112,81 @@ jobs:
           SGLANG_CONTEXT_LENGTH=32768
           SGLANG_CHUNKED_PREFILL=4096
           SGLANG_MAX_RUNNING=4
+          # v18.9.0 P2-14: vars added in v18.8.6-18.8.9 (was: missing from test
+          #   .env → docker compose config silently fell back to defaults, hiding
+          #   real interpolation bugs. Now: all env vars present.)
+          SGLANG_SHM_SIZE=8gb
+          OLLAMA_KEEP_ALIVE=15m
+          OLLAMA_NUM_PARALLEL=2
+          VLLM_TENSOR_PARALLEL=1
+          VLLM_MAX_MODEL_LEN=32768
+          LLAMACPP_CONTEXT_SIZE=32768
+          LLAMACPP_THREADS=16
+          LLAMACPP_CACHE_TYPE_K=q4_0
+          LLAMACPP_CACHE_TYPE_V=q4_0
           TESTEOF
           find . -name 'docker-compose*.yml' -not -path './.git/*' | while read f; do
             echo "Validating $f..."
             docker compose --env-file /tmp/test-scarlix.env -f "$f" config --quiet 2>&1 || { echo "FAIL: $f"; exit 1; }
           done
           echo "All compose configs valid"
+
+      - name: Test models.yaml → .env → compose pipeline
+        run: |
+          # v18.9.0 P2-15: End-to-end config wiring test (was: only syntax checked,
+          #   not actual models.yaml → scarlix-mode → .env → compose rendering)
+          # Create test models.yaml with known non-default values
+          cat > /tmp/test-models.yaml << 'MEOF'
+          sglang:
+            model_path: "/models/TestModel-AWQ"
+            hf_repo: "test/test"
+            context_length: 12345
+            mem_fraction: 0.82
+            chunked_prefill_size: 1234
+            max_running_requests: 7
+            shm_size: "5gb"
+          vllm:
+            model_path: "/models/TestModel-AWQ"
+            tensor_parallel_size: 1
+            gpu_memory_utilization: 0.85
+            max_model_len: 16384
+          beellama:
+            hf_repo: "test/test-gguf"
+            hf_file: "TestModel-Q4_K_M.gguf"
+            context_size: 8192
+            threads: 8
+            cache_type_k: "q4_0"
+            cache_type_v: "q4_0"
+          ollama:
+            model: "test-model:3b"
+            keep_alive: "10m"
+            num_parallel: 4
+          MEOF
+          # Generate .env from test models.yaml (simulate scarlix-mode generate_env_file)
+          python3 << 'GENEOF'
+          import yaml, os
+          m = yaml.safe_load(open('/tmp/test-models.yaml'))
+          with open('/tmp/test-runtime.env', 'w') as f:
+              f.write(f"SGLANG_MODEL_PATH={m['sglang']['model_path']}\n")
+              f.write(f"SGLANG_MEM_FRACTION={m['sglang']['mem_fraction']}\n")
+              f.write(f"SGLANG_CONTEXT_LENGTH={m['sglang']['context_length']}\n")
+              f.write(f"SGLANG_CHUNKED_PREFILL={m['sglang']['chunked_prefill_size']}\n")
+              f.write(f"SGLANG_MAX_RUNNING={m['sglang']['max_running_requests']}\n")
+              f.write(f"SGLANG_SHM_SIZE={m['sglang']['shm_size']}\n")
+              f.write(f"VLLM_TENSOR_PARALLEL={m['vllm']['tensor_parallel_size']}\n")
+              f.write(f"VLLM_MAX_MODEL_LEN={m['vllm']['max_model_len']}\n")
+              f.write(f"LLAMACPP_CONTEXT_SIZE={m['beellama']['context_size']}\n")
+              f.write(f"LLAMACPP_THREADS={m['beellama']['threads']}\n")
+              f.write(f"OLLAMA_KEEP_ALIVE={m['ollama']['keep_alive']}\n")
+              f.write(f"OLLAMA_NUM_PARALLEL={m['ollama']['num_parallel']}\n")
+          GENEOF
+          # Validate that compose renders with these values
+          docker compose --env-file /tmp/test-runtime.env -f ai/sglang/docker-compose.yml config | grep -q "12345" || { echo "FAIL: SGLANG_CONTEXT_LENGTH not wired"; exit 1; }
+          docker compose --env-file /tmp/test-runtime.env -f ai/sglang/docker-compose.yml config | grep -q "5gb" || { echo "FAIL: SGLANG_SHM_SIZE not wired"; exit 1; }
+          docker compose --env-file /tmp/test-runtime.env -f ai/vllm/docker-compose.yml config | grep -q "16384" || { echo "FAIL: VLLM_MAX_MODEL_LEN not wired"; exit 1; }
+          docker compose --env-file /tmp/test-runtime.env -f ai/llamacpp/docker-compose.yml config | grep -q "8192" || { echo "FAIL: LLAMACPP_CONTEXT_SIZE not wired"; exit 1; }
+          docker compose --env-file /tmp/test-runtime.env -f ai/ollama/docker-compose.yml config | grep -q "10m" || { echo "FAIL: OLLAMA_KEEP_ALIVE not wired"; exit 1; }
+          echo "All env wiring verified: models.yaml values appear in rendered compose configs"
 
   # v17.9.8 P2: Go build + vet + test for ScarliHQ (catches compile errors before release)
   go-build:
