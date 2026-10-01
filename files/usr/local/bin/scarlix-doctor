@@ -101,6 +101,18 @@ fix_generate_env() {
 fix_add_scarlihq_token() {
   echo "SCARLIHQ_TOKEN=$(openssl rand -hex 32)" >> /etc/scarlix/.env
 }
+# v18.9.0 P1: Regenerate /etc/scarlix/.env when it contains orphan lines (was: old
+#   base64-64 multiline writes left orphan lines that broke backup hook sourcing
+#   under set -euo pipefail. Now: delegate to generate-env.sh if present, else
+#   strip non-assignment lines in place.)
+fix_regenerate_env() {
+  if [ -f /etc/systemd/system/generate-env.sh ]; then
+    /etc/systemd/system/generate-env.sh
+  else
+    # Re-generate just the problematic keys
+    sed -i '/^[^A-Z_#]/d' /etc/scarlix/.env  # Remove non-assignment lines
+  fi
+}
 fix_enable_host_bridge_timer() { systemctl enable --now scarlix-host-bridge.timer; }
 
 fix() {
@@ -224,6 +236,16 @@ if [ -f "$SECRETS_ENV" ]; then
   fi
 else
   fail "/etc/scarlix/.env not found (run generate-env.sh)"
+fi
+# v18.9.0 P1: Check .env for orphan/invalid lines (was: old base64 64 multiline
+#   orphans could break backup hook sourcing under set -euo pipefail)
+if [ -f "$SECRETS_ENV" ]; then
+  bad_lines=$(grep -vnE '^([A-Z_][A-Z0-9_]*=|#|$)' "$SECRETS_ENV" 2>/dev/null || echo "")
+  if [ -n "$bad_lines" ]; then
+    fail "/etc/scarlix/.env has invalid lines (orphan from old base64?):"
+    echo "$bad_lines" | head -5 | sed 's/^/    /'
+    fix "regenerate .env" fix_regenerate_env
+  fi
 fi
 
 # === Host Bridge (v18.5) ===

@@ -61,6 +61,18 @@ OLLAMA_MODEL_ID=$(yq -r '.ollama.model // empty' "$MODELS_YAML" 2>/dev/null || e
   exit 1
 }
 
+# v18.9.0 P1-05: Validate model ID charset (was: unvalidated → YAML injection if model_path has special chars)
+validate_model_id() {
+    local id="$1" name="$2"
+    if ! [[ "$id" =~ ^[A-Za-z0-9._/@:-]+$ ]]; then
+        echo "ERROR: $name contains invalid characters: '$id' (allowed: A-Za-z0-9._/@:-)" >&2
+        exit 1
+    fi
+}
+validate_model_id "$SGLANG_MODEL_ID" "SGLang model ID"
+validate_model_id "$BEE_MODEL_ID" "BeeLlama model ID"
+validate_model_id "$OLLAMA_MODEL_ID" "Ollama model ID"
+
 # Ensure output directory exists
 mkdir -p "$(dirname "$OUTPUT")"
 

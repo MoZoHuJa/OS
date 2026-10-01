@@ -54,28 +54,19 @@ scarlix-mode ai
 
 ## 🆕 What's New in v18.8.9 (vs v18.8.9)
 
-**Dynamic LiteLLM config + offline mode + backup hardening + Arch risk docs.** 7 fixes from P0/P1 review.
+**Config validation, .env hardening, and README refresh.** 6 fixes from the v18.9.0 review (P1 + P2).
 
-v18.8.9 introduced `generate-litellm-config.sh` (generates LiteLLM `config.yaml` from `models.yaml`), but **CI Test 12 still validated the *committed static* `ai/litellm/config.yaml`** — production could be stale while CI passed. Also `offline` mode had a broken `api_url`, `restic-backup` continued after init failure, and `doctor fix_generate_env` had a wrong fallback path.
+This release tightens the dynamic-config pipeline (`models.yaml` → `generate-litellm-config.sh` → LiteLLM `config.yaml`) and the secrets file (`/etc/scarlix/.env`) that the backup hook sources under `set -euo pipefail`. Several latent issues inherited from v18.8.x sed rewrites are closed with explicit validation, atomic writes, and a doctor-side diagnostic.
 
-### v18.8.9 fixes (7)
-| # | Fix | v18.8.9 Problem | v18.8.9 Solution |
-|---|-----|-----------------|-------------------|
-| P0 | **CI Test 12 validates GENERATED config** | Test 12 read committed `ai/litellm/config.yaml` → could pass while production config was stale (generator output never tested) | Run `generate-litellm-config.sh` with a test `models.yaml`, validate generated `config.yaml` + assert model IDs match input |
-| P1 | **Dynamic LiteLLM config from `models.yaml`** | `ai/litellm/config.yaml` had hardcoded model IDs — changing model in `models.yaml` didn't update routing | `generate-litellm-config.sh` derives IDs (SGLang `basename`, BeeLlama `hf_file`, Ollama `model`) from `models.yaml` |
-| P1 | **offline mode `api_url` + `dump_vram` port fallback** | Offline mode wrote empty/`localhost` `api_url` → clients pointed at non-running gateway; `dump_vram` had no port fallback if env var unset | Default `http://127.0.0.1:4001/v1` + port fallback chain |
-| P1 | **restic backup hardening** | `restic init \|\| true` → if init failed, backup ran on uninitialized repo (silent); missing `RESTIC_PASSWORD` env | Config-file existence check + early return on missing repo + explicit `RESTIC_PASSWORD` env var |
-| P1 | **doctor `fix_generate_env` fallback path fix** | `fix_generate_env` fallback path was wrong → didn't write SGLANG_* runtime vars | Delegates to `generate-env.sh` (single source of truth) with corrected fallback path |
-| P2 | **CI Test 12 `KeyError` on missing `model_name`** | `m['model_name']` → cryptic traceback if any entry missing the field | `m.get('model_name', '<MISSING>')` → clean FAIL line |
-| P2 | **Arch-specific risks documented** | Calamares BTRFS default, AUR `nvidia-container-toolkit`, etc. undocumented → users hit known pitfalls | Docs section listing Arch-specific risks + workarounds (Calamares BTRFS, AUR nvidia-container-toolkit, host-bridge `/var/lock` `mkdir`) |
-
-### Dynamic config flow (v18.8.9+, hardened v18.8.9)
-```
-models.yaml  →  generate-litellm-config.sh  →  ai/litellm/config.yaml
-                       ↑ (called by install.sh + scarlix-mode generate_env_file())
-CI Test 12 now feeds a test models.yaml into the generator + validates the
-output (was: validated committed static file → could pass while stale).
-```
+### v18.9.0 fixes (6)
+| # | Fix | Was (v18.8.x) | Now (v18.9.0) |
+|---|-----|---------------|----------------|
+| P1 | **model-manager: restart after update + staging dir** | Updated model moved into place but the running engine kept serving the old one; no staging dir → in-place overwrite risk during download | Restart engine after a successful update; stage the new model in a temp dir, then atomic `mv` into final path |
+| P1 | **LiteLLM config change detection → restart** | `generate-litellm-config.sh` wrote `config.yaml` but LiteLLM kept the old routing in memory → routing stayed stale until manual restart | Detect config change (checksum/mtime) and restart the LiteLLM container so the new routing takes effect |
+| P1 | **generate-litellm-config charset validation** | Model IDs from `models.yaml` were written into YAML unvalidated — a `model_path` containing `:`, `#`, `[`, `]` could produce an invalid `config.yaml` | `validate_model_id()` enforces `^[A-Za-z0-9._/@:-]+$` for SGLang / BeeLlama / Ollama IDs; exit 1 on violation |
+| P1 | **`.env` orphan line check in `scarlix-doctor`** | Old `.env` files from base64-64 multiline writes left orphan lines; the backup hook sources `.env` under `set -euo pipefail` → silent abort | `scarlix-doctor` scans for non-assignment lines and offers `fix_regenerate_env` (calls `generate-env.sh` or strips bad lines) |
+| P2 | **atomic `.env` write (`mktemp` + `mv`)** | `cat > .env` left a truncated file if interrupted mid-write; next `source .env` failed under `set -e` | Write to `mktemp` then `mv -f` into place — readers always see a complete file |
+| P2 | **model-manager YAML validation** | `yq` errors on individual keys gave confusing "model_path missing" errors when the real problem was invalid YAML syntax | Explicit `yq -e '.'` validation up front with a clear error message |
 
 ---
 
