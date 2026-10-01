@@ -2,34 +2,21 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v18.5 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v18.9.8 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
-# v18.2 FIXES (vs v18.1) — Security + UX:
-#   P0: real_user detection under systemd (was: $USER=root → chown root /opt/scarlix)
-#   P1: scarlix-mode systemctl sudo fallback for user CLI (was: removed sudo → game/tv fails)
-#   P1: token only on TTY + install.log chmod 600 (was: token in 644 log)
-#   P1: FIFO/pipe/socket explicit rejection in validate_input_file
-#   P1: models.yaml schema validation in download-models.sh (fail-fast on typos)
-#   P1: const Version → var Version (ldflags -X main.Version only works on vars)
-#   P1: go.sum removed (generated at build time by Dockerfile go mod download)
-#   P2: CI smoke test chown 65532 (was: mode POST 202 failed in CI)
-#   P2: migration applies pending desired-mode before rm -rf
-#   P2: whiptail ESC/Cancel handling (was: set -e aborted whole script)
-#   P2: bridge restores retry_count + last_error from last-transition
-#   P2: creative/tv ensure .env exists before $DC
-#   P2: .env.template updated (was: v15 header)
+# EndeavourOS/Arch bootstrap installer — NO ISO, runs on clean EndeavourOS.
+# 5 phases: packages → NVIDIA → Docker → copy files → wizard + ScarliHQ build.
+# Full changelog: see CHANGELOG.md or git log.
 #
-# v18.0.0–18.1 fixes preserved (see git history for details).
-#
-# USAGE (primary — safe):
+# USAGE:
 #   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
-#   git checkout v18.5   # ALWAYS checkout specific tag (main may be ahead)
+#   git checkout v18.9.8   # ALWAYS checkout specific tag (main may be ahead)
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.9.7"
+VERSION="18.9.8"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -163,8 +150,14 @@ ok "Repo at $REPO_DIR"
 #   be installed. Now: install pciutils first, then check.)
 if ! command -v lspci >/dev/null 2>&1; then
   log "Installing bootstrap dependency: pciutils (required for GPU detection)..."
-  pacman -Sy --noconfirm --needed pciutils >> "$LOG_FILE" 2>&1 \
-    || crit "Cannot install pciutils — GPU detection cannot continue"
+  # v18.9.8 P0-1: Validate pacman DB before install (was: pacman -Sy pciutils on
+  #   corrupted DB → silent failure → lspci still missing → crit)
+  if ! pacman -Sy --noconfirm --needed pciutils >> "$LOG_FILE" 2>&1; then
+    log "pacman -Sy pciutils failed — attempting DB repair..."
+    pacman-key --init >> "$LOG_FILE" 2>&1 || true
+    pacman -Sy --noconfirm >> "$LOG_FILE" 2>&1 || crit "pacman DB is corrupted — run 'pacman-key --init && pacman -Syu' manually, then re-run install.sh"
+    pacman -S --noconfirm --needed pciutils >> "$LOG_FILE" 2>&1 || crit "Cannot install pciutils even after DB repair — GPU detection cannot continue"
+  fi
 fi
 command -v lspci >/dev/null 2>&1 || crit "lspci still not found after pciutils install"
 # v18.8.6 P0-1: lspci emits "VGA compatible controller: NVIDIA Corporation ..."
@@ -526,6 +519,12 @@ else
   # If the build fails here, crit() aborts install — the host-bridge script will
   # reject every desired-mode until scarlix-bridge-reader is installed.
   log "Building scarlix-bridge-reader (atomic Go file reader)..."
+  # v18.9.8 P0-3: Pre-flight toolchain check (was: build failed silently if
+  #   Go missing AND Docker missing → crit with unclear error. Now: check
+  #   upfront and install Go via Docker if needed.)
+  if ! command -v go >/dev/null 2>&1 && ! command -v docker >/dev/null 2>&1; then
+    crit "Neither Go nor Docker available — cannot build scarlix-bridge-reader (install Docker first or install go)"
+  fi
   mkdir -p "$REPO_DIR/files/usr/local/bin"
   SBR_SRC="$REPO_DIR/scarlihq/cmd/scarlix-bridge-reader/main.go"
   SBR_OUT="$REPO_DIR/files/usr/local/bin/scarlix-bridge-reader"
@@ -818,10 +817,12 @@ else
     #   tag, compose image tag, and VERSION file all agree.
     if docker build --build-arg SCARLIX_VERSION="$VERSION" -t scarlihq:v$VERSION /opt/scarlix/scarlihq/ >> "$LOG_FILE" 2>&1; then
       ok "ScarliHQ image built (scarlihq:v$VERSION, alpine ~20MB, version $VERSION)"
-      # Start dashboard on :8090 (compose references scarlihq:v$VERSION — matches build tag).
-      # v18.7.6 P2: --env-file /etc/scarlix/.env so compose picks up SCARLIHQ_TOKEN
-      # from the secrets file rather than relying on the install.sh export (was already
-      # correct — preserved here as the canonical pattern for future up -d re-runs).
+      # v18.9.8 P0-2 + P1-7: Validate compose config BEFORE up (was: config not checked
+      #   → missing env vars could cause silent container failure. Now: docker compose
+      #   config --quiet with same --env-file as up → catches interpolation errors.)
+      if ! docker compose --env-file /etc/scarlix/.env -f /opt/scarlix/scarlihq/docker-compose.yml config --quiet >> "$LOG_FILE" 2>&1; then
+        crit "ScarliHQ compose config validation failed — check /etc/scarlix/.env for required vars"
+      fi
       if docker compose --env-file /etc/scarlix/.env -f /opt/scarlix/scarlihq/docker-compose.yml up -d >> "$LOG_FILE" 2>&1; then
         # v18.7.8 P0: Post-start health check (was: `compose up -d` exit 0 →
         #   "dashboard started" — but container could start then immediately

@@ -191,6 +191,22 @@ jobs:
           echo "All env wiring verified: models.yaml values appear in rendered compose configs"
 
   # v17.9.8 P2: Go build + vet + test for ScarliHQ (catches compile errors before release)
+  # v18.9.8 P1-2: systemd unit file validation (was: .service/.timer not validated →
+  #   syntax errors only caught at runtime on target system)
+  systemd-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install systemd-analyze
+        run: sudo apt-get update && sudo apt-get install -y systemd
+      - name: Validate systemd unit files
+        run: |
+          find files/etc/systemd/system -name '*.service' -o -name '*.timer' | while read f; do
+            echo "Validating $f..."
+            systemd-analyze verify "$f" 2>&1 || { echo "FAIL: $f"; exit 1; }
+          done
+          echo "All systemd units valid"
+
   go-build:
     runs-on: ubuntu-latest
     steps:

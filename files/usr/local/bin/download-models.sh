@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.7 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v18.9.8 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
 # v18.5 FIXES:
 #   - Missing Ollama compose file = FAILED (was: silently skipped → false "complete")
@@ -49,7 +49,7 @@ exec 9>"$MODELS_LOCK"
 flock -n -x 9 || { echo "ERROR: cannot acquire models lock (scarlix-mode or model-manager running?)" >&2; exit 1; }
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v18.9.7 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v18.9.8 — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing
@@ -107,6 +107,16 @@ validate_models_yaml() {
       errors=$((errors + 1))
     else
       echo "  ✓ $key = $val" | tee -a "$LOG_FILE"
+    fi
+  done
+  # v18.9.8 P1-8: Check for deprecated/removed keys (was: old config from previous
+  #   version silently ignored → stale values used. Now: warn on deprecated keys.)
+  local deprecated_keys=(".sglang.quantization" ".sglang.flashinfer" ".beellama.model_file")
+  for dkey in "${deprecated_keys[@]}"; do
+    local dval
+    dval=$(yq -r "$dkey // empty" "$MODELS_CONFIG" 2>/dev/null || echo "")
+    if [ -n "$dval" ] && [ "$dval" != "null" ]; then
+      echo "  ⚠ DEPRECATED: $dkey is no longer used (value: $dval) — remove from models.yaml" | tee -a "$LOG_FILE"
     fi
   done
   if [ "$errors" -gt 0 ]; then
