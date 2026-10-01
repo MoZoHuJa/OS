@@ -103,7 +103,7 @@ jobs:
           cat > /tmp/test-scarlix.env << 'TESTEOF'
           SCARLIHQ_TOKEN=test-token
           LITELLM_MASTER_KEY=sk-test-key
-          SCARLIX_VERSION=18.8.6
+          SCARLIX_VERSION=$(cat VERSION)
           SGLANG_MODEL_PATH=/models/test
           VLLM_MODEL_PATH=/models/test
           LLAMACPP_MODEL_PATH=/models/test.gguf

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.8.8 — Model Manager
+# SCARLIX OS v18.8.9 — Model Manager
 # v18.7 FIX: Ollama pulls via `docker exec ollama-agent` (was: host `ollama` binary — never installed)
 # FIX Q8b: Split — HF model pulls = auto (safe), Ollama tag pulls = manual (--apply only)
 #
@@ -81,13 +81,13 @@ vram_snapshot() {
 }
 
 log "========================================"
-log "  SCARLIX OS v18.7 — Model Manager"
+log "  SCARLIX OS v18.8.9 — Model Manager"
 [ "$APPLY_OLLAMA" -eq 1 ] && log "  (--apply-ollama: will update Ollama tags)" || log "  (HF auto-pull + Ollama dry-run report only)"
 log "========================================"
 
 if [ ! -f "$MODELS_YAML" ]; then
   log "ERROR: models.yaml not found"
-  send_telegram "🚨 *SCARLIX Model Manager v18.7* — FAILED
+  send_telegram "🚨 *SCARLIX Model Manager v18.8.9* — FAILED
 models.yaml not found"
   exit 1
 fi
@@ -179,7 +179,7 @@ log "HF: updated=$HF_UPDATED failed=$HF_FAILED"
 log "Ollama: updated=$OLLAMA_UPDATED failed=$OLLAMA_FAILED"
 
 # === Telegram summary ===
-SUMMARY="🤖 *SCARLIX Model Manager v18.7*
+SUMMARY="🤖 *SCARLIX Model Manager v18.8.9*
 📊 HF: \`${HF_UPDATED}\` updated, \`${HF_FAILED}\` failed
 📊 Ollama: \`${OLLAMA_UPDATED}\` updated, \`${OLLAMA_FAILED}\` failed
 $([ "$APPLY_OLLAMA" -eq 0 ] && echo "ℹ️ Ollama tags NOT updated (dry-run). Use \`model-manager.sh --apply-ollama\` to update.")

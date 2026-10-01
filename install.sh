@@ -29,7 +29,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="18.8.8"
+VERSION="18.8.9"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -254,12 +254,12 @@ else
   # v18.5.2 P1: Security operations must fail-closed (was: || true → continued on failure)
   chown root:root /etc/scarlix /opt/scarlix 2>/dev/null || crit "Cannot chown root:root /etc/scarlix /opt/scarlix"
   chmod 755 /etc/scarlix /opt/scarlix 2>/dev/null || crit "Cannot chmod 755 /etc/scarlix /opt/scarlix"
-  # Q2a v17.8: Ollama volume root:root + 700 (was 777 — unnecessary security hole)
-  chown root:root /var/lib/scarlix/ollama 2>/dev/null || true
-  chmod 700 /var/lib/scarlix/ollama 2>/dev/null || true
+  # v18.8.9 P1: fail-closed (was: || true → security inconsistency with v18.5.2 policy)
+  chown root:root /var/lib/scarlix/ollama 2>/dev/null || crit "Cannot chown root:root /var/lib/scarlix/ollama"
+  chmod 700 /var/lib/scarlix/ollama 2>/dev/null || crit "Cannot chmod 700 /var/lib/scarlix/ollama"
   # P1 v17.9.7: /models chmod 750 (was 775 — tighter; containers read as root via :ro)
-  chown -R "$REAL_USER:$REAL_USER" /models 2>/dev/null || true
-  chmod 750 /models 2>/dev/null || true
+  chown -R "$REAL_USER:$REAL_USER" /models 2>/dev/null || crit "Cannot chown /models"
+  chmod 750 /models 2>/dev/null || crit "Cannot chmod 750 /models"
 
   # P1 v17.9.7: Verify yq is functional (scripts depend on it — fail hard if broken)
   if command -v yq >/dev/null 2>&1; then
@@ -643,8 +643,9 @@ else
   # v18.5 P0: Fix /opt/scarlix/.env ownership on upgrade (was: only /etc/scarlix/.env fixed in v18.4)
   # Systems upgraded from v18.0-18.3 have user-owned .env → LPE via source
   if [ -f /opt/scarlix/.env ]; then
-    chown root:root /opt/scarlix/.env 2>/dev/null || true
-    chmod 600 /opt/scarlix/.env 2>/dev/null || true
+    # v18.8.9 P1: fail-closed (was: || true → LPE if .env stays user-owned)
+    chown root:root /opt/scarlix/.env 2>/dev/null || crit "Cannot chown root:root /opt/scarlix/.env"
+    chmod 600 /opt/scarlix/.env 2>/dev/null || crit "Cannot chmod 600 /opt/scarlix/.env"
     ok "/opt/scarlix/.env ownership fixed (root:root 600)"
   fi
 
