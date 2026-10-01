@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v18.9.0 — Self-Diagnostic (scarlix-doctor)
+# SCARLIX OS v18.9.1 — Self-Diagnostic (scarlix-doctor)
 # v18.5: http_ok() with -k/--no-check-certificate fallback; host-bridge check; version unified
 # v17.9.2: unhealthy = FAIL (not PASS), --fix mode, API healthcheck, docker group check
 
@@ -105,12 +105,21 @@ fix_add_scarlihq_token() {
 #   base64-64 multiline writes left orphan lines that broke backup hook sourcing
 #   under set -euo pipefail. Now: delegate to generate-env.sh if present, else
 #   strip non-assignment lines in place.)
+# v18.9.1 P1-2: fix_regenerate_env now actually sanitizes orphan lines (was:
+#   called generate-env.sh which only adds missing keys → orphans remained →
+#   doctor still FAIL on next run. Now: filter valid lines into temp, atomic mv.)
 fix_regenerate_env() {
+  local secrets_env="/etc/scarlix/.env"
+  local tmp
+  tmp=$(mktemp "${secrets_env}.XXXXXX") || return 1
+  # Keep only valid lines: KEY=value, comments (#), or empty lines
+  grep -E '^([A-Z_][A-Z0-9_]*=|#|$)' "$secrets_env" > "$tmp" 2>/dev/null || true
+  chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
+  chown root:root "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$secrets_env" 2>/dev/null || { rm -f "$tmp"; return 1; }
+  # Also ensure all required keys exist (generate-env.sh adds missing)
   if [ -f /etc/systemd/system/generate-env.sh ]; then
     /etc/systemd/system/generate-env.sh
-  else
-    # Re-generate just the problematic keys
-    sed -i '/^[^A-Z_#]/d' /etc/scarlix/.env  # Remove non-assignment lines
   fi
 }
 fix_enable_host_bridge_timer() { systemctl enable --now scarlix-host-bridge.timer; }
@@ -129,7 +138,7 @@ fix() {
 }
 
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║  SCARLIX OS v18.9.0 — System Diagnostic                      ║${NC}"
+echo -e "${CYAN}║  SCARLIX OS v18.9.1 — System Diagnostic                      ║${NC}"
 [ "$FIX_MODE" -eq 1 ] && echo -e "${CYAN}║  (--fix mode: will attempt automatic fixes)                  ║${NC}"
 [ "$STRICT_MODE" -eq 1 ] && echo -e "${CYAN}║  (--strict mode: WARN → FAIL, exit 1 on any warning)         ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"

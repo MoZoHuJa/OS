@@ -638,14 +638,15 @@ jobs:
           #   m['model_name'] (was: KeyError if any model entry missing
           #   model_name field → cryptic traceback instead of clean FAIL line).
           echo "=== Test 12: Production LiteLLM config validation (generated) ==="
-          # Install yq (required by generate-litellm-config.sh; not in ubuntu-latest default).
-          # MUST be python-yq (kislyuk/yq, pip install yq) — NOT mikefarah/yq — because
-          # the generator uses jq syntax `// empty` which only python-yq supports.
-          # Production Arch package is python-yq (kislyuk) — see packages.x86_64.
-          if ! command -v yq >/dev/null 2>&1; then
-            sudo apt-get install -y -qq jq
-            pip install --quiet yq
-          fi
+          # v18.9.1 P0: Always install python-yq in venv (was: `if ! command -v yq`
+          #   → if runner had mikefarah/yq pre-installed, it was used instead of
+          #   python-yq → `// empty` syntax fails → "model_path missing" error.
+          #   Now: always create venv with pinned python-yq + jq, export PATH.)
+          sudo apt-get install -y -qq jq
+          python -m venv /tmp/scarlix-yq-venv
+          /tmp/scarlix-yq-venv/bin/pip install --quiet "yq==3.4.3"
+          export PATH="/tmp/scarlix-yq-venv/bin:$PATH"
+          yq --version
           # Generate LiteLLM config from models.yaml (like production does)
           # v18.9.0 fix: Use bash heredoc instead of Python yaml.dump (was: Python
           #   heredoc with 10-space YAML indent → yaml.dump output sometimes
