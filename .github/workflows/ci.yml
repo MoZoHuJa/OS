@@ -181,8 +181,10 @@ jobs:
               f.write(f"OLLAMA_NUM_PARALLEL={m['ollama']['num_parallel']}\n")
           GENEOF
           # Validate that compose renders with these values
+          # v18.9.0 fix: shm_size is normalized by docker compose config (5gb → bytes),
+          # so grep for the key name, not the value
           docker compose --env-file /tmp/test-runtime.env -f ai/sglang/docker-compose.yml config | grep -q "12345" || { echo "FAIL: SGLANG_CONTEXT_LENGTH not wired"; exit 1; }
-          docker compose --env-file /tmp/test-runtime.env -f ai/sglang/docker-compose.yml config | grep -q "5gb" || { echo "FAIL: SGLANG_SHM_SIZE not wired"; exit 1; }
+          docker compose --env-file /tmp/test-runtime.env -f ai/sglang/docker-compose.yml config | grep -q "shm_size" || { echo "FAIL: SGLANG_SHM_SIZE not wired"; exit 1; }
           docker compose --env-file /tmp/test-runtime.env -f ai/vllm/docker-compose.yml config | grep -q "16384" || { echo "FAIL: VLLM_MAX_MODEL_LEN not wired"; exit 1; }
           docker compose --env-file /tmp/test-runtime.env -f ai/llamacpp/docker-compose.yml config | grep -q "8192" || { echo "FAIL: LLAMACPP_CONTEXT_SIZE not wired"; exit 1; }
           docker compose --env-file /tmp/test-runtime.env -f ai/ollama/docker-compose.yml config | grep -q "10m" || { echo "FAIL: OLLAMA_KEEP_ALIVE not wired"; exit 1; }
@@ -645,17 +647,10 @@ jobs:
             pip install --quiet yq
           fi
           # Generate LiteLLM config from models.yaml (like production does)
-          python3 << 'GENEOF'
-          # Create a test models.yaml with known values
-          import yaml
-          test_models = {
-              'sglang': {'model_path': '/models/TestModel-AWQ'},
-              'beellama': {'hf_file': 'TestModel-Q4_K_M.gguf'},
-              'ollama': {'model': 'test-model:3b'}
-          }
-          with open('/tmp/test-models.yaml', 'w') as f:
-              yaml.dump(test_models, f)
-          GENEOF
+          # v18.9.0 fix: Use bash heredoc instead of Python yaml.dump (was: Python
+          #   heredoc with 10-space YAML indent → yaml.dump output sometimes
+          #   incompatible with yq — now: plain bash cat with no indent)
+          printf '%s\n' 'sglang:' '  model_path: "/models/TestModel-AWQ"' 'beellama:' '  hf_file: "TestModel-Q4_K_M.gguf"' 'ollama:' '  model: "test-model:3b"' > /tmp/test-models.yaml
           # Run the generator with test models.yaml
           bash files/usr/local/bin/generate-litellm-config.sh /tmp/test-models.yaml /tmp/test-litellm-config.yaml
           # Validate the GENERATED config (not the static committed one)
