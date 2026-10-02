@@ -1,4 +1,7 @@
-# SCARLIX OS v12 — Network Topology
+# SCARLIX OS v19 — Network Topology
+
+> **v19.0.4:** Header updated from v12 (topology/ports unchanged — still matches
+> the v19 runtime: ScarliHQ :8090, SGLang :30000, Ollama :11435, LiteLLM :4001).
 
 ## LAN
 

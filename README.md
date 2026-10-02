@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.3 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.4 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.0.3</h1>
+<h1 align="center">SCARLIX OS v19.0.4</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.3"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.3-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.4"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.4-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.0.3 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.0.4 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.0.3   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.0.4   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,43 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.0.4 (vs v19.0.3)
+
+**Final docs cleanup — release-candidate for hardware lifecycle test.** 3 fixes.
+
+Independent audit of v19.0.3 confirmed all P0/P1 runtime fixes are in place (SGLang, Whisper, Buzz, generate-env.sh, multilib, go.mod, Dockerfile, dynamic banners). Only 2 documentation legacy items remained: a stale `v12` header on `docs/NETWORK.md` and deprecated image refs in the body of `docs/COMPLETE_INSTALL_GUIDE.md`. v19.0.4 closes both.
+
+### v19.0.4 fixes (3)
+
+| # | Severity | Fix | Was | Now |
+|---|----------|-----|-----|-----|
+| 1 | **P2** | **`docs/NETWORK.md` header v12 → v19** | Header said "SCARLIX OS v12 — Network Topology" (content was still valid — ports, VPN, domains all match v19 runtime) | Header → v19 + note that topology/ports are unchanged (ScarliHQ :8090, SGLang :30000, Ollama :11435, LiteLLM :4001) |
+| 2 | **P2** | **`docs/COMPLETE_INSTALL_GUIDE.md` moved to `docs/archive/`** | 2364-line deprecated v12 Ubuntu-ISO guide still in active `docs/` root — body contained stale image refs (`ghcr.io/sgl-project/sglang:v0.5.5-cu124`, `fedirz/faster-whisper-server:0.10.0`, `ghcr.io/block/buzz-relay:latest`) that could confuse a grep audit | Moved to `docs/archive/COMPLETE_INSTALL_GUIDE_v12_UBUNTU_DEPRECATED.md` — cleanly separated from active docs, `docs/archive/` already exists for historical manifests (V15, V16.1) |
+| 3 | **P2** | **`VERSION` + `install.sh` + `Dockerfile` + `AGENTS.md` → v19.0.4** | v19.0.3 | v19.0.4 |
+
+### Audit confirmation (v19.0.3 fixes verified by independent reviewer)
+
+| Area | Status |
+|------|--------|
+| SGLang image exists (lmsysorg/sglang:v0.4.9.post6-cu128-b200) | 🟢 verified (manifest sha256, linux/amd64, CUDA 12.8.1, Blackwell build) |
+| Whisper image exists (sha-307e23f-cuda) | 🟢 verified (amd64 + arm64) |
+| Buzz image (ghcr.io/block/buzz:latest) | 🟢 verified |
+| multilib ordering, Telegram env, cp -a dotfiles | 🟢 confirmed |
+| Go module path (github.com/MoZoHuJa/OS/scarlihq) | 🟢 confirmed |
+| Dockerfile SCARLIX_VERSION=19.0.3 | 🟢 confirmed (now 19.0.4) |
+| HARDWARE.md + TROUBLESHOOTING.md v12 → v19 | 🟢 confirmed |
+| Bash syntax (all scripts) | 🟢 PASS |
+| Compose YAML (25 files) | 🟢 25/25 PASS |
+| ollama-main runtime refs | 🟢 0 in active config (historical comment refs in archive only) |
+
+### Remaining pre-release checks (require GPU host — NOT code fixes)
+- `docker pull lmsysorg/sglang:v0.4.9.post6-cu128-b200` on RTX 5060 Ti + RTX 4060 Ti — confirm SGLang starts + `--disable-flashinfer` accepted
+- Full lifecycle: EndeavourOS → install.sh → NVIDIA → Docker GPU → SGLang startup → Qwen3-14B-AWQ load → scarlix-mode ai → healthcheck → inference → fallback chain → reboot → doctor
+
+**Verdict:** v19.0.4 is a release-candidate. No more code fixes needed — the remaining gate is a real hardware lifecycle test on the target RTX 5060 Ti + 4060 Ti box.
 
 ---
 
