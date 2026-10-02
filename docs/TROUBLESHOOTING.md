@@ -1,4 +1,7 @@
-# SCARLIX OS v12 — Troubleshooting
+# SCARLIX OS v19 — Troubleshooting
+
+> v19.0.3: Rewritten from v12 Ubuntu edition. v12 used apt purge/apt install —
+> on EndeavourOS (Arch) the package manager is pacman. Commands now match v19.
 
 ## Common Issues
 
@@ -6,9 +9,10 @@
 
 **Problem:** `nvidia-smi` fails or shows no GPUs
 ```bash
-# Reinstall driver
-sudo apt purge 'nvidia-*'
-sudo apt install nvidia-driver-570-open
+# Reinstall driver (EndeavourOS/Arch — NOT apt)
+sudo pacman -Rns --noconfirm nvidia-open nvidia-utils lib32-nvidia-utils 2>/dev/null || true
+sudo pacman -S --noconfirm nvidia-open nvidia-utils lib32-nvidia-utils
+sudo mkinitcpio -P
 sudo reboot
 
 # Verify

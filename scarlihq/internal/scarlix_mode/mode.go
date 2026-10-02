@@ -6,7 +6,7 @@ import (
         "path/filepath"
         "strings"
 
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/status"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/status"
 )
 
 // Mode manages scarlix-mode via a file-based bridge (v17.9.8+).

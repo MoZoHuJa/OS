@@ -1,10 +1,10 @@
-# SCARLIX OS v19.0.2 — Agent Architecture
+# SCARLIX OS v19.0.3 — Agent Architecture
 
 ## Inference Stack
 
 | Tier | Engine | Port | GPU | Use Case |
 |------|--------|------|-----|----------|
-| 1 | SGLang v0.4.6.post1-cu128 (`--disable-flashinfer`) | 30000 | GPU 0 | Agents, RadixAttention, default (Qwen3-14B-AWQ) |
+| 1 | SGLang v0.4.9.post6-cu128-b200 (`--disable-flashinfer`) | 30000 | GPU 0 | Agents, RadixAttention, default (Qwen3-14B-AWQ) |
 | 2 | vLLM v0.8.5 | 8089 | GPU 1 (TP=1) | High throughput, experimental (`.experimental` flag only) |
 | 3 | BeeLlama (llama.cpp, CPU) | 11438 | CPU | Offline fallback, GGUF Q4_K_M |
 | Fallback | Ollama | 11435 | CPU | Starter model qwen2.5:3b (auto-downloaded) |

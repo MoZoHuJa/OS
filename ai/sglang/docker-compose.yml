@@ -4,7 +4,11 @@
 # v18.8.3 P1 (D): context-length + chunked-prefill + max-running from env (was: hardcoded)
 services:
   sglang:
-    # v18.9.6 P0-01: Upgraded to 0.4.6.post1 (was: v0.4.4 — Qwen3 requires
+    # v19.0.3 P0-1: FIXED IMAGE REGISTRY. Was ghcr.io/sgl-project/sglang:v0.4.6.post1-cu128
+    #   (ghcr returns 403/DENIED; tag 404 on lmsysorg/sglang too — cu128 variant only
+    #   exists from v0.4.8+ as -b200/-gb200). P0 BLOCKER: scarlix-mode ai pulls this.
+    #   Now: lmsysorg/sglang:v0.4.9.post6-cu128-b200 (verified HTTP 200 via registry API).
+    #   Supports Qwen3 (requires >= 0.4.6.post1). --disable-flashinfer kept.
     #   SGLang >= 0.4.6.post1 per official Qwen documentation. v0.4.4 lacks
     #   Qwen3 architecture support → runtime failure on model load.)
     # v19.0.1 P1: PRE-RELEASE TAG VERIFICATION NEEDED. The ghcr.io anonymous token
@@ -17,7 +21,7 @@ services:
     #   e.g. v0.4.6.post1-cu121 or a plain v0.4.6.post1). Do NOT blindly change the
     #   CUDA suffix — a wrong variant breaks GPU passthrough. Also confirm
     #   --disable-flashinfer still exists in `sglang.launch_server --help`.
-    image: ghcr.io/sgl-project/sglang:v0.4.6.post1-cu128
+    image: lmsysorg/sglang:v0.4.9.post6-cu128-b200
     container_name: sglang
     restart: unless-stopped
     ports:

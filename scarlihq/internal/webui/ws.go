@@ -8,10 +8,10 @@ import (
         "net/url"
         "time"
 
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/api"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/profiles"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/scarlix_mode"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/status"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/api"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/status"
         "github.com/gorilla/websocket"
 )
 

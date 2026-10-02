@@ -11,10 +11,10 @@ import (
         "sync"
         "time"
 
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/guard"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/profiles"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/scarlix_mode"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/status"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/guard"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/status"
 )
 
 // Version is the fallback default for /api/health when Handler has no version passed.

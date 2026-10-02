@@ -7,12 +7,12 @@ import (
         "os"
         "time" // v18.6 P1: explicit server timeouts
 
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/api"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/guard"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/mcp"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/profiles"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/scarlix_mode"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/webui"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/api"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/guard"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/mcp"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/webui"
 )
 
 // Version is the ScarliHQ application version.

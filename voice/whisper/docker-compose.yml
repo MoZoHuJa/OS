@@ -1,6 +1,9 @@
 services:
   whisper-sk:
-    image: fedirz/faster-whisper-server:0.10.0
+    image: fedirz/faster-whisper-server:sha-307e23f-cuda
+    # v19.0.3 P0-2: was :0.10.0 (tag does NOT exist on Docker Hub — 0.10.x tags = []).
+    #   Now: sha-307e23f-cuda (verified exists). Upstream moved to "Speaches" —
+    #   consider migrating in a future release.
     container_name: whisper-sk
     restart: unless-stopped
     ports:

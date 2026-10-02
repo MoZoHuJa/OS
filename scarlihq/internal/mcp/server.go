@@ -8,10 +8,10 @@ import (
         "net/http"
         "strings"
 
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/guard"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/profiles"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/scarlix_mode"
-        "github.com/MoZoHuJa/scarlix-os-v12/scarlihq/internal/status"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/guard"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/status"
 )
 
 // v17.9.8 P0: This is a REAL JSON-RPC 2.0 endpoint (was: fake MCP returning a static

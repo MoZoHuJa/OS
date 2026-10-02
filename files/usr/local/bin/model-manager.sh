@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v19.0.0 — Model Manager
+# SCARLIX OS v19.0.3 — Model Manager
 # v18.7 FIX: Ollama pulls via `docker exec ollama-agent` (was: host `ollama` binary — never installed)
 # FIX Q8b: Split — HF model pulls = auto (safe), Ollama tag pulls = manual (--apply only)
 #
@@ -88,7 +88,7 @@ vram_snapshot() {
 }
 
 log "========================================"
-log "  SCARLIX OS v19.0.0 — Model Manager"
+log "  SCARLIX OS v${SCARLIX_VER} — Model Manager"
 [ "$APPLY_OLLAMA" -eq 1 ] && log "  (--apply-ollama: will update Ollama tags)" || log "  (HF auto-pull + Ollama dry-run report only)"
 log "========================================"
 

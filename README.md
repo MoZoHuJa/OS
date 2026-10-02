@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.2 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.3 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.0.2</h1>
+<h1 align="center">SCARLIX OS v19.0.3</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.2"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.2-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.3"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.3-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.0.2 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.0.3 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.0.2   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.0.3   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,40 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.0.3 (vs v19.0.2)
+
+**Release-gate fixes: SGLang P0 blocker + image registry audit + version-drift cleanup.** 9 fixes.
+
+A stricter independent audit of v19.0.2 found that the **SGLang Tier-1 image was a real P0 blocker** — the tag `ghcr.io/sgl-project/sglang:v0.4.6.post1-cu128` does NOT exist on any registry (ghcr returns 403/DENIED, Docker Hub `lmsysorg/sglang` returns 404). The v19.0.1 comment already admitted it "could NOT be verified" but it stayed in release. v19.0.3 fixes this + two more dead images + all version-drift.
+
+### v19.0.3 fixes (9)
+
+| # | Severity | Fix | Was | Now |
+|---|----------|-----|-----|-----|
+| 1 | **P0** | **SGLang Tier-1 image** (BLOCKER — scarlix-mode ai pulls this) | `ghcr.io/sgl-project/sglang:v0.4.6.post1-cu128` (ghcr 403/DENIED; tag 404 on Docker Hub `lmsysorg/sglang` — cu128 variant only exists from v0.4.8+ as `-b200`/`-gb200`) | `lmsysorg/sglang:v0.4.9.post6-cu128-b200` (verified HTTP 200 + manifest via registry API; latest stable 0.4.9 cu128-b200 = consumer Blackwell sm_120; supports Qwen3) |
+| 2 | **P0** | **Whisper image tag** | `fedirz/faster-whisper-server:0.10.0` (tag does NOT exist — 0.10.x tags = [] on Docker Hub) | `fedirz/faster-whisper-server:sha-307e23f-cuda` (verified exists; note: upstream moved to "Speaches" — migrate in future) |
+| 3 | **P1** | **Buzz image registry** | `ghcr.io/block/buzz-relay:latest` (ghcr DENIED — repo doesn't exist) | `ghcr.io/block/buzz:latest` (verified: latest, main, sha-* tags exist; profile-gated `[buzz]`) |
+| 4 | **P2** | **All script banners now dynamic** (version-drift fix) | scarlix-doctor / scarlix-mode status+VRAM / download-models / model-manager banners hardcoded `v19.0.0` (drifted every release) | Read `/etc/scarlix/VERSION` dynamically → `v${SCARLIX_VER}` (never drifts again) |
+| 5 | **P2** | **Dockerfile `SCARLIX_VERSION`** | `ARG SCARLIX_VERSION=19.0.0` (manual `docker build` without `--build-arg` produced binary reporting v19.0.0) | `ARG SCARLIX_VERSION=19.0.3` (matches VERSION file) |
+| 6 | **P2** | **Go module path** | `module github.com/MoZoHuJa/scarlix-os-v12/scarlihq` (stale `scarlix-os-v12` path; actual repo is `MoZoHuJa/OS`) | `module github.com/MoZoHuJa/OS/scarlihq` (all `.go` imports updated) |
+| 7 | **P2** | **`docs/HARDWARE.md` + `docs/TROUBLESHOOTING.md` v12 headers** | Both said "v12"; TROUBLESHOOTING had Ubuntu `apt purge`/`apt install` commands (wrong OS — EndeavourOS uses `pacman`) | Headers → v19; TROUBLESHOOTING NVIDIA driver reinstall rewritten with `pacman -S nvidia-open` + `mkinitcpio -P` |
+| 8 | **P2** | **`smg/config.yaml` comment grep false-positive** | Historical comment contained literal `ollama-main` → `grep ollama-main` false-positived on the config (review P1-1/P2-5) | Comment reworded to not contain the dead hostname literally; plain grep now returns 0 matches |
+| 9 | **P2** | **`VERSION` + `install.sh` + `AGENTS.md` → v19.0.3** | v19.0.2 | v19.0.3 (AGENTS.md SGLang version also updated to v0.4.9.post6-cu128-b200) |
+
+### Image-registry verification (v19.0.3)
+```
+lmsysorg/sglang:v0.4.9.post6-cu128-b200     → HTTP 200 + manifest (Docker Hub)
+fedirz/faster-whisper-server:sha-307e23f-cuda → exists (Docker Hub tags list)
+ghcr.io/block/buzz:latest                   → tags: latest, main, sha-* (ghcr API)
+```
+
+### Remaining pre-release checks (NOT fixed in v19.0.3 — require GPU host)
+- `docker pull lmsysorg/sglang:v0.4.9.post6-cu128-b200` on a Blackwell GPU host — confirm SGLang starts + `--disable-flashinfer` accepted
+- `docker pull fedirz/faster-whisper-server:sha-307e23f-cuda` — confirm Whisper starts
+- Full clean-install lifecycle test (EndeavourOS → install.sh → scarlix-mode ai → all fallbacks → reboot → doctor)
 
 ---
 

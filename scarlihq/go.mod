@@ -1,4 +1,4 @@
-module github.com/MoZoHuJa/scarlix-os-v12/scarlihq
+module github.com/MoZoHuJa/OS/scarlihq
 
 go 1.23
 

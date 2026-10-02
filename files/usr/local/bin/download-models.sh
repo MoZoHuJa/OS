@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v19.0.0 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v19.0.3 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
 # v18.5 FIXES:
 #   - Missing Ollama compose file = FAILED (was: silently skipped → false "complete")
@@ -30,6 +30,8 @@ fi
 MODELS_CONFIG="${MODELS_CONFIG:-/etc/scarlix/models.yaml}"
 MODELS_DIR="${MODELS_DIR:-/models}"
 LOG_FILE="/var/log/scarlix/model-download.log"
+# v19.0.3 P2: Dynamic version
+SCARLIX_VER="$(cat /etc/scarlix/VERSION 2>/dev/null || echo unknown)"
 VENV_DIR="/opt/scarlix/venv"
 
 mkdir -p "$(dirname "$LOG_FILE")" "$MODELS_DIR" "$VENV_DIR"
@@ -49,7 +51,7 @@ exec 9>"$MODELS_LOCK"
 flock -n -x 9 || { echo "ERROR: cannot acquire models lock (scarlix-mode or model-manager running?)" >&2; exit 1; }
 
 echo "============================================" | tee "$LOG_FILE"
-echo "  SCARLIX OS v19.0.0 — Model Downloader" | tee -a "$LOG_FILE"
+echo "  SCARLIX OS v${SCARLIX_VER} — Model Downloader" | tee -a "$LOG_FILE"
 echo "============================================" | tee -a "$LOG_FILE"
 
 # Install yq if missing

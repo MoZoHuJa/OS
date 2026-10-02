@@ -5,7 +5,9 @@
 services:
   buzz-relay:
     # v18.8.2 P1: :latest — could NOT pin (GHCR API NO_ACCESS). Experimental profile.
-    image: ghcr.io/block/buzz-relay:latest
+    image: ghcr.io/block/buzz:latest
+    # v19.0.3 P1-3: was ghcr.io/block/buzz-relay:latest (DENIED — repo doesn't exist).
+    #   Official image is ghcr.io/block/buzz (verified: latest, main, sha-* tags).
     container_name: buzz-relay
     restart: unless-stopped
     # v18.8.2 P1: experimental profile — does NOT start in default compose up

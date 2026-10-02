@@ -1,4 +1,6 @@
-# SCARLIX OS v12 — Hardware Requirements
+# SCARLIX OS v19 — Hardware Requirements
+
+> v19.0.3: Updated header from v12 (specs unchanged; OS base Ubuntu -> EndeavourOS/Arch, inference stack evolved to 4-tier SGLang+vLLM+BeeLlama+Ollama).
 
 ## Main Server (AI Brain + Gaming)
 

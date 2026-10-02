@@ -8,10 +8,10 @@ upstreams:
     url: http://ollama-agent:11434/v1
     type: openai
     weight: 5
-  # v19.0.2 P0-6: removed dead `ollama-main` upstream (no such service exists —
-  #   the only ollama service is `ollama-agent`, already listed above). Was: a
-  #   second ollama upstream pointing at http://ollama-main:11434 which never
-  #   resolves on the scarlix-net → smg routing had a dead fallback target.
+  # v19.0.2 P0-6: consolidated ollama upstreams (was: a second dead entry pointing
+  #   at a non-existent service — only `ollama-agent` exists on scarlix-net).
+  # v19.0.3: reworded so a plain grep for dead hostnames no longer false-positives
+  #   on this historical comment (per review P1-1/P2-5).
   - name: beellama-cpu
     url: http://beellama:8080/v1
     type: openai

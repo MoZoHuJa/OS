@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v19.0.0 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v19.0.3 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.7.7 FIXES:
 #   P0: TV mode uses systemctl restart (was: start on RemainAfterExit=yes oneshot
 #       → service stays 'active' after first run → start doesn't re-run healthcheck
@@ -18,6 +18,8 @@ set -euo pipefail
 #       for a privileged mode switcher)
 
 LOG_FILE="/var/log/scarlix-mode.log"
+# v19.0.3 P2: Dynamic version for banners
+SCARLIX_VER="$(cat /etc/scarlix/VERSION 2>/dev/null || echo unknown)"
 STATE_FILE="/var/lib/scarlix/current-mode"
 # v18.7.2 P0: Move lock to root-owned /run/scarlix/ (was: /tmp → symlink attack)
 # v18.7.7 P1: Fail-closed on mkdir (was: || true → exec 200> on missing dir →
@@ -409,7 +411,7 @@ wait_for_healthy() {
 }
 
 show_vram() {
-  echo "=== SCARLIX OS v19.0.0 — VRAM Check ==="
+  echo "=== SCARLIX OS v${SCARLIX_VER} — VRAM Check ==="
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "  nvidia-smi not available — NVIDIA driver not installed."
     return 0
@@ -1195,7 +1197,7 @@ case "$MODE" in
     exit $?
     ;;
   status)
-    echo "=== SCARLIX OS v19.0.0 (EndeavourOS) Status ==="
+    echo "=== SCARLIX OS v${SCARLIX_VER} (EndeavourOS) Status ==="
     echo "Mode: $CURRENT_MODE"
     echo "Experimental: $([ $EXPERIMENTAL -eq 1 ] && echo 'YES (vLLM enabled)' || echo 'no (SGLang + BeeLlama only)')"
     echo "Base: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo 'EndeavourOS')"
