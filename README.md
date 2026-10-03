@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.4 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.5 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.0.4</h1>
+<h1 align="center">SCARLIX OS v19.0.5</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.4"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.4-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.5"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.5-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.0.4 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.0.5 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.0.4   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.0.5   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -48,6 +48,33 @@ scarlix-mode ai
 
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
+```
+
+---
+
+## 🆕 What's New in v19.0.5 (vs v19.0.4)
+
+**Housekeeping — header version drift cleanup.** 3 fixes.
+
+Final audit of v19.0.4 found 2 P2 hygiene items: stale version headers in `scarlihq/Dockerfile` (said v18.5.2) and `ai/sglang/docker-compose.yml` (said v18.8.3) — the runtime content was already correct, only the top comment had drifted. v19.0.5 bumps both headers to current and aligns all version refs.
+
+### v19.0.5 fixes (3)
+
+| # | Severity | Fix | Was | Now |
+|---|----------|-----|-----|-----|
+| 1 | **P2** | **`scarlihq/Dockerfile` header** | `# ScarliHQ v18.5.2 — Multi-stage Dockerfile` (stale by 10 minor releases — ARG SCARLIX_VERSION tracked correctly, but the file's top comment had drifted) | `# ScarliHQ v19.0.5 — Multi-stage Dockerfile` (historical architecture comments retained below) |
+| 2 | **P2** | **`ai/sglang/docker-compose.yml` header** | `# SCARLIX OS v18.8.3 — SGLang (Tier-1, GPU 0)` (stale by 6 minor releases — image tag was already v0.4.9.post6-cu128-b200 from v19.0.3) | `# SCARLIX OS v19.0.5 — SGLang Tier-1 GPU inference (Blackwell sm_120, Qwen3)` (historical P-fix comments retained for audit trail) |
+| 3 | **P2** | **`VERSION` + `install.sh` + `Dockerfile` ARG + `AGENTS.md` → v19.0.5** | v19.0.4 | v19.0.5 |
+
+### No runtime change
+No compose image tags, no script logic, no config values were modified. This release is purely header/comment version alignment. All v19.0.4 runtime fixes (SGLang, Whisper, Buzz, generate-env.sh, multilib, go.mod, dynamic banners) remain **untouched and verified**.
+
+### Pre-release gate (unchanged from v19.0.4)
+The remaining gate is NOT another code review — it is a real hardware lifecycle test on the target RTX 5060 Ti + RTX 4060 Ti box:
+```
+EndeavourOS → install.sh → NVIDIA → Docker GPU → docker pull SGLang
+→ SGLang startup → Qwen3-14B-AWQ load → scarlix-mode ai → healthcheck
+→ inference request → fallback chain → reboot → doctor
 ```
 
 ---
