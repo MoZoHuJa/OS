@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.10 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.11 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.10</h1>
+<h1 align="center">SCARLIX OS v19.1.11</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.10"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.10-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.11"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.11-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.10 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.11 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.10   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.11   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,63 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.11 (vs v19.1.10)
+
+**Scheduler Contract Semantics Hardening + Pi-Bolt deployment fixes.** 8 P1 + 5 P2 from 3 independent reviews.
+
+Three independent reviews of v19.1.10 found scheduler semantics gaps (capability matching, best-of selection, model mapping) + Pi-Bolt deployment issues (unreadable secrets, missing MCP auth, install abort on optional binaries). v19.1.11 fixes all before v19.2.0 Compute Fabric.
+
+### P1 fixes (scheduler + Pi-Bolt)
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P1-1** | **Capability matching = ALL required** | `matched > 0` accepted (2/3 OK) → model without "vision" could be selected for "vision" task | `matched < len(requested)` → REJECT. ALL capabilities must match |
+| **P1-2** | **FormatPlan CPU plan** | Valid CPU plan showed "No compatible GPU found" | Distinguishes CPU OK (`SelectedRuntime != ""`) from failure |
+| **P1-3** | **scoreRuntime best-of** | First-match return (first compatible runtime selected regardless of score) | Best-of: iterates ALL compatible runtimes, returns highest score |
+| **P1-4** | **scoreModel via SupportedRuntimes** | Hardcoded `modelMap` (runtime→modelID 1:1) | Iterates ALL models, checks `SupportedRuntimes` via `runtimeEngine()` mapping (beellama→llamacpp) |
+| **P1-5** | **Empty accelerator default** | `accelerator=""` → no GPU path, no CPU path → empty plan | Defaults to `"cuda"` (sensible default for AI workloads) |
+| **P1-6** | **Pi-Bolt secrets readable** | `~/.bashrc` sourced `/etc/scarlix/.env` (root:root 600 → user can't read → empty key) | Creates `~/.config/scarlix/agent.env` (600, user-owned) with LITELLM_MASTER_KEY + SCARLIHQ_TOKEN, sourced from .bashrc |
+| **P1-7** | **MCP Bearer token** | `config.template.json` MCP had no auth header → 401 | Added `"headers": {"Authorization": "Bearer ${SCARLIHQ_TOKEN}"}` |
+| **P1-8** | **Install doesn't abort on optional binaries** | Copy loop `crit()` on missing scarlix-gpu etc. → install aborts if Go build skipped | `case` statement: non-critical Go binaries → `warn + skip`, core binaries → `crit` |
+
+### P2 fixes (documentation + CI)
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P2-1** | scarlix-mode header | v19.0.3 | v19.1.11 |
+| **P2-2** | models.yaml header | v19.0.0 | v19.1.11 |
+| **P2-3** | Duplicate comment | `acceleratorCompatible` had duplicate doc comment | Removed |
+| **P2-4** | gofmt CI enforcement | No gofmt check in CI | Added `gofmt -l .` check after `go vet` (exit 1 on unformatted files) |
+| **P2-5** | Dockerfile header | v19.1.10 (was OK but comment chain) | v19.1.11 clean |
+
+### New tests (4)
+```
+TestPlan_AllCapabilitiesMustMatch          — 2/3 capabilities → REJECT
+TestFormatPlan_CPUPlanNotNoGPU             — CPU plan shows runtime, not "no GPU found"
+TestPlan_BestRuntimeSelected               — running runtime preferred over non-running
+TestPlan_EmptyAcceleratorDefaultsCuda      — empty accelerator → cuda default → GPU found
+```
+
+### Test results
+```
+go vet ./internal/scheduler/      → CLEAN
+go test ./internal/scheduler/ -v   → 17 PASS / 0 FAIL (13 existing + 4 new)
+go test ./... -count=1             → 153 PASS / 0 FAIL (10 packages, no regression)
+scarlix-smoke-test.sh             → 13 passed, 0 failed, 0 warned
+```
+
+### v19.1.x Resource Foundation + Hardening COMPLETE
+```
+v19.1.0–v19.1.5   Resource Foundation (contract, registries, monitor, telemetry)
+v19.1.6–v19.1.9   Resource View + Scheduler + Compatibility + Release freeze
+v19.1.10          Scheduler Correctness (3 P1: CPU, capabilities, down runtime)
+v19.1.11          Contract Semantics Hardening (8 P1 + 5 P2)  ← THIS RELEASE
+```
+
+**v19.2.0 Compute Fabric can now safely transition from dry-run → real allocation.**
 
 ---
 

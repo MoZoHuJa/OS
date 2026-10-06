@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+        "strings"
         "testing"
 
         "github.com/MoZoHuJa/OS/scarlihq/internal/contract"
@@ -27,7 +28,7 @@ func TestPlan_SelectsCompatibleGPU(t *testing.T) {
                 {ID: "sglang", GPUIDs: []string{"gpu.nvidia.0"}, Running: true, Healthy: true},
         }
         models := []inventory.Model{
-                {ID: "sglang", Present: true, Capabilities: []string{"chat", "coding"}},
+                {ID: "sglang", Present: true, Capabilities: []string{"chat", "coding"}, SupportedRuntimes: []string{"sglang", "vllm"}},
         }
         s := New(gpus, runtimes, models, nil)
 
@@ -126,7 +127,7 @@ func TestPlan_ScoreBreakdownNotEmpty(t *testing.T) {
                 {ID: "sglang", GPUIDs: []string{"gpu.nvidia.0"}, Running: true},
         }
         models := []inventory.Model{
-                {ID: "sglang", Present: true, Capabilities: []string{"coding"}},
+                {ID: "sglang", Present: true, Capabilities: []string{"coding"}, SupportedRuntimes: []string{"sglang", "vllm"}},
         }
         s := New(gpus, runtimes, models, nil)
 
@@ -327,5 +328,114 @@ func TestPlan_RejectsDownRuntime(t *testing.T) {
         }
         if plan.SelectedRuntime != "vllm" {
                 t.Errorf("expected vllm (healthy runtime), got %s", plan.SelectedRuntime)
+        }
+}
+
+// v19.1.11 P1-1: ALL required capabilities must match (not just 1)
+func TestPlan_AllCapabilitiesMustMatch(t *testing.T) {
+        gpus := []inventory.GPU{
+                {ID: "gpu.nvidia.0", Index: 0, Vendor: "nvidia", VRAMTotalMB: 16384, VRAMFreeMB: 12000, Healthy: true},
+        }
+        runtimes := []inventory.Runtime{
+                {ID: "sglang", GPUIDs: []string{"gpu.nvidia.0"}, Running: true},
+        }
+        models := []inventory.Model{
+                {ID: "sglang", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"coding", "reasoning"}}, // no "vision"
+        }
+        s := New(gpus, runtimes, models, nil)
+
+        c := &contract.ResourceContract{
+                Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
+                Compute: contract.ComputeSpec{Accelerator: "cuda", VRAMMB: 8000},
+                Runtime: contract.RuntimeSpec{Preferred: []string{"sglang"}},
+                Model:   contract.ModelSpec{Capabilities: []string{"coding", "reasoning", "vision"}}, // wants 3, model has 2
+        }
+
+        plan := s.Plan(c)
+        if plan.SelectedGPU != nil {
+                t.Errorf("model with 2/3 capabilities should be REJECTED, got GPU %s", plan.SelectedGPU.ID)
+        }
+}
+
+// v19.1.11 P1-2: FormatPlan for CPU shows runtime, not "no GPU found"
+func TestFormatPlan_CPUPlanNotNoGPU(t *testing.T) {
+        plan := &Plan{
+                Task:            "coding",
+                Priority:        "background",
+                SelectedRuntime: "beellama",
+                SelectedModel:   "beellama-model",
+                Score:           50,
+                Reason:          []ScoreBreakdown{{Factor: "accelerator", Score: 10, Detail: "CPU"}},
+        }
+        // SelectedGPU is nil, but SelectedRuntime is set → valid CPU plan
+        formatted := plan.FormatPlan()
+        if formatted == "" {
+                t.Error("expected non-empty formatted plan")
+        }
+        // Should NOT say "No compatible GPU found"
+        if strings.Contains(formatted, "No compatible GPU found") {
+                t.Error("CPU plan should not say 'No compatible GPU found'")
+        }
+        // Should mention the runtime
+        if !strings.Contains(formatted, "beellama") {
+                t.Error("CPU plan should mention the runtime name")
+        }
+}
+
+// v19.1.11 P1-3: scoreRuntime returns best-of, not first-match
+func TestPlan_BestRuntimeSelected(t *testing.T) {
+        gpus := []inventory.GPU{
+                {ID: "gpu.nvidia.0", Index: 0, Vendor: "nvidia", VRAMTotalMB: 16384, VRAMFreeMB: 12000, Healthy: true},
+        }
+        runtimes := []inventory.Runtime{
+                {ID: "sglang", GPUIDs: []string{"gpu.nvidia.0"}, Running: false}, // not running → score 20
+                {ID: "vllm", GPUIDs: []string{"gpu.nvidia.0"}, Running: true},    // running → score 25
+        }
+        models := []inventory.Model{
+                {ID: "vllm-model", Format: "safetensors", SupportedRuntimes: []string{"vllm"}, Present: true, Capabilities: []string{"coding"}},
+                {ID: "sglang-model", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"coding"}},
+        }
+        s := New(gpus, runtimes, models, nil)
+
+        c := &contract.ResourceContract{
+                Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
+                Compute: contract.ComputeSpec{Accelerator: "cuda", VRAMMB: 8000},
+                Runtime: contract.RuntimeSpec{Preferred: []string{"sglang", "vllm"}},
+                Model:   contract.ModelSpec{Capabilities: []string{"coding"}},
+        }
+
+        plan := s.Plan(c)
+        if plan.SelectedGPU == nil {
+                t.Fatal("expected a selected GPU")
+        }
+        // vllm is running (score 25) > sglang not running (score 20) → vllm should win
+        if plan.SelectedRuntime != "vllm" {
+                t.Errorf("expected vllm (best score, running), got %s", plan.SelectedRuntime)
+        }
+}
+
+// v19.1.11 P1-5: Empty accelerator defaults to cuda
+func TestPlan_EmptyAcceleratorDefaultsCuda(t *testing.T) {
+        gpus := []inventory.GPU{
+                {ID: "gpu.nvidia.0", Index: 0, Vendor: "nvidia", VRAMTotalMB: 16384, VRAMFreeMB: 12000, Healthy: true},
+        }
+        runtimes := []inventory.Runtime{
+                {ID: "sglang", GPUIDs: []string{"gpu.nvidia.0"}, Running: true},
+        }
+        models := []inventory.Model{
+                {ID: "test-model", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"coding"}},
+        }
+        s := New(gpus, runtimes, models, nil)
+
+        c := &contract.ResourceContract{
+                Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
+                Compute: contract.ComputeSpec{Accelerator: ""}, // empty → should default to cuda
+                Runtime: contract.RuntimeSpec{Preferred: []string{"sglang"}},
+                Model:   contract.ModelSpec{Capabilities: []string{"coding"}},
+        }
+
+        plan := s.Plan(c)
+        if plan.SelectedGPU == nil {
+                t.Error("empty accelerator should default to cuda and find GPU")
         }
 }

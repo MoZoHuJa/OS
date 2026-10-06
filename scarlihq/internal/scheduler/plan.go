@@ -96,6 +96,11 @@ func (s *Scheduler) Plan(c *contract.ResourceContract) *Plan {
                 Rejected: []Rejection{},
         }
 
+        // v19.1.11 P1-5: Empty accelerator defaults to "cuda".
+        if c.Compute.Accelerator == "" {
+                c.Compute.Accelerator = "cuda"
+        }
+
         // v19.1.10 P1-1 FIX: CPU requests must NOT enter the GPU loop.
         if c.Compute.Accelerator == "cpu" {
                 runtime, runtimeScore, runtimeBreakdown := s.scoreRuntimeForCPU(c)
@@ -275,7 +280,6 @@ func (s *Scheduler) Plan(c *contract.ResourceContract) *Plan {
 }
 
 // acceleratorCompatible checks if a GPU matches the contract's accelerator type.
-// acceleratorCompatible checks if a GPU matches the contract's accelerator type.
 // v19.1.10 P1-1 FIX: "cpu" requests must NOT match any GPU. CPU tasks
 // should only use CPU runtimes (beellama, ollama), never GPUs.
 // The Plan() method handles cpu accelerator by skipping the GPU loop entirely.
@@ -295,13 +299,16 @@ func acceleratorCompatible(want string, gpu inventory.GPU) bool {
 // scoreRuntime finds the best runtime for a GPU + contract.
 // Returns (runtimeID, score, breakdown).
 func (s *Scheduler) scoreRuntime(gpu inventory.GPU, c *contract.ResourceContract) (string, int, ScoreBreakdown) {
-        // Check contract's preferred runtimes first
+        // v19.1.11 P1-3: Best-of selection (was: first-match).
         preferred := make(map[string]bool)
         for _, p := range c.Runtime.Preferred {
                 preferred[p] = true
         }
 
-        // Find runtimes that are assigned to this GPU
+        bestID := ""
+        bestScore := -1
+        var bestBreakdown ScoreBreakdown
+
         for _, rt := range s.runtimes {
                 // Check if this runtime is assigned to this GPU
                 gpuMatch := false
@@ -338,13 +345,19 @@ func (s *Scheduler) scoreRuntime(gpu inventory.GPU, c *contract.ResourceContract
                         detail += " (running)"
                 }
 
-                return rt.ID, score, ScoreBreakdown{
-                        Factor: "runtime_fit", Score: score, Detail: detail,
+                if score > bestScore {
+                        bestScore = score
+                        bestID = rt.ID
+                        bestBreakdown = ScoreBreakdown{
+                                Factor: "runtime_fit", Score: score, Detail: detail,
+                        }
                 }
         }
 
-        // No runtime found — return empty
-        return "", 0, ScoreBreakdown{}
+        if bestID == "" {
+                return "", 0, ScoreBreakdown{}
+        }
+        return bestID, bestScore, bestBreakdown
 }
 
 // scoreRuntimeForCPU finds the best CPU-only runtime for a CPU request.
@@ -356,6 +369,10 @@ func (s *Scheduler) scoreRuntimeForCPU(c *contract.ResourceContract) (string, in
         for _, p := range c.Runtime.Preferred {
                 preferred[p] = true
         }
+
+        bestID := ""
+        bestScore := -1
+        var bestBreakdown ScoreBreakdown
 
         // CPU runtimes: those with no GPU assignment (empty GPUIDs)
         for _, rt := range s.runtimes {
@@ -383,31 +400,33 @@ func (s *Scheduler) scoreRuntimeForCPU(c *contract.ResourceContract) (string, in
                         detail += " (running)"
                 }
 
-                return rt.ID, score, ScoreBreakdown{
-                        Factor: "runtime_fit", Score: score, Detail: detail,
+                if score > bestScore {
+                        bestScore = score
+                        bestID = rt.ID
+                        bestBreakdown = ScoreBreakdown{
+                                Factor: "runtime_fit", Score: score, Detail: detail,
+                        }
                 }
         }
 
-        return "", 0, ScoreBreakdown{}
+        if bestID == "" {
+                return "", 0, ScoreBreakdown{}
+        }
+        return bestID, bestScore, bestBreakdown
 }
 
 // scoreModel finds the best model for a runtime + contract.
 // Returns (modelID, score, breakdown).
 func (s *Scheduler) scoreModel(runtimeID string, c *contract.ResourceContract) (string, int, ScoreBreakdown) {
-        // Map runtime to model section in models.yaml
-        modelMap := map[string]string{
-                "sglang":  "sglang",
-                "vllm":    "vllm",
-                "beellama": "beellama",
-                "ollama":  "ollama",
-        }
-        modelID, ok := modelMap[runtimeID]
-        if !ok {
-                return "", 0, ScoreBreakdown{}
-        }
+        // v19.1.11 P1-4: Use SupportedRuntimes (was: hardcoded modelMap).
+        bestID := ""
+        bestScore := -1
+        var bestBreakdown ScoreBreakdown
 
         for _, m := range s.models {
-                if m.ID != modelID {
+                // v19.1.11 P1-4: Check if this model supports the requested runtime's engine.
+                // (was: hardcoded modelMap. Now: uses SupportedRuntimes + runtimeEngine mapping.)
+                if !containsString(m.SupportedRuntimes, runtimeEngine(runtimeID)) {
                         continue
                 }
 
@@ -425,14 +444,12 @@ func (s *Scheduler) scoreModel(runtimeID string, c *contract.ResourceContract) (
                                         }
                                 }
                         }
-                        if matched == 0 {
-                                // v19.1.10 P1-2 FIX: Model doesn't have requested capabilities → REJECT.
-                                // Was: score=5 (lower but still a candidate). Now: return empty (rejection).
+                        // v19.1.11 P1-1: ALL required capabilities must match (was: matched>0).
+                        if matched < len(c.Model.Capabilities) {
                                 return "", 0, ScoreBreakdown{}
-                        } else {
-                                score += matched * 5
-                                detail = fmt.Sprintf("model %s matches %d/%d capabilities", m.ID, matched, len(c.Model.Capabilities))
                         }
+                        score += matched * 5
+                        detail = fmt.Sprintf("model %s matches %d/%d capabilities", m.ID, matched, len(c.Model.Capabilities))
                 }
 
                 // Bonus if model is present on disk
@@ -441,12 +458,42 @@ func (s *Scheduler) scoreModel(runtimeID string, c *contract.ResourceContract) (
                         detail += " (present on disk)"
                 }
 
-                return m.ID, score, ScoreBreakdown{
-                        Factor: "model_fit", Score: score, Detail: detail,
+                // v19.1.11 P1-4: Track best model (was: first-match return)
+                if score > bestScore {
+                        bestScore = score
+                        bestID = m.ID
+                        bestBreakdown = ScoreBreakdown{
+                                Factor: "model_fit", Score: score, Detail: detail,
+                        }
                 }
         }
 
-        return "", 0, ScoreBreakdown{}
+        if bestID == "" {
+                return "", 0, ScoreBreakdown{}
+        }
+        return bestID, bestScore, bestBreakdown
+}
+
+// containsString checks if a string is in a slice.
+func containsString(s []string, v string) bool {
+        for _, x := range s {
+                if x == v {
+                        return true
+                }
+        }
+        return false
+}
+
+// runtimeEngine maps a runtime ID to its engine name for SupportedRuntimes matching.
+// beellama runtime uses llama.cpp engine, so its model's SupportedRuntimes contains
+// "llamacpp" not "beellama". Other runtimes (sglang, vllm, ollama) have ID == engine.
+func runtimeEngine(runtimeID string) string {
+        switch runtimeID {
+        case "beellama":
+                return "llamacpp"
+        default:
+                return runtimeID
+        }
 }
 
 // healthStateString returns the health state for a component, or "unknown".
@@ -462,6 +509,19 @@ func (p *Plan) FormatPlan() string {
         var sb strings.Builder
         sb.WriteString(fmt.Sprintf("Task: %s\n\n", p.Task))
 
+        // v19.1.11 P1-2: Distinguish valid CPU plan from failure.
+        if p.SelectedGPU == nil && p.SelectedRuntime != "" {
+                sb.WriteString(fmt.Sprintf("Selected Runtime: %s (CPU)\n", p.SelectedRuntime))
+                if p.SelectedModel != "" {
+                        sb.WriteString(fmt.Sprintf("Model: %s\n", p.SelectedModel))
+                }
+                sb.WriteString(fmt.Sprintf("Score: %d\n\n", p.Score))
+                sb.WriteString("Reason:\n")
+                for _, r := range p.Reason {
+                        sb.WriteString(fmt.Sprintf("  %-20s %+d  %s\n", r.Factor, r.Score, r.Detail))
+                }
+                return sb.String()
+        }
         if p.SelectedGPU == nil {
                 sb.WriteString("No compatible GPU found.\n")
                 if len(p.Rejected) > 0 {

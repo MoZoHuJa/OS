@@ -19,7 +19,11 @@
     "scarlihq": {
       "url": "http://127.0.0.1:8090/mcp",
       "#_url_note": "ScarliHQ MCP endpoint (JSON-RPC 2.0 over HTTP). Binds to 127.0.0.1:8090 (dashboard + MCP on same port). The old OpenCode used :8091 — but ScarliHQ serves both REST/WS and MCP on :8090 (see scarlihq/internal/mcp/server.go).",
-      "transport": "http"
+      "transport": "http",
+      "#_auth_note": "ScarliHQ MCP requires Bearer token auth (SCARLIHQ_TOKEN from env). Pi-Bolt must send Authorization header.",
+      "headers": {
+        "Authorization": "Bearer ${SCARLIHQ_TOKEN}"
+      }
     }
   },
 

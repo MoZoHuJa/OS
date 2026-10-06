@@ -31,7 +31,7 @@ COPY . .
 #   by 3 minor releases. install.sh passes --build-arg so runtime was correct, but
 #   manual `docker build` without the arg produced a ScarliHQ binary reporting
 #   v19.0.0. Now matches VERSION.)
-ARG SCARLIX_VERSION=19.1.10
+ARG SCARLIX_VERSION=19.1.11
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${SCARLIX_VERSION}" -o /scarlihq ./cmd/scarlihq
 
 # v18.7.4 P1: Build the host-side atomic file reader (CGO disabled for static binary).
