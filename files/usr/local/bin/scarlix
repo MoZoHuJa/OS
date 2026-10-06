@@ -459,6 +459,23 @@ _runtime_status() {
 }
 
 cmd_runtime_list() {
+  # v19.0.9: delegate --json path to the scarlix-inventory binary when present.
+  # It emits the full 10-field inventory.Runtime schema (data contract §3) +
+  # a per-runtime Health entry, richer than the bash-native 4-field JSON
+  # below. Falls back to the bash-native path if scarlix-inventory is not
+  # installed.
+  if [ "$JSON_MODE" -eq 1 ]; then
+    if command -v scarlix-inventory >/dev/null 2>&1; then
+      scarlix-inventory --runtimes 2>/dev/null
+      return $?
+    fi
+    if command -v /usr/local/bin/scarlix-inventory >/dev/null 2>&1; then
+      /usr/local/bin/scarlix-inventory --runtimes 2>/dev/null
+      return $?
+    fi
+    # else: fall through to the bash-native JSON below.
+  fi
+
   if ! command -v docker >/dev/null 2>&1; then
     warn "docker not available — runtime status unknown"
   fi
@@ -494,6 +511,22 @@ cmd_runtime_list() {
 # Subcommand: model list
 # ============================================================================
 cmd_model_list() {
+  # v19.0.9: delegate --json path to the scarlix-inventory binary when present.
+  # It emits the full 10-field inventory.Model schema (data contract §4),
+  # richer than the bash-native configured+files_present JSON below. Falls
+  # back to the bash-native path if scarlix-inventory is not installed.
+  if [ "$JSON_MODE" -eq 1 ]; then
+    if command -v scarlix-inventory >/dev/null 2>&1; then
+      scarlix-inventory --models 2>/dev/null
+      return $?
+    fi
+    if command -v /usr/local/bin/scarlix-inventory >/dev/null 2>&1; then
+      /usr/local/bin/scarlix-inventory --models 2>/dev/null
+      return $?
+    fi
+    # else: fall through to the bash-native JSON below.
+  fi
+
   local models_file=""
   for cand in "/etc/scarlix/models.yaml" "${SCARLIX_REPO:-}/models.yaml" "$PWD/models.yaml"; do
     if [ -n "$cand" ] && [ -f "$cand" ]; then models_file="$cand"; break; fi

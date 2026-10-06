@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v19.0.8 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v19.0.9 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
 # EndeavourOS/Arch bootstrap installer — NO ISO, runs on clean EndeavourOS.
@@ -15,11 +15,11 @@ set -euo pipefail
 # USAGE:
 #   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
-#   git checkout v19.0.8   # ALWAYS checkout specific tag (main may be ahead)
+#   git checkout v19.0.9   # ALWAYS checkout specific tag (main may be ahead)
 #   bash install.sh
 # ============================================================================
 
-VERSION="19.0.8"
+VERSION="19.0.9"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -673,6 +673,40 @@ else
     warn "scarlix-gpu source not found ($SGPU_SRC) — non-critical"
   fi
 
+  # v19.0.9: Build scarlix-inventory (full system inventory: GPUs + runtimes + models + health).
+  #   Used by `scarlix runtime/model list --json` + `scarlix-inventory` standalone binary.
+  #   Non-critical (warn on failure — bash CLI falls back to docker/yq direct).
+  SINV_SRC="$REPO_DIR/scarlihq/cmd/scarlix-inventory/main.go"
+  SINV_OUT="$REPO_DIR/files/usr/local/bin/scarlix-inventory"
+  if [ -f "$SINV_SRC" ]; then
+    if command -v go >/dev/null 2>&1; then
+      if (cd "$REPO_DIR/scarlihq" && CGO_ENABLED=0 GOFLAGS=-mod=mod go build -o "$SINV_OUT" ./cmd/scarlix-inventory) >> "$LOG_FILE" 2>&1; then
+        chmod 755 "$SINV_OUT"
+        ok "scarlix-inventory built (native Go)"
+      else
+        warn "scarlix-inventory build failed — scarlix runtime/model --json will fall back"
+      fi
+    elif command -v docker >/dev/null 2>&1; then
+      if docker run --rm \
+          -v "$REPO_DIR/scarlihq:/build" \
+          -v "$REPO_DIR/files/usr/local/bin:/out" \
+          -w /build \
+          -e GOFLAGS=-mod=mod \
+          golang:1.23-alpine \
+          go build -o /out/scarlix-inventory ./cmd/scarlix-inventory \
+          >> "$LOG_FILE" 2>&1; then
+        chmod 755 "$SINV_OUT"
+        ok "scarlix-inventory built (via golang:1.23-alpine container)"
+      else
+        warn "scarlix-inventory container build failed — scarlix runtime/model --json will fall back"
+      fi
+    else
+      warn "Neither Go nor Docker available — scarlix-inventory not built (non-critical)"
+    fi
+  else
+    warn "scarlix-inventory source not found ($SINV_SRC) — non-critical"
+  fi
+
   # Q10a: ALL file copy failures are crit (scarlix-mode, scarlix-wizard = core)
   # v17.9.8: added scarlix-host-bridge (privileged ops for ScarliHQ dashboard)
   # v18.7.4 P2: added generate-sha256sums.sh (release integrity manifest generator)
@@ -682,7 +716,7 @@ else
   #   elif branch means the build was skipped/aborted — crit here too for safety.
   log "Installing SCARLIX scripts (CRITICAL)..."
   # v18.8.3 P1 (A-a): Added generate-litellm-config.sh (dynamic LiteLLM config from models.yaml)
-  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge generate-sha256sums.sh generate-litellm-config.sh scarlix-bridge-reader scarlix-gpu scarlix scarlix-smoke-test.sh; do
+  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge generate-sha256sums.sh generate-litellm-config.sh scarlix-bridge-reader scarlix-gpu scarlix-inventory scarlix scarlix-smoke-test.sh; do
     src="$REPO_DIR/files/usr/local/bin/$binfile"
     if [ -f "$src" ]; then
       cp "$src" "/usr/local/bin/$binfile" && chmod 755 "/usr/local/bin/$binfile" && ok "/usr/local/bin/$binfile" || crit "$binfile copy failed"

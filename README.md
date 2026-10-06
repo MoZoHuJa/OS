@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.8 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.9 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.0.8</h1>
+<h1 align="center">SCARLIX OS v19.0.9</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.8"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.8-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.9"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.9-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.0.8 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.0.9 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.0.8   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.0.9   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,71 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.0.9 (vs v19.0.8)
+
+**Runtime/Model Inventory — Runtime Registry + Model Registry.** 4 deliverables.
+
+v19.0.9 implements the runtime and model registries per the ScaRgeN master guide section 9. New Go collectors query Docker for running runtimes + read models.yaml for model metadata, populating the `inventory.Runtime` and `inventory.Model` structs (10 fields each) defined in v19.0.7. A standalone `scarlix-inventory` binary provides the full system snapshot.
+
+### v19.0.9 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **Runtime collector** (`scarlihq/internal/inventory/runtime.go`, 380 lines) | `CollectRuntimes()` queries Docker for 5 runtimes (sglang, vllm, beellama, ollama, litellm) — running status, image, port, GPU IDs. `CollectRuntimeHealth()` probes HTTP healthcheck endpoints (2s timeout per runtime). Never nil. |
+| 2 | **Model collector** (`scarlihq/internal/inventory/model.go`, 438 lines) | `CollectModels()` reads models.yaml via gopkg.in/yaml.v3, parses 4 model sections (sglang AWQ, vllm AWQ, beellama GGUF, ollama), infers format/quantization/capabilities/supported_runtimes, checks file presence on disk. Never nil. |
+| 3 | **scarlix-inventory binary** (`scarlihq/cmd/scarlix-inventory/main.go`, 216 lines) | Standalone CLI: `scarlix-inventory [--gpus\|--runtimes\|--models]` (default: full SystemStatus JSON). Pretty-printed output matching the frozen data contract. |
+| 4 | **CLI integration** | `scarlix runtime list --json` + `scarlix model list --json` now delegate to `scarlix-inventory` when available (falls back to bash native). Human-readable output unchanged. |
+
+### Runtime struct (10 fields, frozen v19.0.7)
+```
+id, version, enabled, running, healthy, protocol, port, gpu_ids, image, capabilities
+```
+
+### Model struct (10 fields, frozen v19.0.7)
+```
+id, path, format, quantization, parameters, context_length, estimated_vram_mb,
+capabilities, supported_runtimes, present
+```
+
+### Test results
+```
+go vet ./internal/inventory/              → CLEAN
+go test ./internal/inventory/ -v          → 39 PASS / 0 FAIL / 2 SKIP (no docker/nvidia-smi)
+go build ./...                             → 12 packages OK (no regression)
+scarlix-inventory (no docker)             → 5 runtimes (Running=false) + 4 models + 5 health (down)
+scarlix-inventory --runtimes               → 5 runtime entries valid JSON
+scarlix-inventory --models                 → 4 model entries valid JSON
+scarlix --json runtime list                → delegates to scarlix-inventory ✓
+scarlix --json model list                  → delegates to scarlix-inventory ✓
+shellcheck -S warning scarlix CLI         → CLEAN
+scarlix-smoke-test.sh                      → 13 passed, 0 failed, 0 warned
+```
+
+### Runtime registry entries (5)
+| ID | Image | Port | GPU | Protocol |
+|----|-------|------|-----|----------|
+| sglang | lmsysorg/sglang:v0.4.9.post6-cu128-b200 | 30000 | gpu.nvidia.0 | openai-compatible |
+| vllm | vllm/vllm-openai:v0.8.5 | 8089 | gpu.nvidia.1 | openai-compatible |
+| beellama | ghcr.io/ggml-org/llama.cpp@sha256:… | 11438 | CPU | openai-compatible |
+| ollama | ollama/ollama:0.5.4 | 11435 | CPU | ollama |
+| litellm | ghcr.io/berriai/litellm:main-v1.21.7 | 4001 | — | openai-compatible |
+
+### Model registry entries (4)
+| ID | Format | Quantization | Path | Present |
+|----|--------|---------------|------|---------|
+| sglang | safetensors | awq | /models/Qwen3-14B-AWQ | checked |
+| vllm | safetensors | awq | /models/Qwen3-14B-AWQ | checked |
+| beellama | gguf | q4_k_m | /models/Qwen3-14B-Q4_K_M.gguf | checked |
+| ollama | gguf | — | (ollama pull) | false |
+
+### What's NOT in v19.0.9 (by design)
+- No automatic scheduling (v19.2.x)
+- No resource allocation
+- No write/control operations
+- Still no automatic scheduler — the registries are read-only
 
 ---
 
