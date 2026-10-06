@@ -26,7 +26,7 @@
 ### Layer 2: Workspace + Infrastructure
 - **Buzz** (Nostr relay): Signed audit trail, channels, git events
 - **LiteLLM** (gateway `:4001`): Unified OpenAI-compatible API, 3-tier failover (SGLang → Ollama → BeeLlama; vLLM excluded — experimental only)
-- **SMG** (Scarlix Model Gateway, `:4002`, profile-gated): Latency-aware routing with `fallback_chain: [sglang-main, ollama-agent, beellama-cpu]`
+- **SMG** (Scarlix Model Gateway, `:4000`, profile-gated): Latency-aware routing with `fallback_chain: [sglang-main, ollama-agent, beellama-cpu]`
 - **Headscale** (VPN): WireGuard mesh, MagicDNS
 - **Caddy** (proxy): Auto-HTTPS, reverse proxy
 - **CrowdSec** (WAF): Intrusion prevention
@@ -68,13 +68,13 @@
 ```
 Request → scarlix-mode direct path
               ↓
-         SGLang (GPU 0, AWQ)        ← primary
+         SGLang (GPU 0, AWQ)        ← primary (tier-1)
               ↓ (if fail)
-         vLLM (GPU 1, .experimental) ← high-throughput (skipped if no .experimental)
+         vLLM (GPU 1, .experimental) ← high-throughput (tier-2, skipped if no .experimental)
               ↓ (if fail)
-         Ollama (CPU)               ← fallback
+         BeeLlama (CPU, GGUF)       ← fallback (tier-3)
               ↓ (if fail)
-         BeeLlama (CPU, GGUF)       ← offline last resort
+         Ollama (CPU)               ← tertiary fallback (tier-4, qwen2.5:3b starter)
 ```
 
 ## LiteLLM Gateway failover (external clients — 3-tier, vLLM excluded)

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.5 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.6 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.0.5</h1>
+<h1 align="center">SCARLIX OS v19.0.6</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.5"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.5-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.6"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.6-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.0.5 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.0.6 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.0.5   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.0.6   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -48,6 +48,63 @@ scarlix-mode ai
 
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
+```
+
+---
+
+## 🆕 What's New in v19.0.6 (vs v19.0.5)
+
+**Baseline Freeze — ScaRgeN preparation.** Repository inventory + architecture maps + regression smoke test.
+
+v19.0.6 freezes the v19.0.5 baseline before the ScaRgeN evolution (v19.0.7→v19.8.9 per the master coding guide). No runtime code changed — this release produces the documentation and tooling that all future generations will build on.
+
+### v19.0.6 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **7 architecture map documents** (`docs/SCARLIX_*.md`) | Current architecture, component map, runtime map, GPU map, security map, API map, release baseline — all code-truth verified |
+| 2 | **Regression smoke test** (`scarlix-smoke-test.sh`) | 10-check automated validation: bash -n, shellcheck -S warning, YAML lint, systemd verify, VERSION consistency, go.mod path, 5 image-tag registry checks (Docker Hub + ghcr API), ollama-main audit, v12 doc-drift audit |
+| 3 | **Doc-drift fixes** | `docs/ARCHITECTURE.md` failover diagram corrected (BeeLlama tier-3, Ollama tier-4 — code-truth); SMG port `:4002` → `:4000` (matches `ai/smg/docker-compose.yml`) |
+| 4 | **Version bump** | VERSION + install.sh + Dockerfile + AGENTS.md → v19.0.6 |
+
+### Smoke test checks (10)
+```
+01  bash -n on all shell scripts                    → PASS
+02  shellcheck -S warning on 10 CI scripts          → PASS
+03  YAML safe_load on 25 compose + smg config       → PASS
+04  systemd-analyze verify on 5 units               → PASS
+05  VERSION consistency (VERSION↔install↔Dockerfile↔README) → PASS
+06  go.mod module path (github.com/MoZoHuJa/OS/scarlihq)    → PASS
+07  5 image tags via registry API (SGLang/Whisper/Buzz/LiteLLM/openlit) → PASS (HTTP 200)
+08  No ollama-main in active smg config             → PASS
+09  No v12 doc headers in active docs/              → PASS
+10  Summary + exit code                             → exit 0
+```
+
+### What is locked in v19.0.6 (must NOT change in v19.0.x)
+- All image tags (SGLang `lmsysorg/sglang:v0.4.9.post6-cu128-b200`, Whisper `sha-307e23f-cuda`, Buzz `ghcr.io/block/buzz:latest`, LiteLLM `main-v1.21.7`, openlit `1.5.0`)
+- Go module path (`github.com/MoZoHuJa/OS/scarlihq`)
+- 4-tier inference failover order (SGLang → vLLM → BeeLlama → Ollama)
+- Secure Host-Bridge architecture (ScarliHQ nonroot UID 65532, no docker.sock)
+- All existing CLI behavior (scarlix-mode, scarlix-doctor, scarlix-wizard, scarlix-host-bridge)
+- Install path (git clone + checkout + bash install.sh)
+
+Full baseline: `docs/SCARLIX_RELEASE_BASELINE.md`
+
+### ScaRgeN roadmap (v19.0.7 → v19.8.9)
+```
+v19.0.6  Baseline Freeze (THIS RELEASE)
+v19.0.7  Observability Preparation (read-only discovery CLI)
+v19.0.8  GPU Telemetry (normalized GPU state)
+v19.0.9  Runtime/Model Inventory (registries)
+v19.1.x  Resource Foundation (contracts, registries, monitor, dry-run scheduler)
+v19.2.x  Compute Fabric (real scheduler, scoring, GPU selection, leases)
+v19.3.x  Agent Kernel (Rust, capabilities, permissions, sessions, sandbox)
+v19.4.x  Agent Fabric (coding/research agents, workspaces, approvals)
+v19.5.x  Desk/Hive (team workflows, delegation, shared context)
+v19.6.x  Universal AI Runtime (normalized adapters, model router, failover)
+v19.7.x  Memory + Cross Device + Agent IR (memory fabric, device pairing, IR)
+v19.8.x  ScaRgeN Integration (orchestrator, ScarliCenter, ScarliMonitor, audit)
 ```
 
 ---
