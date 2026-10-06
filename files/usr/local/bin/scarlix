@@ -280,6 +280,22 @@ cmd_system_status() {
 # Subcommand: gpu list / gpu status
 # ============================================================================
 cmd_gpu_list() {
+  # v19.0.8: delegate --json path to the scarlix-gpu binary when present.
+  # It emits the full 14-field inventory.GPU schema (data contract §2),
+  # richer than the bash-native 4-field JSON below. Falls back to the
+  # bash-native path if scarlix-gpu is not installed.
+  if [ "$JSON_MODE" -eq 1 ]; then
+    if command -v scarlix-gpu >/dev/null 2>&1; then
+      scarlix-gpu 2>/dev/null
+      return $?
+    fi
+    if command -v /usr/local/bin/scarlix-gpu >/dev/null 2>&1; then
+      /usr/local/bin/scarlix-gpu 2>/dev/null
+      return $?
+    fi
+    # else: fall through to the bash-native JSON below.
+  fi
+
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     if [ -r /var/lib/scarlix/gpu-layout ]; then
       warn "nvidia-smi unavailable — using cached /var/lib/scarlix/gpu-layout"
@@ -348,6 +364,22 @@ _gpu_list_from_layout() {
 }
 
 cmd_gpu_status() {
+  # v19.0.8: delegate --json path to the scarlix-gpu binary when present.
+  # It emits the full 14-field inventory.GPU schema (data contract §2) +
+  # a per-GPU Health entry, richer than the bash-native 10-field JSON
+  # below. Falls back to the bash-native path if scarlix-gpu is not installed.
+  if [ "$JSON_MODE" -eq 1 ]; then
+    if command -v scarlix-gpu >/dev/null 2>&1; then
+      scarlix-gpu --health 2>/dev/null
+      return $?
+    fi
+    if command -v /usr/local/bin/scarlix-gpu >/dev/null 2>&1; then
+      /usr/local/bin/scarlix-gpu --health 2>/dev/null
+      return $?
+    fi
+    # else: fall through to the bash-native JSON below.
+  fi
+
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     warn "nvidia-smi unavailable — no detailed GPU data"
     if [ "$JSON_MODE" -eq 1 ]; then printf '[]\n'; fi

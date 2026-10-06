@@ -28,6 +28,7 @@ jobs:
           shellcheck -S warning files/usr/local/bin/generate-litellm-config.sh
           shellcheck -S warning files/usr/local/bin/scarlix
           shellcheck -S warning files/usr/local/bin/scarlix-smoke-test.sh
+          shellcheck -S warning files/usr/local/bin/scarlix-gpu 2>/dev/null || true  # Go binary, not a shell script — skip if not present
           shellcheck -S warning files/etc/systemd/system/generate-env.sh
 
   bash-syntax:

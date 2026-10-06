@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.7 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.8 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.0.7</h1>
+<h1 align="center">SCARLIX OS v19.0.8</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.7"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.7-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.8"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.8-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.0.7 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.0.8 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.0.7   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.0.8   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,47 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.0.8 (vs v19.0.7)
+
+**GPU Telemetry — normalized GPU state collection.** 3 deliverables.
+
+v19.0.8 implements GPU telemetry per the ScaRgeN master guide section 8. A new Go binary (`scarlix-gpu`) collects normalized GPU state from nvidia-smi and populates the `inventory.GPU` struct (14 fields) defined in v19.0.7. The `scarlix gpu status --json` command now delegates to this binary for data-contract-compliant output.
+
+### v19.0.8 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **GPU collector** (`scarlihq/internal/inventory/gpu.go`, 286 lines) | 3 exported functions: `CollectGPUs()` (queries nvidia-smi, returns `[]GPU` — never nil, empty `[]GPU{}` if no nvidia-smi), `CollectGPUHealth()` (marks healthy/unhealthy based on VRAM/utilization), `nvidiaSmiQuery()` (reusable helper with 5s timeout). Handles `[N/A]` power draw, parse errors, missing nvidia-smi. |
+| 2 | **scarlix-gpu binary** (`scarlihq/cmd/scarlix-gpu/main.go`, 68 lines) | Standalone CLI: `scarlix-gpu [--health]` → JSON output matching the frozen data contract. Exit 0 on success, 1 on encode failure. |
+| 3 | **CLI integration** | `scarlix gpu status --json` + `scarlix gpu list --json` now delegate to `scarlix-gpu` binary when available (falls back to nvidia-smi direct if not). Human-readable output unchanged. |
+
+### GPU struct fields (normalized, frozen in v19.0.7)
+```
+id, index, vendor, name, vram_total_mb, vram_used_mb, vram_free_mb,
+utilization_percent, temperature_c, power_w, driver, cuda, compute_cap, healthy
+```
+
+### Test results
+```
+go vet ./internal/inventory/          → CLEAN
+go test ./internal/inventory/ -v      → 8 PASS + 1 SKIP (no-nvidia-smi sandbox)
+go build ./...                         → 11 packages OK (no regression)
+scarlix-gpu (no nvidia-smi)            → [] (empty array, not null)
+scarlix-gpu --health (no nvidia-smi)  → {"gpus":[],"health":[]}
+scarlix --json gpu status              → delegates to scarlix-gpu ✓
+shellcheck -S warning scarlix CLI     → CLEAN
+scarlix-smoke-test.sh                  → 13 passed, 0 failed, 0 warned
+```
+
+### What's NOT in v19.0.8 (by design)
+- No automatic GPU scheduling (v19.2.x)
+- No resource allocation
+- No write/control operations
+- CUDA field left empty (host-global property — will be populated by a future `CollectSystemInfo()`)
+- The existing AI path (scarlix-mode ai → SGLang/vLLM/BeeLlama/Ollama) is completely unchanged
 
 ---
 
