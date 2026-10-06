@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.6 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.7 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.0.6</h1>
+<h1 align="center">SCARLIX OS v19.0.7</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.6"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.6-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.7"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.7-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.0.6 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.0.7 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.0.6   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.0.7   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,50 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.0.7 (vs v19.0.6)
+
+**Observability Preparation — read-only discovery CLI + normalized data structures.** 4 deliverables.
+
+v19.0.7 adds the first read-only observability layer per the ScaRgeN master guide section 7. No automatic resource allocation yet — only discovery commands and the data structures that future versions (v19.0.8 GPU telemetry, v19.1.x resource foundation) will build on.
+
+### v19.0.7 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **`scarlix` unified CLI** (`files/usr/local/bin/scarlix`, 603 lines) | 5 read-only subcommands: `system status`, `gpu list`, `gpu status`, `runtime list`, `model list`. Global `--json` flag for normalized JSON output. Graceful degradation (WARNs if nvidia-smi/docker/yq unavailable, never crashes). Does NOT replace scarlix-mode/doctor/wizard — extends the CLI surface. |
+| 2 | **Normalized Go data structures** (`scarlihq/internal/inventory/`) | 6 structs (GPU, Runtime, Model, Service, Health, SystemStatus) with 54 exported fields, all JSON-tagged. 7 Go tests (all PASS). `go vet` clean, `go build ./...` all 8 packages OK, no regression to existing api/scarlix_mode/status packages. |
+| 3 | **Data contracts document** (`docs/SCARLIX_DATA_CONTRACTS.md`, 145 lines) | Canonical JSON schema — single source of truth for CLI `--json` output, ScarliHQ serialization, and future compute-fabric consumption. Field names FROZEN in v19.0.7 (additive changes only without v2 migration). |
+| 4 | **Integration** | `scarlix` + `scarlix-smoke-test.sh` added to install.sh binary copy list + CI shellcheck checks. |
+
+### scarlix CLI subcommands (all read-only)
+```
+scarlix system status    # version, mode, uptime, docker count, health probes
+scarlix gpu list         # index, name, VRAM total, compute cap
+scarlix gpu status       # VRAM used/free, util, temp, power, driver, CUDA
+scarlix runtime list     # sglang/vllm/beellama/ollama/litellm status + port + image
+scarlix model list       # configured models (models.yaml) + files present (/models/)
+scarlix --json <cmd>     # normalized JSON output (matches data contracts)
+```
+
+### Normalized data structures (Go package inventory)
+| Struct | Fields | Purpose |
+|--------|--------|---------|
+| `GPU` | 14 | Normalized GPU state (id, index, vendor, name, VRAM, util, temp, power, driver, CUDA, compute_cap, healthy) |
+| `Runtime` | 10 | Inference runtime state (id, version, enabled, running, healthy, protocol, port, gpu_ids, image, capabilities) |
+| `Model` | 10 | Model metadata (id, path, format, quantization, parameters, context_length, vram, capabilities, runtimes, present) |
+| `Service` | 7 | Service state (id, name, type, status, port, container_id, uptime) |
+| `Health` | 4 | Component health (component, state, message, checked_at) |
+| `SystemStatus` | 9 | Composite snapshot (version, mode, uptime, timestamp, gpus, runtimes, models, services, health) |
+
+### What's NOT in v19.0.7 (by design)
+- No automatic resource allocation
+- No GPU scheduling
+- No agent kernel
+- No write/control operations
+- The existing AI path (scarlix-mode ai → SGLang/vLLM/BeeLlama/Ollama) is completely unchanged
 
 ---
 

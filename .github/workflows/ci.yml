@@ -26,6 +26,8 @@ jobs:
           shellcheck -S warning files/usr/local/bin/scarlix-host-bridge
           shellcheck -S warning files/usr/local/bin/generate-sha256sums.sh
           shellcheck -S warning files/usr/local/bin/generate-litellm-config.sh
+          shellcheck -S warning files/usr/local/bin/scarlix
+          shellcheck -S warning files/usr/local/bin/scarlix-smoke-test.sh
           shellcheck -S warning files/etc/systemd/system/generate-env.sh
 
   bash-syntax:
