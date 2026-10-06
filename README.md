@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.0 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.1 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.0</h1>
+<h1 align="center">SCARLIX OS v19.1.1</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.0"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.0-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.1"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.1-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.1 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.0   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.1   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,47 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.1 (vs v19.1.0)
+
+**Contract Validation — schema enforcement + reject rules.** 3 deliverables.
+
+v19.1.1 adds validation logic to the Resource Contract. Per master guide section 11: reject missing IDs, invalid resource types, negative resources, unsupported runtimes, invalid models, invalid security scopes. No silent correction of invalid requests.
+
+### v19.1.1 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **Validator** (`scarlihq/internal/contract/validate.go`, 175 lines) | `Validate()` returns `ValidationErrors` collection (every problem reported). `ValidateStrict()` returns `error` for CLI pass/fail. Checks: missing ID/agent_id/version, invalid task type/priority/accelator, negative VRAM/CPU/RAM, unsupported runtime names, empty model capabilities, invalid security scopes. |
+| 2 | **17 validation tests** (`scarlihq/internal/contract/validate_test.go`) | Valid contract passes, each reject rule tested individually (missing ID, missing agent_id, invalid task type, invalid priority, negative VRAM/CPU/RAM, invalid accelerator, unsupported runtime, empty capability, invalid filesystem/network/shell scope, multiple errors, strict mode). |
+| 3 | **CLI integration** | `scarlix-contract validate <file>` now runs `ValidateStrict()` — reports specific field errors + exit 1 on invalid (was: parse-only in v19.1.0). |
+
+### Validation rules (per master guide section 11)
+```
+✓ missing IDs            → reject (id, agent_id, version required)
+✓ invalid resource types → reject (task.type, priority, accelerator enums)
+✓ negative resources     → reject (vram_mb, cpu_cores, ram_mb >= 0)
+✓ unsupported runtime   → reject (preferred must be known: sglang/vllm/beellama/ollama/litellm)
+✓ invalid model          → reject (capabilities must be non-empty strings)
+✓ invalid security scope → reject (filesystem/network/shell enums)
+```
+
+### Test results
+```
+go vet ./internal/contract/        → CLEAN
+go test ./internal/contract/ -v   → 27 PASS / 0 FAIL (10 parse + 17 validate)
+go build ./...                     → all packages OK (no regression)
+scarlix-contract validate <valid>  → "valid", exit 0
+scarlix-contract validate <invalid>→ "error: id: missing required field", exit 1
+scarlix-smoke-test.sh              → 13 passed, 0 failed, 0 warned
+```
+
+### What's NOT in v19.1.1 (by design)
+- No scheduler (v19.2.x)
+- No resource allocation
+- No runtime registry formalization (v19.1.2)
 
 ---
 
