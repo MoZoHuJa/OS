@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.7 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.8 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.7</h1>
+<h1 align="center">SCARLIX OS v19.1.8</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.7"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.7-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.8"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.8-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.7 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.8 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.7   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.8   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,45 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.8 (vs v19.1.7)
+
+**GPU Compatibility Matrix — GPU × Runtime × Model checks.** 3 deliverables.
+
+v19.1.8 implements the GPU Compatibility Matrix per master guide section 18. A new `compat` package evaluates every GPU+Runtime+Model combination and reports whether it's compatible — checking VRAM fit, format support, runtime support list, GPU vendor match, and GPU assignment.
+
+### v19.1.8 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **compat package** (`scarlihq/internal/compat/matrix.go`, 190 lines) | `BuildMatrix()` evaluates every GPU×Runtime×Model triple. `Check()` returns compatible + reason. 5 compatibility rules: format support, runtime support list, VRAM fit, vendor match, GPU assignment. `Compatible()/Incompatible()/ForGPU()/ForRuntime()` query methods. |
+| 2 | **11 compat tests** (`matrix_test.go`) | Compatible triple, wrong format, runtime not in support list, insufficient VRAM, GPU not assigned, CPU runtime with any GPU, empty matrix, full grid, compatible filter, ForGPU filter, count compatible. All PASS. |
+| 3 | **Integration** | The scheduler (v19.1.7) can query the matrix to filter incompatible candidates before scoring. |
+
+### Compatibility rules (5)
+```
+✓ Runtime supports model format      (sglang/vllm → safetensors/awq; beellama/ollama → gguf)
+✓ Runtime in model's supported list   (model.SupportedRuntimes contains runtime.ID)
+✓ GPU VRAM >= model estimated VRAM    (if estimated_vram > 0)
+✓ GPU vendor matches runtime accel    (nvidia→cuda, amd→rocm, cpu→any)
+✓ GPU assigned to runtime             (or runtime is CPU-only with empty GPUIDs)
+```
+
+### Test results
+```
+go vet ./internal/compat/     → CLEAN
+go test ./internal/compat/ -v  → 11 PASS / 0 FAIL
+go build ./...                 → 10 packages OK (no regression)
+go test ./...                  → 10 packages all PASS
+scarlix-smoke-test.sh          → 13 passed, 0 failed, 0 warned
+```
+
+### What's NOT in v19.1.8 (by design)
+- No scheduler integration yet (v19.1.9 freeze, v19.2.0 real)
+- No CLI command (the matrix is a Go package, queried by the scheduler)
+- No automatic compatibility testing on GPU host
 
 ---
 

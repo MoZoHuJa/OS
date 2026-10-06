@@ -27,11 +27,11 @@ COPY . .
 # v18.7.8 P1: Bumped default to 18.7.8 (was: 18.7.6 — stale even though install.sh
 #   passes --build-arg so runtime was correct. Default matters for manual `docker build`
 #   without the arg, and for consistency with VERSION file.)
-# v19.1.7: Bumped default to 19.1.7 (was: 19.1.6) (was: 19.1.5) (was: 19.1.4) (was: 19.1.3) (was: 19.1.2) (was: 19.1.1) (was: 19.1.0) (was: 19.0.10) (was: 19.0.9) (was: 19.0.8) (was: 19.0.7) (was: 19.0.6) (was: 19.0.5) (was: 19.0.4) (was: 19.0.3) (was: 19.0.0 — drifted from VERSION file
+# v19.1.8: Bumped default to 19.1.8 (was: 19.1.7) (was: 19.1.6) (was: 19.1.5) (was: 19.1.4) (was: 19.1.3) (was: 19.1.2) (was: 19.1.1) (was: 19.1.0) (was: 19.0.10) (was: 19.0.9) (was: 19.0.8) (was: 19.0.7) (was: 19.0.6) (was: 19.0.5) (was: 19.0.4) (was: 19.0.3) (was: 19.0.0 — drifted from VERSION file
 #   by 3 minor releases. install.sh passes --build-arg so runtime was correct, but
 #   manual `docker build` without the arg produced a ScarliHQ binary reporting
 #   v19.0.0. Now matches VERSION.)
-ARG SCARLIX_VERSION=19.1.7
+ARG SCARLIX_VERSION=19.1.8
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${SCARLIX_VERSION}" -o /scarlihq ./cmd/scarlihq
 
 # v18.7.4 P1: Build the host-side atomic file reader (CGO disabled for static binary).
