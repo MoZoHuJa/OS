@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v19.0.9 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v19.0.10 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
 # EndeavourOS/Arch bootstrap installer — NO ISO, runs on clean EndeavourOS.
@@ -15,11 +15,11 @@ set -euo pipefail
 # USAGE:
 #   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
-#   git checkout v19.0.9   # ALWAYS checkout specific tag (main may be ahead)
+#   git checkout v19.0.10   # ALWAYS checkout specific tag (main may be ahead)
 #   bash install.sh
 # ============================================================================
 
-VERSION="19.0.9"
+VERSION="19.0.10"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -859,6 +859,38 @@ else
     fi
   else
     crit "scarlix-wizard not installed"
+  fi
+
+  # v19.0.10: Install Pi-Bolt (coding agent — replaces OpenCode).
+  #   Per migration guide: install as NON-ROOT user via official installer.
+  #   Non-critical (warn on failure — Pi-Bolt can be installed manually later).
+  #   The installer places Pi-Bolt under ~/.pi-bolt and links ~/.local/bin/pi-bolt.
+  log "Installing Pi-Bolt (coding agent)..."
+  if sudo -u "$REAL_USER" bash -c 'curl -fsSL https://pi-bolt.opensec.in/install.sh | sh' >> "$LOG_FILE" 2>&1; then
+    ok "Pi-Bolt installed (as $REAL_USER)"
+    # Verify the binary is available
+    if sudo -u "$REAL_USER" bash -c 'command -v pi-bolt >/dev/null 2>&1' || [ -f "/home/$REAL_USER/.local/bin/pi-bolt" ]; then
+      ok "pi-bolt binary available"
+    else
+      warn "Pi-Bolt installed but binary not on PATH — user may need to restart shell or add ~/.local/bin to PATH"
+    fi
+    # Export LITELLM_MASTER_KEY to user's environment for Pi-Bolt (safe: source .env, export to profile)
+    # v19.0.10: Pi-Bolt needs LITELLM_MASTER_KEY env var to connect to LiteLLM gateway.
+    #   We do NOT hardcode the key — we add a safe export line to the user's profile
+    #   that sources /etc/scarlix/.env and exports LITELLM_MASTER_KEY.
+    USER_PROFILE="/home/$REAL_USER/.bashrc"
+    if [ -f /etc/scarlix/.env ] && [ -f "$USER_PROFILE" ]; then
+      # Only add the export line if not already present (idempotent)
+      if ! grep -q "SCARLIX LITELLM_MASTER_KEY for Pi-Bolt" "$USER_PROFILE" 2>/dev/null; then
+        echo "" >> "$USER_PROFILE"
+        echo "# SCARLIX LITELLM_MASTER_KEY for Pi-Bolt (coding agent) — sources root-owned .env" >> "$USER_PROFILE"
+        echo 'export LITELLM_MASTER_KEY="$(grep "^LITELLM_MASTER_KEY=" /etc/scarlix/.env 2>/dev/null | cut -d= -f2-)"' >> "$USER_PROFILE"
+        chown "$REAL_USER:$REAL_USER" "$USER_PROFILE"
+        ok "LITELLM_MASTER_KEY export added to $USER_PROFILE (sources /etc/scarlix/.env)"
+      fi
+    fi
+  else
+    warn "Pi-Bolt installer failed — user can install manually: curl -fsSL https://pi-bolt.opensec.in/install.sh | sh"
   fi
 
   # Enable model-manager timer (weekly HF auto-pull)

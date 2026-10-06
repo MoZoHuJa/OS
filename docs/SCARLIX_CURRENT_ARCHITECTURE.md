@@ -14,7 +14,7 @@
 |---|---|---|
 | 1 — Inference + Base OS | EndeavourOS + Docker + NVIDIA driver + 4 inference engines | Compute substrate |
 | 2 — Workspace + Infrastructure | Buzz (Nostr relay), LiteLLM `:4001`, SMG `:4000`, Headscale VPN, Caddy, CrowdSec | Services that route/observe/persist |
-| 3 — Agents | Hermes (CEO gateway), OpenCode (coding manager), gstack tools | Long-running agents |
+| 3 — Agents | Hermes (CEO gateway), Pi-Bolt (coding agent), gstack tools | Long-running agents |
 | 4 — ScarliHQ | Go binary `:8090` (REST + WS + MCP), go:embed 2D dashboard, Profile Manager, Guard | Host-Bridge control plane |
 | 5 — Family (Profiles) | Zmor (admin, unlimited), Hugo (100k), XOX (10k, kids-safe), Mon (50k) | Per-user policy layer |
 

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.9 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.10 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.0.9</h1>
+<h1 align="center">SCARLIX OS v19.0.10</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.9"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.9-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.10"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.10-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.0.9 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.0.10 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.0.9   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.0.10   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -48,6 +48,50 @@ scarlix-mode ai
 
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
+```
+
+---
+
+## 🆕 What's New in v19.0.10 (vs v19.0.9)
+
+**OpenCode → Pi-Bolt migration (agent-layer replacement).** 6 deliverables.
+
+v19.0.10 replaces the OpenCode coding-agent layer with [Pi-Bolt](https://github.com/opensec-git/Pi-Bolt) — a fork of Pi compiled AOT to native code. This is an **isolated agent-layer replacement**: no inference, security, dashboard, Docker, or host-bridge architecture was changed. OpenCode is quarantined (not deleted) for rollback.
+
+### v19.0.10 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **Pi-Bolt config template** (`agents/pi-bolt/config.template.json`) | Preserves OpenCode functional intent: LiteLLM gateway, ScarliHQ MCP, plan/build agents. Security fixes: localhost-only endpoints (not 100.64.0.1), env-var API key (`${LITELLM_MASTER_KEY}`, not hardcoded) |
+| 2 | **Pi-Bolt README** (`agents/pi-bolt/README.md`) | Install instructions, config, security model, workflow, rollback procedure |
+| 3 | **OpenCode quarantined** (`agents/opencode/config.json` → `config.json.DEPRECATED`) | Renamed (not deleted) for rollback per migration guide section 39. DEPRECATED.md marker explains status + restore procedure |
+| 4 | **install.sh integration** | Phase 5: Pi-Bolt installed as non-root user via `curl -fsSL https://pi-bolt.opensec.in/install.sh \| sh`. LITELLM_MASTER_KEY exported to user's `.bashrc` via safe grep+cut from `/etc/scarlix/.env` (never hardcoded) |
+| 5 | **Migration documentation** (`docs/SCARLIX_AGENT_MIGRATION_OpenCode_to_PiBolt.md`) | Full migration record: changed files, security checks, regression matrix, test checklist (A–J per guide section 21), rollback procedure |
+| 6 | **Architecture doc update** (`docs/SCARLIX_CURRENT_ARCHITECTURE.md`) | Layer 3: "OpenCode (coding manager)" → "Pi-Bolt (coding agent)" |
+
+### Security model (unchanged boundaries)
+| Check | Status |
+|-------|--------|
+| docker.sock exposure | ✅ NO — Pi-Bolt has no Docker access |
+| root privilege | ✅ NO — installed + runs as non-root user |
+| NVIDIA runtime | ✅ NO — Pi-Bolt is a coding agent, not inference |
+| bridge-state write | ✅ NO — Pi-Bolt has no host-bridge access |
+| .env secret leak | ✅ NO — API key is env var reference, not committed |
+| inference endpoint exposed publicly | ✅ NO — localhost-only (127.0.0.1) |
+| hard-coded production secrets | ✅ NO — `${LITELLM_MASTER_KEY}` env var pattern |
+
+### Regression (completely unchanged)
+Hermes, ScarliHQ, dashboard, LiteLLM, SGLang, vLLM, BeeLlama, Ollama, scarlix-mode, GPU config, Docker stack, models.yaml, host-bridge, bridge-reader, /etc/scarlix/.env generation — **all untouched**.
+
+### Remaining gate (requires GPU host)
+Tests A–J per migration guide section 21 (startup, model connectivity, repo inspection, file read, planning, controlled write, Git awareness, Git diff, MCP, subagent) — require real Pi-Bolt binary on target hardware. Not verifiable in repo-only sandbox. Once tests pass on hardware, OpenCode can be fully deleted (remove `agents/opencode/` directory).
+
+### Rollback
+```bash
+git revert <migration-commit>
+mv agents/opencode/config.json.DEPRECATED agents/opencode/config.json
+rm -rf ~/.pi-bolt ~/.local/bin/pi-bolt
+# Remove LITELLM_MASTER_KEY export line from .bashrc
 ```
 
 ---
