@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.2 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.3 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.2</h1>
+<h1 align="center">SCARLIX OS v19.1.3</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.2"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.2-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.3"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.3-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.2 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.3 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.2   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.3   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,47 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.3 (vs v19.1.2)
+
+**Model Registry v1 + CLI inspect/status/health.** 3 deliverables.
+
+v19.1.3 formalizes the Model Registry (per master guide section 13) and adds CLI inspect/status/health subcommands for both runtimes and models. The `scarlix-inventory` binary now supports single-entry lookup by ID.
+
+### v19.1.3 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **scarlix-inventory inspect/status/health** | New flags: `--runtime-inspect=<id>`, `--runtime-status=<id>`, `--model-inspect=<id>`, `--model-health=<id>`. Single-entry JSON lookup via the registry. Exit 1 + "not found" message on unknown ID. |
+| 2 | **ModelRegistry formalized** | Already created in v19.1.2 (package cohesion), now fully wired into scarlix-inventory CLI: `LoadFromInventory()`, `Inspect(id)`, `Health(id)`, `PresentCount()`. |
+| 3 | **No scheduler yet** — the registries + CLI are read-only. The scheduler (v19.2.x) will query these. |
+
+### scarlix-inventory new operations
+```bash
+scarlix-inventory --runtime-inspect=sglang    # single Runtime JSON
+scarlix-inventory --runtime-status=sglang     # single runtime Health JSON
+scarlix-inventory --model-inspect=sglang      # single Model JSON
+scarlix-inventory --model-health=sglang       # single model Health JSON
+# exit 1 + "not found" on unknown ID
+```
+
+### Test results
+```
+go vet ./...                       → CLEAN
+go test ./...                      → 6 packages all PASS (no regression)
+go build ./...                     → all packages OK
+scarlix-inventory --runtime-inspect=sglang   → valid Runtime JSON
+scarlix-inventory --model-inspect=sglang      → valid Model JSON (with SCARLIX_REPO)
+scarlix-inventory --runtime-inspect=bogus     → "not found", exit 1
+scarlix-smoke-test.sh              → 13 passed, 0 failed, 0 warned
+```
+
+### What's NOT in v19.1.3 (by design)
+- No scheduler (v19.2.x)
+- No resource allocation
+- No automatic model scanning beyond models.yaml parsing (that's the inventory collector's job)
 
 ---
 
