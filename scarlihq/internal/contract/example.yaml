@@ -1,0 +1,28 @@
+version: v1
+id: 550e8400-e29b-41d4-a716-446655440000
+agent_id: agent.coder
+
+task:
+  type: coding
+  priority: interactive
+
+compute:
+  accelerator: cuda
+  vram_mb: 12000
+  cpu_cores: 4
+  ram_mb: 8192
+
+runtime:
+  preferred:
+    - sglang
+    - vllm
+
+model:
+  capabilities:
+    - coding
+    - reasoning
+
+security:
+  filesystem: workspace
+  network: restricted
+  shell: sandbox

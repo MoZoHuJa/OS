@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.0.10 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.0 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.0.10</h1>
+<h1 align="center">SCARLIX OS v19.1.0</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.0.10"><img alt="Version" src="https://img.shields.io/badge/version-v19.0.10-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.0"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.0-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.0.10 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.0.10   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.0   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,69 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.0 (vs v19.0.10)
+
+**Resource Contract v1 — canonical schema for compute resource requests.** 6 deliverables.
+
+v19.1.0 begins the **Resource Foundation** generation (v19.1.x) per the ScaRgeN master guide. This release defines the Resource Contract — the canonical schema that agents submit to request compute resources (GPU, runtime, model, security scope). The contract is defined + parseable + serializable, but NOT yet enforced by a scheduler (that comes in v19.2.x Compute Fabric).
+
+### v19.1.0 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **Contract package** (`scarlihq/internal/contract/types.go`, 171 lines) | `ResourceContract` struct + 5 nested specs (TaskSpec, ComputeSpec, RuntimeSpec, ModelSpec, SecuritySpec) + 6 const blocks for enum values (task types, priorities, accelerators, security scopes). JSON+YAML tags on every field. |
+| 2 | **Parser** (`scarlihq/internal/contract/parse.go`, 202 lines) | `ParseYAML()`, `ParseJSON()`, `MarshalYAML()`, `MarshalJSON()`, `Example()`. Custom marshalers enforce `[]` not `null` for slices. |
+| 3 | **scarlix-contract binary** (`scarlihq/cmd/scarlix-contract/main.go`, 164 lines) | Standalone CLI: `example` (print example contract), `validate <file>` (parse + validate), `parse <file>` (normalized JSON output). |
+| 4 | **Example contract** (`scarlihq/internal/contract/example.yaml`) | Canonical example from master guide section 10 — used by tests + documentation. |
+| 5 | **Documentation** (`docs/SCARLIX_RESOURCE_CONTRACT.md`, 236 lines) | Purpose, schema, field reference, enum values, stability contract, CLI usage, relationship to inventory package. |
+| 6 | **Integration** | scarlix-contract added to install.sh build block + binary copy list. |
+
+### Resource Contract schema (v1, FROZEN)
+```yaml
+version: v1
+id: <uuid>
+agent_id: agent.coder
+task:
+  type: coding          # coding|chat|research|embedding|indexing
+  priority: interactive # realtime|interactive|normal|background|batch
+compute:
+  accelerator: cuda     # cuda|cpu|rocm
+  vram_mb: 12000
+  cpu_cores: 4
+  ram_mb: 8192
+runtime:
+  preferred: [sglang, vllm]
+model:
+  capabilities: [coding, reasoning]
+security:
+  filesystem: workspace # workspace|none
+  network: restricted   # restricted|none
+  shell: sandbox         # sandbox|none
+```
+
+### Test results
+```
+go vet ./internal/contract/        → CLEAN
+go test ./internal/contract/ -v   → 10 PASS / 0 FAIL
+go build ./...                     → 13 packages OK (no regression)
+scarlix-contract example          → valid YAML output
+scarlix-contract validate <file>  → "valid", exit 0
+scarlix-contract parse <file>     → valid normalized JSON
+scarlix-smoke-test.sh             → 13 passed, 0 failed, 0 warned
+```
+
+### Relationship to inventory package
+- **contract** = REQUEST (what the agent wants — GPU, runtime, model capabilities, security scope)
+- **inventory** = STATE (what the system has — actual GPUs, running runtimes, available models)
+- The **scheduler** (v19.2.x Compute Fabric) will match contract requests against inventory state.
+
+### What's NOT in v19.1.0 (by design)
+- No scheduler (v19.2.x)
+- No resource allocation
+- No contract enforcement — the contract is defined + parseable, but nothing rejects invalid contracts yet (that's v19.1.1 Contract Validation)
 
 ---
 
