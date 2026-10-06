@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.1 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.2 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.1</h1>
+<h1 align="center">SCARLIX OS v19.1.2</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.1"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.1-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.2"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.2-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.1 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.2 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.1   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.2   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,48 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.2 (vs v19.1.1)
+
+**Runtime Registry v1 — formalized registry with lifecycle + lookup.** 4 deliverables.
+
+v19.1.2 formalizes the Runtime Registry per master guide section 12. The registry wraps the v19.0.9 `inventory.CollectRuntimes()` collector with explicit lifecycle (Register/Unregister), lookup (Inspect/Status), and sorted listing. This is the data structure the future scheduler (v19.2.x) will query when matching Resource Contract requests against available runtimes.
+
+### v19.1.2 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **RuntimeRegistry** (`scarlihq/internal/registry/runtime.go`, 145 lines) | Thread-safe registry with `LoadFromInventory()`, `Register()`, `Unregister()`, `List()`, `Inspect(id)`, `Status(id)`, `Count()`, `IDs()`. Sorted by ID. Never nil. |
+| 2 | **ModelRegistry** (`scarlihq/internal/registry/model.go`, 165 lines) | Same pattern for models — `LoadFromInventory()`, `Register()`, `Unregister()`, `List()`, `Inspect(id)`, `Health(id)`, `PresentCount()`. (v19.1.3 deliverable included here for package cohesion.) |
+| 3 | **20 registry tests** (`runtime_test.go` + `model_test.go`) | 10 RuntimeRegistry + 10 ModelRegistry tests — empty, register, unregister, inspect not-found, status/health, sorted list, load from inventory, IDs. All PASS. |
+| 4 | **No scheduler yet** — the registries are read-only data structures. The scheduler (v19.2.x) will match Resource Contract requests against registry state. |
+
+### RuntimeRegistry operations
+```
+LoadFromInventory()    — snapshot current system state (calls inventory.CollectRuntimes)
+Register(runtime)      — manually add/update a runtime entry
+Unregister(id)         — remove a runtime entry
+List()                 — all runtimes sorted by ID (never nil)
+Inspect(id)            — single runtime lookup (returns ok bool)
+Status(id)             — health probe for a runtime (returns ok bool)
+Count() / IDs()        — size + sorted ID list
+```
+
+### Test results
+```
+go vet ./internal/registry/      → CLEAN
+go test ./internal/registry/ -v  → 20 PASS / 0 FAIL
+go build ./...                    → all packages OK (no regression)
+go test ./...                     → 6 packages all PASS
+scarlix-smoke-test.sh             → 13 passed, 0 failed, 0 warned
+```
+
+### What's NOT in v19.1.2 (by design)
+- No scheduler (v19.2.x)
+- No resource allocation
+- No CLI `runtime inspect/status` yet (the registries are Go-only in v19.1.2; CLI integration comes in v19.1.3)
 
 ---
 
