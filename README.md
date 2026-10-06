@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.8 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.9 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.8</h1>
+<h1 align="center">SCARLIX OS v19.1.9</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.8"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.8-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.9"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.9-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.8 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.9 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.8   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.9   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,72 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.9 (vs v19.1.8)
+
+**Resource Foundation Release — freeze + full regression.** 2 deliverables.
+
+v19.1.9 is the Resource Foundation release per master guide section 19. No new architecture — this version freezes the v19.1.x generation (contracts, registries, telemetry, monitor, dry-run scheduler, compatibility matrix) and runs full regression.
+
+### v19.1.9 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **Release baseline document** (`docs/SCARLIX_RESOURCE_FOUNDATION_RELEASE.md`) | Frozen artifacts inventory: 10 Go packages (145 tests), 7 Go binaries, 8+ bash CLIs. Full regression results. What's frozen (must not change without version bump). Next generation roadmap (v19.2.x Compute Fabric). |
+| 2 | **Full regression verification** | 145 Go tests PASS / 0 FAIL. 10 packages all OK. 7 binaries build. bash -n + shellcheck -S warning + YAML + systemd + smoke test all green. |
+
+### Full regression results (v19.1.9)
+```
+Go packages (10):
+  api, compat, contract, inventory, monitor, registry,
+  scheduler, scarlix_mode, status, telemetry
+  → 145 tests PASS / 0 FAIL / 0 SKIP
+
+Go binaries (7):
+  scarlihq, scarlix-bridge-reader, scarlix-gpu, scarlix-inventory,
+  scarlix-contract, scarlix-monitor, scarlix-scheduler
+  → all build OK
+
+Bash validation:
+  bash -n (all scripts)             → PASS
+  shellcheck -S warning (CI scripts) → CLEAN
+  YAML lint (26 compose + smg)      → 26/26 OK
+  systemd-analyze verify (5 units)  → PASS
+  VERSION consistency               → PASS (19.1.9)
+  go.mod module path                → PASS
+  image tags (5 via registry API)   → HTTP 200
+  ollama-main active refs           → 0
+  v12 doc headers                   → 0
+  scarlix-smoke-test.sh             → 13 passed, 0 failed, 0 warned
+```
+
+### What is frozen (v19.1.x Resource Foundation)
+- Resource Contract v1 schema (v19.1.0)
+- Contract validation rules (v19.1.1)
+- RuntimeRegistry + ModelRegistry APIs (v19.1.2/v19.1.3)
+- ScarliMonitor Snapshot schema (v19.1.4)
+- Telemetry Measurement fields (v19.1.5)
+- HTTP API endpoints (v19.1.6)
+- Scheduler scoring formula (v19.1.7)
+- Compatibility rules (v19.1.8)
+
+### v19.1.x Resource Foundation generation COMPLETE
+```
+v19.1.0  Resource Contract v1 (schema)
+v19.1.1  Contract Validation (reject rules)
+v19.1.2  Runtime Registry v1 (lifecycle + lookup)
+v19.1.3  Model Registry v1 (CLI inspect/health)
+v19.1.4  ScarliMonitor Foundation (read-only monitoring)
+v19.1.5  Telemetry History (JSON Lines persistence)
+v19.1.6  ScarliHQ Resource View (HTTP server)
+v19.1.7  Scheduler Dry Run (deterministic scoring)
+v19.1.8  GPU Compatibility Matrix (GPU×Runtime×Model)
+v19.1.9  Resource Foundation Release (freeze + regression)  ← THIS RELEASE
+```
+
+**Next generation: v19.2.x Compute Fabric** (real scheduler, GPU selection, priority queues, leases, safe fallback, ScarliHQ compute control).
 
 ---
 
