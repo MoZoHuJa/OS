@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.5 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.6 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.5</h1>
+<h1 align="center">SCARLIX OS v19.1.6</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.5"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.5-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.6"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.6-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.5 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.6 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.5   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.6   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,45 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.6 (vs v19.1.5)
+
+**ScarliHQ Resource View — HTTP server exposing system state.** 3 deliverables.
+
+v19.1.6 implements the ScarliHQ Resource View per master guide section 16. The `scarlix-monitor --serve <port>` flag (which was a stub in v19.1.4) now starts a real HTTP server exposing GPUs, runtime status, models, health, and telemetry history. ScarliHQ remains the control plane — this is a read-only observation endpoint.
+
+### v19.1.6 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **HTTP server in scarlix-monitor** | `--serve <port>` starts a localhost-only HTTP server. Endpoints: `GET /` (full Snapshot JSON), `GET /health` (liveness probe), `GET /telemetry?from=T&to=T` (telemetry history query). Read-only — no control operations. |
+| 2 | **3 HTTP endpoints** | `GET /` returns full `monitor.Snapshot` JSON. `GET /health` returns `{"status":"ok","service":"scarlix-monitor","version":"..."}` (no auth — like LiteLLM `/health/liveliness`). `GET /telemetry` accepts `from`/`to` RFC3339 query params + returns `[]Measurement` JSON. |
+| 3 | **Security: localhost-only** | Server binds to `127.0.0.1:<port>` — no LAN/WAN exposure per the security policy (inference + monitoring endpoints are localhost-only). |
+
+### HTTP API
+```
+GET /                           # full system snapshot (GPUs, CPU, RAM, storage, runtimes, models, health)
+GET /health                     # liveness probe (no auth)
+GET /telemetry?from=T1&to=T2    # telemetry history (RFC3339 time range, optional)
+```
+
+### Test results
+```
+go vet ./cmd/scarlix-monitor/    → CLEAN
+go build ./...                    → all packages OK (no regression)
+scarlix-monitor --serve 18080    → HTTP server starts, 3 endpoints respond:
+  GET /                          → valid Snapshot JSON
+  GET /health                    → {"status":"ok","service":"scarlix-monitor","version":"..."}
+  GET /telemetry                 → []Measurement JSON
+scarlix-smoke-test.sh            → 13 passed, 0 failed, 0 warned
+```
+
+### What's NOT in v19.1.6 (by design)
+- No scheduler (v19.1.7 dry-run, v19.2.x real)
+- No resource allocation
+- No auth on /health (liveness probe) — but / and /telemetry would need auth in production (not enforced yet — localhost-only binding is the current boundary)
 
 ---
 

@@ -39,6 +39,7 @@ import (
         "encoding/json"
         "flag"
         "fmt"
+        "net/http"
         "os"
         "strings"
         "time"
@@ -69,7 +70,7 @@ See docs/SCARLIX_MONITOR.md for the snapshot schema and design notes.
 
 func main() {
         once := flag.Bool("once", false, "print a single Snapshot as JSON and exit (default behavior)")
-        servePort := flag.Int("serve", 0, "start HTTP server on the given port (STUB — coming in v19.1.5)")
+        servePort := flag.Int("serve", 0, "start HTTP server on the given port (v19.1.6: ScarliHQ resource view)")
         record := flag.Bool("record", false, "take a snapshot + persist telemetry measurements to store (v19.1.5)")
         history := flag.Bool("history", false, "print telemetry history as JSON array (v19.1.5)")
         historyFrom := flag.String("from", "", "history query start time (RFC3339, e.g. 2026-10-06T00:00:00Z)")
@@ -80,9 +81,78 @@ func main() {
         }
         flag.Parse()
 
-        // --serve stub
+        // v19.1.6: --serve starts a real HTTP server (ScarliHQ Resource View per
+        // master guide section 16). Exposes: GPUs, runtime status, models, health,
+        // telemetry. Read-only — no control operations. Binds to 127.0.0.1 only
+        // (localhost — no LAN/WAN exposure per security policy).
         if *servePort > 0 {
-                fmt.Println("HTTP server mode coming in v19.1.6")
+                version := readVersion()
+                mon := monitor.New(version)
+                mux := http.NewServeMux()
+
+                // GET / — full system snapshot
+                mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+                        if r.Method != "GET" {
+                                http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+                                return
+                        }
+                        w.Header().Set("Content-Type", "application/json")
+                        data, err := mon.SnapshotJSON()
+                        if err != nil {
+                                http.Error(w, `{"error":"encode failed"}`, http.StatusInternalServerError)
+                                return
+                        }
+                        w.Write(data)
+                })
+
+                // GET /health — simple liveness probe (no auth required, like LiteLLM /health/liveliness)
+                mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+                        w.Header().Set("Content-Type", "application/json")
+                        w.Write([]byte(`{"status":"ok","service":"scarlix-monitor","version":"` + version + `"}`))
+                })
+
+                // GET /telemetry — telemetry history query
+                mux.HandleFunc("/telemetry", func(w http.ResponseWriter, r *http.Request) {
+                        if r.Method != "GET" {
+                                http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+                                return
+                        }
+                        store := telemetry.New("")
+                        fromStr := r.URL.Query().Get("from")
+                        toStr := r.URL.Query().Get("to")
+                        var fromTime, toTime time.Time
+                        var err error
+                        if fromStr != "" {
+                                fromTime, err = time.Parse(time.RFC3339, fromStr)
+                                if err != nil {
+                                        http.Error(w, `{"error":"invalid 'from' time (use RFC3339)"}`, http.StatusBadRequest)
+                                        return
+                                }
+                        }
+                        if toStr != "" {
+                                toTime, err = time.Parse(time.RFC3339, toStr)
+                                if err != nil {
+                                        http.Error(w, `{"error":"invalid 'to' time (use RFC3339)"}`, http.StatusBadRequest)
+                                        return
+                                }
+                        }
+                        results, err := store.Query(fromTime, toTime)
+                        if err != nil {
+                                http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+                                return
+                        }
+                        w.Header().Set("Content-Type", "application/json")
+                        enc := json.NewEncoder(w)
+                        enc.SetIndent("", "  ")
+                        enc.Encode(results)
+                })
+
+                addr := fmt.Sprintf("127.0.0.1:%d", *servePort)
+                fmt.Fprintf(os.Stderr, "scarlix-monitor: serving ScarliHQ resource view at http://%s/ (read-only, localhost only)\n", addr)
+                if err := http.ListenAndServe(addr, mux); err != nil {
+                        fmt.Fprintf(os.Stderr, "scarlix-monitor: server failed: %v\n", err)
+                        os.Exit(1)
+                }
                 os.Exit(0)
         }
 
