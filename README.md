@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.3 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.4 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.3</h1>
+<h1 align="center">SCARLIX OS v19.1.4</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.3"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.3-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.4"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.4-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.3 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.4 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.3   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.4   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,58 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.4 (vs v19.1.3)
+
+**ScarliMonitor Foundation — read-only monitoring service.** 5 deliverables.
+
+v19.1.4 implements ScarliMonitor per master guide section 14: a read-only monitoring service that exposes GPU, CPU, RAM, storage, runtime health, model health, and service health. No control operations — observation only.
+
+### v19.1.4 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **Monitor package** (`scarlihq/internal/monitor/monitor.go`, 469 lines) | `Monitor` type + `Snapshot()` method composing inventory collectors + /proc + /sys reads (CPU, RAM, storage). Graceful degradation — never panics, never nil. |
+| 2 | **8 monitor tests** (`monitor_test.go`, 197 lines) | Never-panics, valid timestamp, never-nil slices, valid JSON round-trip, CPU/RAM reads from /proc. All PASS. |
+| 3 | **scarlix-monitor binary** (`scarlihq/cmd/scarlix-monitor/main.go`, 140 lines) | Standalone CLI: `--once` (default, print Snapshot JSON), `--serve <port>` (stub for v19.1.5), `--help`. |
+| 4 | **Documentation** (`docs/SCARLIX_MONITOR.md`, 193 lines) | Purpose, architecture, schema, CLI usage, what's-NOT-in-v19.1.4, integration. |
+| 5 | **install.sh integration** | Build block (native Go + Docker fallback) + binary copy list. |
+
+### Snapshot schema
+```json
+{
+  "timestamp": "2026-10-06T09:54:44Z",
+  "version": "19.1.4",
+  "mode": "ai",
+  "gpus": [...],
+  "cpu": { "cores": 8, "model_name": "...", "load_avg_1m": 0.5, "usage_pct": 12.3 },
+  "ram": { "total_mb": 65536, "used_mb": 8192, "free_mb": 57344, "available_mb": 57344 },
+  "storage": { "models_dir": "/models", "models_total_mb": 102400, "models_free_mb": 51200, "root_free_mb": 20480 },
+  "runtimes": [...],
+  "models": [...],
+  "services": [],
+  "health": [...]
+}
+```
+
+### Test results
+```
+go vet ./internal/monitor/      → CLEAN
+go test ./internal/monitor/ -v  → 8 PASS / 0 FAIL
+go build ./...                   → 16 packages OK (no regression)
+go test ./...                    → 7 test packages all PASS
+scarlix-monitor                  → valid Snapshot JSON
+scarlix-monitor --serve 8080    → "HTTP server mode coming in v19.1.5" (stub)
+scarlix-smoke-test.sh           → 13 passed, 0 failed, 0 warned
+```
+
+### What's NOT in v19.1.4 (by design)
+- No HTTP server (v19.1.5 — `--serve` is a stub)
+- No telemetry persistence (v19.1.5)
+- No alerting
+- No control operations — read-only observation
 
 ---
 
