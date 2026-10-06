@@ -5,15 +5,15 @@
 // The monitor package composes inventory collectors (GPUs, runtimes, models,
 // health) with /proc + /sys reads (CPU, RAM, storage) into a single
 // point-in-time Snapshot. This binary is the simplest possible consumer of
-// that snapshot — print-as-JSON-and-exit. Future versions (v19.1.5+) will add
+// that snapshot — print-as-JSON-and-exit. HTTP server mode implemented in v19.1.6+
 // an HTTP server mode (--serve) for long-running monitoring.
 //
 // Usage:
 //
 //      scarlix-monitor                    # print a single Snapshot JSON, exit 0
 //      scarlix-monitor --once             # same as above (explicit)
-//      scarlix-monitor --serve <port>     # future HTTP server mode (v19.1.5+)
-//                                         # currently a stub
+//      scarlix-monitor --serve <port>     # HTTP server mode (v19.1.6+)
+//                                         # implemented since v19.1.6
 //      scarlix-monitor --help, -h         # print usage + exit 0
 //
 // Exit codes:

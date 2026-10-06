@@ -96,13 +96,14 @@ func (s *Scheduler) Plan(c *contract.ResourceContract) *Plan {
                 Rejected: []Rejection{},
         }
 
-        // v19.1.11 P1-5: Empty accelerator defaults to "cuda".
-        if c.Compute.Accelerator == "" {
-                c.Compute.Accelerator = "cuda"
+        // v19.1.12 P1-B3: Don't mutate caller's contract. Use local copy.
+        accelerator := c.Compute.Accelerator
+        if accelerator == "" {
+                accelerator = "cuda" // v19.1.11: sensible default for AI workloads
         }
 
         // v19.1.10 P1-1 FIX: CPU requests must NOT enter the GPU loop.
-        if c.Compute.Accelerator == "cpu" {
+        if accelerator == "cpu" {
                 runtime, runtimeScore, runtimeBreakdown := s.scoreRuntimeForCPU(c)
                 if runtime == "" {
                         plan.Rejected = append(plan.Rejected, Rejection{
@@ -141,10 +142,10 @@ func (s *Scheduler) Plan(c *contract.ResourceContract) *Plan {
         var candidates []scored
 
         for _, gpu := range s.gpus {
-                // Check accelerator compatibility
-                if !acceleratorCompatible(c.Compute.Accelerator, gpu) {
+                // Check accelerator compatibility (v19.1.12: use local accelerator, not mutated contract)
+                if !acceleratorCompatible(accelerator, gpu) {
                         plan.Rejected = append(plan.Rejected, Rejection{
-                                GPU: gpu.ID, Reason: fmt.Sprintf("accelerator mismatch: contract wants %s, GPU is %s", c.Compute.Accelerator, gpu.Vendor),
+                                GPU: gpu.ID, Reason: fmt.Sprintf("accelerator mismatch: contract wants %s, GPU is %s", accelerator, gpu.Vendor),
                         })
                         continue
                 }
@@ -310,6 +311,13 @@ func (s *Scheduler) scoreRuntime(gpu inventory.GPU, c *contract.ResourceContract
         var bestBreakdown ScoreBreakdown
 
         for _, rt := range s.runtimes {
+                // v19.1.12 P1-B1: CPU-only runtimes (empty GPUIDs) must NOT
+                // be selected for GPU tasks. Was: only skipped if GPUIDs didn't
+                // match AND were non-empty → CPU runtimes leaked into GPU path.
+                if len(rt.GPUIDs) == 0 {
+                        continue // CPU-only runtime — skip in GPU scoring
+                }
+
                 // Check if this runtime is assigned to this GPU
                 gpuMatch := false
                 for _, gid := range rt.GPUIDs {
@@ -425,8 +433,8 @@ func (s *Scheduler) scoreModel(runtimeID string, c *contract.ResourceContract) (
 
         for _, m := range s.models {
                 // v19.1.11 P1-4: Check if this model supports the requested runtime's engine.
-                // (was: hardcoded modelMap. Now: uses SupportedRuntimes + runtimeEngine mapping.)
-                if !containsString(m.SupportedRuntimes, runtimeEngine(runtimeID)) {
+                // v19.1.12 P1-B2: Empty SupportedRuntimes = "supports all" (was: always rejected).
+                if len(m.SupportedRuntimes) > 0 && !containsString(m.SupportedRuntimes, runtimeEngine(runtimeID)) {
                         continue
                 }
 
@@ -444,9 +452,11 @@ func (s *Scheduler) scoreModel(runtimeID string, c *contract.ResourceContract) (
                                         }
                                 }
                         }
-                        // v19.1.11 P1-1: ALL required capabilities must match (was: matched>0).
+                        // v19.1.11 P1-1: ALL required capabilities must match.
+                        // v19.1.12 P1-2 (Review2): Was `return` (aborts entire loop on first
+                        // incompatible model). Now: `continue` (try next model).
                         if matched < len(c.Model.Capabilities) {
-                                return "", 0, ScoreBreakdown{}
+                                continue // This model doesn't match — try next
                         }
                         score += matched * 5
                         detail = fmt.Sprintf("model %s matches %d/%d capabilities", m.ID, matched, len(c.Model.Capabilities))

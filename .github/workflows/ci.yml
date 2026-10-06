@@ -236,6 +236,16 @@ jobs:
           go mod download
           go mod verify
           go vet ./...
+      - name: gofmt check
+        working-directory: scarlihq
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "ERROR: unformatted Go files:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+          echo "All Go files are gofmt-clean"
       - name: go build
         working-directory: scarlihq
         run: |

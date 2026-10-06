@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.11 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.12 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.11</h1>
+<h1 align="center">SCARLIX OS v19.1.12</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.11"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.11-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.12"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.12-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.11 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.12 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.11   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.12   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,59 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.12 (vs v19.1.11)
+
+**Resource Snapshot Integrity — final P1 fixes from 2 independent reviews.** 4 P1 + 4 P2.
+
+Two reviews of v19.1.11 found 4 remaining P1 issues in the scheduler + production CLI path. v19.1.12 fixes all — this is the **final integrity release** before v19.2.0 Compute Fabric.
+
+### P1 fixes (scheduler + CLI)
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P1-1** | **CPU runtime not on GPU path** | `scoreRuntime()` let CPU-only runtimes (empty GPUIDs) leak into GPU scoring → beellama could be selected for cuda task | Explicit `if len(rt.GPUIDs) == 0 { continue }` — CPU runtimes excluded from GPU path |
+| **P1-2** | **scoreModel continue (not return)** | `return "", 0, ScoreBreakdown{}` on first incompatible model → aborted loop, never tried model B | `continue` — tries ALL models, returns best. Model A rejected → Model B selected |
+| **P1-3** | **scarlix-scheduler CLI collects runtime health** | CLI sent only `CollectGPUHealth()` to scheduler → runtime health map was empty → down runtimes never hard-rejected in production path | CLI now calls `CollectRuntimeHealth()` + combines GPU+runtime health → scheduler sees runtime health in production |
+| **P1-4** | **Plan() doesn't mutate caller's contract** | `c.Compute.Accelerator = "cuda"` mutated the caller's struct → side effect | Local `accelerator` variable — caller's contract unchanged |
+
+### P2 fixes (documentation + CI)
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P2-1** | **gofmt CI actually added** | README claimed gofmt in CI but `ci.yml` had no gofmt step (false claim) | `gofmt -l .` step added to CI after `go vet` — exits 1 on unformatted files |
+| **P2-2** | **Dockerfile header** | v19.1.10 (stale by 2 releases) | v19.1.12 |
+| **P2-3** | **Pi-Bolt config.template.json** | v19.0.10 + security text referenced old `/etc/scarlix/.env` pattern | v19.1.12 + references `~/.config/scarlix/agent.env` (v19.1.11 pattern) |
+| **P2-4** | **Monitor file-header comments** | Said "currently a stub" / "coming in v19.1.5+" (server implemented since v19.1.6) | Updated to "HTTP server mode implemented in v19.1.6+" |
+
+### New tests (4)
+```
+TestPlan_CPURuntimeNotOnGPUPath              — beellama (empty GPUIDs) NOT selected for cuda request
+TestPlan_MultiModelSelectionSkipsIncompatible — Model A (no "coding") → skip → Model B (has "coding") → selected
+TestPlan_EmptySupportedRuntimesNotRejected   — empty SupportedRuntimes = "supports all"
+TestPlan_DoesNotMutateContract               — Plan() leaves caller's Accelerator unchanged
+```
+
+### Test results
+```
+go vet ./internal/scheduler/      → CLEAN
+go test ./internal/scheduler/ -v   → 21 PASS / 0 FAIL (17 existing + 4 new)
+go test ./...                      → 10 packages all OK (no regression)
+scarlix-smoke-test.sh             → 13 passed, 0 failed, 0 warned
+```
+
+### v19.1.x Resource Foundation + Hardening — FINAL
+```
+v19.1.0–v19.1.5   Resource Foundation (contract, registries, monitor, telemetry)
+v19.1.6–v19.1.9   Resource View + Scheduler + Compatibility + Release freeze
+v19.1.10          Scheduler Correctness (3 P1: CPU, capabilities, down runtime)
+v19.1.11          Contract Semantics Hardening (8 P1 + 5 P2)
+v19.1.12          Resource Snapshot Integrity (4 P1 + 4 P2)  ← FINAL RELEASE
+```
+
+**v19.1.x is now FROZEN. v19.2.0 Compute Fabric can safely transition from dry-run → real allocation.**
 
 ---
 

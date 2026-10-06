@@ -439,3 +439,114 @@ func TestPlan_EmptyAcceleratorDefaultsCuda(t *testing.T) {
                 t.Error("empty accelerator should default to cuda and find GPU")
         }
 }
+
+// v19.1.12 P1-B1: CPU-only runtime (empty GPUIDs) must NOT be selected on GPU path
+func TestPlan_CPURuntimeNotOnGPUPath(t *testing.T) {
+        gpus := []inventory.GPU{
+                {ID: "gpu.nvidia.0", Index: 0, Vendor: "nvidia", VRAMTotalMB: 16384, VRAMFreeMB: 12000, Healthy: true},
+        }
+        runtimes := []inventory.Runtime{
+                {ID: "beellama", GPUIDs: []string{}, Running: true}, // CPU-only, running
+                {ID: "sglang", GPUIDs: []string{"gpu.nvidia.0"}, Running: false}, // GPU, not running
+        }
+        models := []inventory.Model{
+                {ID: "beellama-model", Format: "gguf", SupportedRuntimes: []string{"llamacpp"}, Present: true, Capabilities: []string{"coding"}},
+                {ID: "sglang-model", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"coding"}},
+        }
+        s := New(gpus, runtimes, models, nil)
+
+        c := &contract.ResourceContract{
+                Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
+                Compute: contract.ComputeSpec{Accelerator: "cuda", VRAMMB: 8000},
+                Runtime: contract.RuntimeSpec{Preferred: []string{"sglang", "beellama"}},
+                Model:   contract.ModelSpec{Capabilities: []string{"coding"}},
+        }
+
+        plan := s.Plan(c)
+        if plan.SelectedRuntime == "beellama" {
+                t.Error("beellama (CPU-only) must NOT be selected for a cuda request (P1-B1)")
+        }
+}
+
+// v19.1.12 P1-2 (Review2): Model A incompatible → continue → Model B compatible → B selected
+func TestPlan_MultiModelSelectionSkipsIncompatible(t *testing.T) {
+        gpus := []inventory.GPU{
+                {ID: "gpu.nvidia.0", Index: 0, Vendor: "nvidia", VRAMTotalMB: 16384, VRAMFreeMB: 12000, Healthy: true},
+        }
+        runtimes := []inventory.Runtime{
+                {ID: "sglang", GPUIDs: []string{"gpu.nvidia.0"}, Running: true},
+        }
+        models := []inventory.Model{
+                {ID: "model-a", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"chat"}},         // no "coding"
+                {ID: "model-b", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"coding", "reasoning"}}, // has "coding"
+        }
+        s := New(gpus, runtimes, models, nil)
+
+        c := &contract.ResourceContract{
+                Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
+                Compute: contract.ComputeSpec{Accelerator: "cuda", VRAMMB: 8000},
+                Runtime: contract.RuntimeSpec{Preferred: []string{"sglang"}},
+                Model:   contract.ModelSpec{Capabilities: []string{"coding"}},
+        }
+
+        plan := s.Plan(c)
+        if plan.SelectedGPU == nil {
+                t.Fatal("expected a selected GPU, got nil")
+        }
+        if plan.SelectedModel != "model-b" {
+                t.Errorf("expected model-b (has coding capability), got %s (model-a should have been skipped, not abort the loop)", plan.SelectedModel)
+        }
+}
+
+// v19.1.12 P1-B2: Empty SupportedRuntimes = "supports all"
+func TestPlan_EmptySupportedRuntimesNotRejected(t *testing.T) {
+        gpus := []inventory.GPU{
+                {ID: "gpu.nvidia.0", Index: 0, Vendor: "nvidia", VRAMTotalMB: 16384, VRAMFreeMB: 12000, Healthy: true},
+        }
+        runtimes := []inventory.Runtime{
+                {ID: "sglang", GPUIDs: []string{"gpu.nvidia.0"}, Running: true},
+        }
+        models := []inventory.Model{
+                {ID: "custom-model", Format: "safetensors", SupportedRuntimes: []string{}, Present: true, Capabilities: []string{"coding"}},
+        }
+        s := New(gpus, runtimes, models, nil)
+
+        c := &contract.ResourceContract{
+                Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
+                Compute: contract.ComputeSpec{Accelerator: "cuda", VRAMMB: 8000},
+                Runtime: contract.RuntimeSpec{Preferred: []string{"sglang"}},
+                Model:   contract.ModelSpec{Capabilities: []string{"coding"}},
+        }
+
+        plan := s.Plan(c)
+        if plan.SelectedGPU == nil {
+                t.Error("model with empty SupportedRuntimes should be treated as 'supports all' — not rejected")
+        }
+}
+
+// v19.1.12 P1-B3: Plan() must NOT mutate caller's contract
+func TestPlan_DoesNotMutateContract(t *testing.T) {
+        gpus := []inventory.GPU{
+                {ID: "gpu.nvidia.0", Index: 0, Vendor: "nvidia", VRAMTotalMB: 16384, VRAMFreeMB: 12000, Healthy: true},
+        }
+        runtimes := []inventory.Runtime{
+                {ID: "sglang", GPUIDs: []string{"gpu.nvidia.0"}, Running: true},
+        }
+        models := []inventory.Model{
+                {ID: "test-model", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"coding"}},
+        }
+        s := New(gpus, runtimes, models, nil)
+
+        c := &contract.ResourceContract{
+                Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
+                Compute: contract.ComputeSpec{Accelerator: ""}, // empty — should default to cuda internally
+                Runtime: contract.RuntimeSpec{Preferred: []string{"sglang"}},
+                Model:   contract.ModelSpec{Capabilities: []string{"coding"}},
+        }
+
+        _ = s.Plan(c)
+        // After Plan(), the caller's contract should still have empty accelerator
+        if c.Compute.Accelerator != "" {
+                t.Errorf("Plan() must NOT mutate caller's contract — accelerator was changed to %q (was empty)", c.Compute.Accelerator)
+        }
+}
