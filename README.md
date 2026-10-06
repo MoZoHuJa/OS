@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.4 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.5 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.4</h1>
+<h1 align="center">SCARLIX OS v19.1.5</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.4"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.4-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.5"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.5-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.4 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.5 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.4   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.5   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,53 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.5 (vs v19.1.4)
+
+**Telemetry History — lightweight measurement persistence.** 4 deliverables.
+
+v19.1.5 implements telemetry persistence per master guide section 16. Measurements (timestamp, GPU util, VRAM, temp, runtime, model, latency, tokens/sec) are stored as JSON Lines — no SQLite dependency. The `scarlix-monitor` binary gains `--record` (persist a snapshot) and `--history` (query past measurements) modes.
+
+### v19.1.5 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **Telemetry store** (`scarlihq/internal/telemetry/store.go`, 230 lines) | JSON Lines persistence. `Measurement` struct (10 fields, FROZEN in v19.1.5). `Append()`, `Query(from, to)`, `Count()`, `Prune(olderThan)`, `Path()`. Thread-safe append, sorted query results, malformed-line skip. |
+| 2 | **10 telemetry tests** (`store_test.go`) | Append+count, auto-timestamp, empty query, time-range filter, sorted results, prune, parent-dir creation, malformed-line skip, env-var path, JSON round-trip. All PASS. |
+| 3 | **scarlix-monitor `--record`/`--history`/`--prune`** | `--record`: take snapshot + persist measurements (one per GPU + runtime mapping). `--history [--from T --to T]`: query + print JSON. `--prune <duration>`: remove old entries (e.g. `24h`, `7d`). |
+| 4 | **No SQLite dependency** — JSON Lines format (one JSON object per line). Append-only, simple time-range queries. Storage path: `/var/lib/scarlix/telemetry.jsonl` (override via `SCARLIX_TELEMETRY_FILE`). |
+
+### Measurement fields (FROZEN in v19.1.5)
+```
+timestamp, gpu_index, gpu_util_pct, gpu_vram_used_mb, gpu_vram_total_mb,
+gpu_temp_c, runtime, model, latency_ms, tokens_per_sec
+```
+
+### Test results
+```
+go vet ./internal/telemetry/         → CLEAN
+go test ./internal/telemetry/ -v     → 10 PASS / 0 FAIL
+go build ./...                        → all packages OK (no regression)
+go test ./...                         → 8 packages all PASS
+scarlix-monitor --record              → "recorded telemetry to /var/lib/scarlix/telemetry.jsonl"
+scarlix-monitor --history             → []Measurement JSON array
+scarlix-monitor --history --from T    → time-range filtered
+scarlix-monitor --prune 24h           → "pruned N entries older than 24h"
+scarlix-smoke-test.sh                → 13 passed, 0 failed, 0 warned
+```
+
+### v19.1.x Resource Foundation generation COMPLETE
+v19.1.0–v19.1.5 delivers the full Resource Foundation per ScaRgeN master guide sections 10–16:
+- v19.1.0: Resource Contract v1 (schema)
+- v19.1.1: Contract Validation (reject rules)
+- v19.1.2: Runtime Registry v1 (lifecycle + lookup)
+- v19.1.3: Model Registry v1 (CLI inspect/health)
+- v19.1.4: ScarliMonitor Foundation (read-only monitoring)
+- v19.1.5: Telemetry History (persistence)
+
+**Next generation: v19.2.x Compute Fabric** (real scheduler, deterministic scoring, GPU selection, leases).
 
 ---
 

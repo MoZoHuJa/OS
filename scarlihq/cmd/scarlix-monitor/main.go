@@ -36,12 +36,15 @@
 package main
 
 import (
+        "encoding/json"
         "flag"
         "fmt"
         "os"
         "strings"
+        "time"
 
         "github.com/MoZoHuJa/OS/scarlihq/internal/monitor"
+        "github.com/MoZoHuJa/OS/scarlihq/internal/telemetry"
 )
 
 const usage = `scarlix-monitor — ScarliMonitor read-only snapshot CLI (SCARLIX OS v19.1.4)
@@ -65,41 +68,129 @@ See docs/SCARLIX_MONITOR.md for the snapshot schema and design notes.
 `
 
 func main() {
-        // Define flags. --once is the default behavior (no-op flag, kept for
-        // explicitness + future-script clarity). --serve <port> is a stub — it
-        // prints a "coming in v19.1.5" message and exits 0 per the task spec
-        // ("don't implement the server yet, just the flag").
         once := flag.Bool("once", false, "print a single Snapshot as JSON and exit (default behavior)")
         servePort := flag.Int("serve", 0, "start HTTP server on the given port (STUB — coming in v19.1.5)")
+        record := flag.Bool("record", false, "take a snapshot + persist telemetry measurements to store (v19.1.5)")
+        history := flag.Bool("history", false, "print telemetry history as JSON array (v19.1.5)")
+        historyFrom := flag.String("from", "", "history query start time (RFC3339, e.g. 2026-10-06T00:00:00Z)")
+        historyTo := flag.String("to", "", "history query end time (RFC3339)")
+        pruneOlder := flag.String("prune", "", "prune entries older than duration (e.g. 24h, 7d)")
         flag.Usage = func() {
                 fmt.Fprint(os.Stderr, usage)
         }
         flag.Parse()
 
-        // --serve is mutually exclusive with --once (and with the default
-        // no-args form). If both are set, prefer --serve (the explicit future
-        // mode) — but since --serve is a stub in v19.1.4, we just print the
-        // stub message and exit.
+        // --serve stub
         if *servePort > 0 {
-                fmt.Println("HTTP server mode coming in v19.1.5")
-                // Exit 0 — the stub message is the intended v19.1.4 behavior,
-                // not an error. This makes scripts that probe for --serve support
-                // get a clean exit code they can branch on.
+                fmt.Println("HTTP server mode coming in v19.1.6")
                 os.Exit(0)
         }
 
-        // Default + --once: same path. The *once bool is intentionally unused
-        // beyond flag parsing — its presence in --help output documents that
-        // the no-args form IS the "once" mode, which is otherwise non-obvious.
         _ = once
 
-        // Read the SCARLIX OS version from /etc/scarlix/VERSION (canonical install
-        // path). Falls back through repo-relative paths + "unknown" sentinel,
-        // matching scarlix-inventory/main.go's readVersion() helper. We don't
-        // import that helper because it's package main-scoped — re-implement
-        // the small reader inline (5 lines, no behavior drift risk).
         version := readVersion()
 
+        // --record: take snapshot + persist telemetry
+        if *record {
+                m := monitor.New(version)
+                snap := m.Snapshot()
+                store := telemetry.New("")
+
+                // Convert snapshot to measurements (one per GPU if GPUs present, else one general)
+                if len(snap.GPUs) > 0 {
+                        for _, gpu := range snap.GPUs {
+                                meas := telemetry.Measurement{
+                                        Timestamp:      snap.Timestamp,
+                                        GPUIndex:       gpu.Index,
+                                        GPUUtilPct:     float64(gpu.UtilizationPct),
+                                        GPUVRAMUsedMB:  gpu.VRAMUsedMB,
+                                        GPUVRAMTotalMB: gpu.VRAMTotalMB,
+                                        GPUTempC:       gpu.TemperatureC,
+                                }
+                                // Find the runtime running on this GPU
+                                for _, rt := range snap.Runtimes {
+                                        if rt.Running {
+                                                for _, gid := range rt.GPUIDs {
+                                                        if gid == fmt.Sprintf("gpu.nvidia.%d", gpu.Index) {
+                                                                meas.Runtime = rt.ID
+                                                                break
+                                                        }
+                                                }
+                                        }
+                                }
+                                if err := store.Append(meas); err != nil {
+                                        fmt.Fprintf(os.Stderr, "scarlix-monitor: record failed: %v\n", err)
+                                        os.Exit(1)
+                                }
+                        }
+                } else {
+                        // No GPUs — record a single measurement with just timestamp + CPU
+                        meas := telemetry.Measurement{
+                                Timestamp: snap.Timestamp,
+                        }
+                        if err := store.Append(meas); err != nil {
+                                fmt.Fprintf(os.Stderr, "scarlix-monitor: record failed: %v\n", err)
+                                os.Exit(1)
+                        }
+                }
+                fmt.Fprintf(os.Stderr, "scarlix-monitor: recorded telemetry to %s\n", store.Path())
+                os.Exit(0)
+        }
+
+        // --history: query + print telemetry
+        if *history {
+                store := telemetry.New("")
+
+                var fromTime, toTime time.Time
+                var err error
+                if *historyFrom != "" {
+                        fromTime, err = time.Parse(time.RFC3339, *historyFrom)
+                        if err != nil {
+                                fmt.Fprintf(os.Stderr, "scarlix-monitor: invalid --from time: %v\n", err)
+                                os.Exit(2)
+                        }
+                }
+                if *historyTo != "" {
+                        toTime, err = time.Parse(time.RFC3339, *historyTo)
+                        if err != nil {
+                                fmt.Fprintf(os.Stderr, "scarlix-monitor: invalid --to time: %v\n", err)
+                                os.Exit(2)
+                        }
+                }
+
+                results, err := store.Query(fromTime, toTime)
+                if err != nil {
+                        fmt.Fprintf(os.Stderr, "scarlix-monitor: history query failed: %v\n", err)
+                        os.Exit(1)
+                }
+
+                enc := json.NewEncoder(os.Stdout)
+                enc.SetIndent("", "  ")
+                if err := enc.Encode(results); err != nil {
+                        fmt.Fprintf(os.Stderr, "scarlix-monitor: encode error: %v\n", err)
+                        os.Exit(1)
+                }
+                os.Exit(0)
+        }
+
+        // --prune: remove old entries
+        if *pruneOlder != "" {
+                dur, err := time.ParseDuration(*pruneOlder)
+                if err != nil {
+                        fmt.Fprintf(os.Stderr, "scarlix-monitor: invalid duration %q: %v\n", *pruneOlder, err)
+                        os.Exit(2)
+                }
+                store := telemetry.New("")
+                removed, err := store.Prune(dur)
+                if err != nil {
+                        fmt.Fprintf(os.Stderr, "scarlix-monitor: prune failed: %v\n", err)
+                        os.Exit(1)
+                }
+                fmt.Fprintf(os.Stderr, "scarlix-monitor: pruned %d entries older than %s\n", removed, *pruneOlder)
+                os.Exit(0)
+        }
+
+        // Default: --once (print snapshot JSON)
         m := monitor.New(version)
         data, err := m.SnapshotJSON()
         if err != nil {
@@ -107,8 +198,6 @@ func main() {
                 os.Exit(1)
         }
 
-        // json.MarshalIndent doesn't append a trailing newline; print one for
-        // clean terminal output + POSIX-friendly piping (e.g. `| jq`).
         fmt.Println(string(data))
 }
 
