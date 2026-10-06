@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.6 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.7 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.6</h1>
+<h1 align="center">SCARLIX OS v19.1.7</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.6"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.6-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.7"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.7-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.6 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.7 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.6   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.7   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,55 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.7 (vs v19.1.6)
+
+**Scheduler Dry Run — deterministic scoring, no allocation.** 4 deliverables.
+
+v19.1.7 implements the dry-run scheduler per master guide section 17. The `scarlix-scheduler` binary (or future `scarlix compute plan`) takes a task type + computes a plan: which GPU, runtime, and model the scheduler WOULD select. No actual allocation — read-only planning.
+
+### v19.1.7 deliverables
+
+| # | Deliverable | Description |
+|---|-------------|-------------|
+| 1 | **Scheduler package** (`scarlihq/internal/scheduler/plan.go`, 330 lines) | `Scheduler` type + `Plan()` method. Deterministic scoring: `vram_fit + runtime_fit + model_fit + latency + health - utilization_penalty - temperature_penalty`. Returns `Plan` with selected GPU/runtime/model + score breakdown + rejections. |
+| 2 | **9 scheduler tests** (`plan_test.go`) | No-GPUs, selects compatible GPU, rejects insufficient VRAM, rejects wrong accelerator, prefers low utilization, score breakdown non-empty, format human-readable, accelerator compatibility, rejects unhealthy GPU. All PASS. |
+| 3 | **scarlix-scheduler binary** (`scarlihq/cmd/scarlix-scheduler/main.go`, 90 lines) | CLI: `plan --task <type> [--priority <p>] [--vram <mb>] [--runtime <r>] [--capabilities <c>] [--json]`. Human-readable output by default (master guide format), JSON with `--json`. |
+| 4 | **install.sh integration** | Build block (native Go + Docker fallback) + binary copy list. |
+
+### Scoring formula (deterministic, no AI)
+```
+score = vram_fit(+30) + runtime_fit(+20) + model_fit(+20) + latency(+20) + health(+10)
+      - utilization_penalty(-10 if >80%) - temperature_penalty(-10 if >90°C)
+```
+
+### CLI usage
+```bash
+scarlix-scheduler plan --task coding                    # human-readable plan
+scarlix-scheduler plan --task coding --json              # JSON output
+scarlix-scheduler plan --task coding --vram 12000         # specify VRAM requirement
+scarlix-scheduler plan --task chat --runtime sglang       # preferred runtime
+scarlix-scheduler plan --task coding --capabilities coding,reasoning  # model caps
+```
+
+### Test results
+```
+go vet ./internal/scheduler/      → CLEAN
+go test ./internal/scheduler/ -v   → 9 PASS / 0 FAIL
+go build ./...                      → 9 packages OK (no regression)
+go test ./...                       → 9 packages all PASS
+scarlix-scheduler plan --task coding → "No compatible GPU found" (sandbox, no nvidia-smi)
+scarlix-scheduler --json plan       → valid JSON
+scarlix-smoke-test.sh               → 13 passed, 0 failed, 0 warned
+```
+
+### What's NOT in v19.1.7 (by design)
+- No actual allocation (v19.2.0 real Compute Fabric)
+- No resource leases (v19.2.7)
+- No priority queue ordering (v19.2.5)
+- GPU compatibility matrix not formalized yet (v19.1.8)
 
 ---
 
