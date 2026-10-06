@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.9 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.10 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.9</h1>
+<h1 align="center">SCARLIX OS v19.1.10</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.9"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.9-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.10"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.10-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.9 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.10 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.9   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.10   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,55 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.10 (vs v19.1.9)
+
+**Scheduler Correctness Patch — 3 P1 + 3 P2 fixes from independent review.** 6 deliverables.
+
+Independent review of v19.1.9 found 3 P1 logic bugs in the dry-run scheduler + 3 P2 documentation/CI gaps. v19.1.10 fixes all 6 before the transition to v19.2.x Compute Fabric.
+
+### P1 fixes (scheduler correctness)
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P1-1** | **CPU request never selects GPU** | `acceleratorCompatible("cpu", gpu)` returned `true` → CPU tasks could be assigned to GPUs via the GPU loop | `acceleratorCompatible("cpu", gpu)` returns `false`. CPU requests skip the GPU loop entirely, only matching CPU runtimes (beellama/ollama) via new `scoreRuntimeForCPU()` method |
+| **P1-2** | **Model with missing capabilities is REJECTED** | `scoreModel()` gave `score=5` (lower but still a candidate) when capabilities didn't match → model without "vision" could be selected for a "vision" task | `scoreModel()` returns empty (rejection) when `matched==0`. Plan() hard-rejects candidates with no compatible model |
+| **P1-3** | **Down/unhealthy runtime is HARD-rejected** | Health only affected latency score → a DOWN runtime (sglang) could be selected over a HEALTHY one (vllm) if sglang was first in the loop | `scoreRuntime()` + `scoreRuntimeForCPU()` hard-filter `down`/`unhealthy` runtimes BEFORE scoring. Only `healthy`/`unknown` runtimes are candidates |
+
+### P2 fixes (documentation + CI)
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P2-1** | scarlix-monitor usage text | Said "v19.1.4" + "--serve = STUB — coming in v19.1.5" | Updated to "v19.1.10" + "--serve = ScarliHQ Resource View, v19.1.6" (server is implemented since v19.1.6) |
+| **P2-2** | Dockerfile header | `# ScarliHQ v19.0.5` (stale by 5+ minor releases) | `# ScarliHQ v19.1.10` |
+| **P2-3** | CI builds only 2 of 7 Go binaries | CI verified only `scarlihq` + `scarlix-bridge-reader` (v18.7.8) — 5 new binaries (scarlix-gpu, scarlix-inventory, scarlix-contract, scarlix-monitor, scarlix-scheduler) were not CI-verified | CI now explicitly builds all 7 Go binaries with success verification |
+
+### New scheduler tests (4)
+```
+TestPlan_CPURequestNeverSelectsGPU        — CPU accelerator → no GPU selected, CPU runtime used
+TestPlan_RejectsModelWithMissingCapabilities — model without "vision" → rejected, not lowered score
+TestPlan_RejectsWhenNoModelFound          — no models in registry → candidate rejected
+TestPlan_RejectsDownRuntime               — sglang DOWN + vllm HEALTHY → vllm selected (hard filter)
+```
+
+### Test results
+```
+go vet ./internal/scheduler/      → CLEAN
+go test ./internal/scheduler/ -v   → 13 PASS / 0 FAIL (9 existing + 4 new)
+go test ./... -count=1            → 149 PASS / 0 FAIL (10 packages, no regression)
+go build ./...                     → all packages OK
+scarlix-smoke-test.sh             → 13 passed, 0 failed, 0 warned
+```
+
+### What this means for v19.2.x
+The scheduler now correctly handles the 3 edge cases that would have caused incorrect allocations in the real Compute Fabric:
+- CPU tasks will never be sent to GPUs
+- Models without required capabilities will never be selected
+- Down runtimes will never be selected over healthy ones
+
+**v19.2.0 Compute Fabric can now safely transition from dry-run → real allocation.**
 
 ---
 

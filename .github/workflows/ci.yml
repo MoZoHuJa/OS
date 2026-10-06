@@ -246,6 +246,18 @@ jobs:
           #   the slower scarlihq-docker-build job. Now both binaries are vetted here.)
           CGO_ENABLED=0 go build -ldflags="-s -w" -o /tmp/scarlix-bridge-reader ./cmd/scarlix-bridge-reader
           echo "scarlix-bridge-reader binary built successfully"
+          # v19.1.10 P2 FIX: Build ALL 7 Go binaries (was: only 2 — 5 new binaries
+          #   from v19.0.8-v19.1.7 were not CI-verified. Now all are built explicitly.)
+          CGO_ENABLED=0 go build -o /tmp/scarlix-gpu ./cmd/scarlix-gpu
+          echo "scarlix-gpu binary built successfully"
+          CGO_ENABLED=0 go build -o /tmp/scarlix-inventory ./cmd/scarlix-inventory
+          echo "scarlix-inventory binary built successfully"
+          CGO_ENABLED=0 go build -o /tmp/scarlix-contract ./cmd/scarlix-contract
+          echo "scarlix-contract binary built successfully"
+          CGO_ENABLED=0 go build -o /tmp/scarlix-monitor ./cmd/scarlix-monitor
+          echo "scarlix-monitor binary built successfully"
+          CGO_ENABLED=0 go build -o /tmp/scarlix-scheduler ./cmd/scarlix-scheduler
+          echo "scarlix-scheduler binary built successfully"
       - name: go test
         working-directory: scarlihq
         # v18.3 P1: removed `|| echo "(no tests yet)"` mask (was: hid test failures)

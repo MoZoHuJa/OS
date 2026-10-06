@@ -1,6 +1,6 @@
 // Command scarlix-monitor prints a read-only system monitoring snapshot as
 // JSON. It is the standalone CLI entry point for the ScarliMonitor service
-// (v19.1.4 ScarliMonitor Foundation — ScaRgeN master guide section 14).
+// (v19.1.10 ScarliMonitor — ScaRgeN master guide sections 14-16).
 //
 // The monitor package composes inventory collectors (GPUs, runtimes, models,
 // health) with /proc + /sys reads (CPU, RAM, storage) into a single
@@ -27,7 +27,7 @@
 //
 //      CGO_ENABLED=0 go build -o /usr/local/bin/scarlix-monitor ./cmd/scarlix-monitor
 //
-// Deployment (v19.1.4 task 4-b): install.sh Phase 4 copies this binary to
+// Deployment (v19.1.4+): install.sh Phase 4 copies this binary to
 // /usr/local/bin/scarlix-monitor (root:root, mode 755). It is a standalone
 // tool — the bash `scarlix` CLI does not depend on it. Future integrations:
 //   - v19.1.5: telemetry history (persist snapshots every N seconds)
@@ -48,12 +48,12 @@ import (
         "github.com/MoZoHuJa/OS/scarlihq/internal/telemetry"
 )
 
-const usage = `scarlix-monitor — ScarliMonitor read-only snapshot CLI (SCARLIX OS v19.1.4)
+const usage = `scarlix-monitor — ScarliMonitor read-only snapshot CLI (SCARLIX OS v19.1.10)
 
 Usage:
   scarlix-monitor                  Print a single Snapshot as pretty JSON, exit 0
   scarlix-monitor --once           Same as default (explicit)
-  scarlix-monitor --serve <port>   Start HTTP server (STUB — coming in v19.1.5)
+  scarlix-monitor --serve <port>   Start HTTP server (ScarliHQ Resource View, v19.1.6)
   scarlix-monitor -h, --help       Print this help and exit 0
 
 The snapshot includes GPU, CPU, RAM, storage, runtime health, model health,
