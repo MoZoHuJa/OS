@@ -24,16 +24,16 @@ services:
             - driver: nvidia
               device_ids: ["1"]
               capabilities: [gpu]
+    # v19.1.13 P1-5 SECURITY: --trust-remote-code (below) allows model repos to execute
+    #   arbitrary Python code inside the container. Only safe with TRUSTED model
+    #   sources (verified HuggingFace repos, e.g. Qwen official). For untrusted
+    #   models, remove that flag and use only models with built-in architecture support.
+    #   Supply-chain path: models.yaml → download-models.sh → HuggingFace → /models → vLLM
     command: >
       --model ${VLLM_MODEL_PATH:-/models/Qwen3-14B-AWQ}
       --tensor-parallel-size ${VLLM_TENSOR_PARALLEL:-1}
       --gpu-memory-utilization ${VLLM_GPU_UTIL:-0.85}
       --max-model-len ${VLLM_MAX_MODEL_LEN:-32768}
-      # v19.1.13 P1-5 SECURITY: --trust-remote-code allows model repos to execute
-      #   arbitrary Python code inside the container. Only safe with TRUSTED model
-      #   sources (verified HuggingFace repos, e.g. Qwen official). For untrusted
-      #   models, remove this flag and use only models with built-in architecture support.
-      #   Supply-chain path: models.yaml → download-models.sh → HuggingFace → /models → vLLM
       --trust-remote-code
       --host 0.0.0.0
       --port 8000
