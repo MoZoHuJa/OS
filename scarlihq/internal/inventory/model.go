@@ -34,14 +34,14 @@
 package inventory
 
 import (
-        "fmt"
-        "os"
-        "path/filepath"
-        "regexp"
-        "strconv"
-        "strings"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 
-        "gopkg.in/yaml.v3"
+	"gopkg.in/yaml.v3"
 )
 
 // engineMeta captures per-engine static metadata used to normalize a model
@@ -53,16 +53,16 @@ import (
 // Fields:
 //   - Format           — "safetensors" or "gguf"
 //   - Quantization      — heuristic default ("awq" for sglang/vllm, "" for
-//                         ollama — beellama overrides with q4_k_m parsed
-//                         from hf_file name)
+//     ollama — beellama overrides with q4_k_m parsed
+//     from hf_file name)
 //   - Capabilities     — Model.Capabilities (chat/completion/tools)
 //   - SupportedRuntimes — Model.SupportedRuntimes (the runtimes that can
-//                         serve this format)
+//     serve this format)
 type engineMeta struct {
-        Format           string
-        Quantization     string
-        Capabilities     []string
-        SupportedRuntimes []string
+	Format            string
+	Quantization      string
+	Capabilities      []string
+	SupportedRuntimes []string
 }
 
 // engineMetadata is the canonical engine → format/caps mapping. Sourced
@@ -71,30 +71,30 @@ type engineMeta struct {
 //   - GGUF models are served by llamacpp
 //   - ollama pulls GGUF blobs internally but exposes them via its own API
 var engineMetadata = map[string]engineMeta{
-        "sglang": {
-                Format:            "safetensors",
-                Quantization:      "awq",
-                Capabilities:      []string{"chat", "completion", "tools"},
-                SupportedRuntimes: []string{"sglang", "vllm"},
-        },
-        "vllm": {
-                Format:            "safetensors",
-                Quantization:      "awq",
-                Capabilities:      []string{"chat", "completion", "tools"},
-                SupportedRuntimes: []string{"sglang", "vllm"},
-        },
-        "beellama": {
-                Format:            "gguf",
-                Quantization:      "q4_k_m", // overridden from hf_file name in modelFromYAML
-                Capabilities:      []string{"chat", "completion"},
-                SupportedRuntimes: []string{"llamacpp"},
-        },
-        "ollama": {
-                Format:            "gguf",
-                Quantization:      "",
-                Capabilities:      []string{"chat", "completion"},
-                SupportedRuntimes: []string{"ollama"},
-        },
+	"sglang": {
+		Format:            "safetensors",
+		Quantization:      "awq",
+		Capabilities:      []string{"chat", "completion", "tools"},
+		SupportedRuntimes: []string{"sglang", "vllm"},
+	},
+	"vllm": {
+		Format:            "safetensors",
+		Quantization:      "awq",
+		Capabilities:      []string{"chat", "completion", "tools"},
+		SupportedRuntimes: []string{"sglang", "vllm"},
+	},
+	"beellama": {
+		Format:            "gguf",
+		Quantization:      "q4_k_m", // overridden from hf_file name in modelFromYAML
+		Capabilities:      []string{"chat", "completion"},
+		SupportedRuntimes: []string{"llamacpp"},
+	},
+	"ollama": {
+		Format:            "gguf",
+		Quantization:      "",
+		Capabilities:      []string{"chat", "completion"},
+		SupportedRuntimes: []string{"ollama"},
+	},
 }
 
 // modelSectionKeys is the canonical list of model sections in models.yaml.
@@ -109,177 +109,177 @@ var modelSectionKeys = []string{"sglang", "vllm", "beellama", "ollama"}
 //
 // Field population rules (see docs/SCARLIX_DATA_CONTRACTS.md §4):
 //   - ID                — the YAML section key ("sglang", "vllm", "beellama",
-//                         "ollama"). Stable identifier; matches the runtime
-//                         IDs in runtimeMetadata (so cross-refs work).
+//     "ollama"). Stable identifier; matches the runtime
+//     IDs in runtimeMetadata (so cross-refs work).
 //   - Path              — model_path from YAML; for beellama (which has no
-//                         model_path, only hf_repo + hf_file) derive as
-//                         "/models/" + basename(hf_file); for ollama
-//                         (which has neither) empty string.
+//     model_path, only hf_repo + hf_file) derive as
+//     "/models/" + basename(hf_file); for ollama
+//     (which has neither) empty string.
 //   - Format            — "safetensors" for sglang/vllm, "gguf" for beellama
-//                         and ollama.
+//     and ollama.
 //   - Quantization      — "awq" for sglang/vllm; "q4_k_m" for beellama
-//                         (parsed from hf_file name, case-insensitive);
-//                         "" for ollama.
+//     (parsed from hf_file name, case-insensitive);
+//     "" for ollama.
 //   - Parameters        — parsed from model path / hf_file / model name
-//                         (e.g. "14B" from "Qwen3-14B-AWQ"). "" if no match.
+//     (e.g. "14B" from "Qwen3-14B-AWQ"). "" if no match.
 //   - ContextLength     — read from YAML; sglang uses context_length key,
-//                         vllm uses max_model_len, beellama uses context_size.
-//                         Ollama has no context-length key → 0.
+//     vllm uses max_model_len, beellama uses context_size.
+//     Ollama has no context-length key → 0.
 //   - EstimatedVRAM     — 0 (not in models.yaml — left for future
-//                         calculation in v19.1.x resource foundation).
+//     calculation in v19.1.x resource foundation).
 //   - Capabilities      — engine-derived (see engineMetadata).
 //   - SupportedRuntimes — engine-derived (see engineMetadata).
 //   - Present           — true iff os.Stat(Path) succeeds. For ollama
-//                         (Path=="") always false (task spec allows this —
-//                         ollama pulls on demand).
+//     (Path=="") always false (task spec allows this —
+//     ollama pulls on demand).
 func CollectModels() []Model {
-        path := resolveModelsYAML()
-        if path == "" {
-                // models.yaml not found anywhere we look — graceful degradation.
-                return []Model{}
-        }
+	path := resolveModelsYAML()
+	if path == "" {
+		// models.yaml not found anywhere we look — graceful degradation.
+		return []Model{}
+	}
 
-        data, err := os.ReadFile(path)
-        if err != nil {
-                // Read error (permissions, race-condition file delete) — return empty.
-                // Logged to stderr for diagnosis; caller sees []Model{}.
-                fmt.Fprintf(os.Stderr, "inventory: cannot read %s: %v\n", path, err)
-                return []Model{}
-        }
+	data, err := os.ReadFile(path)
+	if err != nil {
+		// Read error (permissions, race-condition file delete) — return empty.
+		// Logged to stderr for diagnosis; caller sees []Model{}.
+		fmt.Fprintf(os.Stderr, "inventory: cannot read %s: %v\n", path, err)
+		return []Model{}
+	}
 
-        // Parse with gopkg.in/yaml.v3 (already a go.mod dependency, v3.0.1).
-        // Top-level structure: map[string]map[string]interface{} where outer
-        // keys are section names (sglang/vllm/...) and inner maps are the
-        // per-section config (model_path, hf_repo, hf_file, context_length, ...).
-        var raw map[string]map[string]interface{}
-        if err := yaml.Unmarshal(data, &raw); err != nil {
-                fmt.Fprintf(os.Stderr, "inventory: cannot parse %s as YAML: %v\n", path, err)
-                return []Model{}
-        }
+	// Parse with gopkg.in/yaml.v3 (already a go.mod dependency, v3.0.1).
+	// Top-level structure: map[string]map[string]interface{} where outer
+	// keys are section names (sglang/vllm/...) and inner maps are the
+	// per-section config (model_path, hf_repo, hf_file, context_length, ...).
+	var raw map[string]map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		fmt.Fprintf(os.Stderr, "inventory: cannot parse %s as YAML: %v\n", path, err)
+		return []Model{}
+	}
 
-        out := make([]Model, 0, len(modelSectionKeys))
-        for _, section := range modelSectionKeys {
-                sectionData, ok := raw[section]
-                if !ok || sectionData == nil {
-                        // Section absent in YAML (e.g. someone deleted the ollama:
-                        // block). Skip — don't emit a zero-value Model that would
-                        // confuse downstream consumers with a Present=false ghost.
-                        continue
-                }
-                out = append(out, modelFromYAML(section, section, sectionData))
-        }
-        return out
+	out := make([]Model, 0, len(modelSectionKeys))
+	for _, section := range modelSectionKeys {
+		sectionData, ok := raw[section]
+		if !ok || sectionData == nil {
+			// Section absent in YAML (e.g. someone deleted the ollama:
+			// block). Skip — don't emit a zero-value Model that would
+			// confuse downstream consumers with a Present=false ghost.
+			continue
+		}
+		out = append(out, modelFromYAML(section, section, sectionData))
+	}
+	return out
 }
 
 // modelFromYAML converts a yq-parsed model section to a Model struct.
 //
 //   - name    = the YAML section key (used as Model.ID)
 //   - engine  = the canonical engine name (sglang/vllm/llamacpp/ollama —
-//               for the beellama section the engine is "llamacpp")
+//     for the beellama section the engine is "llamacpp")
 //   - raw     = the parsed section map (keys: model_path, hf_repo,
-//               hf_file, context_length, context_size, max_model_len,
-//               model, ...)
+//     hf_file, context_length, context_size, max_model_len,
+//     model, ...)
 //
 // Numeric fields (ContextLength) are parsed defensively — a missing or
 // non-integer value yields 0 (the zero value), not an error. This matches
 // the data contract's "0 means unset" convention.
 func modelFromYAML(name, engine string, raw map[string]interface{}) Model {
-        // Look up engine metadata; default to a minimal entry if the engine
-        // name is unknown (defensive — shouldn't happen with our fixed
-        // modelSectionKeys + engineMetadata).
-        meta, ok := engineMetadata[name]
-        if !ok {
-                meta = engineMeta{
-                        Format:            "",
-                        Quantization:      "",
-                        Capabilities:      []string{"chat"},
-                        SupportedRuntimes: []string{},
-                }
-        }
+	// Look up engine metadata; default to a minimal entry if the engine
+	// name is unknown (defensive — shouldn't happen with our fixed
+	// modelSectionKeys + engineMetadata).
+	meta, ok := engineMetadata[name]
+	if !ok {
+		meta = engineMeta{
+			Format:            "",
+			Quantization:      "",
+			Capabilities:      []string{"chat"},
+			SupportedRuntimes: []string{},
+		}
+	}
 
-        // Extract model_path (may be empty for beellama + ollama).
-        modelPath := stringField(raw, "model_path")
+	// Extract model_path (may be empty for beellama + ollama).
+	modelPath := stringField(raw, "model_path")
 
-        // For beellama: derive model_path from hf_file if model_path
-        // is missing. Compose's default is "/models/" + basename(hf_file).
-        // If hf_file is already an absolute path (rare — e.g. test fixtures
-        // or non-standard installs), use it verbatim.
-        if modelPath == "" && name == "beellama" {
-                if hfFile := stringField(raw, "hf_file"); hfFile != "" {
-                        if filepath.IsAbs(hfFile) {
-                                modelPath = hfFile
-                        } else {
-                                modelPath = filepath.Join("/models", filepath.Base(hfFile))
-                        }
-                }
-        }
+	// For beellama: derive model_path from hf_file if model_path
+	// is missing. Compose's default is "/models/" + basename(hf_file).
+	// If hf_file is already an absolute path (rare — e.g. test fixtures
+	// or non-standard installs), use it verbatim.
+	if modelPath == "" && name == "beellama" {
+		if hfFile := stringField(raw, "hf_file"); hfFile != "" {
+			if filepath.IsAbs(hfFile) {
+				modelPath = hfFile
+			} else {
+				modelPath = filepath.Join("/models", filepath.Base(hfFile))
+			}
+		}
+	}
 
-        // Quantization: override for beellama by parsing hf_file name
-        // (Q4_K_M.gguf → "q4_k_m"). For sglang/vllm the engine default
-        // ("awq") is correct; for ollama the engine default ("") is correct.
-        quant := meta.Quantization
-        if name == "beellama" {
-                if hfFile := stringField(raw, "hf_file"); hfFile != "" {
-                        if q := parseGGUFQuant(hfFile); q != "" {
-                                quant = q
-                        }
-                }
-        }
+	// Quantization: override for beellama by parsing hf_file name
+	// (Q4_K_M.gguf → "q4_k_m"). For sglang/vllm the engine default
+	// ("awq") is correct; for ollama the engine default ("") is correct.
+	quant := meta.Quantization
+	if name == "beellama" {
+		if hfFile := stringField(raw, "hf_file"); hfFile != "" {
+			if q := parseGGUFQuant(hfFile); q != "" {
+				quant = q
+			}
+		}
+	}
 
-        // ContextLength: per-engine YAML key differs.
-        //   - sglang:   context_length
-        //   - vllm:     max_model_len
-        //   - beellama: context_size
-        //   - ollama:   (none — 0)
-        ctxLen := 0
-        switch name {
-        case "sglang":
-                ctxLen = intField(raw, "context_length")
-        case "vllm":
-                ctxLen = intField(raw, "max_model_len")
-        case "beellama":
-                ctxLen = intField(raw, "context_size")
-        }
+	// ContextLength: per-engine YAML key differs.
+	//   - sglang:   context_length
+	//   - vllm:     max_model_len
+	//   - beellama: context_size
+	//   - ollama:   (none — 0)
+	ctxLen := 0
+	switch name {
+	case "sglang":
+		ctxLen = intField(raw, "context_length")
+	case "vllm":
+		ctxLen = intField(raw, "max_model_len")
+	case "beellama":
+		ctxLen = intField(raw, "context_size")
+	}
 
-        // Parameters: parse from model_path or hf_repo / hf_file / model name.
-        // Looks for a substring like "14B", "3b", "7M", "70B" — case-insensitive.
-        params := parseParameters(modelPath)
-        if params == "" {
-                params = parseParameters(stringField(raw, "hf_repo"))
-        }
-        if params == "" {
-                params = parseParameters(stringField(raw, "hf_file"))
-        }
-        if params == "" {
-                params = parseParameters(stringField(raw, "model"))
-        }
+	// Parameters: parse from model_path or hf_repo / hf_file / model name.
+	// Looks for a substring like "14B", "3b", "7M", "70B" — case-insensitive.
+	params := parseParameters(modelPath)
+	if params == "" {
+		params = parseParameters(stringField(raw, "hf_repo"))
+	}
+	if params == "" {
+		params = parseParameters(stringField(raw, "hf_file"))
+	}
+	if params == "" {
+		params = parseParameters(stringField(raw, "model"))
+	}
 
-        // Present: true iff Path resolves on disk. For ollama (Path="") → false.
-        present := false
-        if modelPath != "" {
-                if _, err := os.Stat(modelPath); err == nil {
-                        present = true
-                }
-        }
+	// Present: true iff Path resolves on disk. For ollama (Path="") → false.
+	present := false
+	if modelPath != "" {
+		if _, err := os.Stat(modelPath); err == nil {
+			present = true
+		}
+	}
 
-        // Build non-nil slices so JSON marshals as [...] not null.
-        caps := make([]string, len(meta.Capabilities))
-        copy(caps, meta.Capabilities)
-        sr := make([]string, len(meta.SupportedRuntimes))
-        copy(sr, meta.SupportedRuntimes)
+	// Build non-nil slices so JSON marshals as [...] not null.
+	caps := make([]string, len(meta.Capabilities))
+	copy(caps, meta.Capabilities)
+	sr := make([]string, len(meta.SupportedRuntimes))
+	copy(sr, meta.SupportedRuntimes)
 
-        return Model{
-                ID:                name,
-                Path:              modelPath,
-                Format:            meta.Format,
-                Quantization:      quant,
-                Parameters:        params,
-                ContextLength:     ctxLen,
-                EstimatedVRAM:     0, // not in models.yaml — future v19.1.x calculation
-                Capabilities:      caps,
-                SupportedRuntimes: sr,
-                Present:           present,
-        }
+	return Model{
+		ID:                name,
+		Path:              modelPath,
+		Format:            meta.Format,
+		Quantization:      quant,
+		Parameters:        params,
+		ContextLength:     ctxLen,
+		EstimatedVRAM:     0, // not in models.yaml — future v19.1.x calculation
+		Capabilities:      caps,
+		SupportedRuntimes: sr,
+		Present:           present,
+	}
 }
 
 // ----- internal helpers ----------------------------------------------------
@@ -295,88 +295,88 @@ func modelFromYAML(name, engine string, raw map[string]interface{}) Model {
 // existing file — does NOT validate it parses as YAML (CollectModels
 // does that).
 func resolveModelsYAML() string {
-        if p := os.Getenv("SCARLIX_MODELS_YAML"); p != "" {
-                if fileExists(p) {
-                        return p
-                }
-        }
-        candidates := []string{
-                "/etc/scarlix/models.yaml",
-                filepath.Join(os.Getenv("SCARLIX_REPO"), "models.yaml"),
-                filepath.Join(os.Getenv("PWD"), "models.yaml"),
-        }
-        for _, c := range candidates {
-                if c != "" && fileExists(c) {
-                        return c
-                }
-        }
-        return ""
+	if p := os.Getenv("SCARLIX_MODELS_YAML"); p != "" {
+		if fileExists(p) {
+			return p
+		}
+	}
+	candidates := []string{
+		"/etc/scarlix/models.yaml",
+		filepath.Join(os.Getenv("SCARLIX_REPO"), "models.yaml"),
+		filepath.Join(os.Getenv("PWD"), "models.yaml"),
+	}
+	for _, c := range candidates {
+		if c != "" && fileExists(c) {
+			return c
+		}
+	}
+	return ""
 }
 
 // fileExists returns true iff path exists and is a regular file (not a
 // directory, socket, etc.). Used by resolveModelsYAML for the candidate
 // priority walk.
 func fileExists(path string) bool {
-        info, err := os.Stat(path)
-        if err != nil {
-                return false
-        }
-        return !info.IsDir()
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
 }
 
 // stringField extracts a string value from a parsed YAML map. Handles the
 // case where the YAML value is a non-string scalar (e.g. unquoted number
 // or bool) by formatting it. Returns "" for missing keys or null values.
 func stringField(m map[string]interface{}, key string) string {
-        v, ok := m[key]
-        if !ok || v == nil {
-                return ""
-        }
-        switch s := v.(type) {
-        case string:
-                return s
-        case int:
-                return strconv.Itoa(s)
-        case int64:
-                return strconv.FormatInt(s, 10)
-        case float64:
-                return strconv.FormatFloat(s, 'f', -1, 64)
-        case bool:
-                return strconv.FormatBool(s)
-        default:
-                return fmt.Sprintf("%v", v)
-        }
+	v, ok := m[key]
+	if !ok || v == nil {
+		return ""
+	}
+	switch s := v.(type) {
+	case string:
+		return s
+	case int:
+		return strconv.Itoa(s)
+	case int64:
+		return strconv.FormatInt(s, 10)
+	case float64:
+		return strconv.FormatFloat(s, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(s)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // intField extracts an integer value from a parsed YAML map. yaml.v3 parses
 // integer literals as `int` (not int64) so the int case is the common one;
 // other numeric types are coerced. Returns 0 for missing / null / non-numeric.
 func intField(m map[string]interface{}, key string) int {
-        v, ok := m[key]
-        if !ok || v == nil {
-                return 0
-        }
-        switch n := v.(type) {
-        case int:
-                return n
-        case int64:
-                return int(n)
-        case int32:
-                return int(n)
-        case float64:
-                return int(n)
-        case float32:
-                return int(n)
-        case string:
-                // Defensive: yaml.v3 may quote numeric values if the user wrote
-                // `context_length: "32768"`. Parse leniently.
-                if i, err := strconv.Atoi(strings.TrimSpace(n)); err == nil {
-                        return i
-                }
-                return 0
-        default:
-                return 0
-        }
+	v, ok := m[key]
+	if !ok || v == nil {
+		return 0
+	}
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case int32:
+		return int(n)
+	case float64:
+		return int(n)
+	case float32:
+		return int(n)
+	case string:
+		// Defensive: yaml.v3 may quote numeric values if the user wrote
+		// `context_length: "32768"`. Parse leniently.
+		if i, err := strconv.Atoi(strings.TrimSpace(n)); err == nil {
+			return i
+		}
+		return 0
+	default:
+		return 0
+	}
 }
 
 // parseParameters scans a model path / repo / filename for a parameter-size
@@ -394,18 +394,18 @@ func intField(m map[string]interface{}, key string) int {
 var paramRe = regexp.MustCompile(`(?i)\b(\d+(?:x\d+)?)([bmk])\b`)
 
 func parseParameters(s string) string {
-        if s == "" {
-                return ""
-        }
-        m := paramRe.FindStringSubmatch(s)
-        if m == nil {
-                return ""
-        }
-        // Canonicalize: uppercase the size suffix (B/M/K). Preserve the
-        // digit portion (including any "x" multiplier — "8x7" stays "8x7").
-        num := m[1]               // e.g. "14", "8x7", "3"
-        suffix := strings.ToUpper(m[2]) // "B", "M", "K"
-        return num + suffix
+	if s == "" {
+		return ""
+	}
+	m := paramRe.FindStringSubmatch(s)
+	if m == nil {
+		return ""
+	}
+	// Canonicalize: uppercase the size suffix (B/M/K). Preserve the
+	// digit portion (including any "x" multiplier — "8x7" stays "8x7").
+	num := m[1]                     // e.g. "14", "8x7", "3"
+	suffix := strings.ToUpper(m[2]) // "B", "M", "K"
+	return num + suffix
 }
 
 // parseGGUFQuant extracts the quantization label from a GGUF filename.
@@ -423,16 +423,16 @@ func parseParameters(s string) string {
 var ggufQuantRe = regexp.MustCompile(`(?i)\b(q\d(?:_\w+)*|f16|fp16|i8|i4)\b`)
 
 func parseGGUFQuant(filename string) string {
-        if filename == "" {
-                return ""
-        }
-        // Strip extension so the regex sees "Qwen3-14B-Q4_K_M" not "...Q4_K_M.gguf"
-        // (the regex uses \b boundaries which work on either form, but stripping
-        // makes the F16 vs fp16 distinction cleaner when there's no separator).
-        stem := strings.TrimSuffix(filename, filepath.Ext(filename))
-        m := ggufQuantRe.FindStringSubmatch(stem)
-        if m == nil {
-                return ""
-        }
-        return strings.ToLower(m[1])
+	if filename == "" {
+		return ""
+	}
+	// Strip extension so the regex sees "Qwen3-14B-Q4_K_M" not "...Q4_K_M.gguf"
+	// (the regex uses \b boundaries which work on either form, but stripping
+	// makes the F16 vs fp16 distinction cleaner when there's no separator).
+	stem := strings.TrimSuffix(filename, filepath.Ext(filename))
+	m := ggufQuantRe.FindStringSubmatch(stem)
+	if m == nil {
+		return ""
+	}
+	return strings.ToLower(m[1])
 }

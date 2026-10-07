@@ -10,11 +10,11 @@ import (
 
 // Compatibility represents the compatibility of a GPU+Runtime+Model triple.
 type Compatibility struct {
-	GPU        inventory.GPU    `json:"gpu"`
+	GPU        inventory.GPU     `json:"gpu"`
 	Runtime    inventory.Runtime `json:"runtime"`
 	Model      inventory.Model   `json:"model"`
-	Compatible bool             `json:"compatible"`
-	Reason     string           `json:"reason"`
+	Compatible bool              `json:"compatible"`
+	Reason     string            `json:"reason"`
 }
 
 // Matrix is the full GPU × Runtime × Model compatibility matrix.
@@ -103,7 +103,7 @@ func (m *Matrix) ForRuntime(rtID string) []Compatibility {
 	return result
 }
 
-func (m *Matrix) Count() int          { return len(m.Entries) }
+func (m *Matrix) Count() int           { return len(m.Entries) }
 func (m *Matrix) CountCompatible() int { return len(m.Compatible()) }
 
 func runtimeSupportsModelFormat(rt inventory.Runtime, mdl inventory.Model) bool {
@@ -143,8 +143,10 @@ func acceleratorForRuntime(rtID string) string {
 }
 
 func gpuAssignedToRuntime(gpu inventory.GPU, rt inventory.Runtime) bool {
+	// v19.1.13 P1: CPU-only runtimes (empty GPUIDs) are NOT GPU-compatible.
+	//   Was: returned true → beellama marked as compatible with RTX 5060 Ti.
 	if len(rt.GPUIDs) == 0 {
-		return true
+		return false
 	}
 	for _, gid := range rt.GPUIDs {
 		if gid == gpu.ID || gid == fmt.Sprintf("gpu.nvidia.%d", gpu.Index) {

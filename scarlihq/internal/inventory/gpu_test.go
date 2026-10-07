@@ -267,11 +267,11 @@ func TestCollectGPUHealth_TableDriven(t *testing.T) {
 	// Each case specifies a GPU + the expected State + expected Healthy
 	// value mirrored back into the input slice.
 	cases := []struct {
-		name         string
-		gpu          GPU
-		wantState    string
-		wantMessage  string // "" if no message expected
-		wantHealthy  bool
+		name        string
+		gpu         GPU
+		wantState   string
+		wantMessage string // "" if no message expected
+		wantHealthy bool
 	}{
 		{
 			name: "healthy_normal",

@@ -29,13 +29,13 @@
 package inventory
 
 import (
-        "context"
-        "fmt"
-        "net/http"
-        "os"
-        "os/exec"
-        "strings"
-        "time"
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
 )
 
 // dockerTimeout bounds any `docker ps` invocation. 5s matches the v19.0.8
@@ -63,14 +63,14 @@ const healthTimeout = 2 * time.Second
 //   - Capabilities — Runtime.Capabilities (chat/completion/tools/embed/gateway)
 //   - HealthURL    — HTTP healthcheck endpoint (http://127.0.0.1:<port>/...)
 type runtimeMeta struct {
-        ID           string
-        Container    string
-        Image        string
-        Protocol     string
-        Port         int
-        GPUIndex     int
-        Capabilities []string
-        HealthURL    string
+	ID           string
+	Container    string
+	Image        string
+	Protocol     string
+	Port         int
+	GPUIndex     int
+	Capabilities []string
+	HealthURL    string
 }
 
 // runtimeMetadata is the canonical runtime table for v19.0.x. Sourced from:
@@ -83,63 +83,63 @@ type runtimeMeta struct {
 // HealthURL endpoints verified against each compose's `healthcheck:` block:
 //   - sglang   → /health (port 30000)
 //   - vllm     → /v1/models (port 8089; vLLM exposes /health and /v1/models;
-//                /v1/models is the standard OpenAI-compatible probe)
+//     /v1/models is the standard OpenAI-compatible probe)
 //   - beellama → /health (port 11438 → container :8080)
 //   - ollama   → /api/tags (port 11435; ollama healthcheck uses `ollama list`
-//                internally but the HTTP endpoint is /api/tags)
+//     internally but the HTTP endpoint is /api/tags)
 //   - litellm  → /health/liveliness (port 4001; auth-free liveness probe —
-//                /health requires master_key and would 401)
+//     /health requires master_key and would 401)
 var runtimeMetadata = []runtimeMeta{
-        {
-                ID:           "sglang",
-                Container:    "sglang",
-                Image:        "lmsysorg/sglang:v0.4.9.post6-cu128-b200",
-                Protocol:     "openai-compatible",
-                Port:         30000,
-                GPUIndex:     0,
-                Capabilities: []string{"chat", "completion", "tools"},
-                HealthURL:    "http://127.0.0.1:30000/health",
-        },
-        {
-                ID:           "vllm",
-                Container:    "vllm",
-                Image:        "vllm/vllm-openai:v0.8.5",
-                Protocol:     "openai-compatible",
-                Port:         8089,
-                GPUIndex:     1,
-                Capabilities: []string{"chat", "completion"},
-                HealthURL:    "http://127.0.0.1:8089/v1/models",
-        },
-        {
-                ID:           "beellama",
-                Container:    "beellama",
-                Image:        "ghcr.io/ggml-org/llama.cpp@sha256:6d607629e3dd5e85f45c43d1494648126cb3f93f2122c9cd53f43242c94cde14",
-                Protocol:     "openai-compatible",
-                Port:         11438,
-                GPUIndex:     -1,
-                Capabilities: []string{"chat", "completion"},
-                HealthURL:    "http://127.0.0.1:11438/health",
-        },
-        {
-                ID:           "ollama",
-                Container:    "ollama-agent",
-                Image:        "ollama/ollama:0.5.4",
-                Protocol:     "ollama",
-                Port:         11435,
-                GPUIndex:     -1,
-                Capabilities: []string{"chat", "completion", "embed"},
-                HealthURL:    "http://127.0.0.1:11435/api/tags",
-        },
-        {
-                ID:           "litellm",
-                Container:    "litellm",
-                Image:        "ghcr.io/berriai/litellm:main-v1.21.7",
-                Protocol:     "openai-compatible",
-                Port:         4001,
-                GPUIndex:     -1,
-                Capabilities: []string{"chat", "completion", "gateway"},
-                HealthURL:    "http://127.0.0.1:4001/health/liveliness",
-        },
+	{
+		ID:           "sglang",
+		Container:    "sglang",
+		Image:        "lmsysorg/sglang:v0.4.9.post6-cu128-b200",
+		Protocol:     "openai-compatible",
+		Port:         30000,
+		GPUIndex:     0,
+		Capabilities: []string{"chat", "completion", "tools"},
+		HealthURL:    "http://127.0.0.1:30000/health",
+	},
+	{
+		ID:           "vllm",
+		Container:    "vllm",
+		Image:        "vllm/vllm-openai:v0.8.5",
+		Protocol:     "openai-compatible",
+		Port:         8089,
+		GPUIndex:     1,
+		Capabilities: []string{"chat", "completion"},
+		HealthURL:    "http://127.0.0.1:8089/v1/models",
+	},
+	{
+		ID:           "beellama",
+		Container:    "beellama",
+		Image:        "ghcr.io/ggml-org/llama.cpp@sha256:6d607629e3dd5e85f45c43d1494648126cb3f93f2122c9cd53f43242c94cde14",
+		Protocol:     "openai-compatible",
+		Port:         11438,
+		GPUIndex:     -1,
+		Capabilities: []string{"chat", "completion"},
+		HealthURL:    "http://127.0.0.1:11438/health",
+	},
+	{
+		ID:           "ollama",
+		Container:    "ollama-agent",
+		Image:        "ollama/ollama:0.5.4",
+		Protocol:     "ollama",
+		Port:         11435,
+		GPUIndex:     -1,
+		Capabilities: []string{"chat", "completion", "embed"},
+		HealthURL:    "http://127.0.0.1:11435/api/tags",
+	},
+	{
+		ID:           "litellm",
+		Container:    "litellm",
+		Image:        "ghcr.io/berriai/litellm:main-v1.21.7",
+		Protocol:     "openai-compatible",
+		Port:         4001,
+		GPUIndex:     -1,
+		Capabilities: []string{"chat", "completion", "gateway"},
+		HealthURL:    "http://127.0.0.1:4001/health/liveliness",
+	},
 }
 
 // CollectRuntimes queries Docker for inference runtime status + returns
@@ -151,50 +151,50 @@ var runtimeMetadata = []runtimeMeta{
 // Field population rules (see docs/SCARLIX_DATA_CONTRACTS.md §3):
 //   - ID           = runtimeMeta.ID (stable identifier)
 //   - Version      = the image tag (e.g. "v0.4.9.post6-cu128-b200" extracted
-//                    from "lmsysorg/sglang:v0.4.9.post6-cu128-b200"). For
-//                    digest-pinned images (beellama), Version="" since the
-//                    digest is not a meaningful "version".
+//     from "lmsysorg/sglang:v0.4.9.post6-cu128-b200"). For
+//     digest-pinned images (beellama), Version="" since the
+//     digest is not a meaningful "version".
 //   - Enabled      = true (all five runtimes are configured in compose files;
-//                    whether they actually start depends on scarlix-mode).
+//     whether they actually start depends on scarlix-mode).
 //   - Running      = true iff `docker ps --filter name=<container>` returns
-//                    a Status line starting with "Up".
+//     a Status line starting with "Up".
 //   - Healthy      = false (placeholder; CollectRuntimeHealth refines).
 //   - Protocol     = runtimeMeta.Protocol.
 //   - Port         = runtimeMeta.Port.
 //   - GPUIDs       = ["gpu.nvidia.0"] for GPUIndex=0, ["gpu.nvidia.1"] for
-//                    GPUIndex=1, [] for GPUIndex=-1 (CPU). Format matches
-//                    GPU.ID so cross-refs work.
+//     GPUIndex=1, [] for GPUIndex=-1 (CPU). Format matches
+//     GPU.ID so cross-refs work.
 //   - Image        = runtimeMeta.Image (full image:tag).
 //   - Capabilities = runtimeMeta.Capabilities (chat/completion/tools/embed/gateway).
 func CollectRuntimes() []Runtime {
-        out := make([]Runtime, 0, len(runtimeMetadata))
-        for _, m := range runtimeMetadata {
-                gpuIDs := make([]string, 0, 1)
-                if m.GPUIndex >= 0 {
-                        gpuIDs = append(gpuIDs, fmt.Sprintf("gpu.nvidia.%d", m.GPUIndex))
-                }
-                // Capabilities is a []string — always non-nil so JSON marshals as
-                // [...] not null. Build a fresh copy so the caller can mutate freely.
-                caps := make([]string, len(m.Capabilities))
-                copy(caps, m.Capabilities)
+	out := make([]Runtime, 0, len(runtimeMetadata))
+	for _, m := range runtimeMetadata {
+		gpuIDs := make([]string, 0, 1)
+		if m.GPUIndex >= 0 {
+			gpuIDs = append(gpuIDs, fmt.Sprintf("gpu.nvidia.%d", m.GPUIndex))
+		}
+		// Capabilities is a []string — always non-nil so JSON marshals as
+		// [...] not null. Build a fresh copy so the caller can mutate freely.
+		caps := make([]string, len(m.Capabilities))
+		copy(caps, m.Capabilities)
 
-                runningStatus, _ := dockerInspect(m.Container)
-                running := runningStatus == "running"
+		runningStatus, _ := dockerInspect(m.Container)
+		running := runningStatus == "running"
 
-                out = append(out, Runtime{
-                        ID:           m.ID,
-                        Version:      imageTag(m.Image),
-                        Enabled:      true,
-                        Running:      running,
-                        Healthy:      false, // refined by CollectRuntimeHealth
-                        Protocol:     m.Protocol,
-                        Port:         m.Port,
-                        GPUIDs:       gpuIDs,
-                        Image:        m.Image,
-                        Capabilities: caps,
-                })
-        }
-        return out
+		out = append(out, Runtime{
+			ID:           m.ID,
+			Version:      imageTag(m.Image),
+			Enabled:      true,
+			Running:      running,
+			Healthy:      false, // refined by CollectRuntimeHealth
+			Protocol:     m.Protocol,
+			Port:         m.Port,
+			GPUIDs:       gpuIDs,
+			Image:        m.Image,
+			Capabilities: caps,
+		})
+	}
+	return out
 }
 
 // CollectRuntimeHealth probes each runtime's HTTP healthcheck endpoint
@@ -216,40 +216,40 @@ func CollectRuntimes() []Runtime {
 // (Go slice semantics — slice header passed by value, backing array shared).
 // Callers that want to preserve the original Healthy values should pass a copy.
 func CollectRuntimeHealth(runtimes []Runtime) []Health {
-        healths := make([]Health, 0, len(runtimes))
-        now := time.Now().UTC().Format(time.RFC3339)
-        client := &http.Client{Timeout: healthTimeout}
+	healths := make([]Health, 0, len(runtimes))
+	now := time.Now().UTC().Format(time.RFC3339)
+	client := &http.Client{Timeout: healthTimeout}
 
-        for i := range runtimes {
-                var state, msg string
-                // Look up the HealthURL for this runtime ID. If we don't find it
-                // (shouldn't happen — runtimeMetadata is the source of truth —
-                // but defensive), mark unknown.
-                url := ""
-                for _, m := range runtimeMetadata {
-                        if m.ID == runtimes[i].ID {
-                                url = m.HealthURL
-                                break
-                        }
-                }
-                if url == "" {
-                        state = "unknown"
-                        msg = "no healthcheck URL configured for runtime"
-                } else {
-                        state, msg = probeHealth(client, url)
-                }
+	for i := range runtimes {
+		var state, msg string
+		// Look up the HealthURL for this runtime ID. If we don't find it
+		// (shouldn't happen — runtimeMetadata is the source of truth —
+		// but defensive), mark unknown.
+		url := ""
+		for _, m := range runtimeMetadata {
+			if m.ID == runtimes[i].ID {
+				url = m.HealthURL
+				break
+			}
+		}
+		if url == "" {
+			state = "unknown"
+			msg = "no healthcheck URL configured for runtime"
+		} else {
+			state, msg = probeHealth(client, url)
+		}
 
-                healths = append(healths, Health{
-                        Component: runtimes[i].ID,
-                        State:     state,
-                        Message:   msg,
-                        CheckedAt: now,
-                })
-                // Mirror state back into the Runtime slice so callers using either
-                // API see consistent Healthy values.
-                runtimes[i].Healthy = (state == "healthy")
-        }
-        return healths
+		healths = append(healths, Health{
+			Component: runtimes[i].ID,
+			State:     state,
+			Message:   msg,
+			CheckedAt: now,
+		})
+		// Mirror state back into the Runtime slice so callers using either
+		// API see consistent Healthy values.
+		runtimes[i].Healthy = (state == "healthy")
+	}
+	return healths
 }
 
 // dockerInspect runs `docker ps --filter name=<container> --format {{.Status}}`
@@ -265,38 +265,38 @@ func CollectRuntimeHealth(runtimes []Runtime) []Health {
 // never used by callers but kept on the signature for future expansion and to
 // match the task spec's `dockerInspect(...) (status string, err error)` shape).
 func dockerInspect(containerName string) (status string, err error) {
-        binary, lookErr := exec.LookPath("docker")
-        if lookErr != nil {
-                // docker not installed — common in CI / dev sandboxes. Graceful
-                // degradation: return "" so caller treats as "not running".
-                return "", nil
-        }
+	binary, lookErr := exec.LookPath("docker")
+	if lookErr != nil {
+		// docker not installed — common in CI / dev sandboxes. Graceful
+		// degradation: return "" so caller treats as "not running".
+		return "", nil
+	}
 
-        ctx, cancel := context.WithTimeout(context.Background(), dockerTimeout)
-        defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), dockerTimeout)
+	defer cancel()
 
-        cmd := exec.CommandContext(ctx, binary,
-                "ps", "--filter", "name="+containerName,
-                "--format", "{{.Status}}",
-        )
-        out, runErr := cmd.Output()
-        if runErr != nil {
-                // Covers: non-zero exit (dockerd broken), context deadline (hang),
-                // signal. In all cases, "not running" is the safe answer.
-                return "", nil
-        }
+	cmd := exec.CommandContext(ctx, binary,
+		"ps", "--filter", "name="+containerName,
+		"--format", "{{.Status}}",
+	)
+	out, runErr := cmd.Output()
+	if runErr != nil {
+		// Covers: non-zero exit (dockerd broken), context deadline (hang),
+		// signal. In all cases, "not running" is the safe answer.
+		return "", nil
+	}
 
-        line := strings.TrimSpace(string(out))
-        if line == "" {
-                // No container matched the name filter — not running.
-                return "", nil
-        }
-        if strings.HasPrefix(line, "Up") {
-                return "running", nil
-        }
-        // "Exited", "Restarting", "Created", "Paused", "Removing", "Dead" —
-        // the container exists but isn't serving traffic. Treat as not running.
-        return "down", nil
+	line := strings.TrimSpace(string(out))
+	if line == "" {
+		// No container matched the name filter — not running.
+		return "", nil
+	}
+	if strings.HasPrefix(line, "Up") {
+		return "running", nil
+	}
+	// "Exited", "Restarting", "Created", "Paused", "Removing", "Dead" —
+	// the container exists but isn't serving traffic. Treat as not running.
+	return "down", nil
 }
 
 // ----- internal helpers ----------------------------------------------------
@@ -316,34 +316,34 @@ func dockerInspect(containerName string) (status string, err error) {
 // callers can decide whether to display "unknown" or skip — the Runtime
 // struct's Version field accepts an empty string per the data contract.
 func imageTag(imageRef string) string {
-        // Digest-pinned images (sha256:...) take precedence over any tag —
-        // Docker does not allow both, so we check for @ first.
-        if at := strings.Index(imageRef, "@"); at >= 0 {
-                // Some digest-pinned images also have a tag before the @ (e.g.
-                // "repo:tag@sha256:..."). Extract that tag if present.
-                repo := imageRef[:at]
-                if colon := strings.LastIndex(repo, ":"); colon >= 0 {
-                        // Skip the registry-port colon if there's a slash after it.
-                        // e.g. "ghcr.io:443/repo" — the last colon is the port, not tag.
-                        // But "ghcr.io/repo:tag" — last colon is the tag separator.
-                        // Heuristic: if the substring after the last colon contains a
-                        // slash, it's a port-qualified registry, not a tag.
-                        tag := repo[colon+1:]
-                        if !strings.Contains(tag, "/") {
-                                return tag
-                        }
-                }
-                return ""
-        }
-        // No @ digest — look for the last : that's not part of a registry port.
-        // Heuristic: a tag separator colon has no slash after it.
-        if colon := strings.LastIndex(imageRef, ":"); colon >= 0 {
-                tag := imageRef[colon+1:]
-                if !strings.Contains(tag, "/") {
-                        return tag
-                }
-        }
-        return ""
+	// Digest-pinned images (sha256:...) take precedence over any tag —
+	// Docker does not allow both, so we check for @ first.
+	if at := strings.Index(imageRef, "@"); at >= 0 {
+		// Some digest-pinned images also have a tag before the @ (e.g.
+		// "repo:tag@sha256:..."). Extract that tag if present.
+		repo := imageRef[:at]
+		if colon := strings.LastIndex(repo, ":"); colon >= 0 {
+			// Skip the registry-port colon if there's a slash after it.
+			// e.g. "ghcr.io:443/repo" — the last colon is the port, not tag.
+			// But "ghcr.io/repo:tag" — last colon is the tag separator.
+			// Heuristic: if the substring after the last colon contains a
+			// slash, it's a port-qualified registry, not a tag.
+			tag := repo[colon+1:]
+			if !strings.Contains(tag, "/") {
+				return tag
+			}
+		}
+		return ""
+	}
+	// No @ digest — look for the last : that's not part of a registry port.
+	// Heuristic: a tag separator colon has no slash after it.
+	if colon := strings.LastIndex(imageRef, ":"); colon >= 0 {
+		tag := imageRef[colon+1:]
+		if !strings.Contains(tag, "/") {
+			return tag
+		}
+	}
+	return ""
 }
 
 // probeHealth issues a GET to url and maps the result to (state, message).
@@ -352,29 +352,29 @@ func imageTag(imageRef string) string {
 // timeout → ("unhealthy", "healthcheck timeout")
 // other error (DNS, malformed URL, non-200 status) → ("down", err.Error())
 func probeHealth(client *http.Client, url string) (state, msg string) {
-        resp, err := client.Get(url)
-        if err != nil {
-                // Distinguish timeout (a stuck runtime — "unhealthy") from
-                // connection refused (nothing listening — "down"). Other errors
-                // (DNS, malformed URL) lump into "down" since the runtime isn't
-                // responding on its expected endpoint.
-                if os.IsTimeout(err) {
-                        return "unhealthy", "healthcheck timeout"
-                }
-                // http.Client errors wrap the underlying net.OpError — check for
-                // "connection refused" substring (cross-platform-ish; works on Linux
-                // + macOS which is all we support for now).
-                errStr := err.Error()
-                if strings.Contains(errStr, "connection refused") {
-                        return "down", "connection refused"
-                }
-                return "down", errStr
-        }
-        defer resp.Body.Close()
-        if resp.StatusCode == http.StatusOK {
-                return "healthy", ""
-        }
-        // Non-200 (e.g. 503 from a runtime that's still loading the model).
-        // Treat as "unhealthy" — the runtime is responding but not ready.
-        return "unhealthy", fmt.Sprintf("HTTP %d", resp.StatusCode)
+	resp, err := client.Get(url)
+	if err != nil {
+		// Distinguish timeout (a stuck runtime — "unhealthy") from
+		// connection refused (nothing listening — "down"). Other errors
+		// (DNS, malformed URL) lump into "down" since the runtime isn't
+		// responding on its expected endpoint.
+		if os.IsTimeout(err) {
+			return "unhealthy", "healthcheck timeout"
+		}
+		// http.Client errors wrap the underlying net.OpError — check for
+		// "connection refused" substring (cross-platform-ish; works on Linux
+		// + macOS which is all we support for now).
+		errStr := err.Error()
+		if strings.Contains(errStr, "connection refused") {
+			return "down", "connection refused"
+		}
+		return "down", errStr
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		return "healthy", ""
+	}
+	// Non-200 (e.g. 503 from a runtime that's still loading the model).
+	// Treat as "unhealthy" — the runtime is responding but not ready.
+	return "unhealthy", fmt.Sprintf("HTTP %d", resp.StatusCode)
 }

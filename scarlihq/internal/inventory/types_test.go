@@ -210,13 +210,13 @@ func TestSystemStatus_NestedArrays(t *testing.T) {
 	}
 	// Nested values that prove arrays actually contain entries.
 	for _, want := range []string{
-		`"gpu.nvidia.0"`,        // from GPUs[].ID
+		`"gpu.nvidia.0"`, // from GPUs[].ID
 		`"lmsysorg/sglang:v0.4.9.post6-cu128-b200"`, // from Runtimes[].Image
-		`"qwen3-14b-awq"`,       // from Models[].ID
-		`"scarlihq"`,            // from Services[].ID
-		`"openai-compatible"`,    // from Runtimes[].Protocol
+		`"qwen3-14b-awq"`,           // from Models[].ID
+		`"scarlihq"`,                // from Services[].ID
+		`"openai-compatible"`,       // from Runtimes[].Protocol
 		`"v0.4.9.post6-cu128-b200"`, // from Runtimes[].Version
-		`"RTX 5060 Ti"`,         // from GPUs[].Name
+		`"RTX 5060 Ti"`,             // from GPUs[].Name
 	} {
 		if !strings.Contains(j, want) {
 			t.Errorf("SystemStatus JSON missing expected nested value %s; got: %s", want, j)
@@ -253,13 +253,13 @@ func TestSystemStatus_EmptyArraysMarshalAsNotNull(t *testing.T) {
 	// a nil slice would produce). The scarlix CLI is required to emit
 	// empty arrays; ScarliHQ consumer code assumes non-nil.
 	s := SystemStatus{
-		Version:   "19.0.7",
-		Mode:      "stop",
-		GPUs:      []GPU{},
-		Runtimes:  []Runtime{},
-		Models:    []Model{},
-		Services:  []Service{},
-		Health:    []Health{},
+		Version:  "19.0.7",
+		Mode:     "stop",
+		GPUs:     []GPU{},
+		Runtimes: []Runtime{},
+		Models:   []Model{},
+		Services: []Service{},
+		Health:   []Health{},
 	}
 	j, err := roundTrip(t, s)
 	if err != nil {

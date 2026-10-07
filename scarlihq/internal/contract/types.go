@@ -51,9 +51,9 @@ const (
 //	  "security": { "filesystem": "workspace", "network": "restricted", "shell": "sandbox" }
 //	}
 type ResourceContract struct {
-	Version  ContractVersion `json:"version"  yaml:"version"`   // "v1"
-	ID       string          `json:"id"       yaml:"id"`         // UUID
-	AgentID  string          `json:"agent_id" yaml:"agent_id"`   // e.g. "agent.coder"
+	Version  ContractVersion `json:"version"  yaml:"version"`  // "v1"
+	ID       string          `json:"id"       yaml:"id"`       // UUID
+	AgentID  string          `json:"agent_id" yaml:"agent_id"` // e.g. "agent.coder"
 	Task     TaskSpec        `json:"task"     yaml:"task"`
 	Compute  ComputeSpec     `json:"compute"  yaml:"compute"`
 	Runtime  RuntimeSpec     `json:"runtime"   yaml:"runtime"`
@@ -78,9 +78,9 @@ type TaskSpec struct {
 // (means "do not reserve this resource").
 type ComputeSpec struct {
 	Accelerator string `json:"accelerator" yaml:"accelerator"` // AcceleratorCUDA, AcceleratorCPU, AcceleratorROCM
-	VRAMMB      int    `json:"vram_mb"      yaml:"vram_mb"`     // requested VRAM in MiB
-	CPUCores    int    `json:"cpu_cores"    yaml:"cpu_cores"`   // requested CPU cores
-	RAMMB       int    `json:"ram_mb"       yaml:"ram_mb"`      // requested RAM in MiB
+	VRAMMB      int    `json:"vram_mb"      yaml:"vram_mb"`    // requested VRAM in MiB
+	CPUCores    int    `json:"cpu_cores"    yaml:"cpu_cores"`  // requested CPU cores
+	RAMMB       int    `json:"ram_mb"       yaml:"ram_mb"`     // requested RAM in MiB
 }
 
 // RuntimeSpec describes which inference runtimes the agent prefers.

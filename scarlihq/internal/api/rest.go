@@ -1,20 +1,20 @@
 package api
 
 import (
-        "crypto/rand"
-        "crypto/subtle"
-        "encoding/hex"
-        "encoding/json"
-        "errors"
-        "net/http"
-        "strings"
-        "sync"
-        "time"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
 
-        "github.com/MoZoHuJa/OS/scarlihq/internal/guard"
-        "github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
-        "github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
-        "github.com/MoZoHuJa/OS/scarlihq/internal/status"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/status"
 )
 
 // Version is the fallback default for /api/health when Handler has no version passed.
@@ -28,36 +28,38 @@ var Version = "19.0.0"
 // permanent SCARLIHQ_TOKEN (was: leaked into logs/history/referrer headers).
 //
 // v18.7.7 P1: Rate limit max outstanding tickets (was: a single holder of
-//   SCARLIHQ_TOKEN could POST /api/ws-ticket in a tight loop and create
-//   unlimited map entries during the 30s TTL — the sweep only runs on the
-//   NEXT issueWSTicket call, so 100k requests could allocate 100k entries
-//   before any expired. Now: maxWSTickets=1024 caps the map size — if the
-//   store is full, issueWSTicket returns ErrTicketLimit and the HTTP handler
-//   returns 503 so the dashboard backs off instead of exhausting memory.)
+//
+//	SCARLIHQ_TOKEN could POST /api/ws-ticket in a tight loop and create
+//	unlimited map entries during the 30s TTL — the sweep only runs on the
+//	NEXT issueWSTicket call, so 100k requests could allocate 100k entries
+//	before any expired. Now: maxWSTickets=1024 caps the map size — if the
+//	store is full, issueWSTicket returns ErrTicketLimit and the HTTP handler
+//	returns 503 so the dashboard backs off instead of exhausting memory.)
 //
 // v18.7.8 P1: Use error type instead of returning "" + guessing (was:
-//   issueWSTicket returned "" for BOTH RNG failure and rate-limit → handler
-//   re-checked len(wsTickets) to distinguish → RACE: between issueWSTicket
-//   returning "" and the handler checking len(), another goroutine could
-//   consume tickets → len < 1024 → handler returns 500 (RNG failure) even
-//   though the real reason was 503 (rate-limit). Now: issueWSTicket returns
-//   (ticket, err) with sentinel errors ErrTicketLimit / ErrTicketRNG so
-//   the handler can return the correct status without re-checking state.)
+//
+//	issueWSTicket returned "" for BOTH RNG failure and rate-limit → handler
+//	re-checked len(wsTickets) to distinguish → RACE: between issueWSTicket
+//	returning "" and the handler checking len(), another goroutine could
+//	consume tickets → len < 1024 → handler returns 500 (RNG failure) even
+//	though the real reason was 503 (rate-limit). Now: issueWSTicket returns
+//	(ticket, err) with sentinel errors ErrTicketLimit / ErrTicketRNG so
+//	the handler can return the correct status without re-checking state.)
 var (
-        wsTickets   = make(map[string]time.Time)
-        wsTicketsMu sync.Mutex
-        wsTicketTTL = 30 * time.Second
-        // v18.7.7 P1: max outstanding (unconsumed) tickets. 1024 is far above the
-        // dashboard's normal usage (1 ticket per WS connect, consumed atomically on
-        // Reserve). A legitimate user never hits this; only a flooding client does.
-        maxWSTickets = 1024
+	wsTickets   = make(map[string]time.Time)
+	wsTicketsMu sync.Mutex
+	wsTicketTTL = 30 * time.Second
+	// v18.7.7 P1: max outstanding (unconsumed) tickets. 1024 is far above the
+	// dashboard's normal usage (1 ticket per WS connect, consumed atomically on
+	// Reserve). A legitimate user never hits this; only a flooding client does.
+	maxWSTickets = 1024
 )
 
 // v18.7.8 P1: Sentinel errors for ticket issuance (was: issueWSTicket returned
 // "" for both failure modes → handler guessed via len() → race condition).
 var (
-        ErrTicketLimit = errors.New("ticket store at capacity")
-        ErrTicketRNG   = errors.New("RNG unavailable")
+	ErrTicketLimit = errors.New("ticket store at capacity")
+	ErrTicketRNG   = errors.New("RNG unavailable")
 )
 
 // issueWSTicket generates a single-use WS ticket valid for wsTicketTTL.
@@ -86,30 +88,30 @@ var (
 // errors ErrTicketLimit / ErrTicketRNG are returned atomically under the lock,
 // so the handler returns the correct HTTP status without any TOCTOU window.
 func issueWSTicket() (string, error) {
-        b := make([]byte, 32)
-        // v18.7.5 P0: Remove urandom fallback (was: os.ReadFile → infinite read/OOM)
-        // crypto/rand on Linux uses /dev/urandom internally. If it fails, fail-closed.
-        if _, err := rand.Read(b); err != nil {
-                return "", ErrTicketRNG // Signal RNG failure
-        }
-        ticket := hex.EncodeToString(b)
-        wsTicketsMu.Lock()
-        now := time.Now()
-        for t, expiry := range wsTickets {
-                if now.After(expiry) {
-                        delete(wsTickets, t)
-                }
-        }
-        // v18.7.7 P1: Rate limit — reject if too many unconsumed tickets outstanding.
-        // (was: no cap → flooding client could exhaust memory. 1024 is far above the
-        // dashboard's normal usage of 1 ticket per WS connect.)
-        if len(wsTickets) >= maxWSTickets {
-                wsTicketsMu.Unlock()
-                return "", ErrTicketLimit // Signal rate-limited
-        }
-        wsTickets[ticket] = now.Add(wsTicketTTL)
-        wsTicketsMu.Unlock()
-        return ticket, nil
+	b := make([]byte, 32)
+	// v18.7.5 P0: Remove urandom fallback (was: os.ReadFile → infinite read/OOM)
+	// crypto/rand on Linux uses /dev/urandom internally. If it fails, fail-closed.
+	if _, err := rand.Read(b); err != nil {
+		return "", ErrTicketRNG // Signal RNG failure
+	}
+	ticket := hex.EncodeToString(b)
+	wsTicketsMu.Lock()
+	now := time.Now()
+	for t, expiry := range wsTickets {
+		if now.After(expiry) {
+			delete(wsTickets, t)
+		}
+	}
+	// v18.7.7 P1: Rate limit — reject if too many unconsumed tickets outstanding.
+	// (was: no cap → flooding client could exhaust memory. 1024 is far above the
+	// dashboard's normal usage of 1 ticket per WS connect.)
+	if len(wsTickets) >= maxWSTickets {
+		wsTicketsMu.Unlock()
+		return "", ErrTicketLimit // Signal rate-limited
+	}
+	wsTickets[ticket] = now.Add(wsTicketTTL)
+	wsTicketsMu.Unlock()
+	return ticket, nil
 }
 
 // ReserveWSTicket atomically removes the ticket from the store (single-use).
@@ -128,209 +130,209 @@ func issueWSTicket() (string, error) {
 // single-use is enforced unconditionally, and no client-controlled failure
 // can refresh the TTL.
 func ReserveWSTicket(ticket string) bool {
-        if ticket == "" {
-                return false
-        }
-        wsTicketsMu.Lock()
-        defer wsTicketsMu.Unlock()
-        expiry, ok := wsTickets[ticket]
-        if !ok {
-                return false
-        }
-        if time.Now().After(expiry) {
-                delete(wsTickets, ticket)
-                return false
-        }
-        // Atomically delete — ticket is now "reserved" (and consumed for good).
-        delete(wsTickets, ticket)
-        return true
+	if ticket == "" {
+		return false
+	}
+	wsTicketsMu.Lock()
+	defer wsTicketsMu.Unlock()
+	expiry, ok := wsTickets[ticket]
+	if !ok {
+		return false
+	}
+	if time.Now().After(expiry) {
+		delete(wsTickets, ticket)
+		return false
+	}
+	// Atomically delete — ticket is now "reserved" (and consumed for good).
+	delete(wsTickets, ticket)
+	return true
 }
 
 // Handler holds dependencies for API routes.
 type Handler struct {
-        guard     *guard.Guard
-        mode      *scarlix_mode.Mode
-        profiles  *profiles.Manager
-        authToken string
-        version   string // v18.2: passed from main (ldflags-injected)
+	guard     *guard.Guard
+	mode      *scarlix_mode.Mode
+	profiles  *profiles.Manager
+	authToken string
+	version   string // v18.2: passed from main (ldflags-injected)
 }
 
 // NewHandler creates a new API handler.
 // v18.2 P1: version param added (was: separate const — ldflags couldn't override).
 func NewHandler(g *guard.Guard, m *scarlix_mode.Mode, p *profiles.Manager, authToken, version string) *Handler {
-        if version == "" {
-                version = Version // fallback to package var
-        }
-        return &Handler{guard: g, mode: m, profiles: p, authToken: authToken, version: version}
+	if version == "" {
+		version = Version // fallback to package var
+	}
+	return &Handler{guard: g, mode: m, profiles: p, authToken: authToken, version: version}
 }
 
 // RegisterRoutes registers all REST API routes (all behind auth middleware).
 // v18.7.3 P1: Added /api/ws-ticket — short-lived single-use ticket for WS upgrade
 // (was: WS upgrade required permanent SCARLIHQ_TOKEN in ?token= URL → leaked in logs).
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-        mux.HandleFunc("/api/health", h.auth(h.health))
-        mux.HandleFunc("/api/gpu", h.auth(h.gpuStatus))
-        mux.HandleFunc("/api/containers", h.auth(h.listContainers))
-        mux.HandleFunc("/api/mode", h.auth(h.modeHandler))
-        mux.HandleFunc("/api/profiles", h.auth(h.listProfiles))
-        mux.HandleFunc("/api/status", h.auth(h.fullStatus))
-        mux.HandleFunc("/api/ws-ticket", h.auth(h.issueWSTicket))
+	mux.HandleFunc("/api/health", h.auth(h.health))
+	mux.HandleFunc("/api/gpu", h.auth(h.gpuStatus))
+	mux.HandleFunc("/api/containers", h.auth(h.listContainers))
+	mux.HandleFunc("/api/mode", h.auth(h.modeHandler))
+	mux.HandleFunc("/api/profiles", h.auth(h.listProfiles))
+	mux.HandleFunc("/api/status", h.auth(h.fullStatus))
+	mux.HandleFunc("/api/ws-ticket", h.auth(h.issueWSTicket))
 }
 
 // auth middleware: validates Bearer token header only.
 // v18.0.0 P1: uses crypto/subtle.ConstantTimeCompare (was: custom secureCompare).
 // v18.6 P2: removed ?token= query fallback (was: token leaked in URLs/logs/history).
 func (h *Handler) auth(next http.HandlerFunc) http.HandlerFunc {
-        return func(w http.ResponseWriter, r *http.Request) {
-                if h.authToken == "" {
-                        writeJSONError(w, http.StatusServiceUnavailable, "SCARLIHQ_TOKEN not configured on server")
-                        return
-                }
-                // v18.6 P2: Only accept Bearer header now (was: also accepted ?token= query param)
-                token := r.Header.Get("Authorization")
-                if strings.HasPrefix(token, "Bearer ") {
-                        token = strings.TrimPrefix(token, "Bearer ")
-                } else {
-                        writeJSONError(w, http.StatusUnauthorized, "invalid or missing token (use Authorization: Bearer)")
-                        return
-                }
-                // v18.0.0 P1: crypto/subtle.ConstantTimeCompare (standard library, constant-time)
-                if subtle.ConstantTimeCompare([]byte(token), []byte(h.authToken)) != 1 {
-                        writeJSONError(w, http.StatusUnauthorized, "invalid or missing token")
-                        return
-                }
-                next(w, r)
-        }
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.authToken == "" {
+			writeJSONError(w, http.StatusServiceUnavailable, "SCARLIHQ_TOKEN not configured on server")
+			return
+		}
+		// v18.6 P2: Only accept Bearer header now (was: also accepted ?token= query param)
+		token := r.Header.Get("Authorization")
+		if strings.HasPrefix(token, "Bearer ") {
+			token = strings.TrimPrefix(token, "Bearer ")
+		} else {
+			writeJSONError(w, http.StatusUnauthorized, "invalid or missing token (use Authorization: Bearer)")
+			return
+		}
+		// v18.0.0 P1: crypto/subtle.ConstantTimeCompare (standard library, constant-time)
+		if subtle.ConstantTimeCompare([]byte(token), []byte(h.authToken)) != 1 {
+			writeJSONError(w, http.StatusUnauthorized, "invalid or missing token")
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
-        writeJSON(w, map[string]string{
-                "status":  "ok",
-                "version": h.version, // v18.2: from main.Version (ldflags-injected)
-        })
+	writeJSON(w, map[string]string{
+		"status":  "ok",
+		"version": h.version, // v18.2: from main.Version (ldflags-injected)
+	})
 }
 
 func (h *Handler) gpuStatus(w http.ResponseWriter, r *http.Request) {
-        s := status.ReadOrStale()
-        if len(s.GPUs) == 0 && s.Timestamp == "" {
-                writeJSON(w, map[string]interface{}{
-                        "gpus":    []status.GPU{},
-                        "stale":   true,
-                        "message": "host-status.json not found — scarlix-host-bridge.timer not running?",
-                })
-                return
-        }
-        writeJSON(w, map[string]interface{}{
-                "gpus":      s.GPUs,
-                "timestamp": s.Timestamp,
-        })
+	s := status.ReadOrStale()
+	if len(s.GPUs) == 0 && s.Timestamp == "" {
+		writeJSON(w, map[string]interface{}{
+			"gpus":    []status.GPU{},
+			"stale":   true,
+			"message": "host-status.json not found — scarlix-host-bridge.timer not running?",
+		})
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"gpus":      s.GPUs,
+		"timestamp": s.Timestamp,
+	})
 }
 
 func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request) {
-        s := status.ReadOrStale()
-        if s.Containers == nil {
-                s.Containers = []status.Container{}
-        }
-        writeJSON(w, map[string]interface{}{
-                "containers": s.Containers,
-                "timestamp":  s.Timestamp,
-        })
+	s := status.ReadOrStale()
+	if s.Containers == nil {
+		s.Containers = []status.Container{}
+	}
+	writeJSON(w, map[string]interface{}{
+		"containers": s.Containers,
+		"timestamp":  s.Timestamp,
+	})
 }
 
 func (h *Handler) fullStatus(w http.ResponseWriter, r *http.Request) {
-        writeJSON(w, status.ReadOrStale())
+	writeJSON(w, status.ReadOrStale())
 }
 
 // modeHandler handles GET (return current + transition state) and POST (set desired mode).
 // v18.0.0 P1: GET returns full transition state (was: only current-mode).
 // Dashboard can now show "requested=ai, state=retrying, retry_count=1, last_error=...".
 func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
-        if r.Method == http.MethodGet {
-                s := status.ReadOrStale()
-                writeJSON(w, map[string]interface{}{
-                        "mode":             s.Mode,
-                        "status":           "ok",
-                        "requested_mode":   s.ModeTransition.Requested,
-                        "transition_state": s.ModeTransition.State,
-                        "retry_count":      s.ModeTransition.RetryCount,
-                        "last_error":       s.ModeTransition.LastError,
-                        "last_timestamp":   s.ModeTransition.LastTimestamp,
-                })
-                return
-        }
+	if r.Method == http.MethodGet {
+		s := status.ReadOrStale()
+		writeJSON(w, map[string]interface{}{
+			"mode":             s.Mode,
+			"status":           "ok",
+			"requested_mode":   s.ModeTransition.Requested,
+			"transition_state": s.ModeTransition.State,
+			"retry_count":      s.ModeTransition.RetryCount,
+			"last_error":       s.ModeTransition.LastError,
+			"last_timestamp":   s.ModeTransition.LastTimestamp,
+		})
+		return
+	}
 
-        if r.Method != http.MethodPost {
-                writeJSONError(w, http.StatusMethodNotAllowed, "use GET or POST")
-                return
-        }
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "use GET or POST")
+		return
+	}
 
-        mode := r.URL.Query().Get("set")
-        if mode == "" {
-                // v18.6 P1: Limit request body size (was: no limit → DoS with large body)
-                r.Body = http.MaxBytesReader(w, r.Body, 4096)
-                var body map[string]string
-                if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
-                        mode = body["mode"]
-                }
-        }
-        if mode == "" {
-                writeJSONError(w, http.StatusBadRequest, "no mode specified")
-                return
-        }
+	mode := r.URL.Query().Get("set")
+	if mode == "" {
+		// v18.6 P1: Limit request body size (was: no limit → DoS with large body)
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			mode = body["mode"]
+		}
+	}
+	if mode == "" {
+		writeJSONError(w, http.StatusBadRequest, "no mode specified")
+		return
+	}
 
-        // v18.7.3 P1: Centralized mode request (was: duplicate retrying check + Set()
-        // in both this REST handler and the MCP handler). Mode.Request() now does:
-        //   1. Rejects if host-status.json says state="retrying" (transition in progress)
-        //   2. Atomically reserves desired-mode via O_EXCL (v18.7.2 P0 atomicity preserved)
-        // On error, the message string discriminates which check failed so we can return
-        // the right HTTP status (409 for busy/retrying, 400 for invalid mode, 503 for fs).
-        if err := h.mode.Request(mode); err != nil {
-                if strings.Contains(err.Error(), "already pending") {
-                        w.WriteHeader(http.StatusConflict)
-                        writeJSON(w, map[string]interface{}{
-                                "status":  "busy",
-                                "message": "a mode request is already pending",
-                        })
-                        return
-                }
-                if strings.Contains(err.Error(), "in progress (retrying)") {
-                        // v18.7.3 P1: Surface retrying-state from Mode.Request() as 409 with context
-                        // (preserves v18.6 P0 dashboard semantics: client sees requested_mode +
-                        // transition_state + retry_count so it can render the retry banner).
-                        s := status.ReadOrStale()
-                        w.WriteHeader(http.StatusConflict)
-                        writeJSON(w, map[string]interface{}{
-                                "status":           "busy",
-                                "message":          "a mode transition is already in progress",
-                                "requested_mode":   s.ModeTransition.Requested,
-                                "transition_state": s.ModeTransition.State,
-                                "retry_count":      s.ModeTransition.RetryCount,
-                        })
-                        return
-                }
-                code := http.StatusInternalServerError
-                if strings.Contains(err.Error(), "invalid mode") {
-                        code = http.StatusBadRequest
-                } else if strings.Contains(err.Error(), "create") || strings.Contains(err.Error(), "permission") {
-                        code = http.StatusServiceUnavailable
-                }
-                writeJSONError(w, code, err.Error())
-                return
-        }
-        w.WriteHeader(http.StatusAccepted)
-        writeJSON(w, map[string]string{
-                "mode":    mode,
-                "status":  "accepted",
-                "message": "mode switch requested — host bridge will apply within 5s",
-        })
+	// v18.7.3 P1: Centralized mode request (was: duplicate retrying check + Set()
+	// in both this REST handler and the MCP handler). Mode.Request() now does:
+	//   1. Rejects if host-status.json says state="retrying" (transition in progress)
+	//   2. Atomically reserves desired-mode via O_EXCL (v18.7.2 P0 atomicity preserved)
+	// On error, the message string discriminates which check failed so we can return
+	// the right HTTP status (409 for busy/retrying, 400 for invalid mode, 503 for fs).
+	if err := h.mode.Request(mode); err != nil {
+		if strings.Contains(err.Error(), "already pending") {
+			w.WriteHeader(http.StatusConflict)
+			writeJSON(w, map[string]interface{}{
+				"status":  "busy",
+				"message": "a mode request is already pending",
+			})
+			return
+		}
+		if strings.Contains(err.Error(), "in progress (retrying)") {
+			// v18.7.3 P1: Surface retrying-state from Mode.Request() as 409 with context
+			// (preserves v18.6 P0 dashboard semantics: client sees requested_mode +
+			// transition_state + retry_count so it can render the retry banner).
+			s := status.ReadOrStale()
+			w.WriteHeader(http.StatusConflict)
+			writeJSON(w, map[string]interface{}{
+				"status":           "busy",
+				"message":          "a mode transition is already in progress",
+				"requested_mode":   s.ModeTransition.Requested,
+				"transition_state": s.ModeTransition.State,
+				"retry_count":      s.ModeTransition.RetryCount,
+			})
+			return
+		}
+		code := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "invalid mode") {
+			code = http.StatusBadRequest
+		} else if strings.Contains(err.Error(), "create") || strings.Contains(err.Error(), "permission") {
+			code = http.StatusServiceUnavailable
+		}
+		writeJSONError(w, code, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+	writeJSON(w, map[string]string{
+		"mode":    mode,
+		"status":  "accepted",
+		"message": "mode switch requested — host bridge will apply within 5s",
+	})
 }
 
 func (h *Handler) listProfiles(w http.ResponseWriter, r *http.Request) {
-        profs := h.profiles.List()
-        if profs == nil {
-                profs = []profiles.Profile{}
-        }
-        writeJSON(w, profs)
+	profs := h.profiles.List()
+	if profs == nil {
+		profs = []profiles.Profile{}
+	}
+	writeJSON(w, profs)
 }
 
 // issueWSTicket issues a short-lived, single-use ticket for the WS upgrade handshake.
@@ -349,38 +351,39 @@ func (h *Handler) listProfiles(w http.ResponseWriter, r *http.Request) {
 // can back off appropriately.
 //
 // v18.7.8 P1: Use sentinel errors instead of re-checking len(wsTickets) (was:
-//   issueWSTicket returned "" for both failures → handler re-checked len() →
-//   RACE: between issueWSTicket returning "" and the handler checking len(),
-//   another goroutine could consume tickets → handler returns wrong status.
-//   Now: errors.Is() on the returned error is atomic — no TOCTOU window.)
+//
+//	issueWSTicket returned "" for both failures → handler re-checked len() →
+//	RACE: between issueWSTicket returning "" and the handler checking len(),
+//	another goroutine could consume tickets → handler returns wrong status.
+//	Now: errors.Is() on the returned error is atomic — no TOCTOU window.)
 func (h *Handler) issueWSTicket(w http.ResponseWriter, r *http.Request) {
-        if r.Method != http.MethodPost {
-                writeJSONError(w, http.StatusMethodNotAllowed, "use POST")
-                return
-        }
-        ticket, err := issueWSTicket()
-        if err != nil {
-                if errors.Is(err, ErrTicketLimit) {
-                        writeJSONError(w, http.StatusServiceUnavailable, "too many outstanding tickets — retry shortly")
-                        return
-                }
-                // ErrTicketRNG (or any other unexpected error) — fail-closed.
-                writeJSONError(w, http.StatusInternalServerError, "unable to generate secure ticket (RNG unavailable)")
-                return
-        }
-        writeJSON(w, map[string]interface{}{
-                "ticket":     ticket,
-                "expires_in": int(wsTicketTTL / time.Second),
-        })
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	ticket, err := issueWSTicket()
+	if err != nil {
+		if errors.Is(err, ErrTicketLimit) {
+			writeJSONError(w, http.StatusServiceUnavailable, "too many outstanding tickets — retry shortly")
+			return
+		}
+		// ErrTicketRNG (or any other unexpected error) — fail-closed.
+		writeJSONError(w, http.StatusInternalServerError, "unable to generate secure ticket (RNG unavailable)")
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"ticket":     ticket,
+		"expires_in": int(wsTicketTTL / time.Second),
+	})
 }
 
 func writeJSON(w http.ResponseWriter, data interface{}) {
-        w.Header().Set("Content-Type", "application/json")
-        json.NewEncoder(w).Encode(data)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
 }
 
 func writeJSONError(w http.ResponseWriter, code int, msg string) {
-        w.Header().Set("Content-Type", "application/json")
-        w.WriteHeader(code)
-        json.NewEncoder(w).Encode(map[string]string{"status": "error", "message": msg})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"status": "error", "message": msg})
 }

@@ -19,27 +19,29 @@
 // may ADD fields but MUST NOT rename or remove existing ones without a v2
 // migration. New optional fields should use `omitempty` and a meaningful name.
 //
-//go:generate go run github.com/alvaroloes/enumer -type=Vendor -transform=snake -output=vendor_enumer.go
 // (go:generate hint is OPTIONAL — left as a comment for future enum generation
-//  if Vendor / Protocol / Status values ever need type-safe enumeration.)
+//
+//	if Vendor / Protocol / Status values ever need type-safe enumeration.)
+//
+//go:generate go run github.com/alvaroloes/enumer -type=Vendor -transform=snake -output=vendor_enumer.go
 package inventory
 
 // GPU represents the normalized state of a single GPU.
 // (ScaRgeN master guide section 8 — GPU discovery)
 type GPU struct {
-	ID             string  `json:"id"`               // e.g. "gpu.nvidia.0"
-	Index          int     `json:"index"`            // 0, 1, ...
-	Vendor         string  `json:"vendor"`           // "nvidia", "amd", "intel"
-	Name           string  `json:"name"`             // "RTX 5060 Ti"
+	ID             string  `json:"id"`     // e.g. "gpu.nvidia.0"
+	Index          int     `json:"index"`  // 0, 1, ...
+	Vendor         string  `json:"vendor"` // "nvidia", "amd", "intel"
+	Name           string  `json:"name"`   // "RTX 5060 Ti"
 	VRAMTotalMB    int     `json:"vram_total_mb"`
 	VRAMUsedMB     int     `json:"vram_used_mb"`
 	VRAMFreeMB     int     `json:"vram_free_mb"`
 	UtilizationPct int     `json:"utilization_percent"`
 	TemperatureC   int     `json:"temperature_c"`
 	PowerW         float64 `json:"power_w"`
-	Driver         string  `json:"driver"`           // "570. ..."
-	CUDA           string  `json:"cuda"`             // "12.8"
-	ComputeCap     string  `json:"compute_cap"`      // "12.0" (sm_120)
+	Driver         string  `json:"driver"`      // "570. ..."
+	CUDA           string  `json:"cuda"`        // "12.8"
+	ComputeCap     string  `json:"compute_cap"` // "12.0" (sm_120)
 	Healthy        bool    `json:"healthy"`
 }
 
@@ -69,16 +71,16 @@ type Runtime struct {
 // or "/models/Qwen3-14B-Q4_K_M.gguf" for GGUF). EstimatedVRAM is the
 // approximate VRAM footprint at the model's quantization + default context.
 type Model struct {
-	ID               string   `json:"id"`                // "qwen3-14b-awq"
-	Path             string   `json:"path"`              // "/models/Qwen3-14B-AWQ"
-	Format           string   `json:"format"`            // "safetensors", "gguf"
-	Quantization     string   `json:"quantization"`      // "awq", "q4_k_m", "fp16"
-	Parameters       string   `json:"parameters"`        // "14B"
-	ContextLength    int      `json:"context_length"`   // 32768
-	EstimatedVRAM    int      `json:"estimated_vram_mb"`
-	Capabilities     []string `json:"capabilities"`      // "coding", "reasoning", "chat"
+	ID                string   `json:"id"`             // "qwen3-14b-awq"
+	Path              string   `json:"path"`           // "/models/Qwen3-14B-AWQ"
+	Format            string   `json:"format"`         // "safetensors", "gguf"
+	Quantization      string   `json:"quantization"`   // "awq", "q4_k_m", "fp16"
+	Parameters        string   `json:"parameters"`     // "14B"
+	ContextLength     int      `json:"context_length"` // 32768
+	EstimatedVRAM     int      `json:"estimated_vram_mb"`
+	Capabilities      []string `json:"capabilities"`       // "coding", "reasoning", "chat"
 	SupportedRuntimes []string `json:"supported_runtimes"` // "sglang", "vllm", "llamacpp"
-	Present          bool     `json:"present"`           // file actually exists on disk?
+	Present           bool     `json:"present"`            // file actually exists on disk?
 }
 
 // Service represents a ScarLiX service (container or systemd unit).
@@ -88,10 +90,10 @@ type Model struct {
 // docker or systemd). Status is one of: "running", "stopped", "failed",
 // "unknown".
 type Service struct {
-	ID          string `json:"id"`                    // "scarlihq", "sglang", "scarlix-host-bridge"
+	ID          string `json:"id"` // "scarlihq", "sglang", "scarlix-host-bridge"
 	Name        string `json:"name"`
-	Type        string `json:"type"`                  // "docker", "systemd", "binary"
-	Status      string `json:"status"`                // "running", "stopped", "failed", "unknown"
+	Type        string `json:"type"`   // "docker", "systemd", "binary"
+	Status      string `json:"status"` // "running", "stopped", "failed", "unknown"
 	Port        int    `json:"port,omitempty"`
 	ContainerID string `json:"container_id,omitempty"`
 	Uptime      string `json:"uptime,omitempty"`
@@ -103,10 +105,10 @@ type Service struct {
 // "gpu.0"). State is one of: "healthy", "unhealthy", "starting", "down",
 // "unknown". CheckedAt is ISO 8601 (RFC 3339) UTC.
 type Health struct {
-	Component string `json:"component"`           // "sglang", "scarlihq", "gpu.0"
-	State     string `json:"state"`               // "healthy", "unhealthy", "starting", "down", "unknown"
+	Component string `json:"component"` // "sglang", "scarlihq", "gpu.0"
+	State     string `json:"state"`     // "healthy", "unhealthy", "starting", "down", "unknown"
 	Message   string `json:"message,omitempty"`
-	CheckedAt string `json:"checked_at"`          // ISO 8601 timestamp
+	CheckedAt string `json:"checked_at"` // ISO 8601 timestamp
 }
 
 // SystemStatus is the top-level normalized system snapshot.
@@ -116,10 +118,10 @@ type Health struct {
 // v19.1.6). All nested slices are non-nil in emitted JSON (use empty
 // slices, not nil, when no entries exist — see types_test.go).
 type SystemStatus struct {
-	Version       string    `json:"version"`        // SCARLIX OS version (e.g. "19.0.7")
-	Mode          string    `json:"mode"`           // current scarlix-mode (ai, turbo, creative, ...)
+	Version       string    `json:"version"` // SCARLIX OS version (e.g. "19.0.7")
+	Mode          string    `json:"mode"`    // current scarlix-mode (ai, turbo, creative, ...)
 	UptimeSeconds int64     `json:"uptime_seconds"`
-	Timestamp     string    `json:"timestamp"`      // ISO 8601
+	Timestamp     string    `json:"timestamp"` // ISO 8601
 	GPUs          []GPU     `json:"gpus"`
 	Runtimes      []Runtime `json:"runtimes"`
 	Models        []Model   `json:"models"`

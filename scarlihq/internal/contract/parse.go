@@ -1,11 +1,11 @@
 package contract
 
 import (
-        "encoding/json"
-        "errors"
-        "fmt"
+	"encoding/json"
+	"errors"
+	"fmt"
 
-        "gopkg.in/yaml.v3"
+	"gopkg.in/yaml.v3"
 )
 
 // ParseYAML parses a Resource Contract from YAML bytes.
@@ -17,15 +17,15 @@ import (
 //
 // On error returns (nil, err) with a descriptive message.
 func ParseYAML(data []byte) (*ResourceContract, error) {
-        if len(data) == 0 {
-                return nil, errors.New("contract: ParseYAML: empty input")
-        }
-        var c ResourceContract
-        if err := yaml.Unmarshal(data, &c); err != nil {
-                return nil, fmt.Errorf("contract: ParseYAML: %w", err)
-        }
-        normalize(&c)
-        return &c, nil
+	if len(data) == 0 {
+		return nil, errors.New("contract: ParseYAML: empty input")
+	}
+	var c ResourceContract
+	if err := yaml.Unmarshal(data, &c); err != nil {
+		return nil, fmt.Errorf("contract: ParseYAML: %w", err)
+	}
+	normalize(&c)
+	return &c, nil
 }
 
 // ParseJSON parses a Resource Contract from JSON bytes.
@@ -33,15 +33,15 @@ func ParseYAML(data []byte) (*ResourceContract, error) {
 // Mirrors ParseYAML semantics: non-nil slices guaranteed on success,
 // descriptive error on failure.
 func ParseJSON(data []byte) (*ResourceContract, error) {
-        if len(data) == 0 {
-                return nil, errors.New("contract: ParseJSON: empty input")
-        }
-        var c ResourceContract
-        if err := json.Unmarshal(data, &c); err != nil {
-                return nil, fmt.Errorf("contract: ParseJSON: %w", err)
-        }
-        normalize(&c)
-        return &c, nil
+	if len(data) == 0 {
+		return nil, errors.New("contract: ParseJSON: empty input")
+	}
+	var c ResourceContract
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, fmt.Errorf("contract: ParseJSON: %w", err)
+	}
+	normalize(&c)
+	return &c, nil
 }
 
 // MarshalYAML serializes a ResourceContract to YAML bytes.
@@ -53,14 +53,14 @@ func ParseJSON(data []byte) (*ResourceContract, error) {
 // RuntimeSpec and ModelSpec types implement yaml.Marshaler to enforce the
 // [] not null rule regardless of call site.
 func MarshalYAML(c *ResourceContract) ([]byte, error) {
-        if c == nil {
-                return nil, errors.New("contract: MarshalYAML: nil contract")
-        }
-        out, err := yaml.Marshal(c)
-        if err != nil {
-                return nil, fmt.Errorf("contract: MarshalYAML: %w", err)
-        }
-        return out, nil
+	if c == nil {
+		return nil, errors.New("contract: MarshalYAML: nil contract")
+	}
+	out, err := yaml.Marshal(c)
+	if err != nil {
+		return nil, fmt.Errorf("contract: MarshalYAML: %w", err)
+	}
+	return out, nil
 }
 
 // MarshalJSON serializes a ResourceContract to JSON bytes.
@@ -74,14 +74,14 @@ func MarshalYAML(c *ResourceContract) ([]byte, error) {
 // (modulo indentation) — the RuntimeSpec and ModelSpec types implement
 // json.Marshaler to enforce the [] not null rule regardless of call site.
 func MarshalJSON(c *ResourceContract) ([]byte, error) {
-        if c == nil {
-                return nil, errors.New("contract: MarshalJSON: nil contract")
-        }
-        out, err := json.MarshalIndent(c, "", "  ")
-        if err != nil {
-                return nil, fmt.Errorf("contract: MarshalJSON: %w", err)
-        }
-        return out, nil
+	if c == nil {
+		return nil, errors.New("contract: MarshalJSON: nil contract")
+	}
+	out, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("contract: MarshalJSON: %w", err)
+	}
+	return out, nil
 }
 
 // Example returns a valid example ResourceContract (useful for docs +
@@ -90,34 +90,34 @@ func MarshalJSON(c *ResourceContract) ([]byte, error) {
 //
 // The returned contract is fully initialized — all slices are non-nil.
 func Example() *ResourceContract {
-        c := &ResourceContract{
-                Version: VersionV1,
-                ID:      "550e8400-e29b-41d4-a716-446655440000",
-                AgentID: "agent.coder",
-                Task: TaskSpec{
-                        Type:     TaskTypeCoding,
-                        Priority: PriorityInteractive,
-                },
-                Compute: ComputeSpec{
-                        Accelerator: AcceleratorCUDA,
-                        VRAMMB:      12000,
-                        CPUCores:    4,
-                        RAMMB:       8192,
-                },
-                Runtime: RuntimeSpec{
-                        Preferred: []string{"sglang", "vllm"},
-                },
-                Model: ModelSpec{
-                        Capabilities: []string{"coding", "reasoning"},
-                },
-                Security: SecuritySpec{
-                        Filesystem: FilesystemScopeWorkspace,
-                        Network:    NetworkScopeRestricted,
-                        Shell:      ShellScopeSandbox,
-                },
-        }
-        normalize(c)
-        return c
+	c := &ResourceContract{
+		Version: VersionV1,
+		ID:      "550e8400-e29b-41d4-a716-446655440000",
+		AgentID: "agent.coder",
+		Task: TaskSpec{
+			Type:     TaskTypeCoding,
+			Priority: PriorityInteractive,
+		},
+		Compute: ComputeSpec{
+			Accelerator: AcceleratorCUDA,
+			VRAMMB:      12000,
+			CPUCores:    4,
+			RAMMB:       8192,
+		},
+		Runtime: RuntimeSpec{
+			Preferred: []string{"sglang", "vllm"},
+		},
+		Model: ModelSpec{
+			Capabilities: []string{"coding", "reasoning"},
+		},
+		Security: SecuritySpec{
+			Filesystem: FilesystemScopeWorkspace,
+			Network:    NetworkScopeRestricted,
+			Shell:      ShellScopeSandbox,
+		},
+	}
+	normalize(c)
+	return c
 }
 
 // ---------------------------------------------------------------------------
@@ -132,12 +132,12 @@ func Example() *ResourceContract {
 // alias to delegate to the default encoding/json machinery without
 // infinite recursion.
 func (r RuntimeSpec) MarshalJSON() ([]byte, error) {
-        type alias RuntimeSpec
-        tmp := alias(r)
-        if tmp.Preferred == nil {
-                tmp.Preferred = []string{}
-        }
-        return json.Marshal(tmp)
+	type alias RuntimeSpec
+	tmp := alias(r)
+	if tmp.Preferred == nil {
+		tmp.Preferred = []string{}
+	}
+	return json.Marshal(tmp)
 }
 
 // MarshalYAML implements yaml.Marshaler for RuntimeSpec.
@@ -146,24 +146,24 @@ func (r RuntimeSpec) MarshalJSON() ([]byte, error) {
 // alias to delegate to the default yaml.v3 reflection-based encoder
 // without infinite recursion (alias has no MarshalYAML method).
 func (r RuntimeSpec) MarshalYAML() (interface{}, error) {
-        type alias RuntimeSpec
-        tmp := alias(r)
-        if tmp.Preferred == nil {
-                tmp.Preferred = []string{}
-        }
-        return tmp, nil
+	type alias RuntimeSpec
+	tmp := alias(r)
+	if tmp.Preferred == nil {
+		tmp.Preferred = []string{}
+	}
+	return tmp, nil
 }
 
 // MarshalJSON implements json.Marshaler for ModelSpec.
 //
 // Ensures Capabilities serializes as `[]` not `null` when nil.
 func (m ModelSpec) MarshalJSON() ([]byte, error) {
-        type alias ModelSpec
-        tmp := alias(m)
-        if tmp.Capabilities == nil {
-                tmp.Capabilities = []string{}
-        }
-        return json.Marshal(tmp)
+	type alias ModelSpec
+	tmp := alias(m)
+	if tmp.Capabilities == nil {
+		tmp.Capabilities = []string{}
+	}
+	return json.Marshal(tmp)
 }
 
 // MarshalYAML implements yaml.Marshaler for ModelSpec.
@@ -171,12 +171,12 @@ func (m ModelSpec) MarshalJSON() ([]byte, error) {
 // Ensures Capabilities serializes as `[]` not `null` when nil. Uses a type
 // alias to avoid infinite recursion (alias has no MarshalYAML method).
 func (m ModelSpec) MarshalYAML() (interface{}, error) {
-        type alias ModelSpec
-        tmp := alias(m)
-        if tmp.Capabilities == nil {
-                tmp.Capabilities = []string{}
-        }
-        return tmp, nil
+	type alias ModelSpec
+	tmp := alias(m)
+	if tmp.Capabilities == nil {
+		tmp.Capabilities = []string{}
+	}
+	return tmp, nil
 }
 
 // normalize ensures all slices are non-nil (so they serialize as [] not
@@ -187,16 +187,16 @@ func (m ModelSpec) MarshalYAML() (interface{}, error) {
 // the in-memory representation also reflects the stability contract
 // (consumers iterating over Preferred/Capabilities won't need nil checks).
 func normalize(c *ResourceContract) {
-        if c == nil {
-                return
-        }
-        if c.Version == "" {
-                c.Version = VersionV1
-        }
-        if c.Runtime.Preferred == nil {
-                c.Runtime.Preferred = []string{}
-        }
-        if c.Model.Capabilities == nil {
-                c.Model.Capabilities = []string{}
-        }
+	if c == nil {
+		return
+	}
+	if c.Version == "" {
+		c.Version = VersionV1
+	}
+	if c.Runtime.Preferred == nil {
+		c.Runtime.Preferred = []string{}
+	}
+	if c.Model.Capabilities == nil {
+		c.Model.Capabilities = []string{}
+	}
 }
