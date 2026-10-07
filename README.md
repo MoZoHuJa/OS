@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.14 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.15 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.14</h1>
+<h1 align="center">SCARLIX OS v19.1.15</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.14"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.14-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.15"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.15-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.14 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.15 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.14   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.15   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,56 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.15 (vs v19.1.14)
+
+**Data contract integrity + security gate fixes.** 5 P1 + 4 P2 from 3 independent reviews.
+
+Three reviews of v19.1.14 found critical data contract mismatches (GPU health ID, runtime metadata version), security gate semantic bugs (vLLM trust-remote-code), and systemd anti-patterns. v19.1.15 fixes all.
+
+### P1 fixes
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P1-1** | **vLLM trust-remote-code boolean gate** | `${VLLM_TRUST_REMOTE_CODE:+--trust-remote-code}` — `false`/`0`/`no` all enabled the flag (any non-empty = true) | scarlix-mode validates: `true`/`1`/`yes` → `VLLM_TRUST_FLAG="--trust-remote-code"`, else empty. Compose uses `${VLLM_TRUST_FLAG:-}` |
+| **P1-2** | **agent.env permissions** | `umask 077` only on mkdir (first bash -c), cat ran in separate bash -c with default umask → file was 644, not 600. `ok()` was unconditional | Single `bash -c` with `umask 077` wrapping mkdir + cat + chmod 600. Conditional `ok/warn` based on success |
+| **P1-3** | **GPU health ID mismatch** | `CollectGPUHealth` used `fmt.Sprintf("gpu.%d", index)` → `"gpu.0"`, but scheduler looked up `gpu.ID` = `"gpu.nvidia.0"` → health never matched → unhealthy GPUs could be selected | `CollectGPUHealth` now uses `gpu.ID` (`"gpu.nvidia.0"`) — matches scheduler lookup |
+| **P1-4** | **runtime.go + smoke test LiteLLM version drift** | `runtime.go` had `main-v1.21.7`, smoke test had `main-v1.21.7`, while compose had `main-v1.23.9` | Both updated to `main-v1.23.9` (matches production) |
+| **P1-5** | **model-manager.timer Requires= anti-pattern** | `Requires=model-manager.service` could trigger service at boot instead of waiting for OnCalendar=Mon 04:00 | Removed `Requires=` — timer targets service by basename convention |
+
+### P2 fixes
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P2-1** | **scarlix CLI header** | v19.0.7 (stale by 8 releases) | v19.1.15 |
+| **P2-2** | **/mnt subdirs ownership** | After removing `chown -R /mnt`, subdirs (/mnt/files, /mnt/games, /mnt/photos) were root:root — user couldn't write | Individual `chown` for each subdir (non-recursive) |
+| **P2-3** | **models.yaml trust_remote_code** | Key missing — scarlix-mode read empty default, but single-source-of-truth was incomplete | Added `trust_remote_code: false` to vllm section + yq read in scarlix-mode |
+| **P2-4** | **Version headers → v19.1.15** | models.yaml, scarlix-mode, scarlix CLI, Dockerfile, Pi-Bolt, model-manager.timer | All → v19.1.15 |
+
+### Verification
+```
+gofmt -l .              → EMPTY (clean)
+go vet ./...            → CLEAN
+go test ./...           → 10 packages all OK (no regression)
+bash -n                 → OK
+YAML lint               → OK
+scarlix-smoke-test.sh  → 13 passed, 0 failed, 0 warned
+CI (all 8 jobs)        → expected PASS (compose-validation fix from 1772fe8 confirmed)
+```
+
+### v19.1.x Resource Foundation + Hardening — FINAL
+```
+v19.1.0–v19.1.5   Resource Foundation
+v19.1.6–v19.1.9   Resource View + Scheduler + Compatibility + Release freeze
+v19.1.10–v19.1.12  Scheduler Correctness + Semantics + Snapshot Integrity
+v19.1.13          Release Integrity (gofmt + security + deployment)
+v19.1.14          CI Green + Security Hardening
+v19.1.15          Data Contract Integrity + Security Gate  ← FINAL
+```
+
+**v19.1.x is now FROZEN. v19.2.0 Compute Fabric can safely begin.**
 
 ---
 

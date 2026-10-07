@@ -24,18 +24,17 @@ services:
             - driver: nvidia
               device_ids: ["1"]
               capabilities: [gpu]
-    # v19.1.14 P2: --trust-remote-code is now env-gated.
-    #   Set VLLM_TRUST_REMOTE_CODE=true in .env to enable (default: disabled).
-    #   SECURITY: this flag allows model repos to execute arbitrary Python code.
-    #   Only enable with TRUSTED model sources (verified HF repos, e.g. Qwen official).
-    #   Supply-chain path: models.yaml → download-models.sh → HuggingFace → /models → vLLM
-    # v19.1.13 P1-5: original security comment preserved above.
+    # v19.1.15 P1: VLLM_TRUST_FLAG is set by scarlix-mode from models.yaml
+    #   (trust_remote_code: true → "--trust-remote-code", false → "").
+    #   Was: ${VLLM_TRUST_REMOTE_CODE:+--trust-remote-code} which treated
+    #   "false"/"0"/"no" as truthy (any non-empty value enables the flag).
+    #   Now: scarlix-mode validates the boolean and outputs VLLM_TRUST_FLAG.
     command: >
       --model ${VLLM_MODEL_PATH:-/models/Qwen3-14B-AWQ}
       --tensor-parallel-size ${VLLM_TENSOR_PARALLEL:-1}
       --gpu-memory-utilization ${VLLM_GPU_UTIL:-0.85}
       --max-model-len ${VLLM_MAX_MODEL_LEN:-32768}
-      ${VLLM_TRUST_REMOTE_CODE:+--trust-remote-code}
+      ${VLLM_TRUST_FLAG:-}
       --host 0.0.0.0
       --port 8000
     networks: [scarlix-net]

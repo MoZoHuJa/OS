@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v19.1.14 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v19.1.15 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.7.7 FIXES:
 #   P0: TV mode uses systemctl restart (was: start on RemainAfterExit=yes oneshot
 #       → service stays 'active' after first run → start doesn't re-run healthcheck
@@ -137,6 +137,7 @@ generate_env_file() {
   # v18.8.9 P1-02: vLLM + BeeLlama runtime params from models.yaml
   local vllm_tensor_parallel="1"
   local vllm_max_model_len="32768"
+  local vllm_trust_remote_code="false"
   local beellama_context_size="32768"
   local beellama_threads="16"
   local beellama_cache_type_k="q4_0"
@@ -160,6 +161,7 @@ generate_env_file() {
     # v18.8.9 P1-02: vLLM + BeeLlama runtime params
     vllm_tensor_parallel=$(yaml_get '.vllm.tensor_parallel_size' "$vllm_tensor_parallel") || return 1
     vllm_max_model_len=$(yaml_get '.vllm.max_model_len' "$vllm_max_model_len") || return 1
+    vllm_trust_remote_code=$(yaml_get '.vllm.trust_remote_code' "$vllm_trust_remote_code") || return 1
     beellama_context_size=$(yaml_get '.beellama.context_size' "$beellama_context_size") || return 1
     beellama_threads=$(yaml_get '.beellama.threads' "$beellama_threads") || return 1
     beellama_cache_type_k=$(yaml_get '.beellama.cache_type_k' "$beellama_cache_type_k") || return 1
@@ -220,9 +222,17 @@ OLLAMA_NUM_PARALLEL=$ollama_num_parallel
 # v18.8.9 P1-02: vLLM runtime params
 VLLM_TENSOR_PARALLEL=$vllm_tensor_parallel
 VLLM_MAX_MODEL_LEN=$vllm_max_model_len
-# v19.1.14 P2: --trust-remote-code env-gated (default: not set = disabled)
-# Set VLLM_TRUST_REMOTE_CODE=true in .env or models.yaml to enable.
-VLLM_TRUST_REMOTE_CODE=${vllm_trust_remote_code:-}
+# v19.1.15 P1: VLLM_TRUST_FLAG — proper boolean gate.
+# scarlix-mode reads trust_remote_code from models.yaml, validates it
+# (only true/1/yes → "--trust-remote-code", everything else → "").
+# Was: VLLM_TRUST_REMOTE_CODE=${vllm_trust_remote_code:-} which compose
+# treated as :+ (any non-empty = true, including "false"/"0"/"no").
+VLLM_TRUST_FLAG=
+if [ -n "${vllm_trust_remote_code:-}" ]; then
+  case "$(echo "${vllm_trust_remote_code}" | tr '[:upper:]' '[:lower:]')" in
+    true|1|yes) VLLM_TRUST_FLAG="--trust-remote-code" ;;
+  esac
+fi
 # v18.8.9 P1-02: BeeLlama runtime params
 LLAMACPP_CONTEXT_SIZE=$beellama_context_size
 LLAMACPP_THREADS=$beellama_threads

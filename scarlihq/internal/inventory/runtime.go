@@ -133,7 +133,7 @@ var runtimeMetadata = []runtimeMeta{
 	{
 		ID:           "litellm",
 		Container:    "litellm",
-		Image:        "ghcr.io/berriai/litellm:main-v1.21.7",
+		Image:        "ghcr.io/berriai/litellm:main-v1.23.9",
 		Protocol:     "openai-compatible",
 		Port:         4001,
 		GPUIndex:     -1,
@@ -307,7 +307,7 @@ func dockerInspect(containerName string) (status string, err error) {
 //   - "lmsysorg/sglang:v0.4.9.post6-cu128-b200" → "v0.4.9.post6-cu128-b200"
 //   - "vllm/vllm-openai:v0.8.5"                 → "v0.8.5"
 //   - "ollama/ollama:0.5.4"                     → "0.5.4"
-//   - "ghcr.io/berriai/litellm:main-v1.21.7"   → "main-v1.21.7"
+//   - "ghcr.io/berriai/litellm:main-v1.23.9"   → "main-v1.23.9"
 //   - "ghcr.io/ggml-org/llama.cpp@sha256:..."   → "" (digest-pinned, no tag)
 //   - "library/nginx:latest"                    → "latest"
 //   - "library/nginx"                           → "" (no tag)

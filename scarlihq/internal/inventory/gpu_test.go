@@ -103,8 +103,8 @@ func TestCollectGPUHealth_MarksHealthyGPU(t *testing.T) {
 	if healths[0].State != "healthy" {
 		t.Errorf("expected state=healthy; got %q (msg=%q)", healths[0].State, healths[0].Message)
 	}
-	if healths[0].Component != "gpu.0" {
-		t.Errorf("expected component=gpu.0; got %q", healths[0].Component)
+	if healths[0].Component != "gpu.nvidia.0" {
+		t.Errorf("expected component=gpu.nvidia.0; got %q", healths[0].Component)
 	}
 	// Mutation contract: the input GPU's Healthy field should have been
 	// flipped to true.

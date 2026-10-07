@@ -1,4 +1,4 @@
-# SCARLIX OS v19.1.14 — EndeavourOS Edition — Model-Agnostic Configuration
+# SCARLIX OS v19.1.15 — EndeavourOS Edition — Model-Agnostic Configuration
 #
 # v17.9.7: flashinfer disabled in SGLang compose (--disable-flashinfer) — Blackwell sm_120 safe.
 #   `flashinfer: false` documents this (compose is the source of truth for the flag).
@@ -53,6 +53,11 @@ vllm:
   gpu_memory_utilization: 0.85
   max_model_len: 32768
   enable_lora: false  # v17.5: LoRA paths removed (didn't exist)
+  # v19.1.15 P1: trust_remote_code — controls vLLM --trust-remote-code flag.
+  #   true/1/yes → VLLM_TRUST_FLAG="--trust-remote-code" (enables custom model code).
+  #   false (default) → flag disabled (only built-in architectures).
+  #   SECURITY: only enable with TRUSTED model sources (verified HF repos).
+  trust_remote_code: false
 
 # === Tier-4: BeeLlama.cpp / llama.cpp (DEFAULT, CPU offline) ===
 # v17.5: Uses official llama.cpp image (not BeeLlama fork — was unverified).

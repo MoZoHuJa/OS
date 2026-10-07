@@ -398,7 +398,7 @@ check_07_registry() {
     check_image_dockerhub "fedirz/faster-whisper-server" "sha-307e23f-cuda"
     # ghcr.io images
     check_image_ghcr "block/buzz" "latest"
-    check_image_ghcr "berriai/litellm" "main-v1.21.7"
+    check_image_ghcr "berriai/litellm" "main-v1.23.9"
     check_image_ghcr "openlit/openlit" "1.5.0"
 }
 

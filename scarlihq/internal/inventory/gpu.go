@@ -209,7 +209,11 @@ func CollectGPUs() []GPU {
 //	            (driver issue or GPU is in a reset state).
 //
 // Returns []Health (never nil) — one entry per input GPU, in the same order.
-// Component identifier is "gpu.<index>" (matches Health doc comment in
+// Component identifier matches GPU.ID ("gpu.nvidia.0") so scheduler
+// health lookups via s.health[gpu.ID] work correctly.
+// v19.1.15 P1-3: Was fmt.Sprintf("gpu.%d", gpus[i].Index) → mismatch
+// with gpu.ID ("gpu.nvidia.0") → health never matched → unhealthy GPUs
+// could be selected by scheduler.
 // types.go: "gpu.0"). CheckedAt is RFC 3339 UTC.
 //
 // Mutation contract: the input slice's backing array IS modified in place
@@ -235,7 +239,7 @@ func CollectGPUHealth(gpus []GPU) []Health {
 			msg = "VRAM or utilization out of range"
 		}
 		healths = append(healths, Health{
-			Component: fmt.Sprintf("gpu.%d", gpus[i].Index),
+			Component: gpus[i].ID, // v19.1.15 P1-3: use gpu.ID ("gpu.nvidia.0") not "gpu.%d"
 			State:     state,
 			Message:   msg,
 			CheckedAt: now,
