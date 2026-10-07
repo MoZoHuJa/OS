@@ -994,8 +994,8 @@ else
     # /etc/scarlix/.env is root:root 600 — user CANNOT read it.
     # Fix: create a user-readable secrets file (~/.config/scarlix/agent.env, 600, user-owned)
     # and source it from .bashrc. Never write the key directly into .bashrc.
-    USER_SECRETS_DIR="/home/$REAL_USER/.config/scarlix"
-    USER_SECRETS_FILE="$USER_SECRETS_DIR/agent.env"
+    # v19.1.15 P2: Removed unused USER_SECRETS_DIR/FILE vars (shellcheck SC2034).
+    # The file path is now constructed inline in the bash -c command.
     USER_PROFILE="/home/$REAL_USER/.bashrc"
     if [ -f /etc/scarlix/.env ]; then
       # Extract keys from root-owned .env (install.sh runs as root)
