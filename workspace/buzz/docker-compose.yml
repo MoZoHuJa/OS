@@ -54,7 +54,7 @@ services:
 
   buzz-minio:
     # v18.8.2 P1: :latest — could NOT pin (Docker Hub API no tags). Experimental profile.
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2024-10-13T13-34-50Z
     container_name: buzz-minio
     restart: unless-stopped
     # v18.8.2 P1: experimental profile — only starts with --profile buzz

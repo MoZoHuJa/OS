@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v19.1.13 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v19.1.14 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.7.7 FIXES:
 #   P0: TV mode uses systemctl restart (was: start on RemainAfterExit=yes oneshot
 #       → service stays 'active' after first run → start doesn't re-run healthcheck
@@ -220,6 +220,9 @@ OLLAMA_NUM_PARALLEL=$ollama_num_parallel
 # v18.8.9 P1-02: vLLM runtime params
 VLLM_TENSOR_PARALLEL=$vllm_tensor_parallel
 VLLM_MAX_MODEL_LEN=$vllm_max_model_len
+# v19.1.14 P2: --trust-remote-code env-gated (default: not set = disabled)
+# Set VLLM_TRUST_REMOTE_CODE=true in .env or models.yaml to enable.
+VLLM_TRUST_REMOTE_CODE=${vllm_trust_remote_code:-}
 # v18.8.9 P1-02: BeeLlama runtime params
 LLAMACPP_CONTEXT_SIZE=$beellama_context_size
 LLAMACPP_THREADS=$beellama_threads

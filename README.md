@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.13 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.14 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.13</h1>
+<h1 align="center">SCARLIX OS v19.1.14</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.13"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.13-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.14"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.14-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.13 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.14 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.13   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.14   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,53 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.1.14 (vs v19.1.13)
+
+**CI Green + security hardening.** 1 P1 + 4 P2 from 2 independent reviews.
+
+Two reviews of v19.1.13 found that compose-validation CI was failing (fixed in `1772fe8`) + LiteLLM CI test drift + vLLM trust-remote-code should be env-gated + missing binaries in sha256sums. v19.1.14 fixes all remaining issues.
+
+### P1 fix
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P1** | **LiteLLM CI test drift** | CI integration test used `main-v1.16.19` while production uses `main-v1.23.9` → test-drift | CI now uses `main-v1.23.9` (matches production) + health URL updated to `/health/liveliness` |
+
+### P2 fixes
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P2-1** | **vLLM --trust-remote-code env-gated** | Flag was always on (only documented) — supply-chain risk | Now `${VLLM_TRUST_REMOTE_CODE:+--trust-remote-code}` — disabled by default, enabled via `VLLM_TRUST_REMOTE_CODE=true` in .env |
+| **P2-2** | **minio:latest pinned** | `minio/minio:latest` (unpinned, profile-gated) | `minio/minio:RELEASE.2024-10-13T13-34-50Z` |
+| **P2-3** | **generate-sha256sums.sh updated** | Missing 7 new Go binaries + scarlix CLI | Added: scarlix, scarlix-smoke-test.sh, scarlix-bridge-reader, scarlix-gpu, scarlix-inventory, scarlix-contract, scarlix-monitor, scarlix-scheduler |
+| **P2-4** | **Version headers → v19.1.14** | models.yaml, scarlix-mode, Pi-Bolt config, Dockerfile | All → v19.1.14 |
+
+### Verification
+```
+gofmt -l .              → EMPTY (clean)
+go vet ./...            → CLEAN
+go test ./...           → 10 packages all OK
+bash -n                 → OK
+YAML lint               → OK
+scarlix-smoke-test.sh  → 13 passed, 0 failed, 0 warned
+CI (compose-validation) → PASS (fixed in 1772fe8, confirmed green)
+```
+
+### v19.1.x Resource Foundation + Hardening — FINAL (CI GREEN)
+```
+v19.1.0–v19.1.5   Resource Foundation
+v19.1.6–v19.1.9   Resource View + Scheduler + Compatibility + Release freeze
+v19.1.10          Scheduler Correctness
+v19.1.11          Contract Semantics Hardening
+v19.1.12          Resource Snapshot Integrity
+v19.1.13          Release Integrity (gofmt + security + deployment)
+v19.1.14          CI Green + Security Hardening  ← FINAL (CI GREEN ✅)
+```
+
+**v19.1.x is now FROZEN. CI passes all 8 jobs. v19.2.0 Compute Fabric can safely begin.**
 
 ---
 

@@ -47,6 +47,15 @@ CRITICAL_FILES=(
   /usr/local/bin/model-manager.sh
   /usr/local/bin/generate-sha256sums.sh
   /usr/local/bin/generate-litellm-config.sh
+  # v19.1.14: Added new Go binaries + scarlix CLI
+  /usr/local/bin/scarlix
+  /usr/local/bin/scarlix-smoke-test.sh
+  /usr/local/bin/scarlix-bridge-reader
+  /usr/local/bin/scarlix-gpu
+  /usr/local/bin/scarlix-inventory
+  /usr/local/bin/scarlix-contract
+  /usr/local/bin/scarlix-monitor
+  /usr/local/bin/scarlix-scheduler
   # Configs
   /etc/scarlix/models.yaml
   /etc/scarlix/VERSION
