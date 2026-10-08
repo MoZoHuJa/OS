@@ -997,9 +997,8 @@ else
     # /etc/scarlix/.env is root:root 600 — user CANNOT read it.
     # Fix: create a user-readable secrets file (~/.config/scarlix/agent.env, 600, user-owned)
     # and source it from .bashrc. Never write the key directly into .bashrc.
-    # v19.1.15 P2: Removed unused USER_SECRETS_DIR/FILE vars (shellcheck SC2034).
-    # The file path is now constructed inline in the bash -c command.
-    USER_PROFILE="/home/$REAL_USER/.bashrc"
+    # v19.1.16 P2: Removed unused USER_PROFILE var (shellcheck SC2034).
+    # Source line is added to .bashrc + .zshrc + fish config in the loop below.
     if [ -f /etc/scarlix/.env ]; then
       # Extract keys from root-owned .env (install.sh runs as root)
       LITELLM_KEY=$(grep "^LITELLM_MASTER_KEY=" /etc/scarlix/.env 2>/dev/null | cut -d= -f2- || echo "")
