@@ -1,4 +1,4 @@
-# SCARLIX OS v19.1.15 — EndeavourOS Edition — Model-Agnostic Configuration
+# SCARLIX OS v19.1.16 — EndeavourOS Edition — Model-Agnostic Configuration
 #
 # v17.9.7: flashinfer disabled in SGLang compose (--disable-flashinfer) — Blackwell sm_120 safe.
 #   `flashinfer: false` documents this (compose is the source of truth for the flag).
@@ -28,7 +28,7 @@ sglang:
   #   it was configurable. To use different quantization: change model_path.)
   # quantization: "awq"  # REMOVED — not a runtime parameter
   context_length: 32768
-  mem_fraction: 0.85
+  mem_fraction: 0.80
   # v18.8.3 P1 (D): Basic SGLang runtime tuning (no PyTorch env vars — kept
   #   conservative for stability). These map to SGLang CLI flags via .env.
   #   chunked_prefill_size: smaller = less peak VRAM for prefill (4096 = safe for 16GB)
@@ -36,7 +36,7 @@ sglang:
   chunked_prefill_size: 4096
   max_running_requests: 4
   # v18.8.7 P1-05: shm_size from models.yaml → .env → compose (was: hardcoded 8gb in compose).
-  shm_size: "8gb"
+  shm_size: "4gb"
   # v17.9.7: flashinfer DISABLED in SGLang compose (--disable-flashinfer).
   # v18.8.7 P1-05: flashinfer removed as config key — it's NOT wired to compose
   #   (compose hardcodes --disable-flashinfer for Blackwell sm_120 safety in v0.4.4).
@@ -50,7 +50,7 @@ sglang:
 vllm:
   model_path: "/models/Qwen3-14B-AWQ"
   tensor_parallel_size: 1  # v17.5: TP=1 (mixed GPU safe — not TP=2)
-  gpu_memory_utilization: 0.85
+  gpu_memory_utilization: 0.80
   max_model_len: 32768
   enable_lora: false  # v17.5: LoRA paths removed (didn't exist)
   # v19.1.15 P1: trust_remote_code — controls vLLM --trust-remote-code flag.

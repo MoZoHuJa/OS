@@ -1,0 +1,9 @@
+[Unit]
+Description=SCARLIX OS v19.1.16 — Telemetry prune timer (daily)
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

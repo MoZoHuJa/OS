@@ -102,10 +102,10 @@ type Service struct {
 // Health represents the health summary of a single component.
 //
 // Component is the same identifier used elsewhere (e.g. Runtime.ID or
-// "gpu.0"). State is one of: "healthy", "unhealthy", "starting", "down",
+// "gpu.nvidia.0"). State is one of: "healthy", "unhealthy", "starting", "down",
 // "unknown". CheckedAt is ISO 8601 (RFC 3339) UTC.
 type Health struct {
-	Component string `json:"component"` // "sglang", "scarlihq", "gpu.0"
+	Component string `json:"component"` // "sglang", "scarlihq", "gpu.nvidia.0"
 	State     string `json:"state"`     // "healthy", "unhealthy", "starting", "down", "unknown"
 	Message   string `json:"message,omitempty"`
 	CheckedAt string `json:"checked_at"` // ISO 8601 timestamp

@@ -1,0 +1,6 @@
+[Unit]
+Description=SCARLIX OS v19.1.16 — Telemetry prune (daily)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/scarlix-monitor --prune 30d

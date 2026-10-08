@@ -1,0 +1,7 @@
+[Unit]
+Description=SCARLIX OS v19.1.16 — Telemetry snapshot (scarlix-monitor --record)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/scarlix-monitor --record

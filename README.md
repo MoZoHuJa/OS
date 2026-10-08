@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.15 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.16 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.15</h1>
+<h1 align="center">SCARLIX OS v19.1.16</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.15"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.15-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.16"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.16-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.15 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.16 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.15   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.16   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -1783,3 +1783,46 @@ These are platform-level risks, not SCARLIX bugs. EndeavourOS/Arch is a rolling 
 
 - **v18.9**: LiteLLM E2E inference CI test, Go unit tests (ReserveWSTicket, Mode.Set O_EXCL), CI artifact sharing between jobs (faster), scarlix-doctor LiteLLM + model identity checks.
 - **v19.0**: Per-user auth (OIDC/LDAP), real GPU telemetry via DCGM, mode-switch history, Incus dev workspaces.
+
+## 🆕 What's New in v19.1.16 (vs v19.1.15)
+
+**Critical heredoc fix + security hardening.** 1 P0 + 4 P1 + 7 P2 from 4 independent reviews.
+
+Four reviews of v19.1.15 found a critical P0 (VLLM_TRUST_FLAG logic inside heredoc → written as text, not executed), plus security issues (chown backup tree, agent.env empty keys, scheduler fail-open), stale headers, missing telemetry timers, and aggressive VRAM defaults for 16GB GPUs.
+
+### P0 fix
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P0** | **VLLM_TRUST_FLAG heredoc bug** | `if`/`case`/`fi` block was inside `cat > .env << EOF` heredoc → written as literal text → VLLM_TRUST_FLAG always empty + 5 non-KEY=VALUE lines in .env breaking docker compose | Flag computed BEFORE heredoc: `case` validates `true`/`1`/`yes` → `--trust-remote-code`, else empty. Heredoc writes `VLLM_TRUST_FLAG=$vllm_trust_flag` (single line) |
+
+### P1 fixes
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P1-1** | **chown -R /mnt/backup/restic** | Root backup hook writes to user-owned tree → symlink attack | `chown root:root /mnt/backup/restic` + `chmod 700` |
+| **P1-2** | **agent.env empty key writes** | Always wrote both `export KEY=""` even when empty → overwrites user's existing var | Only writes non-empty keys via `printf` + conditional |
+| **P1-3** | **Scheduler GPU health fail-closed** | Missing health entry = GPU passes (fail-open) → unhealthy GPU could be selected | Missing health = GPU rejected (fail-closed) |
+| **P1-4** | **types.go comments** | Said `"gpu.0"` (stale from pre-v19.1.15) | Updated to `"gpu.nvidia.0"` |
+
+### P2 fixes
+
+| # | Fix |
+|---|-----|
+| **P2-1** | Stale headers: sglang compose, vllm compose, packages.x86_64 → v19.1.16 |
+| **P2-2** | LiteLLM compose comments: removed "latest stable 1.21.7" references |
+| **P2-3** | shellcheck CI: added scarlix-docker-backup.sh, removed scarlix-gpu (Go binary) |
+| **P2-4** | Telemetry timers: scarlix-monitor.service + .timer (5 min record), scarlix-monitor-prune.service + .timer (daily prune 30d) |
+| **P2-5** | VRAM defaults: mem_fraction 0.85→0.80, gpu_memory_utilization 0.85→0.80, shm_size 8gb→4gb (safe for 16GB) |
+| **P2-6** | agent.env: added .zshrc + fish config.fish source (was: .bashrc only) |
+| **P2-7** | Version headers → v19.1.16 (models.yaml, scarlix-mode, Pi-Bolt, Dockerfile, all timers) |
+
+### Verification
+```
+gofmt -l .              → EMPTY (clean)
+go vet ./...            → CLEAN
+go test ./...           → 10 packages all OK (21 scheduler tests PASS)
+bash -n                 → OK
+YAML lint               → OK
+scarlix-smoke-test.sh  → 13 passed, 0 failed, 0 warned
+```

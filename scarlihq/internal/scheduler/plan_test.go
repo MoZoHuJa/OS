@@ -30,7 +30,7 @@ func TestPlan_SelectsCompatibleGPU(t *testing.T) {
 	models := []inventory.Model{
 		{ID: "sglang", Present: true, Capabilities: []string{"chat", "coding"}, SupportedRuntimes: []string{"sglang", "vllm"}},
 	}
-	s := New(gpus, runtimes, models, nil)
+	s := New(gpus, runtimes, models, []inventory.Health{{Component: "gpu.nvidia.0", State: "healthy"}})
 
 	c := &contract.ResourceContract{
 		Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
@@ -101,7 +101,10 @@ func TestPlan_PrefersLowUtilizationGPU(t *testing.T) {
 		{ID: "sglang", Format: "safetensors", SupportedRuntimes: []string{"sglang", "vllm"}, Present: true},
 		{ID: "vllm", Format: "safetensors", SupportedRuntimes: []string{"sglang", "vllm"}, Present: true},
 	}
-	s := New(gpus, runtimes, models, nil)
+	s := New(gpus, runtimes, models, []inventory.Health{
+		{Component: "gpu.nvidia.0", State: "healthy"},
+		{Component: "gpu.nvidia.1", State: "healthy"},
+	})
 
 	c := &contract.ResourceContract{
 		Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
@@ -129,7 +132,7 @@ func TestPlan_ScoreBreakdownNotEmpty(t *testing.T) {
 	models := []inventory.Model{
 		{ID: "sglang", Present: true, Capabilities: []string{"coding"}, SupportedRuntimes: []string{"sglang", "vllm"}},
 	}
-	s := New(gpus, runtimes, models, nil)
+	s := New(gpus, runtimes, models, []inventory.Health{{Component: "gpu.nvidia.0", State: "healthy"}})
 
 	c := &contract.ResourceContract{
 		Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
@@ -216,7 +219,7 @@ func TestPlan_CPURequestNeverSelectsGPU(t *testing.T) {
 		{ID: "sglang", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true},
 		{ID: "beellama", Format: "gguf", SupportedRuntimes: []string{"llamacpp"}, Present: true},
 	}
-	s := New(gpus, runtimes, models, nil)
+	s := New(gpus, runtimes, models, []inventory.Health{{Component: "gpu.nvidia.0", State: "healthy"}})
 
 	c := &contract.ResourceContract{
 		Task:    contract.TaskSpec{Type: "coding", Priority: "background"},
@@ -244,7 +247,7 @@ func TestPlan_RejectsModelWithMissingCapabilities(t *testing.T) {
 	models := []inventory.Model{
 		{ID: "sglang", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"chat"}}, // no "vision"
 	}
-	s := New(gpus, runtimes, models, nil)
+	s := New(gpus, runtimes, models, []inventory.Health{{Component: "gpu.nvidia.0", State: "healthy"}})
 
 	c := &contract.ResourceContract{
 		Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
@@ -307,6 +310,8 @@ func TestPlan_RejectsDownRuntime(t *testing.T) {
 		{ID: "vllm", Format: "safetensors", SupportedRuntimes: []string{"vllm"}, Present: true},
 	}
 	health := []inventory.Health{
+		{Component: "gpu.nvidia.0", State: "healthy"},
+		{Component: "gpu.nvidia.1", State: "healthy"},
 		{Component: "sglang", State: "down"},  // sglang is DOWN
 		{Component: "vllm", State: "healthy"}, // vllm is HEALTHY
 	}
@@ -342,7 +347,7 @@ func TestPlan_AllCapabilitiesMustMatch(t *testing.T) {
 	models := []inventory.Model{
 		{ID: "sglang", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"coding", "reasoning"}}, // no "vision"
 	}
-	s := New(gpus, runtimes, models, nil)
+	s := New(gpus, runtimes, models, []inventory.Health{{Component: "gpu.nvidia.0", State: "healthy"}})
 
 	c := &contract.ResourceContract{
 		Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
@@ -395,7 +400,10 @@ func TestPlan_BestRuntimeSelected(t *testing.T) {
 		{ID: "vllm-model", Format: "safetensors", SupportedRuntimes: []string{"vllm"}, Present: true, Capabilities: []string{"coding"}},
 		{ID: "sglang-model", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"coding"}},
 	}
-	s := New(gpus, runtimes, models, nil)
+	s := New(gpus, runtimes, models, []inventory.Health{
+		{Component: "gpu.nvidia.0", State: "healthy"},
+		{Component: "gpu.nvidia.1", State: "healthy"},
+	})
 
 	c := &contract.ResourceContract{
 		Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
@@ -425,7 +433,7 @@ func TestPlan_EmptyAcceleratorDefaultsCuda(t *testing.T) {
 	models := []inventory.Model{
 		{ID: "test-model", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"coding"}},
 	}
-	s := New(gpus, runtimes, models, nil)
+	s := New(gpus, runtimes, models, []inventory.Health{{Component: "gpu.nvidia.0", State: "healthy"}})
 
 	c := &contract.ResourceContract{
 		Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
@@ -453,7 +461,7 @@ func TestPlan_CPURuntimeNotOnGPUPath(t *testing.T) {
 		{ID: "beellama-model", Format: "gguf", SupportedRuntimes: []string{"llamacpp"}, Present: true, Capabilities: []string{"coding"}},
 		{ID: "sglang-model", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"coding"}},
 	}
-	s := New(gpus, runtimes, models, nil)
+	s := New(gpus, runtimes, models, []inventory.Health{{Component: "gpu.nvidia.0", State: "healthy"}})
 
 	c := &contract.ResourceContract{
 		Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
@@ -480,7 +488,7 @@ func TestPlan_MultiModelSelectionSkipsIncompatible(t *testing.T) {
 		{ID: "model-a", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"chat"}},                // no "coding"
 		{ID: "model-b", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"coding", "reasoning"}}, // has "coding"
 	}
-	s := New(gpus, runtimes, models, nil)
+	s := New(gpus, runtimes, models, []inventory.Health{{Component: "gpu.nvidia.0", State: "healthy"}})
 
 	c := &contract.ResourceContract{
 		Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
@@ -509,7 +517,7 @@ func TestPlan_EmptySupportedRuntimesNotRejected(t *testing.T) {
 	models := []inventory.Model{
 		{ID: "custom-model", Format: "safetensors", SupportedRuntimes: []string{}, Present: true, Capabilities: []string{"coding"}},
 	}
-	s := New(gpus, runtimes, models, nil)
+	s := New(gpus, runtimes, models, []inventory.Health{{Component: "gpu.nvidia.0", State: "healthy"}})
 
 	c := &contract.ResourceContract{
 		Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},
@@ -535,7 +543,7 @@ func TestPlan_DoesNotMutateContract(t *testing.T) {
 	models := []inventory.Model{
 		{ID: "test-model", Format: "safetensors", SupportedRuntimes: []string{"sglang"}, Present: true, Capabilities: []string{"coding"}},
 	}
-	s := New(gpus, runtimes, models, nil)
+	s := New(gpus, runtimes, models, []inventory.Health{{Component: "gpu.nvidia.0", State: "healthy"}})
 
 	c := &contract.ResourceContract{
 		Task:    contract.TaskSpec{Type: "coding", Priority: "interactive"},

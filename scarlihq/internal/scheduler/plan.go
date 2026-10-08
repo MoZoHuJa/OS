@@ -159,10 +159,17 @@ func (s *Scheduler) Plan(c *contract.ResourceContract) *Plan {
 		}
 
 		// Check health
-		gpuHealth, healthy := s.health[gpu.ID]
-		if healthy && gpuHealth.State != "healthy" && gpuHealth.State != "unknown" {
+		// v19.1.16 P1-3: Fail-closed for missing GPU health (was: fail-open —
+		//   if no health entry, GPU passed. Now: reject if health missing).
+		gpuHealth, hasHealth := s.health[gpu.ID]
+		if !hasHealth || (gpuHealth.State != "healthy" && gpuHealth.State != "unknown") {
 			plan.Rejected = append(plan.Rejected, Rejection{
-				GPU: gpu.ID, Reason: fmt.Sprintf("GPU unhealthy: %s", gpuHealth.State),
+				GPU: gpu.ID, Reason: fmt.Sprintf("GPU health missing or unhealthy: %s", func() string {
+					if hasHealth {
+						return gpuHealth.State
+					}
+					return "no health data"
+				}()),
 			})
 			continue
 		}

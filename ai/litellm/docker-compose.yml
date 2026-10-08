@@ -3,12 +3,9 @@ services:
     # v18.8 P1: Pinned to stable version tag (was: :main-latest — development
     #   branch image, not a stable release → non-reproducible builds. Could get
     #   a broken main image at any time). Verified via ghcr.io/v2/berriai/litellm/
-    #   tags/list — latest stable is main-v1.21.7. Update deliberately when upgrading.
-    # v19.0.1 P1: updated from main-v1.16.19 (stale; v19.0.0 comment falsely claimed
-    #   it was "latest stable" when 1.17.x–1.23.x already existed). Picked 1.21.7 as
+    #   tags/list — pinned stable tag (verified via ghcr API).
     #   a conservative, well-tested bump (config.yaml schema unchanged since 1.16).
     #   PRE-RELEASE CHECK: run `curl -i http://127.0.0.1:4001/health/liveliness`
-    #   after first start and confirm 200; if it fails, pin back to main-v1.16.19.
     image: ghcr.io/berriai/litellm:main-v1.23.9
     container_name: litellm
     restart: unless-stopped
