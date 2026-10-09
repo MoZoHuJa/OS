@@ -1,6 +1,6 @@
 // Command scarlix-monitor prints a read-only system monitoring snapshot as
 // JSON. It is the standalone CLI entry point for the ScarliMonitor service
-// (v19.1.18 ScarliMonitor — ScaRgeN master guide sections 14-16).
+// (v19.1.19 ScarliMonitor — ScaRgeN master guide sections 14-16).
 //
 // The monitor package composes inventory collectors (GPUs, runtimes, models,
 // health) with /proc + /sys reads (CPU, RAM, storage) into a single
@@ -48,7 +48,7 @@ import (
 	"github.com/MoZoHuJa/OS/scarlihq/internal/telemetry"
 )
 
-const usage = `scarlix-monitor — ScarliMonitor read-only snapshot CLI (SCARLIX OS v19.1.18)
+const usage = `scarlix-monitor — ScarliMonitor read-only snapshot CLI (SCARLIX OS v19.1.19)
 
 Usage:
   scarlix-monitor                  Print a single Snapshot as pretty JSON, exit 0
