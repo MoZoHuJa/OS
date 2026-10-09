@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.17 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.18 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.17</h1>
+<h1 align="center">SCARLIX OS v19.1.18</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.17"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.17-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.18"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.18-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.17 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.18 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.17   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.18   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -1862,4 +1862,56 @@ go test ./...           → 10 packages all OK (19 telemetry tests, 21 scheduler
 bash -n                 → OK
 YAML lint               → OK
 scarlix-smoke-test.sh  → 13 passed, 0 failed, 0 warned
+```
+
+## 🆕 What's New in v19.1.18 (vs v19.1.17)
+
+**Audit closure + secret hardening.** 4 P1 + 5 P2 from 3 independent audits of v19.1.17.
+
+Three audits of v19.1.17 found a shell injection vector in agent.env generation (secret values with quotes/metacharacters could break the generated file or inject shell code), a fish write path missing `mkdir -p`, edge cases in the retention duration parser (explicit signs, sub-nanosecond rounding), and version header drift (packages.x86_64, backup hook, compose files, scarlix-monitor usage text all still at older versions).
+
+### P1 fixes
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P1-1** | **agent.env shell injection via secret values (A-07)** | `printf "export KEY='%s'\n" "$KEY"` — a key containing `'`, `$`, backtick, or `\` could break the generated file or inject shell code at `source` time | Keys encoded as base64, decoded at source time: `export KEY="$(printf '%s' '<b64>' | base64 -d)"`. Base64 is `[A-Za-z0-9+/=]` only → safe to inline. Applied to both bash `agent.env` and fish `agent.env.fish`. |
+| **P1-2** | **Fish agent.env.fish missing mkdir -p (Zmor-3)** | `cat > ~/.config/scarlix/agent.env.fish` without `mkdir -p` — if dir didn't exist, cat failed silently but the `source` line was still added to `config.fish` | `mkdir -p "$d"` before cat + `PIPESTATUS` check — `source` line only added on successful write |
+| **P1-3** | **ParseRetentionDuration accepts explicit signs (A-08)** | `+1d` / `-1d` — `time.ParseDuration` fails on `d`, then `numPart="+1"` → `ParseFloat` ok → accepted. `-1d` was caught by `num <= 0` but `+1d` passed through | Explicit `+`/`-` sign prefix rejected in the d/w branch |
+| **P1-4** | **ParseRetentionDuration sub-nanosecond rounds to zero (A-09)** | `0.000000000000001d` (1 femtoday) → `num > 0` passes but `time.Duration()` truncates to 0ns → returned as valid 0-duration | Result checked after conversion: `if result <= 0 → error` |
+
+### P2 fixes
+
+| # | Fix |
+|---|-----|
+| **P2-1** | packages.x86_64 header: v19.0.0 → v19.1.18 (Zmor-1) |
+| **P2-2** | scarlix-docker-backup.sh header: v19.0.0 → v19.1.18 (Zmor-2) |
+| **P2-3** | compose headers (sglang + vllm): v19.1.16 → v19.1.18 |
+| **P2-4** | scarlix-monitor usage text: v19.1.10 → v19.1.18 (Audit-3-6) |
+| **P2-5** | .bashrc/.zshrc source comment: v19.1.16 → v19.1.18 (Zmor-4) |
+| **P2-6** | .env.template: added VLLM_TRUST_FLAG documentation (Zmor-5) |
+| **P2-7** | scarlix-smoke-test.sh: new check [10] — P0 regression guard for VLLM_TRUST_FLAG heredoc fix (Zmor-6). Verifies `local vllm_trust_flag=` declaration, case→assign ordering, and that the assignment is not inside a heredoc. |
+| **P2-8** | Scheduler preferred runtime constraint documented (Zmor-7) — v19.1.x is fail-closed (no fallback if preferred is down). v19.2.0 Compute Fabric will add soft-hint fallback. |
+| **P2-9** | Version headers → v19.1.18 across all files: install.sh, VERSION, Dockerfile, models.yaml, scarlix-mode, scarlix, AGENTS.md, pi-bolt config, all systemd units |
+
+### New tests (telemetry duration parser)
+
+| Test | Input | Expected |
+|------|-------|----------|
+| `TestParseRetentionDuration_NegativeDay` | `-1d` | error (explicit sign) |
+| `TestParseRetentionDuration_NegativeWeek` | `-1w` | error (explicit sign) |
+| `TestParseRetentionDuration_PlusDay` | `+1d` | error (explicit sign) |
+| `TestParseRetentionDuration_PlusWeek` | `+1w` | error (explicit sign) |
+| `TestParseRetentionDuration_SubNanoSecondResult` | `0.000000000000001d` | error (rounds to zero) |
+| `TestParseRetentionDuration_VerySmallButValid` | `0.0000000001d` | OK (86ns > 0) |
+
+### Verification
+```
+gofmt -l .              → EMPTY (clean)
+go vet ./...            → CLEAN
+go test ./...           → 10 packages all OK (25 telemetry tests, 21 scheduler tests)
+bash -n                 → OK (13 scripts)
+shellcheck -S warning  → OK (10 CI scripts)
+YAML lint               → OK (26 files)
+scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline: registry checks skipped)
+base64 round-trip       → PASS (quotes, backticks, $, \, ; all safe)
 ```

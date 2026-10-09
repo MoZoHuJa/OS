@@ -16,6 +16,16 @@ import (
 //
 // v19.1.17 P1 (A-01): Was: time.ParseDuration which rejected "30d" → prune never ran.
 // Now: supports "30d", "2w", "12h", "720h" etc.
+// v19.1.18 P1 (A-08): Reject explicit +/- signs in the d/w branch. Was: "+1d" passed
+//
+//	through (time.ParseDuration fails on 'd', then numPart="+1" → ParseFloat ok →
+//	accepted). Now: reject any sign prefix for consistency with standard Go duration
+//	which also rejects "+1h" (actually Go accepts +1h, but we reject for d/w strictness).
+//
+// v19.1.18 P1 (A-09): Check result > 0 AFTER conversion to time.Duration. Was: a
+//
+//	sub-nanosecond value like "0.0000000000001d" passed the num > 0 float check but
+//	truncated to 0 when cast to time.Duration (int64 nanoseconds). Now: reject result ≤ 0.
 func ParseRetentionDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -45,6 +55,14 @@ func ParseRetentionDuration(s string) (time.Duration, error) {
 		return 0, fmt.Errorf("invalid duration format: %q", s)
 	}
 
+	// v19.1.18 P1 (A-08): Reject explicit sign prefixes in the d/w branch.
+	// time.ParseDuration already handles "+1h"/"-1h" (rejects negative via the d<=0
+	// check above). For the d/w branch, reject signs explicitly so "+1d"/"-1d"
+	// can't slip through with unexpected semantics.
+	if numPart[0] == '+' || numPart[0] == '-' {
+		return 0, fmt.Errorf("duration must not have explicit sign: %q", s)
+	}
+
 	num, err := strconv.ParseFloat(numPart, 64)
 	if err != nil {
 		return 0, fmt.Errorf("invalid number %q in duration: %v", numPart, err)
@@ -69,5 +87,14 @@ func ParseRetentionDuration(s string) (time.Duration, error) {
 		return 0, fmt.Errorf("duration overflow: %q", s)
 	}
 
-	return time.Duration(hours * float64(time.Hour)), nil
+	result := time.Duration(hours * float64(time.Hour))
+
+	// v19.1.18 P1 (A-09): A very small positive float (e.g. "0.0000000000001d")
+	// passes the num > 0 check but truncates to 0 when cast to time.Duration
+	// (int64 nanoseconds). Reject it explicitly.
+	if result <= 0 {
+		return 0, fmt.Errorf("duration rounds to zero or negative: %q (num=%v, result=%v)", s, num, result)
+	}
+
+	return result, nil
 }

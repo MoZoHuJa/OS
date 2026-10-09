@@ -1,4 +1,4 @@
-# SCARLIX OS v19.1.16 — SGLang Tier-1 GPU inference (Blackwell sm_120, Qwen3)
+# SCARLIX OS v19.1.18 — SGLang Tier-1 GPU inference (Blackwell sm_120, Qwen3)
 # v19.0.5 P2: Header bumped from v18.8.3 (was stale by 6 minor releases even
 #   though the image tag was updated to v0.4.9.post6 in v19.0.3. Header only —
 #   historical P-fix comments retained below for audit trail.)

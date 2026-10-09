@@ -350,6 +350,12 @@ func (s *Scheduler) scoreRuntime(gpu inventory.GPU, c *contract.ResourceContract
 		}
 
 		// If contract has preferences, check them
+		// v19.1.18 P2 (Zmor-7): KNOWN CONSTRAINT — if the preferred runtime is
+		// down/unhealthy, it is hard-rejected above AND non-preferred runtimes
+		// are filtered here. Result: no runtime is selected (fail-closed).
+		// This is INTENTIONAL for v19.1.x (dry-run scheduler). v19.2.0 Compute
+		// Fabric will add a fallback pass: if bestID == "" after the preferred
+		// loop, retry without the preferred filter (preferred = soft hint).
 		if len(preferred) > 0 && !preferred[rt.ID] {
 			continue
 		}
@@ -407,6 +413,12 @@ func (s *Scheduler) scoreRuntimeForCPU(c *contract.ResourceContract) (string, in
 		}
 
 		// If contract has preferences, check them
+		// v19.1.18 P2 (Zmor-7): KNOWN CONSTRAINT — if the preferred runtime is
+		// down/unhealthy, it is hard-rejected above AND non-preferred runtimes
+		// are filtered here. Result: no runtime is selected (fail-closed).
+		// This is INTENTIONAL for v19.1.x (dry-run scheduler). v19.2.0 Compute
+		// Fabric will add a fallback pass: if bestID == "" after the preferred
+		// loop, retry without the preferred filter (preferred = soft hint).
 		if len(preferred) > 0 && !preferred[rt.ID] {
 			continue
 		}

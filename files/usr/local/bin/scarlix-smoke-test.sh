@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v19.0.6 — Regression Smoke Test (baseline freeze)
+# SCARLIX OS v19.1.18 — Regression Smoke Test (baseline freeze + P0 checks)
 #
 # Runs 10 integrity checks against the SCARLIX OS repo and prints a
 # PASS/FAIL/WARN line for each. Exits 0 if no check FAILed, 1 otherwise.
@@ -38,7 +38,7 @@ WARN_COUNT=0
 # ---------------------------------------------------------------------------
 usage() {
     cat <<'EOF'
-scarlix-smoke-test.sh — SCARLIX OS v19.0.6 regression smoke test
+scarlix-smoke-test.sh — SCARLIX OS v19.1.18 regression smoke test
 
 Usage:
   scarlix-smoke-test.sh [--offline] [--help]
@@ -104,7 +104,7 @@ done
 # ---------------------------------------------------------------------------
 # Preamble
 # ---------------------------------------------------------------------------
-printf "${BOLD}=== SCARLIX OS v19.0.6 regression smoke test ===${NC}\n"
+printf "${BOLD}=== SCARLIX OS v19.1.18 regression smoke test ===${NC}\n"
 printf "Repo:   %s\n" "$REPO_DIR"
 printf "Offline: %s\n" "$([[ $OFFLINE -eq 1 ]] && echo yes || echo no)"
 echo
@@ -443,6 +443,60 @@ check_09_docs_v12() {
 }
 
 # ===========================================================================
+# Check 10 — P0 regression: VLLM_TRUST_FLAG computed before heredoc in scarlix-mode
+# v19.1.16 P0: VLLM_TRUST_FLAG was inside cat heredoc → literal text, flag always empty.
+# This check ensures the fix is never reverted: the variable must be assigned BEFORE
+# the heredoc that writes .env, and referenced as $vllm_trust_flag (not inline case/if).
+# ===========================================================================
+check_10_vllm_trust_p0() {
+    echo "--- [10] P0 regression: VLLM_TRUST_FLAG computed before heredoc ---"
+    local mode="$REPO_DIR/files/usr/local/bin/scarlix-mode"
+    if [[ ! -f "$mode" ]]; then
+        fail "files/usr/local/bin/scarlix-mode not found"
+        return
+    fi
+
+    # 1. Must have 'local vllm_trust_flag=' declaration (the variable, not literal text)
+    if ! grep -qE 'local vllm_trust_flag=' "$mode"; then
+        fail "scarlix-mode: missing 'local vllm_trust_flag=' declaration (P0 regression)"
+        return
+    fi
+
+    # 2. Must have a case/esac block that sets vllm_trust_flag (computed, not literal)
+    #    The value may be quoted ("--trust-remote-code") or unquoted.
+    if ! grep -qE 'vllm_trust_flag="?--trust-remote-code"?' "$mode"; then
+        fail "scarlix-mode: vllm_trust_flag is not set to --trust-remote-code in case block (P0 regression)"
+        return
+    fi
+
+    # 3. Must reference VLLM_TRUST_FLAG=$vllm_trust_flag (variable, not literal)
+    #    The P0 bug was VLLM_TRUST_FLAG=$vllm_trust_flag appearing INSIDE a cat heredoc
+    #    → written as literal text. The fix computes it BEFORE the heredoc.
+    #    Check: the line 'VLLM_TRUST_FLAG=$vllm_trust_flag' must NOT be inside a
+    #    heredoc (i.e. must be an actual assignment, not redirected via cat <<).
+    if ! grep -qE '^VLLM_TRUST_FLAG=\$vllm_trust_flag' "$mode"; then
+        fail "scarlix-mode: missing 'VLLM_TRUST_FLAG=\$vllm_trust_flag' assignment line (P0 regression — may be inside heredoc)"
+        return
+    fi
+
+    # 4. The assignment must come AFTER the case block that sets vllm_trust_flag.
+    #    Extract line numbers and verify ordering.
+    local case_line assign_line
+    case_line=$(grep -nE 'vllm_trust_flag="?--trust-remote-code"?' "$mode" | head -1 | cut -d: -f1)
+    assign_line=$(grep -nE '^VLLM_TRUST_FLAG=\$vllm_trust_flag' "$mode" | head -1 | cut -d: -f1)
+    if [[ -z "$case_line" ]] || [[ -z "$assign_line" ]]; then
+        fail "scarlix-mode: could not locate case/assignment lines for ordering check"
+        return
+    fi
+    if [[ "$assign_line" -lt "$case_line" ]]; then
+        fail "scarlix-mode: VLLM_TRUST_FLAG assignment (line $assign_line) is BEFORE case block (line $case_line) — P0 regression"
+        return
+    fi
+
+    pass "VLLM_TRUST_FLAG computed before heredoc (case→assign ordering OK: lines $case_line→$assign_line)"
+}
+
+# ===========================================================================
 # Run all checks
 # ===========================================================================
 check_01_bash_syntax
@@ -454,9 +508,10 @@ check_06_go_module
 check_07_registry
 check_08_ollama_main
 check_09_docs_v12
+check_10_vllm_trust_p0
 
 # ===========================================================================
-# Check 10 — Summary
+# Summary
 # ===========================================================================
 echo
 printf "${BOLD}=== Smoke test: %d passed, %d failed, %d warned ===${NC}\n" \
