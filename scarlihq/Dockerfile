@@ -1,4 +1,4 @@
-# ScarliHQ v19.1.17 — Multi-stage Dockerfile (Secure Host-Bridge architecture)
+# ScarliHQ v19.1.18 — Multi-stage Dockerfile (Secure Host-Bridge architecture)
 # v19.0.5 P2: Header bumped from v18.5.2 (was stale by 10 minor releases even
 #   though ARG SCARLIX_VERSION tracked VERSION correctly. Header only — runtime
 #   unchanged.)
@@ -31,7 +31,7 @@ COPY . .
 #   by 3 minor releases. install.sh passes --build-arg so runtime was correct, but
 #   manual `docker build` without the arg produced a ScarliHQ binary reporting
 #   v19.0.0. Now matches VERSION.)
-ARG SCARLIX_VERSION=19.1.17
+ARG SCARLIX_VERSION=19.1.18
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${SCARLIX_VERSION}" -o /scarlihq ./cmd/scarlihq
 
 # v18.7.4 P1: Build the host-side atomic file reader (CGO disabled for static binary).
