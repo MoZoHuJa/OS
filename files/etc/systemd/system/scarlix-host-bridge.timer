@@ -1,5 +1,5 @@
 [Unit]
-Description=SCARLIX OS v19.1.19 — Host Bridge timer (refreshes host-status.json every 5s)
+Description=SCARLIX OS v19.1.20 — Host Bridge timer (refreshes host-status.json every 5s)
 # v19.1.19 P2 (Zmor-2): Removed Requires=scarlix-host-bridge.service. Was: same
 #   anti-pattern as model-manager.timer (fixed in v19.1.15). Requires= pulls the
 #   service when the timer is enabled, even outside OnUnitActiveSec cycle. Timer

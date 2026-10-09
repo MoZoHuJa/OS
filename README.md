@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.19 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.20 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.19</h1>
+<h1 align="center">SCARLIX OS v19.1.20</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.19"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.19-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.20"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.20-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.19 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.20 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.19   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.20   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -1956,4 +1956,54 @@ systemd-analyze verify  → OK (9 units)
 scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)
 base64 round-trip       → PASS (portable base64 | tr -d '\n')
 check_10 negative test  → PASS (injected if/fi in heredoc → FAIL detected)
+```
+
+## 🆕 What's New in v19.1.20 (Jubilee) (vs v19.1.19)
+
+**Mutation-hardened smoke test guard.** 1 P1 + 3 P2 from 3 independent audits.
+
+Three audits of v19.1.19 confirmed all previous fixes were correctly applied. One audit performed mutation testing on the new `check_10` heredoc guard and found it only caught **1 of 4** injection types: the deny-list (`^(if|case|fi|esac)` at col-0) missed indented `case`, `while` loops, and plain commands like `rm -rf /`. Two stale version headers were also found (`generate-env.sh` v19.0.1, `scarlix-docker-backup.hook` v19.0.0).
+
+### P1 fix
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P1-1** | **check_10 mutation-hardened (audit #3 mutation test)** | Deny-list: only col-0 `if/case/fi/esac` rejected. Mutation testing showed 3/4 injections PASSED: (1) indented `case ... in` → PASS, (2) `while true; do` → PASS, (3) `rm -rf /tmp/x` → PASS. Only col-0 `if` was caught. | **Allow-list**: every non-blank, non-comment line inside the `.env` heredoc must match `^[A-Z][A-Z0-9_]*=`. Catches all 4/4 injection types. Baseline (correct scarlix-mode) still PASSes. |
+
+### P2 fixes
+
+| # | Fix |
+|---|-----|
+| **P2-1** | `files/etc/systemd/system/generate-env.sh` header: v19.0.1 → v19.1.20 |
+| **P2-2** | `files/etc/pacman.d/hooks/scarlix-docker-backup.hook` header: v19.0.0 → v19.1.20 |
+| **P2-3** | All version headers → v19.1.20 (jubilee) |
+
+### Mutation test results (check_10)
+
+| Injection | v19.1.19 (deny-list) | v19.1.20 (allow-list) |
+|-----------|----------------------|----------------------|
+| `if [ ... ]; then ... fi` (col-0) | FAIL ✓ | FAIL ✓ |
+| `  case ... in ... esac` (indented) | PASS ✗ (missed) | FAIL ✓ |
+| `  while true; do ... done` | PASS ✗ (missed) | FAIL ✓ |
+| `  rm -rf /tmp/x` (plain command) | PASS ✗ (missed) | FAIL ✓ |
+| Baseline (correct code) | PASS ✓ | PASS ✓ |
+
+### Confirmed OK (no action needed)
+
+- base64 portable `| tr -d '\n'` — round-trip tested with full special character set in bash + fish 3.7
+- `scarlix-host-bridge.timer` — `Requires=` removed, `Unit=` targets service by basename
+- agent.env base64 encoding — injection vector closed
+- All Go tests (171 total) pass
+
+### Verification
+```
+gofmt -l .              → EMPTY (clean)
+go vet ./...            → CLEAN (10 packages)
+go test ./...           → 10 packages all OK (25 telemetry + 21 scheduler tests)
+bash -n                 → OK (13 scripts)
+shellcheck -S warning  → OK (10 CI scripts)
+YAML lint               → OK (26 files)
+systemd-analyze verify  → OK (9 units)
+scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)
+check_10 mutation test  → 4/4 injections FAIL, baseline PASS
 ```

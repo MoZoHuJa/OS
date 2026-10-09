@@ -1,5 +1,5 @@
 [Unit]
-Description=SCARLIX OS v19.1.19 — Telemetry snapshot timer (every 5 min)
+Description=SCARLIX OS v19.1.20 — Telemetry snapshot timer (every 5 min)
 
 [Timer]
 OnCalendar=*:0/5

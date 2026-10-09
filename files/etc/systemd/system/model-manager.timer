@@ -1,5 +1,5 @@
 [Unit]
-Description=SCARLIX OS v19.1.19 — Weekly Model Manager Timer
+Description=SCARLIX OS v19.1.20 — Weekly Model Manager Timer
 # v19.1.15 P1-5: Removed Requires=model-manager.service (was systemd anti-pattern
 #   that could trigger the service at boot instead of waiting for OnCalendar).
 #   Timer automatically targets model-manager.service by basename convention.

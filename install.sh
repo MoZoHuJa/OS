@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v19.1.19 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v19.1.20 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
 # EndeavourOS/Arch bootstrap installer — NO ISO, runs on clean EndeavourOS.
@@ -15,11 +15,11 @@ set -euo pipefail
 # USAGE:
 #   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
-#   git checkout v19.1.19   # ALWAYS checkout specific tag (main may be ahead)
+#   git checkout v19.1.20   # ALWAYS checkout specific tag (main may be ahead)
 #   bash install.sh
 # ============================================================================
 
-VERSION="19.1.19"
+VERSION="19.1.20"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
