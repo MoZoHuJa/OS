@@ -38,13 +38,13 @@ services:
     #   on long context + agent workload. 8gb is safe for 16GB GPU.)
     # v18.8.7 P1-06: shm_size from ${SGLANG_SHM_SIZE} env (was: hardcoded 8gb →
     #   couldn't change without editing compose. Now: models.yaml → .env → compose.)
-    shm_size: ${SGLANG_SHM_SIZE:-8gb}
+    shm_size: ${SGLANG_SHM_SIZE:-4gb}
     command: >
       python -m sglang.launch_server
       --model-path ${SGLANG_MODEL_PATH:-/models/Qwen3-14B-AWQ}
       --port 30000
       --host 0.0.0.0
-      --mem-fraction-static ${SGLANG_MEM_FRACTION:-0.85}
+      --mem-fraction-static ${SGLANG_MEM_FRACTION:-0.80}
       --context-length ${SGLANG_CONTEXT_LENGTH:-32768}
       --chunked-prefill-size ${SGLANG_CHUNKED_PREFILL:-4096}
       --max-running-requests ${SGLANG_MAX_RUNNING:-4}

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v19.1.16 — GPU Mode Switcher (Host-Bridge Architecture)
+# SCARLIX OS v19.1.17 — GPU Mode Switcher (Host-Bridge Architecture)
 # v18.7.7 FIXES:
 #   P0: TV mode uses systemctl restart (was: start on RemainAfterExit=yes oneshot
 #       → service stays 'active' after first run → start doesn't re-run healthcheck
@@ -123,14 +123,14 @@ generate_env_file() {
   local vllm_path="/models/Qwen3-14B-AWQ"
   local llamacpp_file="Qwen3-14B-Q4_K_M.gguf"
   # v18.5 P2: mem-fraction from models.yaml (was: hardcoded 0.85 in compose — OOM on 8GB GPU)
-  local sglang_mem_fraction="0.85"
-  local vllm_gpu_util="0.85"
+  local sglang_mem_fraction="0.80"
+  local vllm_gpu_util="0.80"
   # v18.8.3 P1 (D): Basic SGLang runtime params from models.yaml (no PyTorch env)
   local sglang_context_length="32768"
   local sglang_chunked_prefill="4096"
   local sglang_max_running="4"
   # v18.8.7 P1-06: shm_size from models.yaml (was: hardcoded 8gb in compose)
-  local sglang_shm_size="8gb"
+  local sglang_shm_size="4gb"
   # v18.8.8 P2-01: Ollama runtime config from models.yaml (was: hardcoded in compose)
   local ollama_keep_alive="15m"
   local ollama_num_parallel="2"

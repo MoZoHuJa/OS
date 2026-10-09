@@ -159,10 +159,13 @@ func (s *Scheduler) Plan(c *contract.ResourceContract) *Plan {
 		}
 
 		// Check health
-		// v19.1.16 P1-3: Fail-closed for missing GPU health (was: fail-open —
-		//   if no health entry, GPU passed. Now: reject if health missing).
+		// v19.1.16 P1-3: Fail-closed for missing GPU health (was: fail-open).
+		// v19.1.17 P1 (A-02): Was: allowed "unknown" state. Now: only "healthy" passes.
+		//   "unknown" is NOT proof that GPU is healthy — it means we haven't checked.
+		//   For dry-run scheduler this is acceptable, but for real allocation in v19.2
+		//   it would be dangerous to allocate on an unchecked GPU.
 		gpuHealth, hasHealth := s.health[gpu.ID]
-		if !hasHealth || (gpuHealth.State != "healthy" && gpuHealth.State != "unknown") {
+		if !hasHealth || gpuHealth.State != "healthy" {
 			plan.Rejected = append(plan.Rejected, Rejection{
 				GPU: gpu.ID, Reason: fmt.Sprintf("GPU health missing or unhealthy: %s", func() string {
 					if hasHealth {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v19.1.15 — Unified CLI (read-only discovery)
+# SCARLIX OS v19.1.17 — Unified CLI (read-only discovery)
 #
 # Purpose: Unified read-only discovery entry point. Lists GPUs, inference
 # runtimes, models, and a system summary. Does NOT start/stop services, does
@@ -23,7 +23,7 @@ set -euo pipefail
 #   scarlix --help | -h
 #   scarlix
 
-readonly SCARLIX_CLI_VERSION="19.1.15"
+readonly SCARLIX_CLI_VERSION="19.1.17"
 
 # --- colour helpers (matching scarlix-doctor style) -----------------------
 if [ -t 1 ]; then

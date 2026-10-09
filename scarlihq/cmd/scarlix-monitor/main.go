@@ -245,7 +245,9 @@ func main() {
 
 	// --prune: remove old entries
 	if *pruneOlder != "" {
-		dur, err := time.ParseDuration(*pruneOlder)
+		// v19.1.17 P1 (A-01): Was: time.ParseDuration(*pruneOlder) which rejected "30d"
+		//   (Go doesn't support 'd' unit). Now: ParseRetentionDuration supports d/w.
+		dur, err := telemetry.ParseRetentionDuration(*pruneOlder)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "scarlix-monitor: invalid duration %q: %v\n", *pruneOlder, err)
 			os.Exit(2)

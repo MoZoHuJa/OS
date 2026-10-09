@@ -58,9 +58,12 @@ export RESTIC_PASSWORD
 
 # v18.8.6 P1: Verify backup disk is mounted (was: wrote to root filesystem
 #   if /mnt/backup not mounted — restic would silently create the repo dir on
-#   the root filesystem, filling /. Now: check parent is a mountpoint, exit
-#   early with NO_MOUNTPOINT status so root filesystem is never written to.)
-if ! mountpoint -q "$(dirname "$BACKUP_REPO")" 2>/dev/null; then
+#   the root filesystem, filling /. Now: check /mnt/backup is a mountpoint.
+# v19.1.17 P1 (A-03): Was: checked dirname("$BACKUP_REPO") = /mnt/backup/restic.
+#   But docs say /mnt/backup should be the mountpoint. If /mnt/backup is mounted
+#   but /mnt/backup/restic is just a subdir (not a separate mount), the check
+#   failed → backup skipped. Now: check /mnt/backup directly.)
+if ! mountpoint -q /mnt/backup 2>/dev/null; then
   log "⚠ Backup directory parent not a mountpoint — backup may write to root filesystem"
   log "  (expected: /mnt/backup mounted. Got: $(df "$(dirname "$BACKUP_REPO")" 2>/dev/null | tail -1 | awk '{print $1}'))"
   BACKUP_STATUS="NO_MOUNTPOINT"
