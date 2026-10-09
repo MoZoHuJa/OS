@@ -1,4 +1,4 @@
-# SCARLIX OS v19.1.19 — vLLM (Tier-2, GPU 1, TP=1)
+# SCARLIX OS v19.1.20 — vLLM (Tier-2, GPU 1, TP=1)
 # v17.9: Pinned image v0.8.0 (was latest — unstable for Blackwell)
 #   v0.8.0 verified on CUDA 12.8+ / Blackwell (sm_120)
 # TP=1 (mixed GPU safe — RTX 5060 Ti Blackwell + RTX 4060 Ti Ada)
