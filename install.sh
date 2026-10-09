@@ -1034,7 +1034,6 @@ else
         # v19.1.17 P2 (Zmor-3): Fish shell — bash `export KEY='val'` doesn't work in fish.
         #   Generate a separate agent.env.fish with `set -gx KEY 'val'` syntax.
         FISH_CONFIG="/home/$REAL_USER/.config/fish/config.fish"
-        FISH_AGENT_ENV="/home/$REAL_USER/.config/scarlix/agent.env.fish"
         if [ -f "$FISH_CONFIG" ]; then
           # Generate fish-format secrets file
           {
