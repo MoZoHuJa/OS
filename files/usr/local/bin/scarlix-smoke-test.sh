@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v19.1.18 — Regression Smoke Test (baseline freeze + P0 checks)
+# SCARLIX OS v19.1.19 — Regression Smoke Test (baseline freeze + P0 checks)
 #
 # Runs 10 integrity checks against the SCARLIX OS repo and prints a
 # PASS/FAIL/WARN line for each. Exits 0 if no check FAILed, 1 otherwise.
@@ -38,7 +38,7 @@ WARN_COUNT=0
 # ---------------------------------------------------------------------------
 usage() {
     cat <<'EOF'
-scarlix-smoke-test.sh — SCARLIX OS v19.1.18 regression smoke test
+scarlix-smoke-test.sh — SCARLIX OS v19.1.19 regression smoke test
 
 Usage:
   scarlix-smoke-test.sh [--offline] [--help]
@@ -104,7 +104,7 @@ done
 # ---------------------------------------------------------------------------
 # Preamble
 # ---------------------------------------------------------------------------
-printf "${BOLD}=== SCARLIX OS v19.1.18 regression smoke test ===${NC}\n"
+printf "${BOLD}=== SCARLIX OS v19.1.19 regression smoke test ===${NC}\n"
 printf "Repo:   %s\n" "$REPO_DIR"
 printf "Offline: %s\n" "$([[ $OFFLINE -eq 1 ]] && echo yes || echo no)"
 echo
@@ -449,51 +449,57 @@ check_09_docs_v12() {
 # the heredoc that writes .env, and referenced as $vllm_trust_flag (not inline case/if).
 # ===========================================================================
 check_10_vllm_trust_p0() {
-    echo "--- [10] P0 regression: VLLM_TRUST_FLAG computed before heredoc ---"
+    echo "--- [10] P0 regression: VLLM_TRUST_FLAG is computed before and expanded in heredoc ---"
     local mode="$REPO_DIR/files/usr/local/bin/scarlix-mode"
     if [[ ! -f "$mode" ]]; then
-        fail "files/usr/local/bin/scarlix-mode not found"
+        fail "scarlix-mode not found"
         return
     fi
 
-    # 1. Must have 'local vllm_trust_flag=' declaration (the variable, not literal text)
-    if ! grep -qE 'local vllm_trust_flag=' "$mode"; then
-        fail "scarlix-mode: missing 'local vllm_trust_flag=' declaration (P0 regression)"
+    # Find the exact heredoc that writes the generated .env. The assignment
+    # VLLM_TRUST_FLAG=... is EXPECTED inside this unquoted heredoc so Bash expands
+    # the variable into the generated file. A grep-only test incorrectly treated
+    # that line as a shell assignment and could not detect the original regression.
+    local heredoc_start heredoc_end case_line value_line control_line
+    heredoc_start=$(grep -nE 'cat > "\$env_tmp".*<<[[:space:]]*EOF[[:space:]]*$' "$mode" | head -1 | cut -d: -f1 || true)
+    if [[ -z "$heredoc_start" ]]; then
+        fail "scarlix-mode: .env heredoc not found"
+        return
+    fi
+    heredoc_end=$(awk -v start="$heredoc_start" 'NR > start && $0 == "EOF" { print NR; exit }' "$mode")
+    if [[ -z "$heredoc_end" ]]; then
+        fail "scarlix-mode: .env heredoc has no closing EOF"
         return
     fi
 
-    # 2. Must have a case/esac block that sets vllm_trust_flag (computed, not literal)
-    #    The value may be quoted ("--trust-remote-code") or unquoted.
-    if ! grep -qE 'vllm_trust_flag="?--trust-remote-code"?' "$mode"; then
-        fail "scarlix-mode: vllm_trust_flag is not set to --trust-remote-code in case block (P0 regression)"
+    local decl_line
+    decl_line=$(grep -nE '^[[:space:]]*local vllm_trust_flag=' "$mode" | head -1 | cut -d: -f1 || true)
+    case_line=$(grep -nE 'true\|1\|yes\).*vllm_trust_flag="--trust-remote-code"' "$mode" | head -1 | cut -d: -f1 || true)
+    value_line=$(grep -nE '^VLLM_TRUST_FLAG=\$vllm_trust_flag$' "$mode" | head -1 | cut -d: -f1 || true)
+
+    if [[ -z "$decl_line" || -z "$case_line" || -z "$value_line" ]]; then
+        fail "scarlix-mode: trust flag declaration/case/.env key missing"
+        return
+    fi
+    if (( decl_line >= heredoc_start || case_line >= heredoc_start )); then
+        fail "scarlix-mode: trust flag logic is not computed before the .env heredoc (P0 regression)"
+        return
+    fi
+    if (( value_line <= heredoc_start || value_line >= heredoc_end )); then
+        fail "scarlix-mode: VLLM_TRUST_FLAG key is not inside the .env heredoc"
         return
     fi
 
-    # 3. Must reference VLLM_TRUST_FLAG=$vllm_trust_flag (variable, not literal)
-    #    The P0 bug was VLLM_TRUST_FLAG=$vllm_trust_flag appearing INSIDE a cat heredoc
-    #    → written as literal text. The fix computes it BEFORE the heredoc.
-    #    Check: the line 'VLLM_TRUST_FLAG=$vllm_trust_flag' must NOT be inside a
-    #    heredoc (i.e. must be an actual assignment, not redirected via cat <<).
-    if ! grep -qE '^VLLM_TRUST_FLAG=\$vllm_trust_flag' "$mode"; then
-        fail "scarlix-mode: missing 'VLLM_TRUST_FLAG=\$vllm_trust_flag' assignment line (P0 regression — may be inside heredoc)"
+    # The previous bug put executable if/case/fi lines inside the heredoc,
+    # which emitted invalid non KEY=VALUE lines into .env. Reject that pattern.
+    control_line=$(awk -v start="$heredoc_start" -v end="$heredoc_end" \
+        'NR > start && NR < end && $0 ~ /^(if|case|fi|esac)([[:space:]]|$)/ { print NR ":" $0; exit }' "$mode")
+    if [[ -n "$control_line" ]]; then
+        fail "scarlix-mode: shell control-flow leaked into .env heredoc: $control_line"
         return
     fi
 
-    # 4. The assignment must come AFTER the case block that sets vllm_trust_flag.
-    #    Extract line numbers and verify ordering.
-    local case_line assign_line
-    case_line=$(grep -nE 'vllm_trust_flag="?--trust-remote-code"?' "$mode" | head -1 | cut -d: -f1)
-    assign_line=$(grep -nE '^VLLM_TRUST_FLAG=\$vllm_trust_flag' "$mode" | head -1 | cut -d: -f1)
-    if [[ -z "$case_line" ]] || [[ -z "$assign_line" ]]; then
-        fail "scarlix-mode: could not locate case/assignment lines for ordering check"
-        return
-    fi
-    if [[ "$assign_line" -lt "$case_line" ]]; then
-        fail "scarlix-mode: VLLM_TRUST_FLAG assignment (line $assign_line) is BEFORE case block (line $case_line) — P0 regression"
-        return
-    fi
-
-    pass "VLLM_TRUST_FLAG computed before heredoc (case→assign ordering OK: lines $case_line→$assign_line)"
+    pass "trust flag logic precedes heredoc; only KEY=VALUE entry is inside heredoc (lines $case_line, $value_line)"
 }
 
 # ===========================================================================

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.18 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.1.19 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.1.18</h1>
+<h1 align="center">SCARLIX OS v19.1.19</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.18"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.18-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.1.19"><img alt="Version" src="https://img.shields.io/badge/version-v19.1.19-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.1.18 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.1.19 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.1.18   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.1.19   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -1914,4 +1914,46 @@ shellcheck -S warning  → OK (10 CI scripts)
 YAML lint               → OK (26 files)
 scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline: registry checks skipped)
 base64 round-trip       → PASS (quotes, backticks, $, \, ; all safe)
+```
+
+## 🆕 What's New in v19.1.19 (vs v19.1.18)
+
+**Audit closure + portability.** 2 P1 + 5 P2 from 2 independent reviews (external audit + Zmor).
+
+Two reviews of v19.1.18 found: the smoke test check_10 regression guard was ineffective (grep-only, couldn't distinguish shell commands from heredoc text — the original P0 could return undetected), `base64 -w0` is GNU-only (fails on BusyBox/macOS), `scarlix-host-bridge.timer` had a `Requires=` anti-pattern, and 8+2 stale version headers remained at v19.0.0/v19.0.3.
+
+### P1 fixes
+
+| # | Fix | Was | Now |
+|---|-----|-----|-----|
+| **P1-1** | **Smoke test check_10 ineffective (Audit A-01 / Zmor-5)** | `grep` for `VLLM_TRUST_FLAG=$vllm_trust_flag` — couldn't distinguish a shell assignment from a line inside a heredoc. If the original P0 (if/case inside heredoc) returned, the test could still PASS. | **Heredoc-aware check**: finds the exact `cat > "$env_tmp" << EOF` ... `EOF` boundary, verifies `local vllm_trust_flag=` + `case` are BEFORE the heredoc, `VLLM_TRUST_FLAG=$vllm_trust_flag` is INSIDE the heredoc, and NO shell control-flow lines (`if`/`case`/`fi`/`esac`) leaked inside. Verified with positive + negative (injected if/fi) tests. |
+| **P1-2** | **`base64 -w0` GNU-only (Zmor-3)** | `base64 -w0` (GNU coreutils flag) — fails on BusyBox (Alpine rescue), macOS BSD, some Arch minimal installs → install aborts at agent.env generation | `base64 | tr -d '\n'` — portable across GNU/BusyBox/BSD. Applied to all 4 base64 calls (bash LITELLM + SCARLIHQ, fish LITELLM + SCARLIHQ). |
+
+### P2 fixes
+
+| # | Fix |
+|---|-----|
+| **P2-1** | 8 stale version headers → v19.1.19 (Zmor-1): scarlix-doctor (v19.0.0), scarlix-host-bridge, scarlix-wizard, download-models.sh, model-manager.sh, generate-litellm-config.sh, generate-sha256sums.sh (all v19.0.3), model-manager.service Description (v19.0.3) |
+| **P2-2** | `scarlix-host-bridge.timer`: removed `Requires=scarlix-host-bridge.service` (Zmor-2) — same anti-pattern as model-manager.timer (fixed in v19.1.15). Timer targets service by basename; Requires= pulls service at enable time, outside OnUnitActiveSec cycle. |
+| **P2-3** | `scarlix-host-bridge.timer` Description + `scarlix-tv-mode.service` Description → v19.1.19 (Zmor-7) |
+| **P2-4** | All current version headers → v19.1.19 (install.sh, VERSION, Dockerfile, README, all systemd units, all scripts, compose, models.yaml, AGENTS.md, pi-bolt, smoke test, scarlix-monitor usage) |
+| **P2-5** | Scheduler preferred runtime constraint remains documented (Zmor-7 from v19.1.18) — v19.1.x fail-closed, v19.2.0 will add soft-hint fallback |
+
+### Deferred (non-blocking, for v19.2+)
+
+- **Zmor-4**: Pi-Bolt `curl|sh` without pin/hash — non-fatal warn path, supply-chain hardening for future
+- **Zmor-6**: Dual-GPU hardcode (SGLang `device_ids: ['0']`, vLLM `["1"]`) — single-GPU host → vLLM experimental path fails. scarlix-mode should detect GPU count via `nvidia-smi -L` and adapt. Feature for v19.2.
+
+### Verification
+```
+gofmt -l .              → EMPTY (clean)
+go vet ./...            → CLEAN (10 packages)
+go test ./...           → 10 packages all OK (25 telemetry + 21 scheduler tests)
+bash -n                 → OK (13 scripts)
+shellcheck -S warning  → OK (10 CI scripts)
+YAML lint               → OK (26 files)
+systemd-analyze verify  → OK (9 units)
+scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)
+base64 round-trip       → PASS (portable base64 | tr -d '\n')
+check_10 negative test  → PASS (injected if/fi in heredoc → FAIL detected)
 ```
