@@ -1,5 +1,5 @@
 [Unit]
-Description=SCARLIX OS v19.2.0 — Telemetry prune (daily)
+Description=SCARLIX OS v19.2.1 — Telemetry prune (daily)
 
 [Service]
 Type=oneshot

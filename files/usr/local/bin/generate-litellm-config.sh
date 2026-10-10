@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v19.2.0 — Generate LiteLLM config.yaml from models.yaml
+# SCARLIX OS v19.2.1 — Generate LiteLLM config.yaml from models.yaml
 #
 # v18.8.3 P1 (A-a): Dynamic LiteLLM config (was: ai/litellm/config.yaml had
 #   hardcoded model IDs like openai/Qwen3-14B-AWQ. If user changed model in

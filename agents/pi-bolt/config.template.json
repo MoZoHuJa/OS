@@ -1,5 +1,5 @@
 {
-  "#": "SCARLIX OS v19.2.0 — Pi-Bolt coding agent configuration (TEMPLATE — no real secrets)",
+  "#": "SCARLIX OS v19.2.1 — Pi-Bolt coding agent configuration (TEMPLATE — no real secrets)",
   "#_description": "Pi-Bolt (https://github.com/opensec-git/Pi-Bolt) is a fork of Pi compiled AOT to native code. It uses Pi's config directory (~/.pi/agent) and OpenAI-compatible providers. This template preserves the functional intent of the previous OpenCode config: (1) uses existing LiteLLM gateway, (2) accesses ScarliHQ MCP, (3) has plan + build agents, (4) does not bypass network/security architecture.",
   "#_install": "Pi-Bolt is installed as non-root user via: curl -fsSL https://pi-bolt.opensec.in/install.sh | sh (see install.sh Phase 5). The installer places Pi-Bolt under ~/.pi-bolt and links ~/.local/bin/pi-bolt. This config is a TEMPLATE — the actual runtime config is generated at ~/.pi/agent/ by the install script + user setup.",
   "#_security": "LITELLM_MASTER_KEY is read from /etc/scarlix/.env (root:root 600) at runtime — NEVER hardcode a real key in this file. The ${LITELLM_MASTER_KEY} pattern matches agents/hermes/config.yaml.",

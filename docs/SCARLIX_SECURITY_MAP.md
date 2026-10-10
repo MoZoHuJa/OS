@@ -1,4 +1,4 @@
-# SCARLIX OS v19.0.6 — Security Map
+# SCARLIX OS v19.2.1 — Security Map
 
 > Purpose: Catalog every security boundary in the v19.0.6 tree — the privilege separation model, atomic file operations, the TOCTOU-safe reader, the fail-closed env loader, lock file topology, and the systemd hardening matrix. All values cited from files on branch `fix-v19.0.6`.
 

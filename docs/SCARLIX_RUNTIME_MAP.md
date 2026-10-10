@@ -1,4 +1,4 @@
-# SCARLIX OS v19.0.6 — Runtime Map
+# SCARLIX OS v19.2.1 — Runtime Map
 
 > Purpose: Frozen reference of every inference + gateway runtime in the v19.0.6 tree — image tag, port, GPU binding, config source, healthcheck, and start command. All values cited from the actual `ai/*/docker-compose.yml` files on branch `fix-v19.0.6`.
 

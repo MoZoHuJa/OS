@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.2.0 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.2.1 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.2.0</h1>
+<h1 align="center">SCARLIX OS v19.2.1</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.2.0"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.0-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.2.1"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.1-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.2.0 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.2.1 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.2.0   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.2.1   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -49,6 +49,21 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.2.0 (vs v19.1.20)
+
+**Compute Fabric Kickoff — v19.1.x generation is FROZEN.** 1 P1 + 1 P2 from 3 audits of v19.1.20.
+
+| # | Fix | v19.1.20 Problem | v19.2.0 Solution |
+|---|-----|------------------|------------------|
+| P1 | **`check_10` command-substitution bypass closed** | The allow-list only checked the line prefix; `KEY=$(cmd)` matched, but the `.env` heredoc is unquoted, so bash would execute it | No line (comments included) may contain `$(` or a backtick; values limited to `[A-Za-z0-9_./:-]` plus `$var` / `${var}` |
+| P2 | **LiteLLM config header version is dynamic** | Hardcoded `v19.0.3`, drifted across 17 releases | Reads `VERSION` (repo root → `/etc/scarlix/VERSION` → `/usr/local/share/scarlix/VERSION` → `unknown`) |
+
+**Roadmap (Compute Fabric v19.2.x):** real scheduler allocation (v19.2.1), lease + reservation (v19.2.2), preferred-runtime soft hint (v19.2.3), single-GPU detection (v19.2.4), Pi-Bolt supply-chain pin (v19.2.5), model integrity + image digest pinning (v19.2.6).
+
+**v19.1.16 → v19.1.20 in one line each:** .16 heredoc P0 fix + security hardening · .17 fish `agent.env.fish` hardening · .18 audit closure + secret hardening · .19 audit closure + portable base64 · .20 mutation-hardened smoke guard.
 
 ---
 
@@ -2010,63 +2025,48 @@ check_10 mutation test  → 4/4 injections FAIL, baseline PASS
 
 ---
 
-## 🆕 What's New in v19.2.0 (Compute Fabric Kickoff) (vs v19.1.20)
+## 🆕 What's New in v19.2.1 — ScaRgeN_Zero_alpha (First Formal Release) (vs v19.2.0)
 
-**v19.1.x generation declared FROZEN.** This release closes the final audit findings from v19.1.20 and marks the transition to the **Compute Fabric** generation — real scheduler with allocation, lease, and reservation semantics.
+**First formal GitHub Release.** 1 P1 + 2 P2 + 1 P3 from 5 independent reviews of v19.2.0.
 
-### v19.1.x FROZEN declaration
+Five reviews of v19.2.0 (technical evaluation, OS comparison, category audit, two scoring evaluations) confirmed the v19.1.x FROZEN declaration and the Compute Fabric kickoff. The reviews found: the smoke test was NOT running in CI (only shellcheck on it), the README had a duplicate "What's New v19.2.0" section + the first visible "What's New" was 5 releases stale (v19.1.15), and 8 docs files had v19.0.x headers.
 
-The entire v19.1.x generation (v19.1.0 → v19.1.20) is now declared **FROZEN**:
-- **Resource Contract v1** (schema, validation, registries) — stable, no breaking changes
-- **Scheduler dry-run** (deterministic scoring, no allocation) — stable baseline
-- **ScarliMonitor + Telemetry** — stable, read-only
-- **GPU Compatibility Matrix** — stable
-- **All 10 Go packages** — API surface frozen for additive extensions only
+This release marks SCARLIX OS as the **first formal GitHub Release** (`ScaRgeN_Zero_alpha`) — all prior versions were tags only.
 
-### P1 fix — Command substitution bypass closed (3 audits of v19.1.20)
+### P1 fix — Smoke test now runs in CI (F-02)
 
 | # | Fix | Was | Now |
 |---|-----|-----|-----|
-| **P1-1** | **check_10 allowed `$(...)` and backticks in heredoc values** | The v19.1.20 allow-list (`^[A-Z][A-Z0-9_]*=`) only checked the line *prefix*. A line like `PWN=$(touch /tmp/pwned)` matched the pattern, but because the `.env` heredoc uses an unquoted delimiter (`<< EOF`), bash would **execute** the `$(...)` at generation time. Mutation testing confirmed **5/5 bypasses PASSED**: `$(cmd)`, `` `cmd` ``, `a; cmd`, `${x:-$(cmd)}`, and `# $(cmd)` in comments. | **Double-layer guard** (from auditor's patch, commit `724be91`): (1) No line anywhere in the heredoc may contain `$(` or a backtick. (2) Non-blank, non-comment lines must match a strict VALUE regex allowing only `[A-Za-z0-9_./:-]` plus `$var` / `${var}` expansions. Mutation test: **9/9 injections FAIL, baseline PASS, 0 false positives**. |
+| **P1-1** | **Smoke test never executed in CI** | `.github/workflows/ci.yml` ran `shellcheck` on `scarlix-smoke-test.sh` but never executed the 10-check suite. A regression in `check_10` (or any other check) could land on `main` without detection. | New `smoke-test` CI job runs `SCARLIX_REPO=$GITHUB_WORKSPACE bash files/usr/local/bin/scarlix-smoke-test.sh --offline` — all 10 checks execute on every push/PR. |
 
-### P2 fix — Dynamic version in generated LiteLLM config (2A)
+### P2 fixes
 
-| # | Fix | Was | Now |
-|---|-----|-----|-----|
-| **P2-1** | **generate-litellm-config.sh hardcoded v19.0.3 in generated config header** | Line 82 of the script wrote `# SCARLIX OS v19.0.3 — LiteLLM routing config` into every generated `config.yaml`. The script header was bumped each release, but the *generated output* stayed at v19.0.3 — a diagnostic drift across 17 releases. | **Dynamic version** read from `VERSION` file (search order: repo root → `/etc/scarlix/VERSION` → `/usr/local/share/scarlix/VERSION` → fallback `"unknown"`). No future drift — generated config always reflects the installed version. |
+| # | Fix |
+|---|-----|
+| **P2-1** | README: added v19.2.0 "What's New" top section (was stuck at v19.1.15 — 5 releases behind). Auditor patch `185df78` applied. |
+| **P2-2** | README: removed duplicate "What's New v19.2.0" section (F-03 — two identical copies at bottom). Now a single canonical section per version. |
 
-### P3 — Systemd unit executable bits left as-is (3B)
+### P3 fix
 
-5 systemd unit files (`model-manager.service`, `model-manager.timer`, `scarlix-host-bridge.service`, `scarlix-host-bridge.timer`, `scarlix-tv-mode.service`) retain mode `0755` in the repository. **Runtime is unaffected** — `install.sh:857` explicitly sets `chmod 644` on `.service`/`.timer` files at install time. Decision: leave as-is (3B) to avoid a large mode-only diff; the install-time correction is sufficient.
+| # | Fix |
+|---|-----|
+| **P3-1** | 8 docs files headers bumped v19.0.x → v19.2.1: `SCARLIX_DATA_CONTRACTS.md` (v19.0.7), `SCARLIX_SECURITY_MAP.md`, `SCARLIX_RUNTIME_MAP.md`, `SCARLIX_RELEASE_BASELINE.md`, `SCARLIX_COMPONENT_MAP.md`, `SCARLIX_GPU_MAP.md`, `SCARLIX_API_MAP.md`, `SCARLIX_CURRENT_ARCHITECTURE.md` (all v19.0.6). |
 
-### Info — scarlix-contract v19.1.0 (no action)
+### Confirmed OK from reviews (no action needed)
 
-The `v19.1.0` references in `scarlihq/cmd/scarlix-contract/main.go` and `scarlihq/internal/contract/types.go` refer to the **Resource Contract v1 schema version**, which is intentionally FROZEN. These are not version-drift — they document when the contract schema was frozen. **Not changed.**
+- **F-01**: Compute Fabric is dry-run only — this is the documented roadmap (v19.2.1+ for real allocation). Not a bug.
+- **F-04**: Supply-chain pinning (Pi-Bolt, image digests, model hashes) — planned for v19.2.5/v19.2.6.
+- **F-05**: Physical E2E validation — requires target hardware (RTX 5060 Ti + 4060 Ti). Not actionable in code.
+- All v19.2.0 fixes (check_10 double-layer guard, litellm dynamic version) confirmed correct by all 5 reviews.
 
-### Mutation test results (check_10, v19.2.0)
+### Review scores (v19.2.0 baseline)
 
-| Injection | v19.1.20 (allow-list) | v19.2.0 (double-layer) |
-|-----------|----------------------|----------------------|
-| `KEY=$(cmd)` | PASS ✗ (bypassed) | FAIL ✓ (detected) |
-| `` KEY=`cmd` `` | PASS ✗ (bypassed) | FAIL ✓ (detected) |
-| `KEY=a; cmd` | PASS ✗ (bypassed) | FAIL ✓ (detected) |
-| `KEY=${x:-$(cmd)}` | PASS ✗ (bypassed) | FAIL ✓ (detected) |
-| `# $(cmd) comment` | PASS ✗ (bypassed) | FAIL ✓ (detected) |
-| `if ... fi` (col-0) | FAIL ✓ | FAIL ✓ |
-| `  case ... esac` (indented) | FAIL ✓ | FAIL ✓ |
-| `  while ... done` | FAIL ✓ | FAIL ✓ |
-| `  rm -rf /tmp/x` | FAIL ✓ | FAIL ✓ |
-| Baseline (correct code) | PASS ✓ | PASS ✓ |
-
-### Roadmap — Compute Fabric (v19.2.x)
-
-With v19.1.x frozen, development now focuses on:
-- **v19.2.1**: Real scheduler allocation (GPU IDs + ports granted in response)
-- **v19.2.2**: Lease + reservation semantics (time-bounded GPU holds)
-- **v19.2.3**: Preferred runtime soft-hint fallback (Zmor-7 from v19.1.18)
-- **v19.2.4**: Single-GPU detection (Zmor-6 — `nvidia-smi -L` count, adapt vLLM path)
-- **v19.2.5**: Pi-Bolt supply-chain pin (Zmor-4 — SHA256 verify before `sh`)
-- **v19.2.6**: Model integrity (SHA256/revision), image digest pinning
+| Review | Score | Notes |
+|--------|-------|-------|
+| Hodnotenie #1 | 73/100 (AI platform), 60/100 (end-user OS) | "Stabilizačné vydanie, nie hotový Compute Fabric" |
+| Audit #2 | ~6.3/10 (home AI server) | "Silná osobná platforma, nadpriemerná disciplína testovania" |
+| Evaluation #3 | 8.4/10 (weighted) | "Zrelý, audítorsky prísny, architektonicky čistý" |
+| Review #4 | 8.4/10 (OS), 9.5/10 (engineering) | "Najdôležitejší release od v19.1.0" |
 
 ### Verification
 ```
@@ -2078,80 +2078,6 @@ shellcheck -S warning  → OK (12 scripts)
 YAML lint               → OK (26 files)
 systemd-analyze verify  → OK (9 units)
 scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)
-check_10 mutation test  → 9/9 injections FAIL, baseline PASS, 0 false positives
-litellm dynamic version → PASS (reads VERSION file, falls back to "unknown")
-```
-
----
-
-## 🆕 What's New in v19.2.0 (Compute Fabric Kickoff) (vs v19.1.20)
-
-**v19.1.x generation declared FROZEN.** This release closes the final audit findings from v19.1.20 and marks the transition to the **Compute Fabric** generation — real scheduler with allocation, lease, and reservation semantics.
-
-### v19.1.x FROZEN declaration
-
-The entire v19.1.x generation (v19.1.0 → v19.1.20) is now declared **FROZEN**:
-- **Resource Contract v1** (schema, validation, registries) — stable, no breaking changes
-- **Scheduler dry-run** (deterministic scoring, no allocation) — stable baseline
-- **ScarliMonitor + Telemetry** — stable, read-only
-- **GPU Compatibility Matrix** — stable
-- **All 10 Go packages** — API surface frozen for additive extensions only
-
-### P1 fix — Command substitution bypass closed (3 audits of v19.1.20)
-
-| # | Fix | Was | Now |
-|---|-----|-----|-----|
-| **P1-1** | **check_10 allowed `$(...)` and backticks in heredoc values** | The v19.1.20 allow-list (`^[A-Z][A-Z0-9_]*=`) only checked the line *prefix*. A line like `PWN=$(touch /tmp/pwned)` matched the pattern, but because the `.env` heredoc uses an unquoted delimiter (`<< EOF`), bash would **execute** the `$(...)` at generation time. Mutation testing confirmed **5/5 bypasses PASSED**: `$(cmd)`, `` `cmd` ``, `a; cmd`, `${x:-$(cmd)}`, and `# $(cmd)` in comments. | **Double-layer guard** (from auditor's patch, commit `724be91`): (1) No line anywhere in the heredoc may contain `$(` or a backtick. (2) Non-blank, non-comment lines must match a strict VALUE regex allowing only `[A-Za-z0-9_./:-]` plus `$var` / `${var}` expansions. Mutation test: **9/9 injections FAIL, baseline PASS, 0 false positives**. |
-
-### P2 fix — Dynamic version in generated LiteLLM config (2A)
-
-| # | Fix | Was | Now |
-|---|-----|-----|-----|
-| **P2-1** | **generate-litellm-config.sh hardcoded v19.0.3 in generated config header** | Line 82 of the script wrote `# SCARLIX OS v19.0.3 — LiteLLM routing config` into every generated `config.yaml`. The script header was bumped each release, but the *generated output* stayed at v19.0.3 — a diagnostic drift across 17 releases. | **Dynamic version** read from `VERSION` file (search order: repo root → `/etc/scarlix/VERSION` → `/usr/local/share/scarlix/VERSION` → fallback `"unknown"`). No future drift — generated config always reflects the installed version. |
-
-### P3 — Systemd unit executable bits left as-is (3B)
-
-5 systemd unit files retain mode `0755` in the repository. **Runtime is unaffected** — `install.sh:857` explicitly sets `chmod 644` on `.service`/`.timer` files at install time. Decision: leave as-is (3B) to avoid a large mode-only diff.
-
-### Info — scarlix-contract v19.1.0 (no action)
-
-The `v19.1.0` references in `scarlihq/cmd/scarlix-contract/main.go` and `scarlihq/internal/contract/types.go` refer to the **Resource Contract v1 schema version**, intentionally FROZEN. Not version-drift. **Not changed.**
-
-### Mutation test results (check_10, v19.2.0)
-
-| Injection | v19.1.20 (allow-list) | v19.2.0 (double-layer) |
-|-----------|----------------------|----------------------|
-| `KEY=$(cmd)` | PASS ✗ (bypassed) | FAIL ✓ (detected) |
-| `` KEY=`cmd` `` | PASS ✗ (bypassed) | FAIL ✓ (detected) |
-| `KEY=a; cmd` | PASS ✗ (bypassed) | FAIL ✓ (detected) |
-| `KEY=${x:-$(cmd)}` | PASS ✗ (bypassed) | FAIL ✓ (detected) |
-| `# $(cmd) comment` | PASS ✗ (bypassed) | FAIL ✓ (detected) |
-| `if ... fi` (col-0) | FAIL ✓ | FAIL ✓ |
-| `  case ... esac` (indented) | FAIL ✓ | FAIL ✓ |
-| `  while ... done` | FAIL ✓ | FAIL ✓ |
-| `  rm -rf /tmp/x` | FAIL ✓ | FAIL ✓ |
-| Baseline (correct code) | PASS ✓ | PASS ✓ |
-
-### Roadmap — Compute Fabric (v19.2.x)
-
-With v19.1.x frozen, development now focuses on:
-- **v19.2.1**: Real scheduler allocation (GPU IDs + ports granted in response)
-- **v19.2.2**: Lease + reservation semantics (time-bounded GPU holds)
-- **v19.2.3**: Preferred runtime soft-hint fallback (Zmor-7 from v19.1.18)
-- **v19.2.4**: Single-GPU detection (Zmor-6 — `nvidia-smi -L` count, adapt vLLM path)
-- **v19.2.5**: Pi-Bolt supply-chain pin (Zmor-4 — SHA256 verify before `sh`)
-- **v19.2.6**: Model integrity (SHA256/revision), image digest pinning
-
-### Verification
-```
-gofmt -l .              → EMPTY (clean)
-go vet ./...            → CLEAN (10 packages)
-go test ./...           → 10 packages all OK (25 telemetry + 21 scheduler tests)
-bash -n                 → OK (13 scripts)
-shellcheck -S warning  → OK (12 scripts)
-YAML lint               → OK (26 files)
-systemd-analyze verify  → OK (9 units)
-scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)
-check_10 mutation test  → 9/9 injections FAIL, baseline PASS, 0 false positives
-litellm dynamic version → PASS (reads VERSION file, falls back to "unknown")
+check_10 mutation test  → 9/9 injections FAIL, baseline PASS
+CI smoke-test job       → PASS (new — smoke test now runs in CI)
 ```

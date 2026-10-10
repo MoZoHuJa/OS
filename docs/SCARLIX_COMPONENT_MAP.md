@@ -1,4 +1,4 @@
-# SCARLIX OS v19.0.6 — Component Map
+# SCARLIX OS v19.2.1 — Component Map
 
 > Purpose: Catalog every component shipped by the v19.0.6 tree — what it is, where it lives, what it reads, what it writes. Sourced by direct file read on branch `fix-v19.0.6`.
 

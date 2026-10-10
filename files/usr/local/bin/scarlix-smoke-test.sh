@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v19.2.0 — Regression Smoke Test (baseline freeze + P0 checks)
+# SCARLIX OS v19.2.1 — Regression Smoke Test (baseline freeze + P0 checks)
 #
 # Runs 10 integrity checks against the SCARLIX OS repo and prints a
 # PASS/FAIL/WARN line for each. Exits 0 if no check FAILed, 1 otherwise.
@@ -38,7 +38,7 @@ WARN_COUNT=0
 # ---------------------------------------------------------------------------
 usage() {
     cat <<'EOF'
-scarlix-smoke-test.sh — SCARLIX OS v19.2.0 regression smoke test
+scarlix-smoke-test.sh — SCARLIX OS v19.2.1 regression smoke test
 
 Usage:
   scarlix-smoke-test.sh [--offline] [--help]
@@ -104,7 +104,7 @@ done
 # ---------------------------------------------------------------------------
 # Preamble
 # ---------------------------------------------------------------------------
-printf "${BOLD}=== SCARLIX OS v19.2.0 regression smoke test ===${NC}\n"
+printf "${BOLD}=== SCARLIX OS v19.2.1 regression smoke test ===${NC}\n"
 printf "Repo:   %s\n" "$REPO_DIR"
 printf "Offline: %s\n" "$([[ $OFFLINE -eq 1 ]] && echo yes || echo no)"
 echo
