@@ -31,6 +31,19 @@ jobs:
           shellcheck -S warning files/etc/pacman.d/hooks/scarlix-docker-backup.sh
           shellcheck -S warning files/etc/systemd/system/generate-env.sh
 
+  smoke-test:
+    # v19.2.1 P1 (F-02): Was — CI ran shellcheck ON the smoke test but never
+    # EXECUTED it. A regression in check_10 (or any other check) could land
+    # on main without detection. Now: run the full 10-check suite in --offline
+    # mode on every push/PR. WARN (registry image tag checks) is tolerated;
+    # FAIL is not.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run scarlix-smoke-test.sh --offline
+        run: |
+          SCARLIX_REPO="$GITHUB_WORKSPACE" bash files/usr/local/bin/scarlix-smoke-test.sh --offline
+
   bash-syntax:
     runs-on: ubuntu-latest
     steps:

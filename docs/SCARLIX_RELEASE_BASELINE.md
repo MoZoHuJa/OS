@@ -1,4 +1,4 @@
-# SCARLIX OS v19.0.6 — Release Baseline
+# SCARLIX OS v19.2.1 — Release Baseline
 
 > Purpose: The FROZEN baseline for v19.0.6. Documents what is locked (image tags + version contracts), the 14-item regression matrix, and the explicit "do NOT change in v19.0.x" preserve list. Any change to these requires a version bump and explicit decision.
 

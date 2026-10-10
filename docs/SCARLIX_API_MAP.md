@@ -1,4 +1,4 @@
-# SCARLIX OS v19.0.6 — API Map
+# SCARLIX OS v19.2.1 — API Map
 
 > Purpose: Every HTTP / WebSocket / JSON-RPC endpoint exposed by the v19.0.6 stack — ScarliHQ REST + WS + MCP, plus the four inference backends and the two gateways. Method, path, auth, purpose, and source line. All values cited from files on branch `fix-v19.0.6`.
 

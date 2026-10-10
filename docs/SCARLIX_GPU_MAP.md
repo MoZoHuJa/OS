@@ -1,4 +1,4 @@
-# SCARLIX OS v19.0.6 — GPU Map
+# SCARLIX OS v19.2.1 — GPU Map
 
 > Purpose: The dual-NVIDIA GPU architecture, the `nvidia-smi` query patterns used across host scripts, VRAM allocation per `scarlix-mode`, and the `--disable-flashinfer` rationale for Blackwell sm_120. All values cited from files on branch `fix-v19.0.6`.
 

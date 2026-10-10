@@ -1,4 +1,4 @@
-# SCARLIX OS v19.0.6 — Current Architecture
+# SCARLIX OS v19.2.1 — Current Architecture
 
 > Purpose: One-page reference for the live v19.0.6 system architecture — the 5-layer model, the Secure Host-Bridge privilege pattern, the 4-tier inference failover, and the LiteLLM/SMG gateway tier. Derived from the actual repo on branch `fix-v19.0.6` (commit c731b48 + this task's doc additions).
 
