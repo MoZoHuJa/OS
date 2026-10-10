@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v19.1.20 — Generate .env (fully atomic for both first-run and existing)
+# SCARLIX OS v19.2.0 — Generate .env (fully atomic for both first-run and existing)
 # v17.9.5 FIX: If .env exists, only add missing keys (don't overwrite existing passwords)
 # v18.9.3 P1: Fully atomic for existing .env (was: echo >> + sed -i → partial on crash)
 #   Now: read existing → add missing → write to mktemp → chmod → chown → mv

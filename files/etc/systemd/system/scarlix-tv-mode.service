@@ -1,5 +1,5 @@
 [Unit]
-Description=SCARLIX OS v19.1.20 — TV mode helpers
+Description=SCARLIX OS v19.2.0 — TV mode helpers
 After=docker.service
 
 [Service]

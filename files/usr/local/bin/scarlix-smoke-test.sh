@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCARLIX OS v19.1.20 — Regression Smoke Test (baseline freeze + P0 checks)
+# SCARLIX OS v19.2.0 — Regression Smoke Test (baseline freeze + P0 checks)
 #
 # Runs 10 integrity checks against the SCARLIX OS repo and prints a
 # PASS/FAIL/WARN line for each. Exits 0 if no check FAILed, 1 otherwise.
@@ -38,7 +38,7 @@ WARN_COUNT=0
 # ---------------------------------------------------------------------------
 usage() {
     cat <<'EOF'
-scarlix-smoke-test.sh — SCARLIX OS v19.1.20 regression smoke test
+scarlix-smoke-test.sh — SCARLIX OS v19.2.0 regression smoke test
 
 Usage:
   scarlix-smoke-test.sh [--offline] [--help]
@@ -104,7 +104,7 @@ done
 # ---------------------------------------------------------------------------
 # Preamble
 # ---------------------------------------------------------------------------
-printf "${BOLD}=== SCARLIX OS v19.1.20 regression smoke test ===${NC}\n"
+printf "${BOLD}=== SCARLIX OS v19.2.0 regression smoke test ===${NC}\n"
 printf "Repo:   %s\n" "$REPO_DIR"
 printf "Offline: %s\n" "$([[ $OFFLINE -eq 1 ]] && echo yes || echo no)"
 echo
@@ -491,16 +491,19 @@ check_10_vllm_trust_p0() {
     fi
 
     # The previous bug put executable if/case/fi lines inside the heredoc,
-    # which emitted invalid non KEY=VALUE lines into .env. Reject ANY line inside
-    # the heredoc that is not blank, a comment, or an UPPER_CASE KEY=VALUE entry.
-    # v19.1.20 P1: Was: deny-list of col-0 `if|case|fi|esac` only. Mutation testing
-    #   showed 3 of 4 injections PASSED: indented `case`, `while` loops, and plain
-    #   commands like `rm -rf /` all leaked undetected. Now: allow-list — every
-    #   non-blank, non-comment line must match ^[A-Z][A-Z0-9_]*=. Catches all 4/4.
-    control_line=$(awk -v start="$heredoc_start" -v end="$heredoc_end" \
-        'NR > start && NR < end && $0 !~ /^[[:space:]]*$/ && $0 !~ /^#/ && $0 !~ /^[A-Z][A-Z0-9_]*=/ { print NR ":" $0; exit }' "$mode")
+    # which emitted invalid non KEY=VALUE lines into .env. The heredoc is UNQUOTED,
+    # so $(...) and `...` inside it (even in comments) would EXECUTE, not just emit text.
+    # Allow-list: every line must be blank, a comment, or UPPER_CASE KEY=VALUE where
+    # VALUE is only [A-Za-z0-9_./:-] plus $var / ${var} expansions; and no line may
+    # contain command substitution ($( or backtick) anywhere.
+    control_line=$(awk -v start="$heredoc_start" -v end="$heredoc_end" '
+        NR > start && NR < end {
+            if ($0 ~ /\$\(|`/) { print NR ":" $0; exit }
+            if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^#/) next
+            if ($0 !~ /^[A-Z][A-Z0-9_]*=([A-Za-z0-9_.\/:-]|\$[a-z_][a-z0-9_]*|\$\{[a-z_][a-z0-9_]*\})*$/) { print NR ":" $0; exit }
+        }' "$mode")
     if [[ -n "$control_line" ]]; then
-        fail "scarlix-mode: non KEY=VALUE line inside .env heredoc (shell logic leaked?): $control_line"
+        fail "scarlix-mode: unsafe/non KEY=VALUE line inside .env heredoc (shell logic or command substitution leaked?): $control_line"
         return
     fi
 
