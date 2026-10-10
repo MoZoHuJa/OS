@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v19.1.20 — Model Downloader (v17.5 keys, correct HF repo IDs)
+# SCARLIX OS v19.2.0 — Model Downloader (v17.5 keys, correct HF repo IDs)
 #
 # v18.5 FIXES:
 #   - Missing Ollama compose file = FAILED (was: silently skipped → false "complete")

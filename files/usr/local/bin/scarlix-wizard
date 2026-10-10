@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SCARLIX OS v19.1.20 — EndeavourOS Edition — Setup Wizard
+# SCARLIX OS v19.2.0 — EndeavourOS Edition — Setup Wizard
 # v18.5: gateway prompt (was hardcoded 192.168.1.1), version unified
 # v17.5: Creates .experimental if 2+ GPU (Q3a — vLLM starts without --profile gate)
 # v18.8.1 P1: Dynamic version from VERSION file (was: hardcoded v18.7.6 in
