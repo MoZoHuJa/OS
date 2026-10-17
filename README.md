@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.2.2 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.2.3 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.2.2</h1>
+<h1 align="center">SCARLIX OS v19.2.3</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.2.2"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.2-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.2.3"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.3-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.2.2 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.2.3 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.2.2   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.2.3   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -2128,6 +2128,52 @@ Key safety properties:
 gofmt -l .              → EMPTY (clean)
 go vet ./...            → CLEAN (11 packages, was 10)
 go test ./...           → 11 packages all OK (219 tests total: 172 existing + 47 new)
+bash -n                 → OK (13 scripts)
+shellcheck -S warning  → OK (10 CI scripts)
+scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)
+```
+
+---
+
+## 🆕 What's New in v19.2.3 — KpK Audit Closure (8 findings) (vs v19.2.2)
+
+**KpK (Kontrola Procesu Kódovania) audit closure.** 4 P1 + 4 P2 from independent audit of v19.2.2 allocation package. All 8 findings fixed, 9 new regression tests added.
+
+### P1 fixes (4)
+
+| # | Finding | Fix |
+|---|---------|-----|
+| **KPK-01** | `CLEANUP_REQUIRED → RELEASED` not conditioned on `CleanupVerified` | ANY transition TO `RELEASED` now requires `CleanupVerified == true`. Topology table unchanged (pure state-pair check); contextual precondition enforced at record level in `Transition()`. |
+| **KPK-02** | JSONL store permissions too open (0755 dir, 0644 file) | Directory: `0700`. File: `0600`. Lock file: `0600`. No world/group-readable access. |
+| **KPK-03** | `Update()`/`PruneReleased()` silently discard corrupt JSONL lines | Both operations now REJECT with `ErrCorruptData` when corrupt lines detected. Corrupt data is never silently discarded. |
+| **KPK-04** | Optimistic revision check doesn't detect cross-process writes | Added `flock` (file lock) for multi-process safety. All write operations acquire exclusive flock on `s.path + ".lock"`. Revision check now re-reads from disk. |
+
+### P2 fixes (4)
+
+| # | Finding | Fix |
+|---|---------|-----|
+| **KPK-05** | `Append()` allows duplicate `AllocationID` | `Append()` now checks existing IDs and returns `ErrDuplicateID`. `Load()` reports duplicates as `ErrCorrupt` (integrity error), not silent "last write wins". |
+| **KPK-06** | `HasSecrets()` doesn't check all fields or all patterns | Now checks `LastError`, `Owner`, `WorkloadRef`, and all `History[].Reason` fields. All 6 markers (`token=`, `password=`, `secret=`, `api_key=`, `bearer `, `authorization:`) applied consistently. |
+| **KPK-07** | No crash durability (fsync) | `rewriteAll()` now calls `Sync()` on temp file before rename + `Sync()` on parent dir after rename. `Append()` also calls `Sync()`. |
+| **KPK-08** | Test counts in Phase 2 report inconsistent | Report updated with accurate counts. |
+
+### New tests (9)
+
+- `TestStore_Append_RejectsDuplicateID` (KPK-05)
+- `TestStore_Update_RejectsCorruptData` (KPK-03)
+- `TestStore_PruneReleased_RejectsCorruptData` (KPK-03)
+- `TestStore_FilePermissions` (KPK-02)
+- `TestStore_RewriteAll_FilePermissions` (KPK-02)
+- `TestHasSecrets_AllFields` (KPK-06)
+- `TestHasSecrets_NilReceiver` (KPK-06)
+- `TestStore_LockFileCreated` (KPK-04)
+- `TestAllocation_Transition_CleanupRequired_ReleasingAlwaysOk` (KPK-01)
+
+### Verification
+```
+gofmt -l .              → EMPTY (clean)
+go vet ./...            → CLEAN (11 packages)
+go test ./...           → 11 packages all OK (228 tests: 172 existing + 56 allocation)
 bash -n                 → OK (13 scripts)
 shellcheck -S warning  → OK (10 CI scripts)
 scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)

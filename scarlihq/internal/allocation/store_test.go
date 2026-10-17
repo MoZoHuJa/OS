@@ -269,6 +269,7 @@ func TestStore_ListByState(t *testing.T) {
 	a3 := NewAllocation("alloc-3", "v1", "research", "background", "agent")
 	_ = store.Append(a3)
 	// Transition a3 to RELEASED.
+	// KPK-01 (v19.2.3): CleanupVerified must be set before RELEASED.
 	_ = store.Update("alloc-3", func(a *Allocation) error {
 		_, err := a.Transition(StateValidating, "")
 		if err != nil {
@@ -282,6 +283,7 @@ func TestStore_ListByState(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		a.CleanupVerified = true // KPK-01: required before RELEASED
 		_, err = a.Transition(StateReleased, "")
 		return err
 	})
@@ -319,6 +321,7 @@ func TestStore_PruneReleased(t *testing.T) {
 	old := NewAllocation("alloc-old", "v1", "coding", "interactive", "agent")
 	_ = store.Append(old)
 	// Transition to RELEASED.
+	// KPK-01 (v19.2.3): CleanupVerified must be set before RELEASED.
 	_ = store.Update("alloc-old", func(a *Allocation) error {
 		_, err := a.Transition(StateValidating, "")
 		if err != nil {
@@ -332,6 +335,7 @@ func TestStore_PruneReleased(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		a.CleanupVerified = true // KPK-01: required before RELEASED
 		_, err = a.Transition(StateReleased, "")
 		return err
 	})

@@ -321,7 +321,10 @@ func TestAllocation_Transition_RunningNotReachableByShortcut(t *testing.T) {
 }
 
 // TestAllocation_Transition_CleanupRequiredNotReleased verifies that
-// CLEANUP_REQUIRED is never treated as RELEASED.
+// CLEANUP_REQUIRED → RELEASED requires CleanupVerified == true.
+//
+// KPK-01 (v19.2.3): Previously this transition was allowed unconditionally.
+// Now it is rejected when CleanupVerified is false.
 func TestAllocation_Transition_CleanupRequiredNotReleased(t *testing.T) {
 	a := NewAllocation("alloc-cleanup", "v1", "coding", "interactive", "agent.coder")
 	a.State = StateCleanupRequired
@@ -330,19 +333,54 @@ func TestAllocation_Transition_CleanupRequiredNotReleased(t *testing.T) {
 		t.Error("CLEANUP_REQUIRED should NOT be terminal (only RELEASED is)")
 	}
 
-	// Can go to RELEASING or RELEASED (only after verified).
+	// CanTransition checks topology only — it allows CLEANUP_REQUIRED → RELEASED.
 	ok1, _ := CanTransition(StateCleanupRequired, StateReleasing)
 	if !ok1 {
 		t.Error("CLEANUP_REQUIRED → RELEASING should be legal")
 	}
 	ok2, _ := CanTransition(StateCleanupRequired, StateReleased)
 	if !ok2 {
-		t.Error("CLEANUP_REQUIRED → RELEASED should be legal (after cleanup verified)")
+		t.Error("CLEANUP_REQUIRED → RELEASED should be legal in topology (contextual guard is record-level)")
 	}
 	// But NOT to RUNNING (cannot resume from cleanup-required).
 	ok3, _ := CanTransition(StateCleanupRequired, StateRunning)
 	if ok3 {
 		t.Error("CLEANUP_REQUIRED → RUNNING should be illegal")
+	}
+
+	// KPK-01: Without CleanupVerified, Transition to RELEASED must FAIL.
+	_, err := a.Transition(StateReleased, "attempting release without verification")
+	if err == nil {
+		t.Fatal("Transition CLEANUP_REQUIRED → RELEASED without CleanupVerified should FAIL")
+	}
+	if a.State != StateCleanupRequired {
+		t.Errorf("State was mutated on failed cleanup transition: %q (want CLEANUP_REQUIRED)", a.State)
+	}
+
+	// KPK-01: With CleanupVerified == true, Transition to RELEASED must SUCCEED.
+	a.CleanupVerified = true
+	_, err = a.Transition(StateReleased, "cleanup verified, releasing")
+	if err != nil {
+		t.Fatalf("Transition CLEANUP_REQUIRED → RELEASED with CleanupVerified=true should succeed: %v", err)
+	}
+	if a.State != StateReleased {
+		t.Errorf("State = %q, want RELEASED", a.State)
+	}
+}
+
+// TestAllocation_Transition_CleanupRequired_ReleasingAlwaysOk verifies that
+// CLEANUP_REQUIRED → RELEASING does NOT require CleanupVerified (you can
+// always start the cleanup process).
+func TestAllocation_Transition_CleanupRequired_ReleasingAlwaysOk(t *testing.T) {
+	a := NewAllocation("alloc-cleanup-rel", "v1", "coding", "interactive", "agent.coder")
+	a.State = StateCleanupRequired
+	// CleanupVerified is false — but RELEASING should still be allowed.
+	_, err := a.Transition(StateReleasing, "starting cleanup")
+	if err != nil {
+		t.Fatalf("Transition CLEANUP_REQUIRED → RELEASING should succeed even without CleanupVerified: %v", err)
+	}
+	if a.State != StateReleasing {
+		t.Errorf("State = %q, want RELEASING", a.State)
 	}
 }
 

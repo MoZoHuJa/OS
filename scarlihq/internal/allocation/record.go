@@ -117,26 +117,61 @@ func NewAllocation(allocID, contractVersion, taskType, priority, owner string) *
 	}
 }
 
-// HasSecrets checks whether any field contains something that looks like
-// a secret. This is a defense-in-depth check — it should always return false
-// for records created through NewAllocation + Transition.
+// HasSecrets checks whether any user-influenced field contains something that
+// looks like a secret. This is a defense-in-depth heuristic check — it should
+// always return false for records created through NewAllocation + Transition.
 //
-// It checks for common secret patterns: "token", "password", "secret",
-// "api_key", "bearer", "authorization" in field VALUES (not field names).
-// Field names like "SelectedModel" are fine.
+// KPK-06 (v19.2.3): Previously this function only checked LastError and a
+// subset of patterns in History[].Reason. Now it checks ALL user-influenced
+// string fields consistently against the full secret marker set:
+//   - LastError
+//   - History[].Reason
+//   - Owner (could contain echoed input in future)
+//   - WorkloadRef (could contain echoed container name/env in future)
+//
+// Secret markers checked (case-insensitive):
+//
+//	"token=", "password=", "secret=", "api_key=", "bearer ", "authorization:"
+//
+// This is a heuristic, not a security boundary. Secrets must never be part
+// of the allocation data contract. The check exists to catch accidental
+// leaks during development/debugging.
 func (a *Allocation) HasSecrets() bool {
-	// Check string fields that could contain user-supplied data.
-	// We do NOT check structural fields like AllocationID, SelectedGPU, etc.
-	// because those are system-generated or validated.
-	// We check LastError and Reason because those could contain echoed input.
-	secretMarkers := []string{"token=", "password=", "secret=", "api_key=", "bearer ", "authorization:"}
-	for _, marker := range secretMarkers {
-		if containsCI(a.LastError, marker) {
+	if a == nil {
+		return false
+	}
+	// Check all user-influenced string fields.
+	if hasSecretMarker(a.LastError) {
+		return true
+	}
+	if hasSecretMarker(a.Owner) {
+		return true
+	}
+	if hasSecretMarker(a.WorkloadRef) {
+		return true
+	}
+	// Check all history event reasons.
+	for _, ev := range a.History {
+		if hasSecretMarker(ev.Reason) {
 			return true
 		}
 	}
-	for _, ev := range a.History {
-		if containsCI(ev.Reason, "token=") || containsCI(ev.Reason, "password=") || containsCI(ev.Reason, "secret=") {
+	return false
+}
+
+// hasSecretMarker checks whether s contains any of the secret markers
+// (case-insensitive). Used by HasSecrets() to apply the full marker set
+// consistently across all fields.
+func hasSecretMarker(s string) bool {
+	if s == "" {
+		return false
+	}
+	markers := []string{
+		"token=", "password=", "secret=", "api_key=",
+		"bearer ", "authorization:",
+	}
+	for _, m := range markers {
+		if containsCI(s, m) {
 			return true
 		}
 	}

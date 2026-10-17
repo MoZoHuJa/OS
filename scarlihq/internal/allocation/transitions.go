@@ -161,13 +161,21 @@ type TransitionResult struct {
 // This is the ONLY method that should be used to change an Allocation's state.
 // It enforces:
 //  1. The transition is legal (via CanTransition).
-//  2. The record is NOT mutated if validation fails.
-//  3. Timestamps are updated (UpdatedAt + StateChangedAt).
-//  4. A transition event is appended to the record's history.
+//  2. Contextual preconditions for specific transitions (e.g. CleanupVerified).
+//  3. The record is NOT mutated if validation fails.
+//  4. Timestamps are updated (UpdatedAt + StateChangedAt).
+//  5. A transition event is appended to the record's history.
 //
 // Authorization/ownership is NOT checked here — the caller must verify
 // that the initiating actor is permitted to cause this transition.
 // State transitions are not authorization (see guide §10).
+//
+// KPK-01 (v19.2.3): The transition CLEANUP_REQUIRED → RELEASED requires
+// Allocation.CleanupVerified == true. This is a contextual precondition
+// enforced at the record level (not in the topology-level CanTransition,
+// which only checks state-pair legality). If CleanupVerified is false,
+// the transition is rejected with a TransitionError and the record is
+// NOT mutated.
 //
 // Returns:
 //   - *TransitionResult, nil  on success (record mutated in place)
@@ -180,8 +188,23 @@ func (a *Allocation) Transition(to State, reason string) (*TransitionResult, err
 	from := a.State
 	ok, err := CanTransition(from, to)
 	if !ok {
-		// Record is NOT mutated — validation failed.
+		// Record is NOT mutated — topology validation failed.
 		return nil, err
+	}
+
+	// KPK-01 (v19.2.3): Contextual precondition — ANY transition TO RELEASED
+	// requires positive cleanup confirmation (CleanupVerified == true).
+	// This applies to both RELEASING → RELEASED and CLEANUP_REQUIRED → RELEASED.
+	// Acceptance criterion: "žiadna cesta v produkčnom API/službe nesmie
+	// dostať alokáciu do RELEASED, kým cleanup nie je pozitívne potvrdený."
+	if to == StateReleased {
+		if !a.CleanupVerified {
+			return nil, &TransitionError{
+				From:   from,
+				To:     to,
+				Reason: "cleanup not verified — CleanupVerified must be true before transitioning to RELEASED",
+			}
+		}
 	}
 
 	now := time.Now().UTC()
