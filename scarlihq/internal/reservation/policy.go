@@ -1,6 +1,7 @@
 package reservation
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -70,23 +71,17 @@ func (p ReservationPolicy) IsInventoryStale(snapshotAge time.Duration) bool {
 }
 
 // CanReserveGPU checks whether a GPU can be reserved given the current
-// active reservations. Under the default exclusive policy, a GPU can be
-// reserved only if no other HELD reservation exists for it.
-//
-// Parameters:
-//   - resourceID: the GPU resource ID (e.g. "gpu.nvidia.0")
-//   - activeReservations: all currently HELD reservations
-//   - excludeAllocationID: allocation to exclude from the check (for renewals)
-//
-// Returns true if the GPU is available for reservation.
-func (p ReservationPolicy) CanReserveGPU(resourceID string, activeReservations []*Reservation, excludeAllocationID string) bool {
+// active reservations.
+// KPK-01 (v19.2.5): Uses BlocksResource() — RELEASING, EXPIRED, CONFLICT
+// also block (was: only HELD blocked).
+func (p ReservationPolicy) CanReserveGPU(resourceID string, allReservations []*Reservation, excludeAllocationID string) bool {
 	if p.GPUExclusive {
-		for _, r := range activeReservations {
-			if r.Status != StatusHeld {
+		for _, r := range allReservations {
+			// KPK-01: Use BlocksResource() instead of just checking HELD.
+			if !r.Status.BlocksResource() {
 				continue
 			}
 			if r.ResourceID == resourceID && r.AllocationID != excludeAllocationID {
-				// Another allocation holds this GPU exclusively.
 				return false
 			}
 		}
@@ -95,10 +90,11 @@ func (p ReservationPolicy) CanReserveGPU(resourceID string, activeReservations [
 }
 
 // CanReserveRuntimeSlot checks whether a runtime slot can be reserved.
-func (p ReservationPolicy) CanReserveRuntimeSlot(runtimeID string, activeReservations []*Reservation, excludeAllocationID string) bool {
+// KPK-01 (v19.2.5): Uses BlocksResource() for all status checks.
+func (p ReservationPolicy) CanReserveRuntimeSlot(runtimeID string, allReservations []*Reservation, excludeAllocationID string) bool {
 	count := 0
-	for _, r := range activeReservations {
-		if r.Status != StatusHeld {
+	for _, r := range allReservations {
+		if !r.Status.BlocksResource() {
 			continue
 		}
 		if r.ResourceType == ResourceTypeRuntimeSlot && r.ResourceID == runtimeID {
@@ -111,10 +107,11 @@ func (p ReservationPolicy) CanReserveRuntimeSlot(runtimeID string, activeReserva
 }
 
 // CanReserveModelSlot checks whether a model slot can be reserved.
-func (p ReservationPolicy) CanReserveModelSlot(modelID string, activeReservations []*Reservation, excludeAllocationID string) bool {
+// KPK-01 (v19.2.5): Uses BlocksResource() for all status checks.
+func (p ReservationPolicy) CanReserveModelSlot(modelID string, allReservations []*Reservation, excludeAllocationID string) bool {
 	count := 0
-	for _, r := range activeReservations {
-		if r.Status != StatusHeld {
+	for _, r := range allReservations {
+		if !r.Status.BlocksResource() {
 			continue
 		}
 		if r.ResourceType == ResourceTypeModelSlot && r.ResourceID == modelID {
@@ -124,4 +121,45 @@ func (p ReservationPolicy) CanReserveModelSlot(modelID string, activeReservation
 		}
 	}
 	return count < p.MaxModelSlotsPerModel
+}
+
+// CanReservePort checks whether a port can be reserved.
+// KPK-02 (v19.2.5): New method — port reservations are exclusive by default.
+// Ports are identified by a canonical string ID (e.g. "port.30000" or "tcp.127.0.0.1:30000").
+func (p ReservationPolicy) CanReservePort(portID string, allReservations []*Reservation, excludeAllocationID string) bool {
+	for _, r := range allReservations {
+		if !r.Status.BlocksResource() {
+			continue
+		}
+		if r.ResourceType == ResourceTypePort && r.ResourceID == portID {
+			if r.AllocationID != excludeAllocationID {
+				return false // port already reserved
+			}
+		}
+	}
+	return true
+}
+
+// Validate checks that the policy configuration is valid.
+// KPK-15 (v19.2.5): Reject zero/negative capacities at construction.
+func (p ReservationPolicy) Validate() error {
+	if p.MaxGPUPerReservation <= 0 {
+		return fmt.Errorf("policy: MaxGPUPerReservation must be > 0 (got %d)", p.MaxGPUPerReservation)
+	}
+	if p.MaxRuntimeSlotsPerRuntime <= 0 {
+		return fmt.Errorf("policy: MaxRuntimeSlotsPerRuntime must be > 0 (got %d)", p.MaxRuntimeSlotsPerRuntime)
+	}
+	if p.MaxModelSlotsPerModel <= 0 {
+		return fmt.Errorf("policy: MaxModelSlotsPerModel must be > 0 (got %d)", p.MaxModelSlotsPerModel)
+	}
+	if p.LeaseMinTTL <= 0 {
+		return fmt.Errorf("policy: LeaseMinTTL must be > 0 (got %v)", p.LeaseMinTTL)
+	}
+	if p.LeaseMaxTTL <= p.LeaseMinTTL {
+		return fmt.Errorf("policy: LeaseMaxTTL (%v) must be > LeaseMinTTL (%v)", p.LeaseMaxTTL, p.LeaseMinTTL)
+	}
+	if p.InventoryFreshnessLimit <= 0 {
+		return fmt.Errorf("policy: InventoryFreshnessLimit must be > 0 (got %v)", p.InventoryFreshnessLimit)
+	}
+	return nil
 }
