@@ -90,7 +90,7 @@ func (s *Store) acquireFlock() (*os.File, error) {
 }
 
 // Append writes a new reservation. Rejects duplicates and corruption.
-func (s *Store) Append(r *Reservation) error {
+func (s *Store) append(r *Reservation) error {
 	if r == nil || r.ReservationID == "" {
 		return fmt.Errorf("reservation: cannot append nil or empty-id record")
 	}
@@ -192,7 +192,7 @@ func (s *Store) Get(id string) (*Reservation, error) {
 }
 
 // Update performs a read-modify-write cycle under flock.
-func (s *Store) Update(id string, modify func(*Reservation) error) error {
+func (s *Store) update(id string, modify func(*Reservation) error) error {
 	if id == "" || modify == nil {
 		return fmt.Errorf("reservation: invalid update args")
 	}
@@ -342,7 +342,7 @@ func splitLines(data []byte) [][]byte {
 
 // PruneReleased removes RELEASED reservations older than olderThan.
 // Rejects if corruption is detected (KPK-03 pattern).
-func (s *Store) PruneReleased(olderThan time.Duration) (int, error) {
+func (s *Store) pruneReleased(olderThan time.Duration) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
