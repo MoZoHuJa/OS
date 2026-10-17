@@ -155,16 +155,16 @@ func (p ReservationPolicy) Validate() error {
 	return nil
 }
 
-// CanonicalResourceID normalizes a resource ID for a given type.
-// P2-03 (v19.2.6): Rejects non-canonical input to prevent alias bypass.
+// CanonicalResourceID validates and normalizes a resource ID for a given type.
+// P1-05 (v19.2.7): Real parsing — not just prefix check. Validates format
+// and returns a canonical form.
 //
 // Canonical formats:
-//   - GPUDevice: "gpu.nvidia.<uuid>" (must start with "gpu.nvidia.")
-//   - RuntimeSlot: "runtime.<name>" (must start with "runtime.")
-//   - ModelSlot: "model.<id>" (must start with "model.")
-//   - Port: "port.<port>" (must start with "port.")
-//
-// Returns the canonical ID or an error if the input is not canonical.
+//   - GPUDevice: "gpu.nvidia.<UUID>" where UUID matches NVIDIA GPU UUID format
+//     (GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx). Legacy index IDs rejected.
+//   - RuntimeSlot: "runtime.<name>" where name is [a-z0-9_-]+
+//   - ModelSlot: "model.<id>" where id is [a-z0-9._/-]+
+//   - Port: "port.<num>" where num is 1-65535 (no leading zeros)
 func CanonicalResourceID(resourceID string, resourceType ResourceType) (string, error) {
 	resourceID = strings.TrimSpace(resourceID)
 	if resourceID == "" {
@@ -172,6 +172,7 @@ func CanonicalResourceID(resourceID string, resourceType ResourceType) (string, 
 	}
 	switch resourceType {
 	case ResourceTypeGPUDevice:
+		// Must start with "gpu.nvidia."
 		if !strings.HasPrefix(resourceID, "gpu.nvidia.") {
 			return "", fmt.Errorf("gpu resource_id must start with 'gpu.nvidia.' (got %q)", resourceID)
 		}
@@ -179,23 +180,136 @@ func CanonicalResourceID(resourceID string, resourceType ResourceType) (string, 
 		if uuid == "" {
 			return "", fmt.Errorf("gpu resource_id missing UUID after 'gpu.nvidia.'")
 		}
+		// P1-05: Validate NVIDIA GPU UUID format.
+		// Format: GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (case-insensitive hex)
+		if !isValidGPUUUID(uuid) {
+			return "", fmt.Errorf("gpu resource_id has invalid UUID format %q (expected GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)", uuid)
+		}
 		return resourceID, nil
 	case ResourceTypeRuntimeSlot:
 		if !strings.HasPrefix(resourceID, "runtime.") {
 			return "", fmt.Errorf("runtime resource_id must start with 'runtime.' (got %q)", resourceID)
+		}
+		name := strings.TrimPrefix(resourceID, "runtime.")
+		if name == "" {
+			return "", fmt.Errorf("runtime resource_id missing name")
+		}
+		if !isValidRuntimeName(name) {
+			return "", fmt.Errorf("runtime name %q contains invalid characters (allowed: a-z 0-9 _ -)", name)
 		}
 		return resourceID, nil
 	case ResourceTypeModelSlot:
 		if !strings.HasPrefix(resourceID, "model.") {
 			return "", fmt.Errorf("model resource_id must start with 'model.' (got %q)", resourceID)
 		}
+		name := strings.TrimPrefix(resourceID, "model.")
+		if name == "" {
+			return "", fmt.Errorf("model resource_id missing name")
+		}
+		if !isValidModelName(name) {
+			return "", fmt.Errorf("model name %q contains invalid characters (allowed: a-z 0-9 . _ / -)", name)
+		}
 		return resourceID, nil
 	case ResourceTypePort:
 		if !strings.HasPrefix(resourceID, "port.") {
 			return "", fmt.Errorf("port resource_id must start with 'port.' (got %q)", resourceID)
 		}
-		return resourceID, nil
+		portStr := strings.TrimPrefix(resourceID, "port.")
+		if portStr == "" {
+			return "", fmt.Errorf("port resource_id missing port number")
+		}
+		// P1-05: Validate port number (1-65535, no leading zeros except "0" which is invalid).
+		port, err := parsePortNum(portStr)
+		if err != nil {
+			return "", fmt.Errorf("port resource_id has invalid port: %w", err)
+		}
+		// Canonical form: "port.<num>" with no leading zeros.
+		return fmt.Sprintf("port.%d", port), nil
 	default:
 		return "", fmt.Errorf("unknown resource type %q", resourceType)
 	}
+}
+
+// isValidGPUUUID validates NVIDIA GPU UUID format.
+// Format: GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (hex, case-insensitive)
+func isValidGPUUUID(uuid string) bool {
+	if len(uuid) != 40 {
+		return false
+	}
+	if !strings.HasPrefix(uuid, "GPU-") {
+		return false
+	}
+	// Check hex segments: 8-4-4-4-12 after "GPU-"
+	hexPart := uuid[4:]
+	segments := strings.Split(hexPart, "-")
+	if len(segments) != 5 {
+		return false
+	}
+	expectedLens := []int{8, 4, 4, 4, 12}
+	for i, seg := range segments {
+		if len(seg) != expectedLens[i] {
+			return false
+		}
+		for _, c := range seg {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isValidRuntimeName validates runtime names: [a-z0-9_-]+
+func isValidRuntimeName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, c := range name {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidModelName validates model names: [a-z0-9._/-]+
+func isValidModelName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, c := range name {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '/' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// parsePortNum parses a port number string, rejecting leading zeros and
+// values outside 1-65535.
+func parsePortNum(s string) (int, error) {
+	if len(s) == 0 {
+		return 0, fmt.Errorf("empty port")
+	}
+	// Reject leading zeros (e.g. "030000").
+	if len(s) > 1 && s[0] == '0' {
+		return 0, fmt.Errorf("leading zeros not allowed in port number %q", s)
+	}
+	// Must be all digits.
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, fmt.Errorf("non-numeric port %q", s)
+		}
+	}
+	port := 0
+	for _, c := range s {
+		port = port*10 + int(c-'0')
+		if port > 65535 {
+			return 0, fmt.Errorf("port %d exceeds 65535", port)
+		}
+	}
+	if port < 1 {
+		return 0, fmt.Errorf("port must be >= 1 (got %d)", port)
+	}
+	return port, nil
 }
