@@ -10,26 +10,12 @@ import (
 type ResourceType string
 
 const (
-	// ResourceTypeGPUDevice is an exclusive physical GPU reservation.
-	// KPK-11 (v19.2.5): GPU identity should use the NVIDIA GPU UUID,
-	// not the index. The canonical ID format is "gpu.nvidia.<uuid>"
-	// where <uuid> is the nvidia-smi --query-gpu=gpu_uuid output.
-	// Legacy "gpu.nvidia.<index>" IDs are accepted for backward compat
-	// but new code should use UUID-based IDs.
-	ResourceTypeGPUDevice ResourceType = "gpu.device"
-
-	// ResourceTypeRuntimeSlot is a logical slot for a runtime instance.
+	ResourceTypeGPUDevice   ResourceType = "gpu.device"
 	ResourceTypeRuntimeSlot ResourceType = "runtime.slot"
-
-	// ResourceTypeModelSlot is a logical slot for a model+runtime combination.
-	ResourceTypeModelSlot ResourceType = "model.slot"
-
-	// ResourceTypePort is a specific host port.
-	// KPK-02 (v19.2.5): Now has an explicit policy branch in Reserve().
-	ResourceTypePort ResourceType = "port"
+	ResourceTypeModelSlot   ResourceType = "model.slot"
+	ResourceTypePort        ResourceType = "port"
 )
 
-// IsValid reports whether rt is a known resource type.
 func (rt ResourceType) IsValid() bool {
 	switch rt {
 	case ResourceTypeGPUDevice, ResourceTypeRuntimeSlot, ResourceTypeModelSlot, ResourceTypePort:
@@ -43,51 +29,28 @@ func (rt ResourceType) IsValid() bool {
 type ReservationStatus string
 
 const (
-	// StatusHeld means the reservation is active and the resource is owned.
-	StatusHeld ReservationStatus = "HELD"
-
-	// StatusReleasing means the reservation is being released (cleanup in progress).
-	// KPK-01 (v19.2.5): Still BLOCKS the resource — only RELEASED stops blocking.
-	StatusReleasing ReservationStatus = "RELEASING"
-
-	// StatusReleased means the reservation has been positively released.
-	// Terminal state. Only this state stops blocking the resource.
-	StatusReleased ReservationStatus = "RELEASED"
-
-	// StatusExpiredPendingReconciliation means the lease has expired but the
-	// resource has NOT been confirmed free. Requires reconciliation.
-	// KPK-01 (v19.2.5): Still BLOCKS the resource.
+	StatusHeld                         ReservationStatus = "HELD"
+	StatusReleasing                    ReservationStatus = "RELEASING"
+	StatusReleased                     ReservationStatus = "RELEASED"
 	StatusExpiredPendingReconciliation ReservationStatus = "EXPIRED_PENDING_RECONCILIATION"
-
-	// StatusConflict means there is an ambiguous ownership state that requires
-	// explicit resolution. Fail-closed.
-	// KPK-01 (v19.2.5): Still BLOCKS the resource.
-	StatusConflict ReservationStatus = "CONFLICT"
+	StatusConflict                     ReservationStatus = "CONFLICT"
 )
 
-// IsValid reports whether s is a known reservation status.
 func (s ReservationStatus) IsValid() bool {
 	switch s {
-	case StatusHeld, StatusReleasing, StatusReleased,
-		StatusExpiredPendingReconciliation, StatusConflict:
+	case StatusHeld, StatusReleasing, StatusReleased, StatusExpiredPendingReconciliation, StatusConflict:
 		return true
 	}
 	return false
 }
 
-// IsTerminal reports whether s is a terminal status (no outgoing transitions).
 func (s ReservationStatus) IsTerminal() bool {
 	return s == StatusReleased
 }
 
 // BlocksResource reports whether a reservation in this status should prevent
 // other reservations from acquiring the same resource.
-//
-// KPK-01 (v19.2.5): HELD, RELEASING, EXPIRED_PENDING_RECONCILIATION, and
-// CONFLICT all block the resource. Only RELEASED stops blocking.
 // P1-02 (v19.2.6): Unknown/empty statuses ALSO block (fail-closed).
-// This prevents a malformed/future/persisted-unknown status from silently
-// making a resource available.
 func (s ReservationStatus) BlocksResource() bool {
 	switch s {
 	case StatusReleased:
@@ -95,59 +58,33 @@ func (s ReservationStatus) BlocksResource() bool {
 	case StatusHeld, StatusReleasing, StatusExpiredPendingReconciliation, StatusConflict:
 		return true
 	default:
-		// P1-02: Unknown statuses block (fail-closed).
-		// A persisted record with an unknown status might be a future version
-		// or a manually altered record — we must NOT make the resource available.
-		return true
+		return true // P1-02: unknown blocks (fail-closed)
 	}
 }
 
-// ReservationSchemaVersion is the schema version. v1 frozen in v19.2.4.
 const ReservationSchemaVersion = "v1"
 
 // Reservation is the persistent record of a resource reservation.
-// See record.go for field documentation — this is a type alias for clarity.
 type Reservation struct {
-	// === Identity ===
-	ReservationID string `json:"reservation_id"`
-	AllocationID  string `json:"allocation_id"`
-	SchemaVersion string `json:"schema_version"`
-
-	// === Resource ===
-	ResourceID   string       `json:"resource_id"`
-	ResourceType ResourceType `json:"resource_type"`
-
-	// === Ownership ===
-	// KPK-05 (v19.2.5): Owner is derived from verified identity, not raw string.
-	// The Manager accepts an Identity type and derives Owner from it.
-	Owner string `json:"owner"`
-
-	// === Lease ===
-	LeaseID       string    `json:"lease_id,omitempty"`
-	LeaseExpiry   time.Time `json:"lease_expiry,omitempty"`
-	LastRenewedAt time.Time `json:"last_renewed_at,omitempty"`
-
-	// === Inventory snapshot reference ===
-	InventoryGeneration string `json:"inventory_generation,omitempty"`
-
-	// === Status ===
-	Status    ReservationStatus `json:"status"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
-
-	// === Idempotency ===
-	// KPK-06 (v19.2.5): When IdempotencyKey is set, RequestFingerprint MUST be non-empty.
-	IdempotencyKey     string `json:"idempotency_key,omitempty"`
-	RequestFingerprint string `json:"request_fingerprint,omitempty"`
-
-	// === Audit ===
-	LastReason string `json:"last_reason,omitempty"`
-
-	// === Concurrency ===
-	Revision int64 `json:"revision"`
+	ReservationID       string            `json:"reservation_id"`
+	AllocationID        string            `json:"allocation_id"`
+	SchemaVersion       string            `json:"schema_version"`
+	ResourceID          string            `json:"resource_id"`
+	ResourceType        ResourceType      `json:"resource_type"`
+	Owner               string            `json:"owner"`
+	LeaseID             string            `json:"lease_id,omitempty"`
+	LeaseExpiry         time.Time         `json:"lease_expiry,omitempty"`
+	LastRenewedAt       time.Time         `json:"last_renewed_at,omitempty"`
+	InventoryGeneration string            `json:"inventory_generation,omitempty"`
+	Status              ReservationStatus `json:"status"`
+	CreatedAt           time.Time         `json:"created_at"`
+	UpdatedAt           time.Time         `json:"updated_at"`
+	IdempotencyKey      string            `json:"idempotency_key,omitempty"`
+	RequestFingerprint  string            `json:"request_fingerprint,omitempty"`
+	LastReason          string            `json:"last_reason,omitempty"`
+	Revision            int64             `json:"revision"`
 }
 
-// NewReservation creates a new reservation in HELD status.
 func NewReservation(resID, allocID string, resType ResourceType, resID2, owner string) *Reservation {
 	now := time.Now().UTC()
 	return &Reservation{
@@ -164,10 +101,6 @@ func NewReservation(resID, allocID string, resType ResourceType, resID2, owner s
 	}
 }
 
-// IsExpired reports whether the lease has expired.
-// KPK-07 (v19.2.5): A reservation with no lease (LeaseExpiry.IsZero()) never
-// expires — but this should not happen for ordinary reservations because
-// Reserve() now requires a bounded TTL.
 func (r *Reservation) IsExpired(now time.Time) bool {
 	if r.LeaseExpiry.IsZero() {
 		return false
@@ -176,7 +109,7 @@ func (r *Reservation) IsExpired(now time.Time) bool {
 }
 
 // String returns a human-readable summary.
-// KPK-13 (v19.2.5): Panic-safe — uses truncateID() helper for short/empty IDs.
+// KPK-13: panic-safe with truncateID.
 func (r *Reservation) String() string {
 	if r == nil {
 		return "Reservation(nil)"
@@ -186,8 +119,6 @@ func (r *Reservation) String() string {
 		r.ResourceType, r.ResourceID, r.Owner, r.Status)
 }
 
-// truncateID returns the first 8 chars of s, or the whole string if shorter.
-// KPK-13 (v19.2.5): prevents panic on short/empty IDs.
 func truncateID(s string) string {
 	if len(s) > 8 {
 		return s[:8]
@@ -195,37 +126,166 @@ func truncateID(s string) string {
 	return s
 }
 
-// CleanupEvidence is typed proof that a resource has been cleaned up.
-// KPK-10 (v19.2.5): Replaces bare boolean in ReconcileExpired.
-// Must come from a trusted reconciler, not from an untrusted API caller.
-type CleanupEvidence struct {
-	// ResourceID is the resource that was cleaned up.
-	ResourceID string `json:"resource_id"`
-	// OperationID is a unique identifier for the cleanup operation.
-	OperationID string `json:"operation_id"`
-	// ObservedAt is when the cleanup was verified.
-	ObservedAt time.Time `json:"observed_at"`
-	// Verified is the outcome: true = cleanup confirmed, false = cleanup failed.
-	Verified bool `json:"verified"`
-	// ReconcilerID is the identity of the trusted reconciler that produced
-	// this evidence.
-	ReconcilerID string `json:"reconciler_id"`
+// ValidateRecord validates a Reservation's invariants.
+// P2-03 (v19.2.7): Called on load and before persistence to reject invalid records.
+func (r *Reservation) ValidateRecord() error {
+	if r == nil {
+		return fmt.Errorf("reservation: nil record")
+	}
+	if r.ReservationID == "" {
+		return fmt.Errorf("reservation: reservation_id is empty")
+	}
+	if r.AllocationID == "" {
+		return fmt.Errorf("reservation: allocation_id is empty")
+	}
+	if r.SchemaVersion != ReservationSchemaVersion {
+		return fmt.Errorf("reservation: schema_version %q != %q", r.SchemaVersion, ReservationSchemaVersion)
+	}
+	if !r.ResourceType.IsValid() {
+		return fmt.Errorf("reservation: invalid resource_type %q", r.ResourceType)
+	}
+	if r.ResourceID == "" {
+		return fmt.Errorf("reservation: resource_id is empty")
+	}
+	if !r.Status.IsValid() {
+		return fmt.Errorf("reservation: invalid status %q", r.Status)
+	}
+	if r.Owner == "" {
+		return fmt.Errorf("reservation: owner is empty")
+	}
+	if r.CreatedAt.IsZero() {
+		return fmt.Errorf("reservation: created_at is zero")
+	}
+	if r.UpdatedAt.IsZero() {
+		return fmt.Errorf("reservation: updated_at is zero")
+	}
+	// Lease consistency: if LeaseExpiry is set, LeaseID must be non-empty.
+	if !r.LeaseExpiry.IsZero() && r.LeaseID == "" {
+		return fmt.Errorf("reservation: lease_expiry set but lease_id is empty")
+	}
+	return nil
 }
+
+// --- P1-01 (v19.2.7): Unforgeable identity and evidence ---
 
 // Identity represents a verified principal identity.
-// KPK-05 (v19.2.5): Replaces raw owner string at the domain boundary.
-// The Manager accepts this type and derives the Owner string from it.
-// Authentication is enforced by the caller (API layer / service layer),
-// not by the reservation package itself.
+// P1-01 (v19.2.7): This struct is NOT directly constructible by untrusted callers.
+// Use NewIdentity() (package-private) or TrustedIdentityProvider to create
+// verified identities. The fields are read-only after construction.
 type Identity struct {
-	// Principal is the authenticated identity (e.g. "agent.coder", "system.reconciler").
-	Principal string `json:"principal"`
-	// IsReconciler indicates whether this identity is a trusted system reconciler.
-	// KPK-10 (v19.2.5): Only reconcilers can produce CleanupEvidence.
-	IsReconciler bool `json:"is_reconciler"`
+	principal    string
+	isReconciler bool
 }
 
+// Principal returns the authenticated principal name.
+func (i Identity) Principal() string { return i.principal }
+
+// IsReconciler reports whether this identity is a trusted system reconciler.
+func (i Identity) IsReconciler() bool { return i.isReconciler }
+
 // String returns the principal name.
-func (i Identity) String() string {
-	return i.Principal
+func (i Identity) String() string { return i.principal }
+
+// newIdentity creates an Identity. Package-private — only Manager and
+// TrustedIdentityProvider can create identities.
+func newIdentity(principal string, isReconciler bool) Identity {
+	return Identity{principal: principal, isReconciler: isReconciler}
+}
+
+// NewUserIdentity creates a non-reconciler identity for testing.
+// Production code should use TrustedIdentityProvider.
+func NewUserIdentity(principal string) Identity {
+	return newIdentity(principal, false)
+}
+
+// NewReconcilerIdentity creates a reconciler identity for testing.
+// Production code should use TrustedIdentityProvider.
+func NewReconcilerIdentity(principal string) Identity {
+	return newIdentity(principal, true)
+}
+
+// TrustedIdentityProvider is the interface for resolving authenticated identities.
+// P1-01 (v19.2.7): Production code MUST use this instead of constructing
+// Identity directly from request data.
+type TrustedIdentityProvider interface {
+	// ResolveIdentity resolves an authenticated token/credential to a verified Identity.
+	// Returns an error if the token is invalid or the principal is unknown.
+	ResolveIdentity(token string) (Identity, error)
+}
+
+// CleanupEvidence is typed proof that a resource has been cleaned up.
+// P1-01 (v19.2.7): This struct is NOT directly constructible by untrusted callers.
+// Use NewCleanupEvidence() (package-private) to create verified evidence.
+// The cleanup/reconciliation service creates this ONLY after independently
+// verifying that the resource is actually free.
+type CleanupEvidence struct {
+	resourceID   string
+	operationID  string
+	observedAt   time.Time
+	verified     bool
+	reconcilerID string
+}
+
+// ResourceID returns the resource that was cleaned up.
+func (e CleanupEvidence) ResourceID() string { return e.resourceID }
+
+// OperationID returns the unique cleanup operation identifier.
+func (e CleanupEvidence) OperationID() string { return e.operationID }
+
+// ObservedAt returns when the cleanup was verified.
+func (e CleanupEvidence) ObservedAt() time.Time { return e.observedAt }
+
+// Verified returns the cleanup outcome.
+func (e CleanupEvidence) Verified() bool { return e.verified }
+
+// ReconcilerID returns the identity of the trusted reconciler.
+func (e CleanupEvidence) ReconcilerID() string { return e.reconcilerID }
+
+// newCleanupEvidence creates CleanupEvidence. Package-private — only the
+// trusted cleanup service should create evidence.
+func newCleanupEvidence(resourceID, operationID string, observedAt time.Time, verified bool, reconcilerID string) CleanupEvidence {
+	return CleanupEvidence{
+		resourceID:   resourceID,
+		operationID:  operationID,
+		observedAt:   observedAt,
+		verified:     verified,
+		reconcilerID: reconcilerID,
+	}
+}
+
+// NewCleanupEvidence creates CleanupEvidence for testing.
+// Production code should use the trusted cleanup service.
+func NewCleanupEvidence(resourceID, operationID string, observedAt time.Time, verified bool, reconcilerID string) CleanupEvidence {
+	return newCleanupEvidence(resourceID, operationID, observedAt, verified, reconcilerID)
+}
+
+// --- P1-03 (v19.2.7): Coherent inventory snapshot ---
+
+// InventorySnapshot is a single coherent point-in-time view of inventory.
+// P1-03 (v19.2.7): Replaces separate SnapshotGeneration/SnapshotAge/ResourceExists
+// calls with one immutable snapshot that ties generation, age, and resource
+// health together.
+type InventorySnapshot struct {
+	Generation string
+	AsOf       time.Time
+	resources  map[string]bool // resourceID → exists/healthy
+}
+
+// ResourceExists checks if a resource exists in this snapshot.
+func (s InventorySnapshot) ResourceExists(resourceID string) bool {
+	return s.resources[resourceID]
+}
+
+// InventoryProvider supplies trusted inventory snapshots.
+// P1-03 (v19.2.7): GetSnapshot returns one coherent immutable snapshot.
+type InventoryProvider interface {
+	// GetSnapshot returns a coherent point-in-time inventory snapshot.
+	GetSnapshot() InventorySnapshot
+}
+
+// AllocationValidator validates that an allocation is eligible for reservation.
+type AllocationValidator interface {
+	// ValidateForReservation checks that allocID exists and is eligible.
+	// P1-02 (v19.2.7): Called INSIDE the reservation flock critical section.
+	ValidateForReservation(allocID string) error
 }

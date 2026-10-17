@@ -166,6 +166,11 @@ func (s *Store) loadLocked() (map[string]*Reservation, []error, error) {
 			corrupt = append(corrupt, &ErrCorruptLine{LineNum: i + 1, Err: err})
 			continue
 		}
+		// P2-03 (v19.2.7): Validate record invariants on load.
+		if err := r.ValidateRecord(); err != nil {
+			corrupt = append(corrupt, &ErrCorruptLine{LineNum: i + 1, Err: fmt.Errorf("invalid record: %w", err)})
+			continue
+		}
 		if _, exists := records[r.ReservationID]; exists {
 			corrupt = append(corrupt, &ErrCorruptLine{
 				LineNum: i + 1,
@@ -223,11 +228,17 @@ func (s *Store) update(id string, modify func(*Reservation) error) error {
 
 	diskRev := r.Revision
 	if err := modify(r); err != nil {
+		// P2-04 (v19.2.7): errNoChange is a sentinel for no-op — don't
+		// increment revision or rewrite.
+		if err == errNoChange {
+			return nil
+		}
 		return err
 	}
 	if r.Revision != diskRev {
 		return fmt.Errorf("reservation: revision modified by callback")
 	}
+	// P2-04: Increment revision and rewrite only if the callback made a change.
 	r.Revision++
 	return s.rewriteAll(records)
 }
