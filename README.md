@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.2.1 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.2.2 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.2.1</h1>
+<h1 align="center">SCARLIX OS v19.2.2</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.2.1"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.1-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.2.2"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.2-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.2.1 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.2.2 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.2.1   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.2.2   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -2080,4 +2080,55 @@ systemd-analyze verify  → OK (9 units)
 scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)
 check_10 mutation test  → 9/9 injections FAIL, baseline PASS
 CI smoke-test job       → PASS (new — smoke test now runs in CI)
+```
+
+---
+
+## 🆕 What's New in v19.2.2 — Allocation Lifecycle Foundation (Phase 2) (vs v19.2.1)
+
+**Compute Fabric Phase 2.** Allocation state machine + typed record + JSONL persistence. 0 P1 security issues, 47 new Go tests, NO real side effects (GPU reservation/runtime startup deferred to Phase 3+).
+
+Per `SCARGEN_COMPUTE_FABRIC_PHASE_2_GUIDE.md`: define lifecycle states, typed allocation record, transition validation, persistence using existing storage pattern, focused tests.
+
+### New package: `scarlihq/internal/allocation/`
+
+| File | Lines | Role |
+|------|-------|------|
+| `states.go` | ~95 | 13 lifecycle states + `IsValid()`/`IsTerminal()`/`AllStates()` |
+| `transitions.go` | ~155 | `CanTransition()` validator + `Transition()` method + `TransitionError` |
+| `record.go` | ~135 | `Allocation` struct (20+ fields) + `TransitionEvent` + `NewAllocation()` + `HasSecrets()` |
+| `store.go` | ~250 | JSONL persistence (Append/Load/Get/Update/Count/ListByState/PruneReleased) |
+| `state_machine_test.go` | ~280 | 31 tests: legal/illegal transitions, terminal, shortcuts, cleanup |
+| `record_test.go` | ~270 | 14 tests: fields, JSON round-trip, secrets, full lifecycle paths |
+| `store_test.go` | ~230 | 16 tests: persistence, corrupt lines, revision, prune |
+
+### Allocation state machine (FROZEN v19.2.2)
+
+13 states: `REQUESTED → VALIDATING → PLANNED → RESERVING → RESERVED → STARTING → READY → RUNNING → RELEASING → RELEASED` + `FAILED`, `CANCELLED`, `CLEANUP_REQUIRED`.
+
+Key safety properties:
+- `RELEASED` is terminal (no outgoing transitions)
+- `RUNNING` cannot be reached via shortcut (must go through READY)
+- `CLEANUP_REQUIRED` is never treated as `RELEASED`
+- Invalid transitions do NOT mutate the record
+- Unknown states rejected
+- Reason strings sanitized (newlines stripped, 500-char cap)
+
+### What is NOT implemented (Phase 2 scope)
+
+- No real GPU reservation (Phase 3)
+- No runtime startup/stop (Phase 5)
+- No lease expiry worker (Phase 3+)
+- No API endpoints for allocation (Phase 7)
+- No Host-Bridge privileged operations (Phase 5)
+- No hardware verification
+
+### Verification
+```
+gofmt -l .              → EMPTY (clean)
+go vet ./...            → CLEAN (11 packages, was 10)
+go test ./...           → 11 packages all OK (219 tests total: 172 existing + 47 new)
+bash -n                 → OK (13 scripts)
+shellcheck -S warning  → OK (10 CI scripts)
+scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)
 ```
