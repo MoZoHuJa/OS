@@ -193,22 +193,29 @@ func TestStore_CreatesParentDir(t *testing.T) {
 
 // TestStore_CorruptLineSkipped verifies that corrupt JSON lines are skipped
 // during Load (not fatal).
+//
+// KPK-03 remaining (v19.2.4): Append now REJECTS when corruption is detected.
+// So we write all records directly to the file, bypassing Append for the
+// corrupt line and the second record.
 func TestStore_CorruptLineSkipped(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "allocations.jsonl")
 	store := NewStore(path)
 
-	// Write a valid record, then a corrupt line, then another valid record.
+	// Write a valid record via Append.
 	a1 := NewAllocation("alloc-good-1", "v1", "coding", "interactive", "agent.coder")
 	_ = store.Append(a1)
 
-	// Append corrupt data directly.
-	f, _ := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0644)
+	// Append corrupt data + second valid record directly (bypassing Append,
+	// which would now reject corruption — KPK-03 remaining).
+	f, _ := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0600)
 	f.WriteString("{not valid json}\n")
-	f.Close()
-
+	// Write second valid record directly.
 	a2 := NewAllocation("alloc-good-2", "v1", "chat", "normal", "agent.chat")
-	_ = store.Append(a2)
+	data2, _ := json.Marshal(a2)
+	f.Write(data2)
+	f.WriteString("\n")
+	f.Close()
 
 	records, corrupt, err := store.Load()
 	if err != nil {

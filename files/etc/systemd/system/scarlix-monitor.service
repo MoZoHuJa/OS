@@ -1,5 +1,5 @@
 [Unit]
-Description=SCARLIX OS v19.2.3 — Telemetry snapshot (scarlix-monitor --record)
+Description=SCARLIX OS v19.2.4 — Telemetry snapshot (scarlix-monitor --record)
 After=network-online.target
 
 [Service]

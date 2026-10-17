@@ -98,10 +98,23 @@ func (s *Store) Path() string {
 
 // ensureDir creates the parent directory with secure permissions (0700).
 // KPK-02 (v19.2.3): was 0755, now 0700 (owner-only).
+// KPK-02 remaining (v19.2.4): also validates/fixes permissions of EXISTING
+// directories and files (MkdirAll does not change mode of existing dirs).
 func (s *Store) ensureDir() error {
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("allocation: cannot create store directory %s: %w", dir, err)
+	}
+	// KPK-02 remaining: verify/fix permissions of existing directory.
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("allocation: cannot stat store directory %s: %w", dir, err)
+	}
+	if info.Mode().Perm()&0077 != 0 {
+		// Directory has group/other access — fix it.
+		if err := os.Chmod(dir, 0700); err != nil {
+			return fmt.Errorf("allocation: cannot fix store directory permissions (insecure mode %o): %w", info.Mode().Perm(), err)
+		}
 	}
 	return nil
 }
@@ -109,6 +122,8 @@ func (s *Store) ensureDir() error {
 // acquireFlock acquires an exclusive flock on the lock file.
 // Returns the lock file handle (which MUST be closed to release) or an error.
 // KPK-04 (v19.2.3): protects multi-process concurrent writers.
+// KPK-02 remaining (v19.2.4): also validates/fixes permissions of EXISTING
+// lock file (OpenFile does not change mode of existing file).
 func (s *Store) acquireFlock() (*os.File, error) {
 	if err := s.ensureDir(); err != nil {
 		return nil, err
@@ -116,6 +131,11 @@ func (s *Store) acquireFlock() (*os.File, error) {
 	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("allocation: cannot open lock file %s: %w", s.lockPath, err)
+	}
+	// KPK-02 remaining: verify/fix permissions of existing lock file.
+	info, err := lockFile.Stat()
+	if err == nil && info.Mode().Perm() != 0600 {
+		_ = os.Chmod(s.lockPath, 0600) // best-effort fix
 	}
 	// Blocking exclusive lock — waits for other processes to release.
 	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
@@ -154,9 +174,16 @@ func (s *Store) Append(a *Allocation) error {
 	}()
 
 	// KPK-05: Check for duplicate ID before writing.
-	records, _, err := s.loadLocked()
+	// KPK-03 remaining (v19.2.4): also check for corruption — refuse to
+	// Append to a corrupt store (was: silently ignored corruptErrs).
+	records, corruptErrs, err := s.loadLocked()
 	if err != nil {
 		return err
+	}
+	// KPK-03 remaining: if corruption detected, refuse to Append.
+	if len(corruptErrs) > 0 {
+		return fmt.Errorf("%w: %d corrupt line(s) detected — refusing to append to corrupt store",
+			ErrCorruptData, len(corruptErrs))
 	}
 	if existing, ok := records[a.AllocationID]; ok {
 		_ = existing
@@ -324,15 +351,19 @@ func (s *Store) Update(id string, modify func(*Allocation) error) error {
 		return err
 	}
 
-	// KPK-04: Re-read the record from disk to check if another process
-	// changed it while we were modifying. This is the optimistic concurrency
-	// check that actually works across processes.
-	// (We already hold the flock, so no other process can write between
-	// this re-read and our write. But the flock guarantees this, so the
-	// re-read is defense-in-depth and documents the intent.)
-	// Actually — since we hold the flock for the entire read-modify-write,
-	// no other process can have changed it. The diskRev check is therefore
-	// always consistent. We keep it as a structural assertion.
+	// KPK-04 remaining (v19.2.4): The previous comment claimed we "re-read
+	// the record from disk" — this was misleading. We hold the flock for the
+	// entire read-modify-write cycle, so no other process can have changed
+	// the record between our read and write. The Revision check below is a
+	// structural assertion that the modify() callback did not itself change
+	// the Revision field (which would be a programming error). Multi-process
+	// safety is guaranteed by the flock, NOT by this Revision check.
+	//
+	// If the flock is ever removed or if multi-process safety needs to work
+	// WITHOUT flock (e.g. on non-POSIX systems), then a true optimistic
+	// concurrency check would be needed: re-read from disk, compare Revision,
+	// and reject if changed. Until then, flock + this structural check is
+	// sufficient.
 	if a.Revision != diskRev {
 		// This can only happen if the modify() callback itself changed Revision
 		// (which it should not do). Report as a programming error.
@@ -404,11 +435,21 @@ func (s *Store) rewriteAll(records map[string]*Allocation) error {
 		return fmt.Errorf("allocation: cannot chmod store file to 0600: %w", err)
 	}
 
-	// KPK-07: fsync the parent directory to make the rename durable.
-	// On Linux, rename is not guaranteed durable without dir fsync.
+	// KPK-07 remaining (v19.2.4): fsync the parent directory to make the
+	// rename durable. On Linux/ext4/xfs, rename is not guaranteed durable
+	// without dir fsync. We now treat dir fsync failure as a WARNING (logged
+	// to stderr) but NOT a fatal error — the data file is already fsynced and
+	// renamed, so the content is durable. The dir fsync ensures the directory
+	// entry (the rename itself) is durable. If it fails, a crash after this
+	// point could theoretically lose the rename (but not the temp file content).
+	// This is a defined best-effort durability level: data content is guaranteed,
+	// directory entry durability is best-effort.
 	dirF, err := os.Open(dir)
 	if err == nil {
-		_ = dirF.Sync() // best-effort; not all filesystems support dir fsync
+		if syncErr := dirF.Sync(); syncErr != nil {
+			// Log to stderr — not fatal. The file content is already durable.
+			fmt.Fprintf(os.Stderr, "allocation: warning: cannot fsync directory (rename may not be durable): %v\n", syncErr)
+		}
 		dirF.Close()
 	}
 
