@@ -8,102 +8,98 @@ import (
 	"time"
 )
 
-// Clock is an injectable clock for testing. Production uses RealClock.
+// Clock is an injectable clock for testing.
 type Clock interface {
 	Now() time.Time
 }
 
-// RealClock returns the real wall-clock time.
 type RealClock struct{}
 
 func (RealClock) Now() time.Time { return time.Now().UTC() }
 
-// FakeClock returns a fixed time. Used in tests.
 type FakeClock struct {
 	T time.Time
 }
 
-func (f *FakeClock) Now() time.Time { return f.T }
-
-// Set advances the fake clock.
-func (f *FakeClock) Set(t time.Time) { f.T = t }
-
-// Advance moves the fake clock forward.
+func (f *FakeClock) Now() time.Time          { return f.T }
+func (f *FakeClock) Set(t time.Time)         { f.T = t }
 func (f *FakeClock) Advance(d time.Duration) { f.T = f.T.Add(d) }
 
-// Manager is the single domain entry point for create/reserve/renew/release
-// operations. All mutations go through the Manager.
-//
-// Per Phase 3 guide §7: "ReservationManager: revalidate inventory snapshot,
-// acquire resource lock(s), check current reservations, enforce capacity/
-// exclusivity, persist reservation + lease, transition to RESERVED."
-//
-// Phase 3 does NOT start/stop runtimes or call Docker. It only manages
-// resource ownership and leases.
+// InventoryProvider supplies trusted inventory data to the reservation manager.
+// KPK-04 (v19.2.5): Replaces caller-supplied InventorySnapshotAge.
+// The manager calls this interface inside the reservation critical section
+// to get a fresh, trusted snapshot.
+type InventoryProvider interface {
+	// SnapshotGeneration returns the current inventory generation identifier.
+	SnapshotGeneration() string
+	// SnapshotAge returns how old the current inventory snapshot is.
+	SnapshotAge() time.Duration
+	// ResourceExists checks if a resource exists in inventory and is healthy.
+	// KPK-12 (v19.2.5): Validates resource existence and health.
+	ResourceExists(resourceID string, resourceType ResourceType) bool
+}
+
+// Manager is the single domain entry point for reserve/renew/release operations.
 type Manager struct {
-	store  *Store
-	policy ReservationPolicy
-	clock  Clock
+	store     *Store
+	policy    ReservationPolicy
+	clock     Clock
+	inventory InventoryProvider // KPK-04: may be nil (disables freshness check)
 }
 
 // NewManager creates a Manager with the given store and policy.
-func NewManager(store *Store, policy ReservationPolicy, clock Clock) *Manager {
+// KPK-15 (v19.2.5): Validates policy at construction.
+func NewManager(store *Store, policy ReservationPolicy, clock Clock, inventory InventoryProvider) (*Manager, error) {
 	if clock == nil {
 		clock = RealClock{}
 	}
-	return &Manager{store: store, policy: policy, clock: clock}
+	if err := policy.Validate(); err != nil {
+		return nil, fmt.Errorf("reservation: invalid policy: %w", err)
+	}
+	return &Manager{
+		store:     store,
+		policy:    policy,
+		clock:     clock,
+		inventory: inventory,
+	}, nil
 }
 
-// generateID generates a random hex ID (16 bytes = 32 hex chars).
 func generateID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		// Fallback: use timestamp (should not happen on Linux with /dev/urandom).
 		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
 }
 
-// ReserveRequest contains the parameters for creating a reservation.
+// ReserveRequest contains parameters for creating a reservation.
+// KPK-05 (v19.2.5): Owner is replaced by Identity at the Manager level.
 type ReserveRequest struct {
-	AllocationID   string
-	ResourceID     string
-	ResourceType   ResourceType
-	Owner          string
-	LeaseTTL       time.Duration
-	IdempotencyKey string
-	// RequestFingerprint is a normalized hash of the request parameters.
-	// Used to detect idempotency key reuse with different content.
+	AllocationID       string
+	ResourceID         string
+	ResourceType       ResourceType
+	Identity           Identity // KPK-05: verified identity, not raw string
+	LeaseTTL           time.Duration
+	IdempotencyKey     string
 	RequestFingerprint string
-	// InventoryGeneration is the snapshot generation from inventory.
-	// Used to detect stale inventory.
-	InventoryGeneration string
-	// InventorySnapshotAge is how old the inventory snapshot is.
-	// If zero, the freshness check is skipped.
-	InventorySnapshotAge time.Duration
 }
 
 // ReserveResult is the outcome of a Reserve operation.
 type ReserveResult struct {
 	Reservation *Reservation
-	Created     bool // true if newly created, false if returned existing (idempotent)
+	Created     bool
 }
 
 // Reserve creates a reservation for the given request.
 //
-// Algorithm (per Phase 3 guide §9):
-// 1. Validate request.
-// 2. Check idempotency key — if exists with same fingerprint, return existing.
-// 3. Check inventory freshness.
-// 4. Check policy (capacity, exclusivity) — UNDER FLOCK to prevent races.
-// 5. Create reservation + lease.
-// 6. Persist atomically — UNDER THE SAME FLOCK.
-// 7. Return result.
-//
-// The entire check-then-write cycle is serialized via the store's flock
-// to prevent concurrent reservations for the same exclusive resource.
-//
-// Does NOT start runtimes or call Docker (Phase 5 scope).
+// KPK fixes applied:
+// - KPK-02: Port resource type now has explicit policy branch.
+// - KPK-04: Inventory freshness from trusted provider, not caller-supplied.
+// - KPK-05: Owner derived from Identity, not raw string.
+// - KPK-06: Idempotency key requires non-empty fingerprint.
+// - KPK-07: LeaseTTL must be bounded (zero/negative rejected).
+// - KPK-09: Uses transition table for status changes.
+// - KPK-12: Resource existence validated via InventoryProvider (if available).
 func (m *Manager) Reserve(req ReserveRequest) (*ReserveResult, error) {
 	// 1. Validate request.
 	if req.AllocationID == "" {
@@ -115,29 +111,40 @@ func (m *Manager) Reserve(req ReserveRequest) (*ReserveResult, error) {
 	if !req.ResourceType.IsValid() {
 		return nil, fmt.Errorf("reservation: invalid resource type %q", req.ResourceType)
 	}
-	if req.Owner == "" {
-		return nil, fmt.Errorf("reservation: owner is required")
+	if req.Identity.Principal == "" {
+		return nil, fmt.Errorf("reservation: identity is required")
 	}
 
-	// 3. Inventory freshness check (before locking — read-only check).
-	if req.InventorySnapshotAge > 0 && m.policy.IsInventoryStale(req.InventorySnapshotAge) {
-		return nil, ErrStaleInventory
+	// KPK-06: If idempotency key is provided, fingerprint must be non-empty.
+	if req.IdempotencyKey != "" && req.RequestFingerprint == "" {
+		return nil, fmt.Errorf("reservation: idempotency key requires non-empty request fingerprint")
 	}
 
-	// Validate lease TTL if provided (before locking — pure check).
-	var leaseExpiry time.Time
-	if req.LeaseTTL > 0 {
-		if !m.policy.ValidateLeaseTTL(req.LeaseTTL) {
-			return nil, fmt.Errorf("reservation: lease TTL %v outside allowed range [%v, %v]",
-				req.LeaseTTL, m.policy.LeaseMinTTL, m.policy.LeaseMaxTTL)
+	// KPK-07: LeaseTTL must be bounded — zero/negative is rejected.
+	if req.LeaseTTL <= 0 {
+		return nil, fmt.Errorf("reservation: lease TTL must be > 0 (got %v)", req.LeaseTTL)
+	}
+	if !m.policy.ValidateLeaseTTL(req.LeaseTTL) {
+		return nil, fmt.Errorf("reservation: lease TTL %v outside allowed range [%v, %v]",
+			req.LeaseTTL, m.policy.LeaseMinTTL, m.policy.LeaseMaxTTL)
+	}
+
+	// KPK-04: Check inventory freshness from trusted provider.
+	if m.inventory != nil {
+		age := m.inventory.SnapshotAge()
+		if m.policy.IsInventoryStale(age) {
+			return nil, ErrStaleInventory
 		}
-		leaseExpiry = m.clock.Now().Add(req.LeaseTTL)
+		// KPK-12: Validate resource existence.
+		if !m.inventory.ResourceExists(req.ResourceID, req.ResourceType) {
+			return nil, ErrResourceNotFound
+		}
 	}
 
-	// The entire idempotency-check + policy-check + persist cycle must be
-	// serialized. We acquire the store's flock for the full duration.
-	// This prevents two concurrent goroutines from both passing the policy
-	// check and both appending.
+	// Compute lease expiry from trusted clock.
+	leaseExpiry := m.clock.Now().Add(req.LeaseTTL)
+
+	// Acquire flock for the entire check-then-write cycle.
 	lockFile, err := m.store.acquireFlock()
 	if err != nil {
 		return nil, fmt.Errorf("reservation: cannot acquire flock: %w", err)
@@ -156,10 +163,18 @@ func (m *Manager) Reserve(req ReserveRequest) (*ReserveResult, error) {
 		return nil, fmt.Errorf("%w: %d corrupt lines", ErrReservationStoreCorrupt, len(corrupt))
 	}
 
-	// 2. Idempotency check (under flock).
+	// KPK-04: Revalidate inventory freshness inside the critical section.
+	if m.inventory != nil {
+		age := m.inventory.SnapshotAge()
+		if m.policy.IsInventoryStale(age) {
+			return nil, ErrStaleInventory
+		}
+	}
+
+	// KPK-06: Idempotency check (under flock).
 	if req.IdempotencyKey != "" {
 		for _, existing := range records {
-			if existing.IdempotencyKey == req.IdempotencyKey && existing.Owner == req.Owner {
+			if existing.IdempotencyKey == req.IdempotencyKey && existing.Owner == req.Identity.Principal {
 				if existing.RequestFingerprint != req.RequestFingerprint {
 					return nil, ErrIdempotencyConflict
 				}
@@ -168,45 +183,62 @@ func (m *Manager) Reserve(req ReserveRequest) (*ReserveResult, error) {
 		}
 	}
 
-	// 4. Policy check (under flock — this is the critical section).
-	activeReservations := make([]*Reservation, 0, len(records))
+	// KPK-01: Build active reservations using BlocksResource() (not just HELD).
+	allReservations := make([]*Reservation, 0, len(records))
 	for _, r := range records {
-		if r.Status == StatusHeld {
-			activeReservations = append(activeReservations, r)
-		}
+		allReservations = append(allReservations, r)
 	}
 
+	// Policy check — KPK-02: explicit branch for every resource type.
+	canReserve := false
 	switch req.ResourceType {
 	case ResourceTypeGPUDevice:
-		if !m.policy.CanReserveGPU(req.ResourceID, activeReservations, req.AllocationID) {
+		canReserve = m.policy.CanReserveGPU(req.ResourceID, allReservations, req.AllocationID)
+		if !canReserve {
 			return nil, &ReservationError{
 				Err: ErrReservationConflict, ResourceID: req.ResourceID,
-				Owner: req.Owner, Detail: "GPU already exclusively reserved",
+				Owner: req.Identity.Principal, Detail: "GPU already reserved (blocked)",
 			}
 		}
 	case ResourceTypeRuntimeSlot:
-		if !m.policy.CanReserveRuntimeSlot(req.ResourceID, activeReservations, req.AllocationID) {
+		canReserve = m.policy.CanReserveRuntimeSlot(req.ResourceID, allReservations, req.AllocationID)
+		if !canReserve {
 			return nil, &ReservationError{
 				Err: ErrCapacityExceeded, ResourceID: req.ResourceID,
-				Owner: req.Owner, Detail: "runtime slot capacity exceeded",
+				Owner: req.Identity.Principal, Detail: "runtime slot capacity exceeded",
 			}
 		}
 	case ResourceTypeModelSlot:
-		if !m.policy.CanReserveModelSlot(req.ResourceID, activeReservations, req.AllocationID) {
+		canReserve = m.policy.CanReserveModelSlot(req.ResourceID, allReservations, req.AllocationID)
+		if !canReserve {
 			return nil, &ReservationError{
 				Err: ErrCapacityExceeded, ResourceID: req.ResourceID,
-				Owner: req.Owner, Detail: "model slot capacity exceeded",
+				Owner: req.Identity.Principal, Detail: "model slot capacity exceeded",
 			}
 		}
+	case ResourceTypePort:
+		// KPK-02: Explicit port policy branch.
+		canReserve = m.policy.CanReservePort(req.ResourceID, allReservations, req.AllocationID)
+		if !canReserve {
+			return nil, &ReservationError{
+				Err: ErrReservationConflict, ResourceID: req.ResourceID,
+				Owner: req.Identity.Principal, Detail: "port already reserved",
+			}
+		}
+	default:
+		// KPK-02: Fail-closed on unknown resource types.
+		return nil, fmt.Errorf("reservation: unsupported resource type %q", req.ResourceType)
 	}
 
-	// 5. Create reservation.
+	// Create reservation.
 	resID := generateID()
-	leaseID := ""
-	if req.LeaseTTL > 0 {
-		leaseID = generateID()
-	}
+	leaseID := generateID()
 	now := m.clock.Now()
+
+	var invGen string
+	if m.inventory != nil {
+		invGen = m.inventory.SnapshotGeneration()
+	}
 
 	r := &Reservation{
 		ReservationID:       resID,
@@ -214,11 +246,11 @@ func (m *Manager) Reserve(req ReserveRequest) (*ReserveResult, error) {
 		SchemaVersion:       ReservationSchemaVersion,
 		ResourceID:          req.ResourceID,
 		ResourceType:        req.ResourceType,
-		Owner:               req.Owner,
+		Owner:               req.Identity.Principal, // KPK-05: derived from Identity
 		LeaseID:             leaseID,
 		LeaseExpiry:         leaseExpiry,
 		LastRenewedAt:       now,
-		InventoryGeneration: req.InventoryGeneration,
+		InventoryGeneration: invGen,
 		Status:              StatusHeld,
 		CreatedAt:           now,
 		UpdatedAt:           now,
@@ -227,11 +259,7 @@ func (m *Manager) Reserve(req ReserveRequest) (*ReserveResult, error) {
 		Revision:            0,
 	}
 
-	// 6. Persist (still under flock — append will re-acquire, but flock is
-	// reentrant for the same process via the same fd... actually it's NOT
-	// reentrant in Go's syscall.Flock. So we write directly instead of
-	// calling store.Append which would try to acquire the flock again.)
-	// We use store.rewriteAll after adding the new record to the map.
+	// Persist atomically (still under flock).
 	records[r.ReservationID] = r
 	if err := m.store.rewriteAll(records); err != nil {
 		return nil, fmt.Errorf("reservation: cannot persist: %w", err)
@@ -241,19 +269,25 @@ func (m *Manager) Reserve(req ReserveRequest) (*ReserveResult, error) {
 }
 
 // RenewLease extends the lease TTL for a reservation.
-// Only the owner can renew.
-func (m *Manager) RenewLease(reservationID, owner string, newTTL time.Duration) (*Reservation, error) {
+// KPK-05: Only the verified identity owner can renew.
+// KPK-08 (v19.2.5): Rejects renewal if the lease has already expired.
+func (m *Manager) RenewLease(reservationID string, identity Identity, newTTL time.Duration) (*Reservation, error) {
 	if !m.policy.ValidateLeaseTTL(newTTL) {
 		return nil, fmt.Errorf("reservation: lease TTL %v outside allowed range", newTTL)
 	}
 
 	var updated *Reservation
 	err := m.store.Update(reservationID, func(r *Reservation) error {
-		if r.Owner != owner {
+		// KPK-05: Verify ownership via Identity.
+		if r.Owner != identity.Principal {
 			return ErrLeaseNotOwned
 		}
 		if r.Status != StatusHeld {
 			return fmt.Errorf("reservation: cannot renew reservation in status %s", r.Status)
+		}
+		// KPK-08: Reject renewal if lease has already expired.
+		if r.IsExpired(m.clock.Now()) {
+			return ErrLeaseExpired
 		}
 		r.LeaseExpiry = m.clock.Now().Add(newTTL)
 		r.LastRenewedAt = m.clock.Now()
@@ -267,42 +301,44 @@ func (m *Manager) RenewLease(reservationID, owner string, newTTL time.Duration) 
 	return updated, nil
 }
 
-// Release transitions a reservation to RELEASING then RELEASED.
-// Only the owner can release.
+// Release transitions a reservation toward RELEASED.
+// KPK-05: Only the verified identity owner can release.
+// KPK-09 (v19.2.5): Uses transition table. Returns non-nil result.
 // cleanupConfirmed must be true to reach RELEASED (KPK-01 pattern).
-func (m *Manager) Release(reservationID, owner string, cleanupConfirmed bool) (*Reservation, error) {
+func (m *Manager) Release(reservationID string, identity Identity, cleanupConfirmed bool) (*Reservation, error) {
 	var updated *Reservation
 	err := m.store.Update(reservationID, func(r *Reservation) error {
-		if r.Owner != owner {
+		// KPK-05: Verify ownership.
+		if r.Owner != identity.Principal && !identity.IsReconciler {
 			return ErrLeaseNotOwned
 		}
-		if r.Status == StatusReleased {
-			return nil // already released (idempotent)
-		}
-		if r.Status != StatusHeld && r.Status != StatusReleasing {
-			return fmt.Errorf("reservation: cannot release from status %s", r.Status)
-		}
 
-		// If already RELEASING, only transition to RELEASED if cleanup confirmed.
-		if r.Status == StatusReleasing {
-			if !cleanupConfirmed {
-				return nil // already releasing, no change (idempotent)
-			}
-			r.Status = StatusReleased
-			r.UpdatedAt = m.clock.Now()
+		now := m.clock.Now()
+
+		// KPK-09: Use transition table for all state changes.
+		if r.Status == StatusReleased {
+			// Already released — idempotent. KPK-09: return non-nil.
 			updated = r
 			return nil
 		}
 
-		// Status is HELD — transition to RELEASING.
-		r.Status = StatusReleasing
-		r.UpdatedAt = m.clock.Now()
-
-		// If cleanup confirmed, transition to RELEASED.
-		if cleanupConfirmed {
-			r.Status = StatusReleased
-			r.UpdatedAt = m.clock.Now()
+		if r.Status == StatusHeld {
+			// HELD → RELEASING (start cleanup).
+			if err := r.transition(StatusReleasing, now, "release requested"); err != nil {
+				return err
+			}
 		}
+
+		if r.Status == StatusReleasing && cleanupConfirmed {
+			// RELEASING → RELEASED (cleanup confirmed).
+			if err := r.transition(StatusReleased, now, "cleanup confirmed"); err != nil {
+				return err
+			}
+		} else if r.Status == StatusReleasing && !cleanupConfirmed {
+			// Stay in RELEASING — cleanup not yet confirmed.
+			// Resource still blocks (KPK-01).
+		}
+
 		updated = r
 		return nil
 	})
@@ -313,12 +349,12 @@ func (m *Manager) Release(reservationID, owner string, cleanupConfirmed bool) (*
 }
 
 // MarkExpiredCandidates finds reservations with expired leases and marks them
-// as EXPIRED_PENDING_RECONCILIATION. Does NOT release the resource — that
-// requires ReconcileExpired to confirm the resource is actually free.
-//
-// Per Phase 3 guide §11.6: "Expirácia lease znamená 'vyžaduje sa kontrola',
-// nie 'zdroj je určite voľný'."
+// as EXPIRED_PENDING_RECONCILIATION.
+// KPK-14 (v19.2.5): Re-checks expiry inside the locked update callback.
+// KPK-14 fix: Does NOT hold a separate flock — each Update call acquires its
+// own flock, and the update callback re-checks expiry inside that lock.
 func (m *Manager) MarkExpiredCandidates() (int, error) {
+	// Load to find candidates (no flock — Update will re-validate under lock).
 	records, corrupt, err := m.store.Load()
 	if err != nil {
 		return 0, err
@@ -330,14 +366,28 @@ func (m *Manager) MarkExpiredCandidates() (int, error) {
 	now := m.clock.Now()
 	marked := 0
 	for _, r := range records {
-		if r.Status == StatusHeld && r.IsExpired(now) {
-			if err := m.store.Update(r.ReservationID, func(r2 *Reservation) error {
-				r2.Status = StatusExpiredPendingReconciliation
-				r2.UpdatedAt = m.clock.Now()
-				return nil
-			}); err != nil {
-				return marked, err
+		// Quick pre-check (without lock) — may be stale, that's OK.
+		if r.Status != StatusHeld || !r.IsExpired(now) {
+			continue
+		}
+		// KPK-14: Update acquires its own flock and re-checks inside the callback.
+		err := m.store.Update(r.ReservationID, func(r2 *Reservation) error {
+			// Re-check: status must still be HELD and lease must still be expired.
+			if r2.Status != StatusHeld {
+				return nil // no longer HELD (was renewed or changed)
 			}
+			if !r2.IsExpired(m.clock.Now()) {
+				return nil // no longer expired (was renewed)
+			}
+			// KPK-09: Use transition table.
+			return r2.transition(StatusExpiredPendingReconciliation, m.clock.Now(), "lease expired")
+		})
+		if err != nil {
+			return marked, err
+		}
+		// Check if the transition actually happened.
+		updated, _ := m.store.Get(r.ReservationID)
+		if updated != nil && updated.Status == StatusExpiredPendingReconciliation {
 			marked++
 		}
 	}
@@ -345,20 +395,47 @@ func (m *Manager) MarkExpiredCandidates() (int, error) {
 }
 
 // ReconcileExpired transitions EXPIRED_PENDING_RECONCILIATION reservations.
-// If cleanupConfirmed is true, the reservation is released.
-// If false, it is marked CONFLICT (fail-closed).
-func (m *Manager) ReconcileExpired(reservationID string, cleanupConfirmed bool) (*Reservation, error) {
+// KPK-10 (v19.2.5): Requires trusted CleanupEvidence from a reconciler Identity.
+// Bare boolean is replaced with typed evidence containing resource ID, operation
+// ID, observation time, and verified outcome.
+func (m *Manager) ReconcileExpired(reservationID string, reconciler Identity, evidence CleanupEvidence) (*Reservation, error) {
+	// KPK-10: Only trusted reconcilers can reconcile.
+	if !reconciler.IsReconciler {
+		return nil, fmt.Errorf("reservation: only trusted reconcilers can reconcile expired reservations")
+	}
+
+	// KPK-10: Validate evidence is non-empty and recent.
+	if evidence.ResourceID == "" || evidence.OperationID == "" {
+		return nil, fmt.Errorf("reservation: cleanup evidence must contain resource_id and operation_id")
+	}
+	if m.clock.Now().Sub(evidence.ObservedAt) > 5*time.Minute {
+		return nil, fmt.Errorf("reservation: cleanup evidence is stale (observed %v ago)", m.clock.Now().Sub(evidence.ObservedAt))
+	}
+
 	var updated *Reservation
 	err := m.store.Update(reservationID, func(r *Reservation) error {
 		if r.Status != StatusExpiredPendingReconciliation {
 			return fmt.Errorf("reservation: cannot reconcile from status %s", r.Status)
 		}
-		if cleanupConfirmed {
-			r.Status = StatusReleased
-		} else {
-			r.Status = StatusConflict
+
+		// KPK-10: Validate evidence belongs to this reservation's resource.
+		if evidence.ResourceID != r.ResourceID {
+			return fmt.Errorf("reservation: cleanup evidence resource_id %q does not match reservation resource_id %q",
+				evidence.ResourceID, r.ResourceID)
 		}
-		r.UpdatedAt = m.clock.Now()
+
+		now := m.clock.Now()
+		if evidence.Verified {
+			// Cleanup confirmed → RELEASED.
+			if err := r.transition(StatusReleased, now, "reconciler confirmed cleanup: "+evidence.OperationID); err != nil {
+				return err
+			}
+		} else {
+			// Cleanup failed → CONFLICT (fail-closed).
+			if err := r.transition(StatusConflict, now, "reconciler reported cleanup failure: "+evidence.OperationID); err != nil {
+				return err
+			}
+		}
 		updated = r
 		return nil
 	})
@@ -366,11 +443,6 @@ func (m *Manager) ReconcileExpired(reservationID string, cleanupConfirmed bool) 
 		return nil, err
 	}
 	return updated, nil
-}
-
-// getActiveReservations returns all HELD reservations.
-func (m *Manager) getActiveReservations() ([]*Reservation, error) {
-	return m.store.ListByStatus(StatusHeld)
 }
 
 // Get retrieves a reservation by ID.

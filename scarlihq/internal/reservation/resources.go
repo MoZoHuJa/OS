@@ -11,17 +11,21 @@ type ResourceType string
 
 const (
 	// ResourceTypeGPUDevice is an exclusive physical GPU reservation.
-	// GPU identity uses the canonical "gpu.nvidia.<index>" format from inventory.
+	// KPK-11 (v19.2.5): GPU identity should use the NVIDIA GPU UUID,
+	// not the index. The canonical ID format is "gpu.nvidia.<uuid>"
+	// where <uuid> is the nvidia-smi --query-gpu=gpu_uuid output.
+	// Legacy "gpu.nvidia.<index>" IDs are accepted for backward compat
+	// but new code should use UUID-based IDs.
 	ResourceTypeGPUDevice ResourceType = "gpu.device"
 
-	// ResourceTypeRuntimeSlot is a logical slot for a runtime instance
-	// (e.g. "sglang", "vllm"). Default capacity per runtime is 1 (exclusive).
+	// ResourceTypeRuntimeSlot is a logical slot for a runtime instance.
 	ResourceTypeRuntimeSlot ResourceType = "runtime.slot"
 
 	// ResourceTypeModelSlot is a logical slot for a model+runtime combination.
 	ResourceTypeModelSlot ResourceType = "model.slot"
 
-	// ResourceTypePort is a specific host port. Only managed ports can be reserved.
+	// ResourceTypePort is a specific host port.
+	// KPK-02 (v19.2.5): Now has an explicit policy branch in Reserve().
 	ResourceTypePort ResourceType = "port"
 )
 
@@ -43,18 +47,21 @@ const (
 	StatusHeld ReservationStatus = "HELD"
 
 	// StatusReleasing means the reservation is being released (cleanup in progress).
+	// KPK-01 (v19.2.5): Still BLOCKS the resource — only RELEASED stops blocking.
 	StatusReleasing ReservationStatus = "RELEASING"
 
 	// StatusReleased means the reservation has been positively released.
-	// Terminal state.
+	// Terminal state. Only this state stops blocking the resource.
 	StatusReleased ReservationStatus = "RELEASED"
 
 	// StatusExpiredPendingReconciliation means the lease has expired but the
 	// resource has NOT been confirmed free. Requires reconciliation.
+	// KPK-01 (v19.2.5): Still BLOCKS the resource.
 	StatusExpiredPendingReconciliation ReservationStatus = "EXPIRED_PENDING_RECONCILIATION"
 
 	// StatusConflict means there is an ambiguous ownership state that requires
 	// explicit resolution. Fail-closed.
+	// KPK-01 (v19.2.5): Still BLOCKS the resource.
 	StatusConflict ReservationStatus = "CONFLICT"
 )
 
@@ -73,41 +80,49 @@ func (s ReservationStatus) IsTerminal() bool {
 	return s == StatusReleased
 }
 
+// BlocksResource reports whether a reservation in this status should prevent
+// other reservations from acquiring the same resource.
+//
+// KPK-01 (v19.2.5): HELD, RELEASING, EXPIRED_PENDING_RECONCILIATION, and
+// CONFLICT all block the resource. Only RELEASED stops blocking.
+// This is the fail-closed principle: a resource is considered owned until
+// cleanup is positively confirmed.
+func (s ReservationStatus) BlocksResource() bool {
+	switch s {
+	case StatusHeld, StatusReleasing, StatusExpiredPendingReconciliation, StatusConflict:
+		return true
+	case StatusReleased:
+		return false
+	}
+	return false // unknown states don't block (they shouldn't exist)
+}
+
 // ReservationSchemaVersion is the schema version. v1 frozen in v19.2.4.
 const ReservationSchemaVersion = "v1"
 
 // Reservation is the persistent record of a resource reservation.
-// It is separate from the Allocation record (Phase 2) and linked via AllocationID.
-//
-// DESIGN PRINCIPLES (per Phase 3 guide §8.3):
-//   - Never store bearer tokens, API keys, passwords, private keys, raw prompts.
-//   - Never store raw shell commands or arbitrary environment variables.
-//   - Resource identity uses stable canonical IDs (not GPU index alone).
-//   - A planned resource is not yet an owned resource.
-//
-// JSON field names are FROZEN in v19.2.4 (stability contract).
+// See record.go for field documentation — this is a type alias for clarity.
 type Reservation struct {
 	// === Identity ===
-	ReservationID string `json:"reservation_id"` // unique UUID
-	AllocationID  string `json:"allocation_id"`  // link to Allocation record
-	SchemaVersion string `json:"schema_version"` // always "v1"
+	ReservationID string `json:"reservation_id"`
+	AllocationID  string `json:"allocation_id"`
+	SchemaVersion string `json:"schema_version"`
 
 	// === Resource ===
-	ResourceID   string       `json:"resource_id"`   // e.g. "gpu.nvidia.0"
-	ResourceType ResourceType `json:"resource_type"` // e.g. "gpu.device"
+	ResourceID   string       `json:"resource_id"`
+	ResourceType ResourceType `json:"resource_type"`
 
 	// === Ownership ===
-	Owner string `json:"owner"` // trusted principal from identity model
+	// KPK-05 (v19.2.5): Owner is derived from verified identity, not raw string.
+	// The Manager accepts an Identity type and derives Owner from it.
+	Owner string `json:"owner"`
 
 	// === Lease ===
 	LeaseID       string    `json:"lease_id,omitempty"`
-	LeaseExpiry   time.Time `json:"lease_expiry,omitempty"` // zero = no lease
+	LeaseExpiry   time.Time `json:"lease_expiry,omitempty"`
 	LastRenewedAt time.Time `json:"last_renewed_at,omitempty"`
 
 	// === Inventory snapshot reference ===
-	// InventoryGeneration is a timestamp or generation marker from the inventory
-	// snapshot used to make the reservation decision. Used to detect stale
-	// inventory at reservation time.
 	InventoryGeneration string `json:"inventory_generation,omitempty"`
 
 	// === Status ===
@@ -116,14 +131,12 @@ type Reservation struct {
 	UpdatedAt time.Time         `json:"updated_at"`
 
 	// === Idempotency ===
-	// IdempotencyKey is set when the caller provides one. Linked to owner.
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
-	// RequestFingerprint is a normalized hash of the request parameters.
-	// Used to detect idempotency key reuse with different request content.
+	// KPK-06 (v19.2.5): When IdempotencyKey is set, RequestFingerprint MUST be non-empty.
+	IdempotencyKey     string `json:"idempotency_key,omitempty"`
 	RequestFingerprint string `json:"request_fingerprint,omitempty"`
 
 	// === Audit ===
-	LastReason string `json:"last_reason,omitempty"` // sanitized, bounded to 500 chars
+	LastReason string `json:"last_reason,omitempty"`
 
 	// === Concurrency ===
 	Revision int64 `json:"revision"`
@@ -147,7 +160,9 @@ func NewReservation(resID, allocID string, resType ResourceType, resID2, owner s
 }
 
 // IsExpired reports whether the lease has expired.
-// A reservation with no lease (LeaseExpiry.IsZero()) never expires.
+// KPK-07 (v19.2.5): A reservation with no lease (LeaseExpiry.IsZero()) never
+// expires — but this should not happen for ordinary reservations because
+// Reserve() now requires a bounded TTL.
 func (r *Reservation) IsExpired(now time.Time) bool {
 	if r.LeaseExpiry.IsZero() {
 		return false
@@ -156,7 +171,56 @@ func (r *Reservation) IsExpired(now time.Time) bool {
 }
 
 // String returns a human-readable summary.
+// KPK-13 (v19.2.5): Panic-safe — uses truncateID() helper for short/empty IDs.
 func (r *Reservation) String() string {
+	if r == nil {
+		return "Reservation(nil)"
+	}
 	return fmt.Sprintf("Reservation{%s alloc=%s resource=%s/%s owner=%s status=%s}",
-		r.ReservationID[:8], r.AllocationID[:8], r.ResourceType, r.ResourceID, r.Owner, r.Status)
+		truncateID(r.ReservationID), truncateID(r.AllocationID),
+		r.ResourceType, r.ResourceID, r.Owner, r.Status)
+}
+
+// truncateID returns the first 8 chars of s, or the whole string if shorter.
+// KPK-13 (v19.2.5): prevents panic on short/empty IDs.
+func truncateID(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
+}
+
+// CleanupEvidence is typed proof that a resource has been cleaned up.
+// KPK-10 (v19.2.5): Replaces bare boolean in ReconcileExpired.
+// Must come from a trusted reconciler, not from an untrusted API caller.
+type CleanupEvidence struct {
+	// ResourceID is the resource that was cleaned up.
+	ResourceID string `json:"resource_id"`
+	// OperationID is a unique identifier for the cleanup operation.
+	OperationID string `json:"operation_id"`
+	// ObservedAt is when the cleanup was verified.
+	ObservedAt time.Time `json:"observed_at"`
+	// Verified is the outcome: true = cleanup confirmed, false = cleanup failed.
+	Verified bool `json:"verified"`
+	// ReconcilerID is the identity of the trusted reconciler that produced
+	// this evidence.
+	ReconcilerID string `json:"reconciler_id"`
+}
+
+// Identity represents a verified principal identity.
+// KPK-05 (v19.2.5): Replaces raw owner string at the domain boundary.
+// The Manager accepts this type and derives the Owner string from it.
+// Authentication is enforced by the caller (API layer / service layer),
+// not by the reservation package itself.
+type Identity struct {
+	// Principal is the authenticated identity (e.g. "agent.coder", "system.reconciler").
+	Principal string `json:"principal"`
+	// IsReconciler indicates whether this identity is a trusted system reconciler.
+	// KPK-10 (v19.2.5): Only reconcilers can produce CleanupEvidence.
+	IsReconciler bool `json:"is_reconciler"`
+}
+
+// String returns the principal name.
+func (i Identity) String() string {
+	return i.Principal
 }
