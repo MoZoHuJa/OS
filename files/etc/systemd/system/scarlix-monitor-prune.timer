@@ -1,5 +1,5 @@
 [Unit]
-Description=SCARLIX OS v19.2.5 — Telemetry prune timer (daily)
+Description=SCARLIX OS v19.2.6 — Telemetry prune timer (daily)
 
 [Timer]
 OnCalendar=daily

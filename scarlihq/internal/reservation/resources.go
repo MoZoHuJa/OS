@@ -85,16 +85,21 @@ func (s ReservationStatus) IsTerminal() bool {
 //
 // KPK-01 (v19.2.5): HELD, RELEASING, EXPIRED_PENDING_RECONCILIATION, and
 // CONFLICT all block the resource. Only RELEASED stops blocking.
-// This is the fail-closed principle: a resource is considered owned until
-// cleanup is positively confirmed.
+// P1-02 (v19.2.6): Unknown/empty statuses ALSO block (fail-closed).
+// This prevents a malformed/future/persisted-unknown status from silently
+// making a resource available.
 func (s ReservationStatus) BlocksResource() bool {
 	switch s {
-	case StatusHeld, StatusReleasing, StatusExpiredPendingReconciliation, StatusConflict:
-		return true
 	case StatusReleased:
 		return false
+	case StatusHeld, StatusReleasing, StatusExpiredPendingReconciliation, StatusConflict:
+		return true
+	default:
+		// P1-02: Unknown statuses block (fail-closed).
+		// A persisted record with an unknown status might be a future version
+		// or a manually altered record — we must NOT make the resource available.
+		return true
 	}
-	return false // unknown states don't block (they shouldn't exist)
 }
 
 // ReservationSchemaVersion is the schema version. v1 frozen in v19.2.4.

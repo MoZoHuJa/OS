@@ -2,6 +2,7 @@ package reservation
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -12,10 +13,6 @@ import (
 // Per Phase 3 guide §7: "Pure rules of capacity, exclusivity, compatibility,
 // priority, and lease limits. Without I/O."
 type ReservationPolicy struct {
-	// MaxGPUPerReservation is the maximum GPUs a single reservation can hold.
-	// Default: 1 (exclusive).
-	MaxGPUPerReservation int
-
 	// MaxRuntimeSlotsPerRuntime is the maximum concurrent slots per runtime.
 	// Default: 1 (exclusive — one SGLang, one vLLM, etc.).
 	MaxRuntimeSlotsPerRuntime int
@@ -35,15 +32,16 @@ type ReservationPolicy struct {
 	InventoryFreshnessLimit time.Duration
 
 	// GPUExclusive controls whether GPU reservations are exclusive (no sharing).
-	// Default: true (Phase 3 policy — GPU sharing/VRAM overcommit is a
-	// future explicit feature, not an implicit exception).
+	// Default: true (Phase 3 policy).
 	GPUExclusive bool
+
+	// P2-04 (v19.2.6): MaxGPUPerReservation removed — was validated but never
+	// enforced. Will be re-added when multi-resource reservations are implemented.
 }
 
 // DefaultPolicy returns the default Phase 3 policy.
 func DefaultPolicy() ReservationPolicy {
 	return ReservationPolicy{
-		MaxGPUPerReservation:      1,
 		MaxRuntimeSlotsPerRuntime: 1,
 		MaxModelSlotsPerModel:     1,
 		LeaseMinTTL:               30 * time.Second,
@@ -70,18 +68,18 @@ func (p ReservationPolicy) IsInventoryStale(snapshotAge time.Duration) bool {
 	return snapshotAge > p.InventoryFreshnessLimit
 }
 
-// CanReserveGPU checks whether a GPU can be reserved given the current
-// active reservations.
-// KPK-01 (v19.2.5): Uses BlocksResource() — RELEASING, EXPIRED, CONFLICT
-// also block (was: only HELD blocked).
-func (p ReservationPolicy) CanReserveGPU(resourceID string, allReservations []*Reservation, excludeAllocationID string) bool {
+// CanReserveGPU checks whether a GPU can be reserved given all reservations.
+// KPK-01: Uses BlocksResource() — RELEASING, EXPIRED, CONFLICT, unknown all block.
+// P1-05 (v19.2.6): Removed excludeAllocationID — ALL blocking reservations
+// count toward exclusivity, regardless of allocation. A single allocation
+// cannot bypass exclusivity by reserving the same GPU twice.
+func (p ReservationPolicy) CanReserveGPU(resourceID string, allReservations []*Reservation) bool {
 	if p.GPUExclusive {
 		for _, r := range allReservations {
-			// KPK-01: Use BlocksResource() instead of just checking HELD.
 			if !r.Status.BlocksResource() {
 				continue
 			}
-			if r.ResourceID == resourceID && r.AllocationID != excludeAllocationID {
+			if r.ResourceID == resourceID {
 				return false
 			}
 		}
@@ -90,51 +88,46 @@ func (p ReservationPolicy) CanReserveGPU(resourceID string, allReservations []*R
 }
 
 // CanReserveRuntimeSlot checks whether a runtime slot can be reserved.
-// KPK-01 (v19.2.5): Uses BlocksResource() for all status checks.
-func (p ReservationPolicy) CanReserveRuntimeSlot(runtimeID string, allReservations []*Reservation, excludeAllocationID string) bool {
+// P1-05 (v19.2.6): Removed excludeAllocationID — ALL blocking reservations
+// count toward capacity. Repeated requests by the same allocation are counted.
+func (p ReservationPolicy) CanReserveRuntimeSlot(runtimeID string, allReservations []*Reservation) bool {
 	count := 0
 	for _, r := range allReservations {
 		if !r.Status.BlocksResource() {
 			continue
 		}
 		if r.ResourceType == ResourceTypeRuntimeSlot && r.ResourceID == runtimeID {
-			if r.AllocationID != excludeAllocationID {
-				count++
-			}
+			count++
 		}
 	}
 	return count < p.MaxRuntimeSlotsPerRuntime
 }
 
 // CanReserveModelSlot checks whether a model slot can be reserved.
-// KPK-01 (v19.2.5): Uses BlocksResource() for all status checks.
-func (p ReservationPolicy) CanReserveModelSlot(modelID string, allReservations []*Reservation, excludeAllocationID string) bool {
+// P1-05 (v19.2.6): Removed excludeAllocationID — ALL blocking reservations
+// count toward capacity.
+func (p ReservationPolicy) CanReserveModelSlot(modelID string, allReservations []*Reservation) bool {
 	count := 0
 	for _, r := range allReservations {
 		if !r.Status.BlocksResource() {
 			continue
 		}
 		if r.ResourceType == ResourceTypeModelSlot && r.ResourceID == modelID {
-			if r.AllocationID != excludeAllocationID {
-				count++
-			}
+			count++
 		}
 	}
 	return count < p.MaxModelSlotsPerModel
 }
 
 // CanReservePort checks whether a port can be reserved.
-// KPK-02 (v19.2.5): New method — port reservations are exclusive by default.
-// Ports are identified by a canonical string ID (e.g. "port.30000" or "tcp.127.0.0.1:30000").
-func (p ReservationPolicy) CanReservePort(portID string, allReservations []*Reservation, excludeAllocationID string) bool {
+// P1-05 (v19.2.6): Removed excludeAllocationID — ALL blocking reservations count.
+func (p ReservationPolicy) CanReservePort(portID string, allReservations []*Reservation) bool {
 	for _, r := range allReservations {
 		if !r.Status.BlocksResource() {
 			continue
 		}
 		if r.ResourceType == ResourceTypePort && r.ResourceID == portID {
-			if r.AllocationID != excludeAllocationID {
-				return false // port already reserved
-			}
+			return false
 		}
 	}
 	return true
@@ -142,10 +135,8 @@ func (p ReservationPolicy) CanReservePort(portID string, allReservations []*Rese
 
 // Validate checks that the policy configuration is valid.
 // KPK-15 (v19.2.5): Reject zero/negative capacities at construction.
+// P2-04 (v19.2.6): MaxGPUPerReservation removed from validation.
 func (p ReservationPolicy) Validate() error {
-	if p.MaxGPUPerReservation <= 0 {
-		return fmt.Errorf("policy: MaxGPUPerReservation must be > 0 (got %d)", p.MaxGPUPerReservation)
-	}
 	if p.MaxRuntimeSlotsPerRuntime <= 0 {
 		return fmt.Errorf("policy: MaxRuntimeSlotsPerRuntime must be > 0 (got %d)", p.MaxRuntimeSlotsPerRuntime)
 	}
@@ -162,4 +153,49 @@ func (p ReservationPolicy) Validate() error {
 		return fmt.Errorf("policy: InventoryFreshnessLimit must be > 0 (got %v)", p.InventoryFreshnessLimit)
 	}
 	return nil
+}
+
+// CanonicalResourceID normalizes a resource ID for a given type.
+// P2-03 (v19.2.6): Rejects non-canonical input to prevent alias bypass.
+//
+// Canonical formats:
+//   - GPUDevice: "gpu.nvidia.<uuid>" (must start with "gpu.nvidia.")
+//   - RuntimeSlot: "runtime.<name>" (must start with "runtime.")
+//   - ModelSlot: "model.<id>" (must start with "model.")
+//   - Port: "port.<port>" (must start with "port.")
+//
+// Returns the canonical ID or an error if the input is not canonical.
+func CanonicalResourceID(resourceID string, resourceType ResourceType) (string, error) {
+	resourceID = strings.TrimSpace(resourceID)
+	if resourceID == "" {
+		return "", fmt.Errorf("resource_id is empty")
+	}
+	switch resourceType {
+	case ResourceTypeGPUDevice:
+		if !strings.HasPrefix(resourceID, "gpu.nvidia.") {
+			return "", fmt.Errorf("gpu resource_id must start with 'gpu.nvidia.' (got %q)", resourceID)
+		}
+		uuid := strings.TrimPrefix(resourceID, "gpu.nvidia.")
+		if uuid == "" {
+			return "", fmt.Errorf("gpu resource_id missing UUID after 'gpu.nvidia.'")
+		}
+		return resourceID, nil
+	case ResourceTypeRuntimeSlot:
+		if !strings.HasPrefix(resourceID, "runtime.") {
+			return "", fmt.Errorf("runtime resource_id must start with 'runtime.' (got %q)", resourceID)
+		}
+		return resourceID, nil
+	case ResourceTypeModelSlot:
+		if !strings.HasPrefix(resourceID, "model.") {
+			return "", fmt.Errorf("model resource_id must start with 'model.' (got %q)", resourceID)
+		}
+		return resourceID, nil
+	case ResourceTypePort:
+		if !strings.HasPrefix(resourceID, "port.") {
+			return "", fmt.Errorf("port resource_id must start with 'port.' (got %q)", resourceID)
+		}
+		return resourceID, nil
+	default:
+		return "", fmt.Errorf("unknown resource type %q", resourceType)
+	}
 }
