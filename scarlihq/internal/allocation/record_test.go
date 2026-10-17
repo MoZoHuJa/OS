@@ -228,25 +228,31 @@ func TestAllocation_TransitionHistory_AppendsOnEachTransition(t *testing.T) {
 // TestAllocation_FullLifecycle_HappyPath verifies a complete happy-path
 // lifecycle: REQUESTED → VALIDATING → PLANNED → RESERVING → RESERVED →
 // STARTING → READY → RUNNING → RELEASING → RELEASED.
+//
+// KPK-01 (v19.2.3): CleanupVerified must be set before RELEASING → RELEASED.
 func TestAllocation_FullLifecycle_HappyPath(t *testing.T) {
 	a := NewAllocation("alloc-happy", "v1", "coding", "interactive", "agent.coder")
 
 	steps := []struct {
-		to     State
-		reason string
+		to      State
+		reason  string
+		setVerf bool // set CleanupVerified before this transition
 	}{
-		{StateValidating, "contract parsed"},
-		{StatePlanned, "plan computed"},
-		{StateReserving, "starting reservation"},
-		{StateReserved, "GPU0 reserved"},
-		{StateStarting, "starting runtime"},
-		{StateReady, "healthcheck passed"},
-		{StateRunning, "serving"},
-		{StateReleasing, "task complete"},
-		{StateReleased, "cleanup verified"},
+		{StateValidating, "contract parsed", false},
+		{StatePlanned, "plan computed", false},
+		{StateReserving, "starting reservation", false},
+		{StateReserved, "GPU0 reserved", false},
+		{StateStarting, "starting runtime", false},
+		{StateReady, "healthcheck passed", false},
+		{StateRunning, "serving", false},
+		{StateReleasing, "task complete", false},
+		{StateReleased, "cleanup verified", true}, // KPK-01: CleanupVerified required
 	}
 
 	for _, step := range steps {
+		if step.setVerf {
+			a.CleanupVerified = true
+		}
 		_, err := a.Transition(step.to, step.reason)
 		if err != nil {
 			t.Fatalf("Transition to %s failed: %v", step.to, err)
@@ -266,6 +272,8 @@ func TestAllocation_FullLifecycle_HappyPath(t *testing.T) {
 
 // TestAllocation_FailurePath_VerifiesCleanupTransition verifies that a FAILED
 // allocation can transition to RELEASING (cleanup path).
+//
+// KPK-01 (v19.2.3): CleanupVerified must be set before RELEASING → RELEASED.
 func TestAllocation_FailurePath_VerifiesCleanupTransition(t *testing.T) {
 	a := NewAllocation("alloc-fail", "v1", "coding", "interactive", "agent.coder")
 
@@ -282,6 +290,8 @@ func TestAllocation_FailurePath_VerifiesCleanupTransition(t *testing.T) {
 		t.Fatalf("Transition FAILED → RELEASING failed: %v", err)
 	}
 
+	// KPK-01: Set CleanupVerified before RELEASED.
+	a.CleanupVerified = true
 	// RELEASING → RELEASED (cleanup verified)
 	_, err = a.Transition(StateReleased, "cleanup confirmed")
 	if err != nil {
@@ -295,6 +305,9 @@ func TestAllocation_FailurePath_VerifiesCleanupTransition(t *testing.T) {
 
 // TestAllocation_CleanupRequiredPath verifies the CLEANUP_REQUIRED → RELEASED
 // path (only after cleanup is positively verified).
+//
+// KPK-01 (v19.2.3): CleanupVerified must be set BEFORE the transition to
+// RELEASED, not after.
 func TestAllocation_CleanupRequiredPath(t *testing.T) {
 	a := NewAllocation("alloc-cleanup-path", "v1", "coding", "interactive", "agent.coder")
 
@@ -312,16 +325,22 @@ func TestAllocation_CleanupRequiredPath(t *testing.T) {
 		t.Fatalf("Transition to CLEANUP_REQUIRED failed: %v", err)
 	}
 
-	// CLEANUP_REQUIRED → RELEASING → RELEASED
+	// CLEANUP_REQUIRED → RELEASING (always allowed — starting cleanup)
 	_, _ = a.Transition(StateReleasing, "starting cleanup")
-	_, err = a.Transition(StateReleased, "cleanup verified")
-	if err != nil {
-		t.Fatalf("Transition to RELEASED failed: %v", err)
+
+	// KPK-01: Attempt RELEASED without CleanupVerified — must FAIL.
+	_, err = a.Transition(StateReleased, "attempting release")
+	if err == nil {
+		t.Fatal("Transition to RELEASED without CleanupVerified should fail (KPK-01)")
 	}
 
-	// Mark cleanup as verified.
+	// KPK-01: Set CleanupVerified BEFORE transition to RELEASED.
 	a.CleanupVerified = true
 	a.CleanupStatus = "verified"
+	_, err = a.Transition(StateReleased, "cleanup verified")
+	if err != nil {
+		t.Fatalf("Transition to RELEASED with CleanupVerified=true should succeed: %v", err)
+	}
 
 	if a.State != StateReleased {
 		t.Errorf("Final state = %q, want RELEASED", a.State)
@@ -332,6 +351,8 @@ func TestAllocation_CleanupRequiredPath(t *testing.T) {
 }
 
 // TestAllocation_CancelledPath verifies the CANCELLED → RELEASING → RELEASED path.
+//
+// KPK-01 (v19.2.3): CleanupVerified must be set before RELEASING → RELEASED.
 func TestAllocation_CancelledPath(t *testing.T) {
 	a := NewAllocation("alloc-cancel", "v1", "coding", "interactive", "agent.coder")
 
@@ -343,6 +364,8 @@ func TestAllocation_CancelledPath(t *testing.T) {
 
 	// CANCELLED → RELEASING → RELEASED
 	_, _ = a.Transition(StateReleasing, "cleanup after cancel")
+	// KPK-01: Set CleanupVerified before RELEASED.
+	a.CleanupVerified = true
 	_, err = a.Transition(StateReleased, "cleanup verified")
 	if err != nil {
 		t.Fatalf("Transition to RELEASED failed: %v", err)
