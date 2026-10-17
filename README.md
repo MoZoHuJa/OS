@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.2.3 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.2.4 — Sovereign AI Cloud" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.2.3</h1>
+<h1 align="center">SCARLIX OS v19.2.4</h1>
 
 <p align="center">
   <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.2.3"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.3-06b6d4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.2.4"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.4-06b6d4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
@@ -22,7 +22,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.2.3 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.2.4 | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -30,7 +30,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.2.3   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.2.4   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -61,7 +61,7 @@ scarlix-mode ai
 | P1 | **`check_10` command-substitution bypass closed** | The allow-list only checked the line prefix; `KEY=$(cmd)` matched, but the `.env` heredoc is unquoted, so bash would execute it | No line (comments included) may contain `$(` or a backtick; values limited to `[A-Za-z0-9_./:-]` plus `$var` / `${var}` |
 | P2 | **LiteLLM config header version is dynamic** | Hardcoded `v19.0.3`, drifted across 17 releases | Reads `VERSION` (repo root → `/etc/scarlix/VERSION` → `/usr/local/share/scarlix/VERSION` → `unknown`) |
 
-**Roadmap (Compute Fabric v19.2.x):** real scheduler allocation (v19.2.1), lease + reservation (v19.2.2), preferred-runtime soft hint (v19.2.3), single-GPU detection (v19.2.4), Pi-Bolt supply-chain pin (v19.2.5), model integrity + image digest pinning (v19.2.6).
+**Roadmap (Compute Fabric v19.2.x):** real scheduler allocation (v19.2.1), lease + reservation (v19.2.2), preferred-runtime soft hint (v19.2.4), single-GPU detection (v19.2.4), Pi-Bolt supply-chain pin (v19.2.5), model integrity + image digest pinning (v19.2.6).
 
 **v19.1.16 → v19.1.20 in one line each:** .16 heredoc P0 fix + security hardening · .17 fish `agent.env.fish` hardening · .18 audit closure + secret hardening · .19 audit closure + portable base64 · .20 mutation-hardened smoke guard.
 
@@ -2135,7 +2135,7 @@ scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)
 
 ---
 
-## 🆕 What's New in v19.2.3 — KpK Audit Closure (8 findings) (vs v19.2.2)
+## 🆕 What's New in v19.2.4 — KpK Audit Closure (8 findings) (vs v19.2.2)
 
 **KpK (Kontrola Procesu Kódovania) audit closure.** 4 P1 + 4 P2 from independent audit of v19.2.2 allocation package. All 8 findings fixed, 9 new regression tests added.
 

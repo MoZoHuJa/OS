@@ -117,17 +117,30 @@ func NewAllocation(allocID, contractVersion, taskType, priority, owner string) *
 	}
 }
 
-// HasSecrets checks whether any user-influenced field contains something that
-// looks like a secret. This is a defense-in-depth heuristic check — it should
+// HasSecrets checks whether any of the CHECKED fields contain something that
+// looks like a secret. This is a defense-in-depth heuristic — it should
 // always return false for records created through NewAllocation + Transition.
 //
-// KPK-06 (v19.2.3): Previously this function only checked LastError and a
-// subset of patterns in History[].Reason. Now it checks ALL user-influenced
-// string fields consistently against the full secret marker set:
+// KPK-06 (v19.2.3): Previously checked only LastError + 3 markers in History.
+// KPK-06 remaining (v19.2.4): Documentation now accurately reflects which
+// fields are checked. This is NOT a complete check of ALL fields — it is a
+// heuristic for the fields most likely to contain echoed user input.
+//
+// Fields checked:
 //   - LastError
+//   - Owner
+//   - WorkloadRef
 //   - History[].Reason
-//   - Owner (could contain echoed input in future)
-//   - WorkloadRef (could contain echoed container name/env in future)
+//
+// Fields NOT checked (by design — these are system-generated or validated):
+//
+//	AllocationID, RequestID, IDempotencyKey, SchemaVersion, ContractVersion,
+//	TaskType, Priority, State, timestamps, SelectedGPU/Runtime/Model,
+//	AssignedGPU/Runtime/Model/Port, LeaseExpiry, LeaseID, CleanupStatus,
+//	CleanupVerified, Revision.
+//
+// If any of these fields become user-influenced in the future, they must be
+// added to this check or validated at input boundaries.
 //
 // Secret markers checked (case-insensitive):
 //
