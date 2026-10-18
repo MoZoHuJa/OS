@@ -331,6 +331,7 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 		} `json:"State"`
 		HostConfig struct {
 			PortBindings map[string][]struct {
+				HostIP   string `json:"HostIp"`
 				HostPort string `json:"HostPort"`
 			} `json:"PortBindings"`
 		} `json:"HostConfig"`
@@ -341,7 +342,12 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 	runtimeID = inspected.Config.Labels["scarlix.runtime_id"]
 	modelID = inspected.Config.Labels["scarlix.model_id"]
 	profile, ok := e.profiles[profileKey(runtimeID, modelID)]
-	if !ok || inspected.Config.Labels["scarlix.allocation_id"] != allocationID ||
+	observedGPU := inspected.Config.Labels["scarlix.gpu_id"]
+	observedPort, portErr := strconv.Atoi(inspected.Config.Labels["scarlix.port"])
+	if !ok || portErr != nil || !containsInt(profile.AllowedPorts, observedPort) ||
+		(len(profile.AllowedGPUs) > 0 && !containsString(profile.AllowedGPUs, observedGPU)) ||
+		(len(profile.AllowedGPUs) == 0 && observedGPU != "") ||
+		inspected.Config.Labels["scarlix.allocation_id"] != allocationID ||
 		inspected.Config.Image != profile.Image || inspected.Name != "/"+dockerContainerName(allocationID) ||
 		inspected.Config.Labels["scarlix.managed"] != "true" ||
 		inspected.Config.Labels["scarlix.owned"] != "true" {
@@ -354,10 +360,13 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 			continue
 		}
 		for _, binding := range bindings {
+			if binding.HostIP != "127.0.0.1" {
+				return workload.StartResult{}, false, errors.New("hostbridge: workload port is not loopback-bound")
+			}
 			if binding.HostPort == "" {
 				continue
 			}
-			if p, convErr := strconv.Atoi(binding.HostPort); convErr == nil && containsInt(profile.AllowedPorts, p) {
+			if p, convErr := strconv.Atoi(binding.HostPort); convErr == nil && p == observedPort {
 				port = p
 				break
 			}
