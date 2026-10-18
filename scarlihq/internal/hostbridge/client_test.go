@@ -2,7 +2,6 @@ package hostbridge
 
 import (
 	"context"
-	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
