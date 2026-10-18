@@ -66,7 +66,7 @@ type Allocation struct {
 
 	// === Workload reference (empty until STARTING) ===
 	// Only populated once a workload actually exists (Phase 5+).
-	WorkloadRef  string `json:"workload_ref,omitempty"`  // opaque reference returned by the trusted workload driver
+	WorkloadRef   string `json:"workload_ref,omitempty"`   // opaque reference returned by the trusted workload driver
 	WorkloadOwned bool   `json:"workload_owned,omitempty"` // true only when this allocation started and owns the workload
 
 	// === Error + cleanup status ===
