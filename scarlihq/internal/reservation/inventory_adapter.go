@@ -71,22 +71,24 @@ func NewInventorySnapshotFromInventory(
 	}
 	sort.Strings(ids)
 	ids = uniqueStrings(ids)
-	if generation == "" {
-		h := sha256.New()
-		for _, gpu := range gpus {
-			fmt.Fprintf(h, "gpu:%d:%s:%t:%d:%d;", gpu.Index, gpu.UUID, gpu.Healthy, gpu.VRAMFreeMB, gpu.UtilizationPct)
-		}
-		for _, runtime := range runtimes {
-			fmt.Fprintf(h, "runtime:%s:%t:%t:%t:%d;", runtime.ID, runtime.Enabled, runtime.Running, runtime.Healthy, runtime.Port)
-		}
-		for _, model := range models {
-			fmt.Fprintf(h, "model:%s:%t:%s:%d;", model.ID, model.Present, model.Quantization, model.EstimatedVRAM)
-		}
-		for _, id := range ids {
-			fmt.Fprintf(h, "%d:%s;", len(id), id)
-		}
-		generation = hex.EncodeToString(h.Sum(nil))
+	// Always derive the final generation from source generation AND observed
+	// resource state. A caller that accidentally reuses its source generation
+	// cannot hide changes in GPU capacity, health, runtime state, or model presence.
+	h := sha256.New()
+	fmt.Fprintf(h, "source:%d:%s;", len(generation), generation)
+	for _, gpu := range gpus {
+		fmt.Fprintf(h, "gpu:%d:%s:%t:%d:%d;", gpu.Index, gpu.UUID, gpu.Healthy, gpu.VRAMFreeMB, gpu.UtilizationPct)
 	}
+	for _, runtime := range runtimes {
+		fmt.Fprintf(h, "runtime:%s:%t:%t:%t:%d;", runtime.ID, runtime.Enabled, runtime.Running, runtime.Healthy, runtime.Port)
+	}
+	for _, model := range models {
+		fmt.Fprintf(h, "model:%s:%t:%s:%d;", model.ID, model.Present, model.Quantization, model.EstimatedVRAM)
+	}
+	for _, id := range ids {
+		fmt.Fprintf(h, "%d:%s;", len(id), id)
+	}
+	generation = hex.EncodeToString(h.Sum(nil))
 	return NewInventorySnapshot(generation, asOf.UTC(), ids), nil
 }
 
