@@ -12,7 +12,7 @@ import (
 // AllocationStore is the minimal allocation-store surface required by the
 // reservation adapter. It is intentionally narrower than allocation.Store.
 type AllocationStore interface {
-	Get(id string) (*allocation.Allocation, error)
+	Load() (map[string]*allocation.Allocation, []error, error)
 	Update(id string, modify func(*allocation.Allocation) error) error
 }
 
@@ -27,17 +27,16 @@ type allocationStateLister interface {
 // ListPendingReservationAllocations finds claims interrupted between
 // PLANNED → RESERVING and durable reservation commit/finalization.
 func (a *AllocationReservationAdapter) ListPendingReservationAllocations() ([]string, error) {
-	lister, ok := a.store.(allocationStateLister)
-	if !ok {
-		return nil, fmt.Errorf("reservation: allocation store does not support state listing")
-	}
-	records, err := lister.ListByState(allocation.StateReserving)
+	records, corrupt, err := a.store.Load()
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]string, 0, len(records))
+	if len(corrupt) > 0 {
+		return nil, fmt.Errorf("%w: allocation store has %d corrupt records", ErrReconciliationRequired, len(corrupt))
+	}
+	ids := make([]string, 0)
 	for _, record := range records {
-		if record != nil && record.AllocationID != "" {
+		if record != nil && record.State == allocation.StateReserving && record.AllocationID != "" {
 			ids = append(ids, record.AllocationID)
 		}
 	}
@@ -59,12 +58,27 @@ func NewAllocationReservationAdapter(store AllocationStore) (*AllocationReservat
 	return &AllocationReservationAdapter{store: store}, nil
 }
 
+func (a *AllocationReservationAdapter) getSafe(id string) (*allocation.Allocation, error) {
+	records, corrupt, err := a.store.Load()
+	if err != nil {
+		return nil, err
+	}
+	if len(corrupt) > 0 {
+		return nil, fmt.Errorf("%w: allocation store has %d corrupt records", ErrReconciliationRequired, len(corrupt))
+	}
+	record, ok := records[id]
+	if !ok {
+		return nil, fmt.Errorf("allocation %s not found: %w", id, allocation.ErrNotFound)
+	}
+	return record, nil
+}
+
 // ValidateAllocationOwner prevents a caller from reserving resources for an
 // allocation owned by another authenticated principal.
 func (a *AllocationReservationAdapter) ValidateAllocationOwner(id, principal string) error {
-	record, err := a.store.Get(id)
+	record, err := a.getSafe(id)
 	if err != nil {
-		return fmt.Errorf("allocation %s not found: %w", id, err)
+		return err
 	}
 	if principal == "" || record.Owner != principal {
 		return fmt.Errorf("reservation: allocation %s is not owned by the authenticated principal", id)
