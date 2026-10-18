@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -173,6 +174,14 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 	normalized, err := normalizeRequests(requests, m.policy)
 	if err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(identity.Principal()) == "" {
+		return nil, fmt.Errorf("reservation: identity provider returned an empty principal")
+	}
+	if ownerValidator, ok := m.allocVal.(allocationOwnershipValidator); ok {
+		if err := ownerValidator.ValidateAllocationOwner(normalized[0].request.AllocationID, identity.Principal()); err != nil {
+			return nil, err
+		}
 	}
 	allocationID := normalized[0].request.AllocationID
 	idempotencyKey := normalized[0].request.IdempotencyKey
@@ -437,6 +446,10 @@ func sortReservations(records []*Reservation) {
 	})
 }
 
+
+type allocationOwnershipValidator interface {
+	ValidateAllocationOwner(allocationID, principal string) error
+}
 
 type reservationAssignmentFinalizer interface {
 	FinalizeReservation(allocationID string, reservations []*Reservation) error
