@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="400" viewBox="0 0 1600 400" role="img" aria-labelledby="title desc">
+  <title id="title">ScarLiXoS OS — Foundation of ScaRgeN CuLT</title>
+  <desc id="desc">Obsidian Lattice banner for ScarLiXoS OS, the sovereign local-first AI system foundation of ScaRgeN CuLT.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0B0C0E"/><stop offset=".6" stop-color="#111318"/><stop offset="1" stop-color="#1A1D24"/></linearGradient>
+    <linearGradient id="copper" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#D4A574"/><stop offset="1" stop-color="#B87333"/></linearGradient>
+    <pattern id="grid" width="84" height="72" patternUnits="userSpaceOnUse"><path d="M21 1 L63 1 L83 36 L63 71 L21 71 L1 36 Z" fill="none" stroke="#B87333" stroke-opacity=".10" stroke-width="1"/></pattern>
+  </defs>
+  <rect width="1600" height="400" fill="url(#bg)"/><rect width="1600" height="400" fill="url(#grid)"/>
+  <g fill="none" stroke="#B87333" stroke-opacity=".24" stroke-width="1.5">
+    <path d="M1010 0 L1110 0 L1160 86 L1110 172 L1010 172 L960 86 Z"/>
+    <path d="M1250 64 L1350 64 L1400 150 L1350 236 L1250 236 L1200 150 Z"/>
+    <path d="M1440 -28 L1540 -28 L1590 58 L1540 144 L1440 144 L1390 58 Z"/>
+    <path d="M1120 244 L1220 244 L1270 330 L1220 416 L1120 416 L1070 330 Z"/>
+    <path d="M1400 260 L1500 260 L1550 346 L1500 432 L1400 432 L1350 346 Z"/>
+  </g>
+  <g transform="translate(145 200)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <polygon points="0,-76 65.8,-38 65.8,38 0,76 -65.8,38 -65.8,-38" stroke="url(#copper)" stroke-width="4"/>
+    <path d="M-44 0 H44 M0 -44 V44" stroke="#A8C5D4" stroke-width="2.5"/>
+    <circle r="7" fill="#B87333" stroke="none"/>
+    <circle r="91" stroke="#B87333" stroke-opacity=".18" stroke-width="1"/>
+  </g>
+  <text x="255" y="145" font-family="Arial, Helvetica, sans-serif" font-size="17" letter-spacing="5" fill="#D4A574">SCARGEN CULT / SYSTEM FOUNDATION</text>
+  <text x="250" y="218" font-family="Arial, Helvetica, sans-serif" font-size="64" font-weight="700" letter-spacing="-.8" fill="#E8E4DF">ScarLiXoS OS</text>
+  <path d="M255 240 H785" stroke="#B87333" stroke-width="2"/>
+  <text x="255" y="279" font-family="Arial, Helvetica, sans-serif" font-size="23" letter-spacing="3" fill="#A8C5D4">SOVEREIGN AI CLOUD</text>
+  <text x="255" y="326" font-family="Arial, Helvetica, sans-serif" font-size="16" letter-spacing="1.3" fill="#A8A49F">Local-First  ·  Secure by Design  ·  ScarliHQ  ·  Compute Fabric</text>
+  <text x="1540" y="370" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="12" letter-spacing="3" fill="#B87333">OBSIDIAN LATTICE / 19.2.9</text>
+</svg>

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScaRgeN CuLT — ScarLiXoS v19.2.9 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScarLiXoS OS — Foundation of ScaRgeN CuLT · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.2.9</h1>
+<h1 align="center">ScarLiXoS OS · Foundation of ScaRgeN CuLT</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
