@@ -1,0 +1,40 @@
+{
+  "_comment": "TEMPLATE ONLY. Copy to /etc/scarlix/workload-bridge.json and replace the placeholder digest and host model path with reviewed values. Never use mutable image tags.",
+  "docker_socket": "/var/run/docker.sock",
+  "gpu_devices": {
+    "gpu.nvidia.0": "GPU-REPLACE_WITH_REAL_UUID"
+  },
+  "profiles": [
+    {
+      "runtime_id": "sglang",
+      "model_id": "qwen3-14b-awq",
+      "image": "registry.example.invalid/scarlix/sglang@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "command": [
+        "python",
+        "-m",
+        "sglang.launch_server",
+        "--model-path",
+        "/models/qwen3-14b-awq",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "30000"
+      ],
+      "mounts": [
+        {
+          "source": "/var/lib/scarlix/models/qwen3-14b-awq",
+          "target": "/models/qwen3-14b-awq",
+          "read_only": true
+        }
+      ],
+      "allowed_gpus": [
+        "gpu.nvidia.0"
+      ],
+      "allowed_ports": [
+        30000
+      ],
+      "health_path": "/health",
+      "network": "scarlix-compute"
+    }
+  ]
+}
