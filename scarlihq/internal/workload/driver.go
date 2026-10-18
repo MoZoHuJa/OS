@@ -47,7 +47,7 @@ type StopRequest struct {
 	RuntimeID    string
 	ModelID      string
 	Ref          string
-	Owned         bool
+	Owned        bool
 }
 
 // StopResult reports whether cleanup was positively verified.
