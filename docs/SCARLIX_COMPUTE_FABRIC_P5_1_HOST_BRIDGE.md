@@ -12,18 +12,20 @@ Introduce a narrow host-side boundary between the ScarliHQ lifecycle manager and
 ## Implemented in this increment
 
 - Typed HTTP operations: `POST /v1/workloads/start` and `POST /v1/workloads/stop`.
+- A `workload.Driver` client that connects exclusively through a configured Unix socket, with bounded response reads and no TCP fallback.
 - The server is exposed as an HTTP handler, but the only provided listener is a Unix-domain socket helper. Do not expose it on TCP.
 - Socket creation requires an absolute path and a pre-existing real parent directory; existing paths are rejected instead of unlinked; mode is set to `0600`.
 - JSON requests are size-bounded, reject unknown fields and trailing JSON values, and require `application/json`.
 - Runtime IDs are checked against the frozen Resource Contract allowlist.
 - Request IDs, model IDs, GPU IDs and returned workload references are bounded and syntax-validated.
-- Shared/pre-existing workloads (`owned=false`) cannot reach the stop executor.
+- Shared/pre-existing workloads (`owned=false`) cannot reach the stop executor, and the client independently refuses such stop requests.
+- A socket permission-change failure closes the listener without unlinking the pathname, avoiding a cleanup-time path replacement race.
 - Executor errors are not returned to clients; readiness and cleanup must be positively confirmed.
 - HTTP timeouts and header limits are explicit.
 
 ## Deliberate limitations
 
-This is the **protocol and security core**, not yet a working host execution adapter. There is no production `Executor` implementation, service unit, installer wiring, or ScarliHQ client connection in this commit. The API must fail closed until a separately reviewed executor is supplied. Do not mark P5.1 complete or claim host workload execution works from these tests alone.
+This is the **protocol and security core**, not yet a working host execution adapter. There is no production `Executor` implementation, service unit, installer wiring, or wiring of the new client into ScarliHQ's `workload.Manager` in this commit. The client and protocol are covered by unit-level Unix-socket integration tests, not by a deployed host service. The API must fail closed until a separately reviewed executor is supplied. Do not mark P5.1 complete or claim host workload execution works from these tests alone.
 
 ## Required next work
 
