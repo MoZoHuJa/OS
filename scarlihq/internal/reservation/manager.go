@@ -525,6 +525,36 @@ func (m *Manager) resolveReconciler(token string) (Identity, error) {
 	return identity, nil
 }
 
+
+type ReaperReport func(error)
+
+// RunLeaseReaper periodically expires stale leases and reconciles cleanup.
+// The report callback receives each pass error; a single bad resource does not
+// stop subsequent passes. Cancellation returns ctx.Err().
+func (m *Manager) RunLeaseReaper(ctx context.Context, reconcilerToken string, interval time.Duration, report ReaperReport) error {
+	if interval <= 0 {
+		return fmt.Errorf("reservation: reaper interval must be positive")
+	}
+	if report == nil {
+		return fmt.Errorf("reservation: reaper error callback is required")
+	}
+	if _, err := m.resolveReconciler(reconcilerToken); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if _, err := m.ReapExpiredOnce(reconcilerToken); err != nil {
+				report(err)
+			}
+		}
+	}
+}
+
 // RenewLease extends the lease TTL.
 func (m *Manager) RenewLease(reservationID, token string, newTTL time.Duration) (*Reservation, error) {
 	identity, err := m.resolveIdentity(token)
