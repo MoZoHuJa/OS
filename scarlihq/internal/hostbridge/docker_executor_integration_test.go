@@ -120,6 +120,9 @@ func TestDockerExecutorUsesTypedCreateAndVerifiedStop(t *testing.T) {
 			AllowedPorts: []int{port},
 			HealthPath:   "/health",
 			Network:      "scarlix-compute",
+			MemoryBytes:  24 * 1024 * 1024 * 1024,
+			NanoCPUs:     4_000_000_000,
+			PidsLimit:    2048,
 		}},
 	}
 	executor, err := newDockerExecutor(cfg)
