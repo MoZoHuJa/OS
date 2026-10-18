@@ -2,6 +2,7 @@ package contract
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -46,6 +47,16 @@ var supportedRuntimes = map[string]bool{
 // Resource Contract v1. It does not imply that the runtime is healthy or running.
 func IsSupportedRuntime(id string) bool {
 	return supportedRuntimes[id]
+}
+
+// SupportedRuntimeIDs returns the accepted runtime IDs in deterministic order.
+func SupportedRuntimeIDs() []string {
+	ids := make([]string, 0, len(supportedRuntimes))
+	for id := range supportedRuntimes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // allowed enum sets for validation
