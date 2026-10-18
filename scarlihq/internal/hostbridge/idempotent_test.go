@@ -96,6 +96,29 @@ func TestIdempotentExecutorStartIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestIdempotentExecutorReservesGPUAndPort(t *testing.T) {
+	inner := &recoverableFake{}
+	executor, _ := newTestIdempotent(t, inner)
+	if _, err := executor.Start(context.Background(), testStartRequest()); err != nil {
+		t.Fatal(err)
+	}
+	gpuConflict := testStartRequest()
+	gpuConflict.AllocationID = "alloc-2"
+	gpuConflict.Port = 30001
+	if _, err := executor.Start(context.Background(), gpuConflict); err == nil {
+		t.Fatal("expected an active GPU reservation to reject a second allocation")
+	}
+	portConflict := testStartRequest()
+	portConflict.AllocationID = "alloc-3"
+	portConflict.GPUID = "GPU-def"
+	if _, err := executor.Start(context.Background(), portConflict); err == nil {
+		t.Fatal("expected an active port reservation to reject a second allocation")
+	}
+	if inner.startCalls != 1 {
+		t.Fatalf("conflicting allocations reached runtime: starts=%d", inner.startCalls)
+	}
+}
+
 func TestIdempotentExecutorRejectsConflictingAssignment(t *testing.T) {
 	inner := &recoverableFake{}
 	executor, _ := newTestIdempotent(t, inner)
