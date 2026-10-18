@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -74,5 +73,4 @@ func main() {
 			log.Fatalf("host workload bridge failed: %v", err)
 		}
 	}
-	_ = filepath.Clean(*socketPath)
 }
