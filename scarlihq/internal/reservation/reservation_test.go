@@ -41,6 +41,7 @@ type stubAllocationValidator struct {
 	valid   map[string]bool
 	claimed map[string]bool
 	endErr  error
+	beginCalls int
 }
 
 func (s *stubAllocationValidator) ValidateForReservation(allocID string) error {
@@ -55,6 +56,7 @@ func (s *stubAllocationValidator) ValidateForReservation(allocID string) error {
 func (s *stubAllocationValidator) BeginReservation(allocID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.beginCalls++
 	if !s.valid[allocID] {
 		return fmt.Errorf("allocation %q not eligible for BeginReservation", allocID)
 	}
@@ -471,6 +473,67 @@ func TestManager_Reserve_FinalizationFailureKeepsDurableReservation(t *testing.T
 	}
 	if got[0].Status != StatusHeld {
 		t.Fatalf("durable reservation status = %s, want HELD", got[0].Status)
+	}
+}
+
+
+func TestManager_ReserveBundle_ConflictDoesNotPersistPartialBundle(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+	first, err := mgr.Reserve(ReserveRequest{
+		AllocationID: "alloc-A", ResourceID: "runtime.sglang",
+		ResourceType: ResourceTypeRuntimeSlot, LeaseTTL: 5 * time.Minute,
+	}, "user-token")
+	if err != nil {
+		t.Fatalf("seed reservation: %v", err)
+	}
+	_, err = mgr.ReserveBundle([]ReserveRequest{
+		{AllocationID: "alloc-1", ResourceID: testGPUUUID0, ResourceType: ResourceTypeGPUDevice, LeaseTTL: 5 * time.Minute, IdempotencyKey: "bundle-1"},
+		{AllocationID: "alloc-1", ResourceID: "runtime.sglang", ResourceType: ResourceTypeRuntimeSlot, LeaseTTL: 5 * time.Minute, IdempotencyKey: "bundle-1"},
+	}, "user-token")
+	if err == nil {
+		t.Fatal("expected runtime capacity conflict")
+	}
+	all, loadErr := mgr.store.Load()
+	if loadErr != nil {
+		t.Fatalf("Load: %v", loadErr)
+	}
+	if len(all) != 1 {
+		t.Fatalf("partial bundle persisted: got %d reservations, want only seed reservation", len(all))
+	}
+	if _, ok := all[first.Reservation.ReservationID]; !ok {
+		t.Fatal("seed reservation disappeared")
+	}
+}
+
+func TestManager_ReserveBundle_IdempotentReplayDoesNotBeginClaimAgain(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+	validator := mgr.allocVal.(*stubAllocationValidator)
+	requests := []ReserveRequest{
+		{AllocationID: "alloc-1", ResourceID: testGPUUUID0, ResourceType: ResourceTypeGPUDevice, LeaseTTL: 5 * time.Minute, IdempotencyKey: "bundle-replay"},
+		{AllocationID: "alloc-1", ResourceID: "runtime.vllm", ResourceType: ResourceTypeRuntimeSlot, LeaseTTL: 5 * time.Minute, IdempotencyKey: "bundle-replay"},
+	}
+	first, err := mgr.ReserveBundle(requests, "user-token")
+	if err != nil {
+		t.Fatalf("first bundle reserve: %v", err)
+	}
+	if len(first.Reservations) != 2 || !first.Created {
+		t.Fatalf("unexpected first result: %+v", first)
+	}
+	validator.mu.Lock()
+	firstBeginCalls := validator.beginCalls
+	validator.mu.Unlock()
+
+	second, err := mgr.ReserveBundle([]ReserveRequest{requests[1], requests[0]}, "user-token")
+	if err != nil {
+		t.Fatalf("idempotent bundle replay: %v", err)
+	}
+	if second.Created || len(second.Reservations) != 2 {
+		t.Fatalf("unexpected replay result: %+v", second)
+	}
+	validator.mu.Lock()
+	defer validator.mu.Unlock()
+	if validator.beginCalls != firstBeginCalls {
+		t.Fatalf("idempotent replay re-claimed allocation: BeginReservation calls %d → %d", firstBeginCalls, validator.beginCalls)
 	}
 }
 
