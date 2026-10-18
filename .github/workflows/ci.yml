@@ -256,6 +256,8 @@ jobs:
           if [ -n "$UNFORMATTED" ]; then
             echo "ERROR: unformatted Go files:"
             echo "$UNFORMATTED"
+            echo "gofmt diff:"
+            gofmt -d .
             exit 1
           fi
           echo "All Go files are gofmt-clean"
