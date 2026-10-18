@@ -195,4 +195,3 @@ func (a *AllocationReservationAdapter) UpdateReservationLease(id, leaseID string
 		return nil
 	})
 }
-
