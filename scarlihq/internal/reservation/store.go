@@ -117,6 +117,11 @@ func (s *Store) append(r *Reservation) error {
 		return ErrDuplicateReservationID
 	}
 
+	// P2-02 (v19.2.9): Validate record before persisting.
+	if err := r.ValidateRecord(); err != nil {
+		return fmt.Errorf("reservation: cannot append invalid record: %w", err)
+	}
+
 	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return fmt.Errorf("reservation: cannot open store file: %w", err)
@@ -184,10 +189,14 @@ func (s *Store) loadLocked() (map[string]*Reservation, []error, error) {
 }
 
 // Get reads a single reservation by ID.
+// P2-03 (v19.2.9): Read methods return corruption error.
 func (s *Store) Get(id string) (*Reservation, error) {
-	records, _, err := s.Load()
+	records, corrupt, err := s.Load()
 	if err != nil {
 		return nil, err
+	}
+	if len(corrupt) > 0 {
+		return nil, fmt.Errorf("%w: store has %d corrupt records — cannot read safely", ErrReservationStoreCorrupt, len(corrupt))
 	}
 	r, ok := records[id]
 	if !ok {
@@ -244,10 +253,14 @@ func (s *Store) update(id string, modify func(*Reservation) error) error {
 }
 
 // ListByStatus returns all reservations with the given status.
+// P2-03 (v19.2.9): Returns corruption error.
 func (s *Store) ListByStatus(status ReservationStatus) ([]*Reservation, error) {
-	records, _, err := s.Load()
+	records, corrupt, err := s.Load()
 	if err != nil {
 		return nil, err
+	}
+	if len(corrupt) > 0 {
+		return nil, fmt.Errorf("%w: %d corrupt records", ErrReservationStoreCorrupt, len(corrupt))
 	}
 	var result []*Reservation
 	for _, r := range records {
@@ -259,10 +272,14 @@ func (s *Store) ListByStatus(status ReservationStatus) ([]*Reservation, error) {
 }
 
 // ListByAllocation returns all reservations for the given allocation ID.
+// P2-03 (v19.2.9): Returns corruption error.
 func (s *Store) ListByAllocation(allocID string) ([]*Reservation, error) {
-	records, _, err := s.Load()
+	records, corrupt, err := s.Load()
 	if err != nil {
 		return nil, err
+	}
+	if len(corrupt) > 0 {
+		return nil, fmt.Errorf("%w: %d corrupt records", ErrReservationStoreCorrupt, len(corrupt))
 	}
 	var result []*Reservation
 	for _, r := range records {
@@ -274,10 +291,14 @@ func (s *Store) ListByAllocation(allocID string) ([]*Reservation, error) {
 }
 
 // FindByIdempotencyKey returns the reservation with the given key, if any.
+// P2-03 (v19.2.9): Returns corruption error.
 func (s *Store) FindByIdempotencyKey(key, owner string) (*Reservation, error) {
-	records, _, err := s.Load()
+	records, corrupt, err := s.Load()
 	if err != nil {
 		return nil, err
+	}
+	if len(corrupt) > 0 {
+		return nil, fmt.Errorf("%w: %d corrupt records", ErrReservationStoreCorrupt, len(corrupt))
 	}
 	for _, r := range records {
 		if r.IdempotencyKey == key && r.Owner == owner {
@@ -302,6 +323,12 @@ func (s *Store) rewriteAll(records map[string]*Reservation) error {
 
 	encoder := json.NewEncoder(tmp)
 	for _, r := range records {
+		// P2-02 (v19.2.9): Validate every record before writing.
+		if err := r.ValidateRecord(); err != nil {
+			tmp.Close()
+			os.Remove(tmpPath)
+			return fmt.Errorf("reservation: invalid record %s during rewrite: %w", r.ReservationID, err)
+		}
 		if err := encoder.Encode(r); err != nil {
 			tmp.Close()
 			os.Remove(tmpPath)

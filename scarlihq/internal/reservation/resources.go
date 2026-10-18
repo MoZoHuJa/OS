@@ -2,7 +2,7 @@ package reservation
 
 import (
 	"fmt"
-
+	"strings"
 	"time"
 )
 
@@ -151,8 +151,14 @@ func (r *Reservation) ValidateRecord() error {
 		return fmt.Errorf("reservation: resource_id is empty")
 	}
 	// P2-03: Validate canonical resource ID.
-	if _, err := CanonicalResourceID(r.ResourceID, r.ResourceType); err != nil {
+	// P1-03 (v19.2.9): Enforce that stored ID IS canonical (not just parseable).
+	// Reject records where canonical form differs from stored value.
+	canonID, err := CanonicalResourceID(r.ResourceID, r.ResourceType)
+	if err != nil {
 		return fmt.Errorf("reservation: resource_id not canonical: %w", err)
+	}
+	if canonID != r.ResourceID {
+		return fmt.Errorf("reservation: resource_id %q is not canonical (should be %q)", r.ResourceID, canonID)
 	}
 	if !r.Status.IsValid() {
 		return fmt.Errorf("reservation: invalid status %q", r.Status)
@@ -237,9 +243,13 @@ func (e CleanupEvidence) ObservedAt() time.Time { return e.observedAt }
 func (e CleanupEvidence) Verified() bool        { return e.verified }
 func (e CleanupEvidence) ReconcilerID() string  { return e.reconcilerID }
 
-// newCleanupEvidence creates CleanupEvidence. Package-private.
-// P1-01 (v19.2.8): NOT exported — only trusted cleanup service creates this.
-func newCleanupEvidence(resourceID, operationID string, observedAt time.Time, verified bool, reconcilerID string) CleanupEvidence {
+// NewCleanupEvidence creates CleanupEvidence for use by trusted CleanupVerifier implementations.
+// P1-01 (v19.2.9): EXPORTED — external CleanupVerifier implementations need this
+// to construct the evidence return value. The trust boundary is at the
+// CleanupVerifier interface injection point (NewManager rejects nil CleanupVerifier).
+// Only code that implements CleanupVerifier and is injected into Manager can
+// produce evidence that Manager will accept.
+func NewCleanupEvidence(resourceID, operationID string, observedAt time.Time, verified bool, reconcilerID string) CleanupEvidence {
 	return CleanupEvidence{
 		resourceID:   resourceID,
 		operationID:  operationID,
@@ -272,16 +282,49 @@ type InventorySnapshot struct {
 // NewInventorySnapshot creates an InventorySnapshot with a defensive copy
 // of the resource map. P1-03 (v19.2.8): Exported so external providers
 // can construct snapshots.
+// P2-04 (v19.2.9): Resource IDs are canonicalized before storage.
 func NewInventorySnapshot(generation string, asOf time.Time, resourceIDs []string) InventorySnapshot {
 	m := make(map[string]bool, len(resourceIDs))
 	for _, id := range resourceIDs {
-		m[id] = true
+		canon := canonicalizeAnyResourceID(id)
+		if canon != "" {
+			m[canon] = true
+		} else {
+			m[id] = true
+		}
 	}
 	return InventorySnapshot{
 		Generation: generation,
 		AsOf:       asOf,
 		resources:  m,
 	}
+}
+
+// canonicalizeAnyResourceID tries to canonicalize a resource ID by detecting
+// its type from the prefix. P2-04 (v19.2.9).
+func canonicalizeAnyResourceID(id string) string {
+	if strings.HasPrefix(id, "gpu.nvidia.") {
+		canon, err := CanonicalResourceID(id, ResourceTypeGPUDevice)
+		if err == nil {
+			return canon
+		}
+	} else if strings.HasPrefix(id, "runtime.") {
+		canon, err := CanonicalResourceID(id, ResourceTypeRuntimeSlot)
+		if err == nil {
+			return canon
+		}
+	} else if strings.HasPrefix(id, "model.") {
+		canon, err := CanonicalResourceID(id, ResourceTypeModelSlot)
+		if err == nil {
+			return canon
+		}
+	} else if strings.HasPrefix(id, "port.") {
+		canon, err := CanonicalResourceID(id, ResourceTypePort)
+		if err == nil {
+			return canon
+		}
+	}
+	return ""
 }
 
 // ResourceExists checks if a resource exists in this snapshot.
@@ -296,6 +339,16 @@ type InventoryProvider interface {
 
 // AllocationValidator validates that an allocation is eligible for reservation.
 // P1-02 (v19.2.8): Called INSIDE the reservation flock critical section.
+// P1-02 (v19.2.9): Extended with BeginReservation/EndReservation for atomicity.
+// BeginReservation atomically transitions the allocation to RESERVING state,
+// preventing terminal transitions during the reservation window.
+// EndReservation transitions to RESERVED (success) or rolls back (failure).
 type AllocationValidator interface {
 	ValidateForReservation(allocID string) error
+	// P1-02 (v19.2.9): Atomically claim the allocation for reservation.
+	// Must prevent the allocation from transitioning to terminal state
+	// until EndReservation is called.
+	BeginReservation(allocID string) error
+	// P1-02 (v19.2.9): Release the claim. success=true → RESERVED, false → rollback.
+	EndReservation(allocID string, success bool) error
 }
