@@ -5,14 +5,14 @@ Candidate version: `19.2.10`
 
 ## Automated acceptance
 
-- [ ] Latest branch SHA: `go vet ./...`
-- [ ] Latest branch SHA: `gofmt -l .` returns no files
-- [ ] Latest branch SHA: all Go binaries build
-- [ ] Latest branch SHA: `go test ./...`
-- [ ] Latest branch SHA: `go test -race ./internal/allocation ./internal/inventory ./internal/reservation`
-- [ ] Latest branch SHA: smoke, YAML, ShellCheck, systemd, Compose, Docker build, and API integration jobs pass
+- [x] Source SHA `e46cf5a871188c8c17aa8e0fbf2315c3b1d31c87`: `go vet ./...`
+- [x] Source SHA `e46cf5a871188c8c17aa8e0fbf2315c3b1d31c87`: `gofmt -l .` returns no files
+- [x] Source SHA `e46cf5a871188c8c17aa8e0fbf2315c3b1d31c87`: all Go binaries build
+- [x] Source SHA `e46cf5a871188c8c17aa8e0fbf2315c3b1d31c87`: `go test ./...`
+- [x] Source SHA `e46cf5a871188c8c17aa8e0fbf2315c3b1d31c87`: `go test -race ./internal/allocation ./internal/inventory ./internal/reservation`
+- [x] Source SHA `e46cf5a871188c8c17aa8e0fbf2315c3b1d31c87`: smoke, YAML, ShellCheck, systemd, Compose, Docker build, and API integration jobs pass
 
-Earlier candidate SHA `097a8ca82ce4879f4ac5c8bc94b5b0703daf68b5` passed Go vet, formatting, build, full Go tests, race tests, smoke checks, and Docker build. Later source changes to the file-backed manager factory, inventory-generation hashing, and adapter declaration order require a final rerun against the branch head.
+All nine GitHub Actions jobs passed on source SHA `e46cf5a871188c8c17aa8e0fbf2315c3b1d31c87`. The merge commit that incorporates the latest `main` history and this documentation update will trigger a final rerun.
 
 ## Target-host acceptance (still required)
 

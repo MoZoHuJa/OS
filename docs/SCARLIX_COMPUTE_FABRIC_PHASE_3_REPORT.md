@@ -3,7 +3,7 @@
 **Candidate branch:** `19.2.10.G1`  
 **Version:** `19.2.10`  
 **Scope:** Atomic resource reservation, cross-process locking, lease management, and allocation-state integration  
-**Status:** **IMPLEMENTED IN CANDIDATE — EXECUTION/CI VERIFICATION PENDING**  
+**Status:** **IMPLEMENTED IN CANDIDATE — AUTOMATED CI GREEN; TARGET-HOST ACCEPTANCE PENDING**  
 **Hardware verification:** **BLOCKED** — requires the target ScarLiX host and live runtimes
 
 ## 1. Scope from the Phase 2 handoff
@@ -36,6 +36,7 @@ This candidate implements those items while keeping runtime startup/termination 
 - `AllocationReservationAdapter` connects the reservation manager to the existing allocation state machine and allocation store.
 - `PLANNED → RESERVING → RESERVED` is performed through validated allocation transitions.
 - Allocation owner is checked against the trusted authenticated principal.
+- The persisted allocation plan is checked against every requested resource; GPU UUIDs are resolved through the snapshot's UUID-to-inventory-ID mapping, and plan validation is repeated after the claim transitions to `RESERVING`.
 - Resource assignments and allocation lease metadata are written in the same allocation-store update that transitions to `RESERVED`.
 - Failed pre-commit reservation attempts abort the pending allocation claim; post-commit finalization failures are reported as reconciliation-required, not rolled back.
 
@@ -57,7 +58,7 @@ This candidate implements those items while keeping runtime startup/termination 
 - The NVIDIA collector queries UUID from `nvidia-smi`.
 - The reservation inventory adapter uses stable GPU UUIDs, never mutable display indices, and fails closed for missing/malformed UUIDs.
 - Only healthy GPUs, enabled/healthy runtimes, present models, and explicitly configured ports are exposed as reservable.
-- If the caller does not provide a generation, the adapter derives one from resource availability state and canonical IDs.
+- The adapter always derives the final generation from source generation plus observed resource state and canonical IDs, so a reused source generation cannot hide capacity/health changes.
 
 ## 3. New/updated source files
 
@@ -68,8 +69,13 @@ This candidate implements those items while keeping runtime startup/termination 
 - `scarlihq/internal/reservation/inventory_adapter.go`
 - `scarlihq/internal/reservation/reservation_test.go`
 - `scarlihq/internal/reservation/phase3_integration_test.go`
+- `scarlihq/internal/reservation/phase3_integration_test.go`
 - `scarlihq/internal/reservation/allocation_adapter_test.go`
 - `scarlihq/internal/reservation/inventory_adapter_test.go`
+- `scarlihq/internal/reservation/factory.go`
+- `scarlihq/internal/reservation/factory_test.go`
+- `scarlihq/internal/reservation/token_identity.go`
+- `scarlihq/internal/reservation/token_identity_test.go`
 - `scarlihq/internal/reservation/token_identity.go`
 - `scarlihq/internal/reservation/token_identity_test.go`
 - `scarlihq/internal/inventory/types.go`
@@ -92,7 +98,12 @@ The candidate includes tests for:
 
 ## 5. Verification status
 
-**Test execution is delegated to GitHub Actions for this candidate branch.** The initial CI run exposed a fake-clock mismatch in one regression test; that setup was corrected. The latest run must complete on the final candidate SHA before the acceptance gate can be marked green. This environment has not run Go commands against a local checkout.
+GitHub Actions run on source commit `e46cf5a871188c8c17aa8e0fbf2315c3b1d31c87` completed with **all nine jobs successful**:
+- Go formatting, vet, build, full Go tests, and Phase 3 race tests;
+- YAML, Compose, Bash syntax, ShellCheck, systemd validation;
+- offline smoke test, ScarliHQ Docker build, and API/WebSocket integration tests.
+
+The final merge commit will rerun these checks against the merged candidate SHA. The local container still cannot reach GitHub to run an independent local clone/test cycle.
 
 Required checks before merge:
 ```bash
@@ -111,7 +122,7 @@ Also run shell/config validation and the offline smoke test from the repository 
 
 ## 6. Remaining limits / release gates
 
-1. **Two independent stores are not physically one transaction.** The design uses a durable reservation commit plus idempotent reconciliation. Crash-injection tests must prove that recovery works with the real allocation store.
+1. **Two independent stores are not physically one transaction.** The design uses a durable reservation commit plus idempotent reconciliation. Automated tests pass, but target-host process-kill/crash-injection tests must still prove recovery with the real allocation store.
 2. **Cleanup is an injected trust boundary.** The production `CleanupVerifier` must inspect actual runtime/resource state; the test stub is not a production implementation.
 3. **Ports require trusted configuration.** The inventory adapter deliberately does not infer free ports from a configured port number; the caller must supply an authoritative managed-port set and production port checks must handle races with external processes.
 4. **GPU identity now has a stable UUID field, but all consumers must use it for reservation IDs.** Display IDs such as `gpu.nvidia.0` remain inventory/UI identifiers and are not accepted as reservation IDs.
@@ -120,6 +131,6 @@ Also run shell/config validation and the offline smoke test from the repository 
 
 ## 7. Phase 3 gate
 
-**Code-level scope:** implemented in branch `19.2.10.G1`.  
-**Acceptance gate:** pending successful Go/CI checks and crash-injection verification.  
-**Release decision:** do not merge/tag as stable until the acceptance gate passes.
+**Code-level scope:** implemented in branch `19.2.10.G1`; all automated GitHub Actions jobs passed on source commit `e46cf5a871188c8c17aa8e0fbf2315c3b1d31c87`.  
+**Acceptance gate:** automated checks green; target-host hardware, process-crash, port-race, and real cleanup-verifier checks remain open.  
+**Release decision:** do not merge/tag as stable until target-host acceptance passes.
