@@ -20,10 +20,6 @@ type AllocationStore interface {
 // allocation state machine. Allocation transitions remain validated by the
 // frozen allocation.Transition table and are persisted under the allocation
 // store's own cross-process lock.
-type allocationStateLister interface {
-	ListByState(state allocation.State) ([]*allocation.Allocation, error)
-}
-
 // ListPendingReservationAllocations finds claims interrupted between
 // PLANNED → RESERVING and durable reservation commit/finalization.
 func (a *AllocationReservationAdapter) ListPendingReservationAllocations() ([]string, error) {
@@ -87,9 +83,9 @@ func (a *AllocationReservationAdapter) ValidateAllocationOwner(id, principal str
 }
 
 func (a *AllocationReservationAdapter) ValidateForReservation(id string) error {
-	record, err := a.store.Get(id)
+	record, err := a.getSafe(id)
 	if err != nil {
-		return fmt.Errorf("allocation %s not found: %w", id, err)
+		return err
 	}
 	if record.State != allocation.StateReserving {
 		return fmt.Errorf("allocation %s must be RESERVING, got %s", id, record.State)
