@@ -20,6 +20,10 @@ type AllocationStore interface {
 // allocation state machine. Allocation transitions remain validated by the
 // frozen allocation.Transition table and are persisted under the allocation
 // store's own cross-process lock.
+type ReservationAssignmentFinalizer interface {
+	FinalizeReservation(allocationID string, reservations []*Reservation) error
+}
+
 type AllocationReservationAdapter struct {
 	store AllocationStore
 }
@@ -96,6 +100,10 @@ func (a *AllocationReservationAdapter) FinalizeReservation(id string, reservatio
 		if record.State != allocation.StateReserving && record.State != allocation.StateReserved {
 			return fmt.Errorf("allocation %s cannot finalize reservation from %s", id, record.State)
 		}
+		record.AssignedGPU = ""
+		record.AssignedRuntime = ""
+		record.AssignedModel = ""
+		record.AssignedPort = 0
 		for _, reservation := range reservations {
 			if reservation == nil || reservation.AllocationID != id {
 				return fmt.Errorf("reservation: invalid reservation assignment for allocation %s", id)
@@ -128,9 +136,7 @@ func (a *AllocationReservationAdapter) FinalizeReservation(id string, reservatio
 }
 
 var _ AllocationValidator = (*AllocationReservationAdapter)(nil)
-var _ interface {
-	FinalizeReservation(string, []*Reservation) error
-} = (*AllocationReservationAdapter)(nil)
+var _ ReservationAssignmentFinalizer = (*AllocationReservationAdapter)(nil)
 
 // ErrAllocationStoreNotFound exposes allocation not-found classification to
 // callers without coupling reservation errors to the concrete store type.
