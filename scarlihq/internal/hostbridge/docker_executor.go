@@ -118,19 +118,27 @@ func validateDockerConfig(cfg DockerExecutorConfig) error {
 		}
 		for _, env := range p.Environment {
 			parts := strings.SplitN(env, "=", 2)
-			if len(parts) != 2 || !envNamePattern.MatchString(parts[0]) || strings.ContainsRune(parts[1], '\x00') {
-				return errors.New("hostbridge: invalid static environment entry")
+			name := strings.ToUpper(parts[0])
+			if len(parts) != 2 || !envNamePattern.MatchString(parts[0]) || strings.ContainsRune(parts[1], '\x00') ||
+				strings.Contains(name, "TOKEN") || strings.Contains(name, "PASSWORD") ||
+				strings.Contains(name, "SECRET") || strings.Contains(name, "API_KEY") {
+				return errors.New("hostbridge: invalid or secret-bearing environment entry")
 			}
 		}
 		for _, mount := range p.Mounts {
+			rel, relErr := filepath.Rel("/var/lib/scarlix/models", mount.Source)
+			targetAllowed := mount.Target == "/models" || strings.HasPrefix(mount.Target, "/models/")
 			if !mount.ReadOnly || !filepath.IsAbs(mount.Source) || !filepath.IsAbs(mount.Target) ||
-				filepath.Clean(mount.Target) != mount.Target || strings.Contains(mount.Target, "/../") ||
-				strings.ContainsRune(mount.Source, '\x00') || strings.ContainsRune(mount.Target, '\x00') {
-				return errors.New("hostbridge: only absolute, read-only, normalized bind mounts are permitted")
+				filepath.Clean(mount.Source) != mount.Source || filepath.Clean(mount.Target) != mount.Target ||
+				relErr != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) ||
+				!targetAllowed || strings.ContainsRune(mount.Source, '\x00') || strings.ContainsRune(mount.Target, '\x00') {
+				return errors.New("hostbridge: mounts must be read-only model paths under /var/lib/scarlix/models mapped under /models")
 			}
 			sourceInfo, sourceErr := os.Lstat(mount.Source)
-			if sourceErr != nil || sourceInfo.Mode()&os.ModeSymlink != 0 || (!sourceInfo.IsDir() && !sourceInfo.Mode().IsRegular()) {
-				return errors.New("hostbridge: bind mount source must exist and must not be a symlink")
+			resolved, resolveErr := filepath.EvalSymlinks(mount.Source)
+			if sourceErr != nil || resolveErr != nil || resolved != mount.Source ||
+				sourceInfo.Mode()&os.ModeSymlink != 0 || (!sourceInfo.IsDir() && !sourceInfo.Mode().IsRegular()) {
+				return errors.New("hostbridge: model mount source must exist and must not traverse symlinks")
 			}
 		}
 		if len(p.AllowedPorts) == 0 || p.HealthPath == "" || !strings.HasPrefix(p.HealthPath, "/") ||
