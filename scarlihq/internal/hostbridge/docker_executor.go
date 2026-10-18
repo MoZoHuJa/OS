@@ -3,6 +3,8 @@ package hostbridge
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"strconv"
 	"time"
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/workload"
@@ -193,7 +196,8 @@ func (e *DockerExecutor) Start(ctx context.Context, req workload.StartRequest) (
 		if existing.Ready { return existing, nil }
 		return workload.StartResult{}, errors.New("hostbridge: allocation resource exists but is not ready")
 	}
-	containerName := "scarlix-wl-" + req.AllocationID
+	sum := sha256.Sum256([]byte(req.AllocationID))
+	containerName := "scarlix-wl-" + hex.EncodeToString(sum[:12])
 	portKey := fmt.Sprintf("%d/tcp", req.Port)
 	createBody := map[string]any{
 		"Image": profile.Image,
@@ -295,17 +299,18 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 	if !ok || inspected.Config.Labels["scarlix.allocation_id"] != allocationID {
 		return workload.StartResult{},false,errors.New("hostbridge: Docker labels do not match configured profile")
 	}
-	port, err := strconv.Atoi(inspected.HostConfig.PortBindings[fmt.Sprintf("%d/tcp",profile.AllowedPorts[0])][0].HostPort)
-	if err != nil || !containsInt(profile.AllowedPorts,port) {
-		// Try all configured profile ports; Docker's inspect keys include the
-		// container port and can differ from the first allowed candidate.
-		port = 0
-		for _, candidate := range profile.AllowedPorts {
-			bindings := inspected.HostConfig.PortBindings[fmt.Sprintf("%d/tcp",candidate)]
-			if len(bindings)>0 {
-				if p, convErr := strconv.Atoi(bindings[0].HostPort); convErr == nil && containsInt(profile.AllowedPorts,p) { port = p; break }
+	port := 0
+	for _, candidate := range profile.AllowedPorts {
+		bindings := inspected.HostConfig.PortBindings[fmt.Sprintf("%d/tcp",candidate)]
+		if len(bindings) == 0 { continue }
+		for _, binding := range bindings {
+			if binding.HostPort == "" { continue }
+			if p, convErr := strconv.Atoi(binding.HostPort); convErr == nil && containsInt(profile.AllowedPorts,p) {
+				port = p
+				break
 			}
 		}
+		if port > 0 { break }
 	}
 	found.Ready = inspected.State.Running && port > 0 && e.healthCheck(ctx,port,profile.HealthPath)
 	return *found,true,nil
