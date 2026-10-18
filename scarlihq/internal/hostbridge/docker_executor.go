@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/workload"
@@ -71,6 +72,18 @@ func LoadDockerExecutorConfig(path string) (DockerExecutorConfig, error) {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0022 != 0 {
 		return cfg, errors.New("hostbridge: config must be a regular non-writable-by-group/other file")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != 0 {
+		return cfg, errors.New("hostbridge: runtime config must be owned by root")
+	}
+	parent, err := os.Lstat(filepath.Dir(path))
+	if err != nil || !parent.IsDir() || parent.Mode()&os.ModeSymlink != 0 || parent.Mode().Perm()&0022 != 0 {
+		return cfg, errors.New("hostbridge: config parent must be a root-controlled directory")
+	}
+	parentStat, ok := parent.Sys().(*syscall.Stat_t)
+	if !ok || parentStat.Uid != 0 {
+		return cfg, errors.New("hostbridge: config parent must be root-owned")
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil || len(raw) > 1<<20 {
@@ -184,6 +197,14 @@ func resourceRuntimeAllowed(id string) bool {
 func NewDockerExecutor(cfg DockerExecutorConfig) (*DockerExecutor, error) {
 	if cfg.DockerSocket != "/var/run/docker.sock" {
 		return nil, errors.New("hostbridge: Docker socket must be exactly /var/run/docker.sock")
+	}
+	info, err := os.Lstat(cfg.DockerSocket)
+	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0060 != 0060 || info.Mode().Perm()&0007 != 0 {
+		return nil, errors.New("hostbridge: Docker socket must be a root-owned, group-accessible Unix socket")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != 0 {
+		return nil, errors.New("hostbridge: Docker socket must be root-owned")
 	}
 	return newDockerExecutor(cfg)
 }
