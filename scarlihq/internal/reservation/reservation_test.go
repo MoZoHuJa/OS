@@ -37,10 +37,10 @@ func newStubInventory() *stubInventoryProvider {
 // stubAllocationValidator implements the extended AllocationValidator.
 // P1-02 (v19.2.9): Includes BeginReservation/EndReservation.
 type stubAllocationValidator struct {
-	mu      sync.Mutex
-	valid   map[string]bool
-	claimed map[string]bool
-	endErr  error
+	mu         sync.Mutex
+	valid      map[string]bool
+	claimed    map[string]bool
+	endErr     error
 	beginCalls int
 }
 
@@ -415,7 +415,6 @@ func TestManager_Reserve_SameAllocationCannotBypassCapacity(t *testing.T) {
 	}
 }
 
-
 // KPK v19.2.10: canonical-equivalent resource IDs must share an idempotency fingerprint.
 func TestManager_Reserve_IdempotencyCanonicalResourceID(t *testing.T) {
 	mgr, _, _ := newTestManager(t)
@@ -441,7 +440,6 @@ func TestManager_Reserve_IdempotencyCanonicalResourceID(t *testing.T) {
 		t.Fatalf("reservation IDs differ: %s vs %s", first.Reservation.ReservationID, second.Reservation.ReservationID)
 	}
 }
-
 
 func TestManager_Reserve_FinalizationFailureKeepsDurableReservation(t *testing.T) {
 	store := newTestStore(t)
@@ -475,7 +473,6 @@ func TestManager_Reserve_FinalizationFailureKeepsDurableReservation(t *testing.T
 		t.Fatalf("durable reservation status = %s, want HELD", got[0].Status)
 	}
 }
-
 
 func TestManager_ReserveBundle_ConflictDoesNotPersistPartialBundle(t *testing.T) {
 	mgr, _, _ := newTestManager(t)
@@ -536,7 +533,6 @@ func TestManager_ReserveBundle_IdempotentReplayDoesNotBeginClaimAgain(t *testing
 		t.Fatalf("idempotent replay re-claimed allocation: BeginReservation calls %d → %d", firstBeginCalls, validator.beginCalls)
 	}
 }
-
 
 func TestManager_RenewBundleLease_ExtendsAllReservationsTogether(t *testing.T) {
 	mgr, clock, _ := newTestManager(t)
