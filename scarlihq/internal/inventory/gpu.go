@@ -144,7 +144,7 @@ func CollectGPUs() []GPU {
 
 	gpus := make([]GPU, 0, len(rows))
 	for _, row := range rows {
-		// Each row must have at least 10 columns; if not, skip with a stderr
+		// Each row must have at least 11 columns; if not, skip with a stderr
 		// note (don't crash the whole collector for one malformed GPU).
 		if len(row) < 11 {
 			fmt.Fprintf(os.Stderr, "inventory: skipping malformed nvidia-smi row (got %d fields, want 11): %v\n", len(row), row)
@@ -180,7 +180,7 @@ func CollectGPUs() []GPU {
 			UUID:           uuid,
 			Index:          idx,
 			Vendor:         "nvidia",
-			Name:           row[1],
+			Name:           row[2],
 			VRAMTotalMB:    vramTotal,
 			VRAMUsedMB:     vramUsed,
 			VRAMFreeMB:     vramFree,
