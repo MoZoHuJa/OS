@@ -6,7 +6,6 @@ package compute
 import (
 	"errors"
 
-	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/hostbridge"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/workload"
 )
