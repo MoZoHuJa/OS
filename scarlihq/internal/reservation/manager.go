@@ -324,12 +324,12 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 			LastRenewedAt:       now,
 			InventoryGeneration: snap2.Generation,
 			Status:              StatusHeld,
-			CreatedAt:            now,
-			UpdatedAt:            now,
-			IdempotencyKey:       idempotencyKey,
-			RequestFingerprint:   fingerprint,
-			BundleSize:           len(normalized),
-			Revision:             0,
+			CreatedAt:           now,
+			UpdatedAt:           now,
+			IdempotencyKey:      idempotencyKey,
+			RequestFingerprint:  fingerprint,
+			BundleSize:          len(normalized),
+			Revision:            0,
 		}
 		created = append(created, record)
 		allReservations = append(allReservations, record)
@@ -458,7 +458,6 @@ func sortReservations(records []*Reservation) {
 		return records[i].ResourceID < records[j].ResourceID
 	})
 }
-
 
 type allocationOwnershipValidator interface {
 	ValidateAllocationOwner(allocationID, principal string) error
@@ -607,7 +606,6 @@ func (m *Manager) resolveReconciler(token string) (Identity, error) {
 	}
 	return identity, nil
 }
-
 
 type ReaperReport func(error)
 
