@@ -223,6 +223,9 @@ func (e *DockerExecutor) Start(ctx context.Context, req workload.StartRequest) (
 		if err != nil {
 			return workload.StartResult{}, err
 		}
+		if existing.RuntimeID != req.RuntimeID || existing.ModelID != req.ModelID || existing.GPUID != req.GPUID || existing.Port != req.Port {
+			return workload.StartResult{}, errors.New("hostbridge: existing allocation resource conflicts with requested assignment")
+		}
 		if existing.Ready {
 			return existing, nil
 		}
