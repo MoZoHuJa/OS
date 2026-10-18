@@ -293,6 +293,9 @@ jobs:
           else
             echo "(no Go test files yet — OK)"
           fi
+      - name: Phase 3 race tests
+        working-directory: scarlihq
+        run: go test -race ./internal/allocation ./internal/inventory ./internal/reservation
 
   # v17.9.8 P2: Real ScarliHQ Docker build (catches Dockerfile + go.mod issues)
   # v17.9.9 P2: Added runtime smoke test (container starts + /api/health responds)
