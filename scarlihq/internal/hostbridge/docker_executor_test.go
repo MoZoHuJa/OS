@@ -34,6 +34,11 @@ func TestDockerConfigRequiresDigestPinnedImagesAndAllowlistedRuntime(t *testing.
 	if err := validateDockerConfig(cfg); err == nil {
 		t.Fatal("expected unsupported runtime to be rejected")
 	}
+	cfg = validDockerConfigForTest()
+	cfg.Profiles[0].Network = "host"
+	if err := validateDockerConfig(cfg); err == nil {
+		t.Fatal("expected host network mode to be rejected")
+	}
 }
 
 func TestDockerConfigRequiresFixedPortAndGPUAllowlist(t *testing.T) {
