@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	resourcecontract "github.com/MoZoHuJa/OS/scarlihq/internal/contract"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/workload"
 )
 
@@ -64,6 +65,13 @@ func NewLedger(path string) (*Ledger, error) {
 
 func (l *Ledger) withLock(fn func(*ledgerFile) error) error {
 	lockPath := l.path + ".lock"
+	if info, statErr := os.Lstat(lockPath); statErr == nil {
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("hostbridge: ledger lock must be a regular file")
+		}
+	} else if !os.IsNotExist(statErr) {
+		return errors.New("hostbridge: cannot inspect ledger lock")
+	}
 	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return errors.New("hostbridge: cannot open ledger lock")
@@ -132,8 +140,9 @@ func (l *Ledger) withLock(fn func(*ledgerFile) error) error {
 }
 
 func (l *Ledger) Create(req workload.StartRequest) error {
-	if !ledgerIDPattern.MatchString(req.AllocationID) {
-		return errors.New("hostbridge: invalid allocation id for ledger")
+	if !ledgerIDPattern.MatchString(req.AllocationID) || !resourcecontract.IsSupportedRuntime(req.RuntimeID) ||
+		!modelPattern.MatchString(req.ModelID) || !validGPU(req.GPUID) || req.Port < 1 || req.Port > 65535 {
+		return errors.New("hostbridge: invalid allocation assignment for ledger")
 	}
 	entry := LedgerEntry{
 		AllocationID: req.AllocationID,
