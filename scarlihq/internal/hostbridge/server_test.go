@@ -104,10 +104,15 @@ func TestStartRejectsWrongMethodAndContentType(t *testing.T) {
 
 func TestStopRejectsSharedWorkloadBeforeExecutor(t *testing.T) {
 	executor := &fakeExecutor{stopResult: workload.StopResult{Verified: true}}
-	server, err := NewServer(executor); if err != nil { t.Fatal(err) }
+	server, err := NewServer(executor)
+	if err != nil {
+		t.Fatal(err)
+	}
 	body := `{"allocation_id":"alloc-1","runtime_id":"sglang","model_id":"model","ref":"container:shared","owned":false}`
 	rec := request(t, server, http.MethodPost, "/v1/workloads/stop", "application/json", body)
-	if rec.Code != http.StatusBadRequest { t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String()) }
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
 	if executor.stopCalls != 0 {
 		t.Fatal("shared workload reached executor")
 	}
@@ -115,7 +120,9 @@ func TestStopRejectsSharedWorkloadBeforeExecutor(t *testing.T) {
 
 func TestStopRequiresVerifiedCleanup(t *testing.T) {
 	executor := &fakeExecutor{stopErr: errors.New("private detail")}
-	server, err := NewServer(executor); if err != nil { t.Fatal(err) }
+	server, err := NewServer(executor); if err != nil {
+		t.Fatal(err)
+	}
 	body := `{"allocation_id":"alloc-1","runtime_id":"sglang","model_id":"model","ref":"container:owned","owned":true}`
 	rec := request(t, server, http.MethodPost, "/v1/workloads/stop", "application/json", body)
 	if rec.Code != http.StatusBadGateway {
@@ -140,7 +147,10 @@ func TestListenUnixUsesOwnerOnlyPermissionsAndRefusesExistingPath(t *testing.T) 
 	listener, err := ListenUnix(path)
 	if err != nil { t.Fatal(err) }
 	defer listener.Close()
-	info, err := os.Stat(path); if err != nil { t.Fatal(err) }
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("socket mode=%o, want 0600", info.Mode().Perm())
 	}
