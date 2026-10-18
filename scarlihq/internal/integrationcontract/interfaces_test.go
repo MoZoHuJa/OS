@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	resourcecontract "github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
 	resourcecontract "github.com/MoZoHuJa/OS/scarlihq/internal/contract"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
 )
@@ -123,5 +124,32 @@ func TestInventorySnapshotKeepsStableArraysAndHidesGPUUUID(t *testing.T) {
 	}
 	if _, ok := decoded["gpus"]; !ok {
 		t.Fatalf("inventory snapshot missing gpus key: %s", data)
+	}
+}
+
+func TestAllocationSchemaV1ConsumesResourceContractVersion(t *testing.T) {
+	record := allocation.NewAllocation(
+		"allocation-integration-test",
+		string(resourcecontract.VersionV1),
+		resourcecontract.TaskTypeCoding,
+		resourcecontract.PriorityInteractive,
+		"agent.integration-test",
+	)
+	if record.ContractVersion != string(resourcecontract.VersionV1) {
+		t.Fatalf("allocation contract version = %q, want %q", record.ContractVersion, resourcecontract.VersionV1)
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("marshal Allocation v1: %v", err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("decode Allocation v1: %v", err)
+	}
+	if got := string(bytes.TrimSpace(payload["schema_version"])); got != `"v1"` {
+		t.Errorf("allocation schema_version = %s, want \"v1\"", got)
+	}
+	if got := string(bytes.TrimSpace(payload["history"])); got != "[]" {
+		t.Errorf("allocation history = %s, want []", got)
 	}
 }
