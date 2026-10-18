@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
 )
 
 func newPlannedAllocation(t *testing.T, store *allocation.Store, id string) {
