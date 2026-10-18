@@ -867,6 +867,8 @@ else
     elif [ "$binfile" = "scarlix-bridge-reader" ]; then
       # v18.7.5 P0: was warn (shell fallback existed) — now crit (no fallback).
       crit "scarlix-bridge-reader not built — required for secure host-bridge operation"
+    elif [ "$binfile" = "scarlix-host-workload-bridge" ]; then
+      warn "scarlix-host-workload-bridge not built — optional P5.1 service remains disabled"
     else
       # v19.1.11 P1-8: Non-critical Go binaries (scarlix-gpu, -inventory, -contract,
       # -monitor, -scheduler) may not exist if Go/Docker build failed. Was: crit (abort
