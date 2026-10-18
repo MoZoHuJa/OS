@@ -248,4 +248,61 @@ func TestStopNeverStopsSharedWorkload(t *testing.T) {
 	if driver.lastStop.Owned {
 		t.Fatal("manager marked shared workload as allocation-owned")
 	}
+	if driver.stopCalls != 0 {
+		t.Fatalf("manager called host driver %d times for shared workload; want 0", driver.stopCalls)
+	}
+}
+
+
+func TestStartFailsClosedWhenDriverDoesNotConfirmReadiness(t *testing.T) {
+	cases := []struct {
+		name   string
+		result StartResult
+	}{
+		{name: "not ready", result: StartResult{Ref: "container:uncertain", Ready: false, Owned: true}},
+		{name: "missing reference", result: StartResult{Ready: true, Owned: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store, id := newReservedAllocation(t, allocation.StateReserved)
+			driver := &fakeDriver{startResult: tc.result}
+			manager, err := NewManager(store, driver)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = manager.Start(context.Background(), id, "agent.test")
+			if !errors.Is(err, ErrReconciliationRequired) {
+				t.Fatalf("Start() error = %v, want reconciliation required", err)
+			}
+			record, err := store.Get(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if record.State != allocation.StateCleanupRequired || record.CleanupVerified {
+				t.Fatalf("uncertain readiness was not failed closed: %+v", record)
+			}
+		})
+	}
+}
+
+func TestStartRejectsUnsupportedRuntimeBeforeDriverCall(t *testing.T) {
+	store, id := newReservedAllocation(t, allocation.StateReserved)
+	if err := store.Update(id, func(record *allocation.Allocation) error {
+		record.AssignedRuntime = "arbitrary-runtime"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	driver := &fakeDriver{startResult: StartResult{Ref: "container:should-not-exist", Ready: true, Owned: true}}
+	manager, err := NewManager(store, driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.Start(context.Background(), id, "agent.test")
+	if !errors.Is(err, ErrInvalidAllocation) {
+		t.Fatalf("Start() error = %v, want invalid allocation", err)
+	}
+	if driver.startCalls != 0 {
+		t.Fatalf("driver called %d times for unsupported runtime", driver.startCalls)
+	}
 }
