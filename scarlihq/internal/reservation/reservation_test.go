@@ -493,7 +493,7 @@ func TestManager_ReserveBundle_ConflictDoesNotPersistPartialBundle(t *testing.T)
 	if err == nil {
 		t.Fatal("expected runtime capacity conflict")
 	}
-	all, loadErr := mgr.store.Load()
+	all, _, loadErr := mgr.store.Load()
 	if loadErr != nil {
 		t.Fatalf("Load: %v", loadErr)
 	}
