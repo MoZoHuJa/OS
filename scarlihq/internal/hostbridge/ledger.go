@@ -53,9 +53,17 @@ func NewLedger(path string) (*Ledger, error) {
 	if err != nil || !parent.IsDir() || parent.Mode()&os.ModeSymlink != 0 || parent.Mode().Perm()&0077 != 0 {
 		return nil, errors.New("hostbridge: ledger parent must be an owner-only real directory")
 	}
+	parentStat, ok := parent.Sys().(*syscall.Stat_t)
+	if !ok || parentStat.Uid != uint32(os.Geteuid()) {
+		return nil, errors.New("hostbridge: ledger parent must be owned by the service identity")
+	}
 	if info, err := os.Lstat(path); err == nil {
 		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0600 {
 			return nil, errors.New("hostbridge: ledger file must be a regular 0600 file")
+		}
+		fileStat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || fileStat.Uid != uint32(os.Geteuid()) {
+			return nil, errors.New("hostbridge: ledger file must be owned by the service identity")
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, errors.New("hostbridge: cannot inspect ledger path")
