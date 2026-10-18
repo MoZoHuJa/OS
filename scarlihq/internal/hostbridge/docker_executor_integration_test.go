@@ -122,7 +122,7 @@ func TestDockerExecutorUsesTypedCreateAndVerifiedStop(t *testing.T) {
 			Network:      "scarlix-compute",
 		}},
 	}
-	executor, err := NewDockerExecutor(cfg)
+	executor, err := newDockerExecutor(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
