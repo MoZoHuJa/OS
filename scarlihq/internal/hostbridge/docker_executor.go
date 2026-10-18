@@ -220,8 +220,12 @@ func (e *DockerExecutor) Start(ctx context.Context, req workload.StartRequest) (
 		return workload.StartResult{}, errors.New("hostbridge: profile does not permit GPU assignment")
 	}
 	if existing, found, err := e.Find(ctx, req.AllocationID); err != nil || found {
-		if err != nil { return workload.StartResult{}, err }
-		if existing.Ready { return existing, nil }
+		if err != nil {
+			return workload.StartResult{}, err
+		}
+		if existing.Ready {
+			return existing, nil
+		}
 		return workload.StartResult{}, errors.New("hostbridge: allocation resource exists but is not ready")
 	}
 	containerName := dockerContainerName(req.AllocationID)
@@ -267,18 +271,22 @@ func (e *DockerExecutor) Start(ctx context.Context, req workload.StartRequest) (
 		// Name conflicts are reconciled by the allocation label, never by deleting
 		// a container with a conflicting name.
 		found, ok, findErr := e.Find(ctx, req.AllocationID)
-		if findErr == nil && ok { return found, nil }
+		if findErr == nil && ok {
+			return found, nil
+		}
 		return workload.StartResult{}, errors.New("hostbridge: Docker container name conflict requires reconciliation")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || json.Unmarshal(data, &created) != nil || !containerIDPattern.MatchString(created.ID) {
 		return workload.StartResult{}, errors.New("hostbridge: Docker create failed")
 	}
 	resp, _, err = e.do(ctx, http.MethodPost, "/containers/"+created.ID+"/start", nil)
-	if err != nil { return workload.StartResult{Ref:created.ID, Owned:true}, err }
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotModified {
-		return workload.StartResult{Ref:created.ID, Owned:true}, errors.New("hostbridge: Docker start failed")
+	if err != nil {
+		return workload.StartResult{Ref: created.ID, Owned: true, RuntimeID: req.RuntimeID, ModelID: req.ModelID, GPUID: req.GPUID, Port: req.Port}, err
 	}
-	result := workload.StartResult{Ref:created.ID, Owned:true}
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotModified {
+		return workload.StartResult{Ref: created.ID, Owned: true, RuntimeID: req.RuntimeID, ModelID: req.ModelID, GPUID: req.GPUID, Port: req.Port}, errors.New("hostbridge: Docker start failed")
+	}
+	result := workload.StartResult{Ref: created.ID, Owned: true, RuntimeID: req.RuntimeID, ModelID: req.ModelID, GPUID: req.GPUID, Port: req.Port}
 	if err := e.waitReady(ctx, req.Port, profile.HealthPath); err != nil {
 		return result, err
 	}
@@ -292,26 +300,43 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 	}
 	filters, _ := json.Marshal(map[string][]string{"label": {"scarlix.allocation_id=" + allocationID, "scarlix.managed=true"}})
 	query := url.Values{}
-	query.Set("all","1")
-	query.Set("filters",string(filters))
-	resp, data, err := e.do(ctx,http.MethodGet,"/containers/json?"+query.Encode(),nil)
-	if err != nil { return workload.StartResult{},false,err }
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return workload.StartResult{},false,errors.New("hostbridge: Docker lookup failed") }
+	query.Set("all", "1")
+	query.Set("filters", string(filters))
+	resp, data, err := e.do(ctx, http.MethodGet, "/containers/json?"+query.Encode(), nil)
+	if err != nil {
+		return workload.StartResult{}, false, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return workload.StartResult{}, false, errors.New("hostbridge: Docker lookup failed")
+	}
 	var containers []struct {
 		ID     string            `json:"Id"`
 		State  string            `json:"State"`
 		Labels map[string]string `json:"Labels"`
 	}
-	if err := json.Unmarshal(data,&containers); err != nil { return workload.StartResult{},false,errors.New("hostbridge: invalid Docker lookup response") }
+	if err := json.Unmarshal(data, &containers); err != nil {
+		return workload.StartResult{}, false, errors.New("hostbridge: invalid Docker lookup response")
+	}
 	var found *workload.StartResult
 	for _, c := range containers {
-		if c.Labels["scarlix.allocation_id"] != allocationID || c.Labels["scarlix.managed"] != "true" { continue }
-		if !containerIDPattern.MatchString(c.ID) || c.Labels["scarlix.owned"] != "true" { return workload.StartResult{},false,errors.New("hostbridge: Docker resource ownership metadata invalid") }
-		if found != nil { return workload.StartResult{},false,errors.New("hostbridge: multiple Docker resources exist for allocation; manual reconciliation required") }
-		result := workload.StartResult{Ref:c.ID,Ready:false,Owned:true}
+		if c.Labels["scarlix.allocation_id"] != allocationID || c.Labels["scarlix.managed"] != "true" {
+			continue
+		}
+		if !containerIDPattern.MatchString(c.ID) || c.Labels["scarlix.owned"] != "true" {
+			return workload.StartResult{}, false, errors.New("hostbridge: Docker resource ownership metadata invalid")
+		}
+		if found != nil {
+			return workload.StartResult{}, false, errors.New("hostbridge: multiple Docker resources exist for allocation; manual reconciliation required")
+		}
+		result := workload.StartResult{Ref: c.ID, Ready: false, Owned: true, RuntimeID: c.Labels["scarlix.runtime_id"], ModelID: c.Labels["scarlix.model_id"], GPUID: c.Labels["scarlix.gpu_id"]}
+		if port, err := strconv.Atoi(c.Labels["scarlix.port"]); err == nil {
+			result.Port = port
+		}
 		found = &result
 	}
-	if found == nil { return workload.StartResult{},false,nil }
+	if found == nil {
+		return workload.StartResult{}, false, nil
+	}
 	// Determine the readiness path/port from the resource labels and configured profile.
 	runtimeID, modelID := "", ""
 	for _, p := range e.profiles {
@@ -319,9 +344,9 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 		// the exact container in the next request.
 		_ = p
 	}
-	inspectResp, inspectData, err := e.do(ctx,http.MethodGet,"/containers/"+found.Ref+"/json",nil)
+	inspectResp, inspectData, err := e.do(ctx, http.MethodGet, "/containers/"+found.Ref+"/json", nil)
 	if err != nil || inspectResp.StatusCode < 200 || inspectResp.StatusCode >= 300 {
-		return workload.StartResult{},false,errors.New("hostbridge: Docker inspect failed")
+		return workload.StartResult{}, false, errors.New("hostbridge: Docker inspect failed")
 	}
 	var inspected struct {
 		Name string `json:"Name"`
@@ -354,7 +379,7 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 		inspected.Config.Image != profile.Image || inspected.Name != "/"+dockerContainerName(allocationID) ||
 		inspected.Config.Labels["scarlix.managed"] != "true" ||
 		inspected.Config.Labels["scarlix.owned"] != "true" {
-		return workload.StartResult{},false,errors.New("hostbridge: Docker resource identity does not match configured allocation")
+		return workload.StartResult{}, false, errors.New("hostbridge: Docker resource identity does not match configured allocation")
 	}
 	port := 0
 	for _, candidate := range profile.AllowedPorts {
@@ -374,33 +399,45 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 				break
 			}
 		}
-		if port > 0 { break }
+		if port > 0 {
+			break
+		}
 	}
-	found.Ready = inspected.State.Running && port > 0 && e.healthCheck(ctx,port,profile.HealthPath)
-	return *found,true,nil
+	found.RuntimeID = runtimeID
+	found.ModelID = modelID
+	found.GPUID = observedGPU
+	found.Port = observedPort
+	found.Ready = inspected.State.Running && port > 0 && e.healthCheck(ctx, port, profile.HealthPath)
+	return *found, true, nil
 }
 
 func (e *DockerExecutor) Stop(ctx context.Context, req workload.StopRequest) (workload.StopResult, error) {
 	if !req.Owned || !containerIDPattern.MatchString(req.Ref) {
 		return workload.StopResult{}, errors.New("hostbridge: invalid owned container reference")
 	}
-	observed, found, err := e.Find(ctx,req.AllocationID)
-	if err != nil { return workload.StopResult{},err }
-	if !found { return workload.StopResult{Verified:true},nil }
+	observed, found, err := e.Find(ctx, req.AllocationID)
+	if err != nil {
+		return workload.StopResult{}, err
+	}
+	if !found {
+		return workload.StopResult{Verified: true}, nil
+	}
 	if observed.Ref != req.Ref || !observed.Owned {
 		return workload.StopResult{}, errors.New("hostbridge: container reference does not match allocation")
 	}
-	stopResp,_,err := e.do(ctx,http.MethodPost,"/containers/"+req.Ref+"/stop?t=10",nil)
-	if err != nil { return workload.StopResult{},err }
+	stopResp, _, err := e.do(ctx, http.MethodPost, "/containers/"+req.Ref+"/stop?t=10", nil)
+	if err != nil {
+		return workload.StopResult{}, err
+	}
 	if stopResp.StatusCode != http.StatusNoContent && stopResp.StatusCode != http.StatusNotModified && stopResp.StatusCode != http.StatusNotFound {
-		return workload.StopResult{},errors.New("hostbridge: Docker stop failed")
+		return workload.StopResult{}, errors.New("hostbridge: Docker stop failed")
 	}
 	deleteResp, _, err := e.do(ctx, http.MethodDelete, "/containers/"+req.Ref+"?force=0&v=0", nil)
 	if err != nil {
 		return workload.StopResult{}, err
 	}
 	if deleteResp.StatusCode != http.StatusNoContent && deleteResp.StatusCode != http.StatusNotFound {
-		return workload.StopResult{},errors.New("hostbridge: Docker remove failed")
+		return workload.StopResult{}, errors.New("hostbridge: Docker remove failed")
 	}
 	_, stillFound, err := e.Find(ctx, req.AllocationID)
 	if err != nil || stillFound {
@@ -419,7 +456,7 @@ func profileShmSize(profile RuntimeProfile) int64 {
 func (e *DockerExecutor) dockerMounts(mounts []MountSpec) []map[string]any {
 	result := make([]map[string]any, 0, len(mounts))
 	for _, mount := range mounts {
-		result = append(result, map[string]any{"Type":"bind", "Source":mount.Source, "Target":mount.Target, "ReadOnly":true})
+		result = append(result, map[string]any{"Type": "bind", "Source": mount.Source, "Target": mount.Target, "ReadOnly": true})
 	}
 	return result
 }
