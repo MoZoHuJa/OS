@@ -20,6 +20,30 @@ type AllocationStore interface {
 // allocation state machine. Allocation transitions remain validated by the
 // frozen allocation.Transition table and are persisted under the allocation
 // store's own cross-process lock.
+type allocationStateLister interface {
+	ListByState(state allocation.State) ([]*allocation.Allocation, error)
+}
+
+// ListPendingReservationAllocations finds claims interrupted between
+// PLANNED → RESERVING and durable reservation commit/finalization.
+func (a *AllocationReservationAdapter) ListPendingReservationAllocations() ([]string, error) {
+	lister, ok := a.store.(allocationStateLister)
+	if !ok {
+		return nil, fmt.Errorf("reservation: allocation store does not support state listing")
+	}
+	records, err := lister.ListByState(allocation.StateReserving)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		if record != nil && record.AllocationID != "" {
+			ids = append(ids, record.AllocationID)
+		}
+	}
+	return ids, nil
+}
+
 type ReservationAssignmentFinalizer interface {
 	FinalizeReservation(allocationID string, reservations []*Reservation) error
 }
