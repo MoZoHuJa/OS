@@ -3,7 +3,6 @@ package integrationcontract
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"testing"
 
 	resourcecontract "github.com/MoZoHuJa/OS/scarlihq/internal/contract"
@@ -123,6 +122,6 @@ func TestInventorySnapshotKeepsStableArraysAndHidesGPUUUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := decoded["gpus"]; !ok {
-		t.Fatal(fmt.Sprintf("inventory snapshot missing gpus key: %s", data))
+		t.Fatalf("inventory snapshot missing gpus key: %s", data)
 	}
 }
