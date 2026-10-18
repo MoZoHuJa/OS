@@ -54,6 +54,10 @@ func (e *IdempotentExecutor) Start(ctx context.Context, req workload.StartReques
 			return workload.StartResult{}, errors.New("hostbridge: runtime reconciliation failed")
 		}
 		if found {
+			if observed.RuntimeID != req.RuntimeID || observed.ModelID != req.ModelID || observed.GPUID != req.GPUID || observed.Port != req.Port {
+				_ = e.ledger.SetState(req.AllocationID, "RECONCILE_REQUIRED", observed.Ref, observed.Owned)
+				return workload.StartResult{}, errors.New("hostbridge: observed workload assignment conflicts with allocation")
+			}
 			if !observed.Ready || observed.Ref == "" {
 				_ = e.ledger.SetState(req.AllocationID, "RECONCILE_REQUIRED", observed.Ref, observed.Owned)
 				return workload.StartResult{}, errors.New("hostbridge: existing workload is not ready")
@@ -80,7 +84,7 @@ func (e *IdempotentExecutor) Start(ctx context.Context, req workload.StartReques
 	result, startErr := e.inner.Start(ctx, req)
 	if startErr != nil || !result.Ready || result.Ref == "" {
 		observed, found, findErr := e.inner.Find(ctx, req.AllocationID)
-		if findErr == nil && found && observed.Ready && observed.Ref != "" {
+		if findErr == nil && found && observed.Ready && observed.Ref != "" && observed.RuntimeID == req.RuntimeID && observed.ModelID == req.ModelID && observed.GPUID == req.GPUID && observed.Port == req.Port {
 			if persistErr := e.ledger.SetState(req.AllocationID, "RUNNING", observed.Ref, observed.Owned); persistErr != nil {
 				return workload.StartResult{}, errors.New("hostbridge: runtime started but durable state update failed")
 			}
@@ -114,7 +118,7 @@ func (e *IdempotentExecutor) Stop(ctx context.Context, req workload.StopRequest)
 		_ = e.ledger.SetState(req.AllocationID, "RECONCILE_REQUIRED", entry.Ref, entry.Owned)
 		return workload.StopResult{}, errors.New("hostbridge: cannot reconcile workload before stop")
 	}
-	if found && observed.Ref != entry.Ref {
+	if found && (observed.Ref != entry.Ref || observed.RuntimeID != entry.RuntimeID || observed.ModelID != entry.ModelID || observed.GPUID != entry.GPUID || observed.Port != entry.Port) {
 		return workload.StopResult{}, errors.New("hostbridge: runtime reference does not match ownership record")
 	}
 	if !found {
@@ -166,9 +170,9 @@ func (e *IdempotentExecutor) ReconcileOne(ctx context.Context, allocationID stri
 		}
 		return nil
 	}
-	if !observed.Ready || observed.Ref == "" {
+	if !observed.Ready || observed.Ref == "" || observed.RuntimeID != entry.RuntimeID || observed.ModelID != entry.ModelID || observed.GPUID != entry.GPUID || observed.Port != entry.Port {
 		_ = e.ledger.SetState(allocationID, "RECONCILE_REQUIRED", observed.Ref, observed.Owned)
-		return errors.New("hostbridge: runtime resource exists but readiness is not confirmed")
+		return errors.New("hostbridge: runtime resource readiness or assignment is not confirmed")
 	}
 	return e.ledger.SetState(allocationID, "RUNNING", observed.Ref, observed.Owned)
 }
