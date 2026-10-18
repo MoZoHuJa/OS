@@ -41,6 +41,7 @@ type RuntimeProfile struct {
 	AllowedPorts []int       `json:"allowed_ports"`
 	HealthPath   string      `json:"health_path"`
 	Network      string      `json:"network"`
+	ShmSizeBytes int64       `json:"shm_size_bytes,omitempty"`
 }
 
 type DockerExecutorConfig struct {
@@ -143,7 +144,8 @@ func validateDockerConfig(cfg DockerExecutorConfig) error {
 		}
 		if len(p.AllowedPorts) == 0 || p.HealthPath == "" || !strings.HasPrefix(p.HealthPath, "/") ||
 			strings.Contains(p.HealthPath, "?") || strings.Contains(p.HealthPath, "#") ||
-			p.Network != "scarlix-compute" || !networkPattern.MatchString(p.Network) {
+			p.Network != "scarlix-compute" || !networkPattern.MatchString(p.Network) ||
+			p.ShmSizeBytes < 0 || p.ShmSizeBytes > 16*1024*1024*1024 {
 			return errors.New("hostbridge: profile requires allowed ports, fixed health path and network")
 		}
 		portSeen := map[int]bool{}
@@ -241,6 +243,7 @@ func (e *DockerExecutor) Start(ctx context.Context, req workload.StartRequest) (
 		"HostConfig": map[string]any{
 			"AutoRemove":     false,
 			"ReadonlyRootfs": true,
+			"ShmSize":        profileShmSize(profile),
 			"CapDrop":        []string{"ALL"},
 			"SecurityOpt":    []string{"no-new-privileges:true"},
 			"NetworkMode":    profile.Network,
@@ -404,6 +407,13 @@ func (e *DockerExecutor) Stop(ctx context.Context, req workload.StopRequest) (wo
 		return workload.StopResult{}, errors.New("hostbridge: Docker cleanup could not be verified")
 	}
 	return workload.StopResult{Verified: true}, nil
+}
+
+func profileShmSize(profile RuntimeProfile) int64 {
+	if profile.ShmSizeBytes == 0 {
+		return 1 << 30
+	}
+	return profile.ShmSizeBytes
 }
 
 func (e *DockerExecutor) dockerMounts(mounts []MountSpec) []map[string]any {
