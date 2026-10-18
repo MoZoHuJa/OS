@@ -200,13 +200,14 @@ func TestNvidiaSmiQuery_HandlesMissingBinary(t *testing.T) {
 // --- JSON round-trip ------------------------------------------------------
 
 func TestGPU_JSONRoundTrip(t *testing.T) {
-	// Populate ALL 14 fields of the GPU struct with realistic v19 values
+	// Populate all required GPU fields plus the optional stable UUID with realistic v19 values
 	// (matching the data-contract example in docs/SCARLIX_DATA_CONTRACTS.md §2).
 	// Then marshal + unmarshal + spot-check JSON field names match the
 	// frozen contract exactly. If a future change renames a tag, this test
 	// fails loudly (stability contract enforcement).
 	src := GPU{
 		ID:             "gpu.nvidia.0",
+			UUID:           "GPU-12345678-abcd-1234-abcd-123456789abc",
 		Index:          0,
 		Vendor:         "nvidia",
 		Name:           "RTX 5060 Ti",
@@ -231,6 +232,7 @@ func TestGPU_JSONRoundTrip(t *testing.T) {
 	// Spot-check frozen JSON field names from the data contract.
 	for _, want := range []string{
 		`"id":"gpu.nvidia.0"`,
+		`"uuid":"GPU-12345678-abcd-1234-abcd-123456789abc"`,
 		`"index":0`,
 		`"vram_total_mb":16384`,
 		`"compute_cap":"12.0"`,
