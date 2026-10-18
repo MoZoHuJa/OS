@@ -68,8 +68,8 @@ func (c *Client) Stop(ctx context.Context, request workload.StopRequest) (worklo
 	}
 	payload := stopPayload{
 		AllocationID: request.AllocationID,
-		RuntimeID: request.RuntimeID,
-		ModelID: request.ModelID,
+		RuntimeID:    request.RuntimeID,
+		ModelID:      request.ModelID,
 		Ref:          request.Ref,
 		Owned:        request.Owned,
 	}
