@@ -9,13 +9,13 @@ import (
 func validDockerConfigForTest() DockerExecutorConfig {
 	return DockerExecutorConfig{
 		DockerSocket: "/var/run/docker.sock",
-		GPUDevices: map[string]string{"gpu.nvidia.0":"GPU-0123456789abcdef0123456789abcdef"},
+		GPUDevices:   map[string]string{"gpu.nvidia.0": "GPU-0123456789abcdef0123456789abcdef"},
 		Profiles: []RuntimeProfile{{
-			RuntimeID:"sglang", ModelID:"qwen3-14b-awq",
-			Image:"registry.example.invalid/scarlix/sglang@sha256:"+strings.Repeat("a",64),
-			Command:[]string{"python","-m","sglang.launch_server","--model-path","/models/qwen3-14b-awq","--host","0.0.0.0","--port","30000"},
-			AllowedGPUs:[]string{"gpu.nvidia.0"}, AllowedPorts:[]int{30000},
-			HealthPath:"/health", Network:"scarlix-compute",
+			RuntimeID: "sglang", ModelID: "qwen3-14b-awq",
+			Image: "registry.example.invalid/scarlix/sglang@sha256:" + strings.Repeat("a", 64),
+			Command: []string{"python", "-m", "sglang.launch_server", "--model-path", "/models/qwen3-14b-awq", "--host", "0.0.0.0", "--port", "30000"},
+			AllowedGPUs: []string{"gpu.nvidia.0"}, AllowedPorts: []int{30000},
+			HealthPath: "/health", Network: "scarlix-compute",
 		}},
 	}
 }
@@ -23,7 +23,7 @@ func validDockerConfigForTest() DockerExecutorConfig {
 func TestDockerConfigRequiresDigestPinnedImagesAndAllowlistedRuntime(t *testing.T) {
 	cfg := validDockerConfigForTest()
 	if err := validateDockerConfig(cfg); err != nil {
-		t.Fatalf("valid operator config rejected: %v",err)
+		t.Fatalf("valid operator config rejected: %v", err)
 	}
 	cfg.Profiles[0].Image = "registry.example.invalid/scarlix/sglang:latest"
 	if err := validateDockerConfig(cfg); err == nil {
@@ -56,19 +56,19 @@ func TestDockerConfigRequiresFixedPortAndGPUAllowlist(t *testing.T) {
 
 func TestDockerConfigRejectsWritableAndUnnormalizedMounts(t *testing.T) {
 	cfg := validDockerConfigForTest()
-	cfg.Profiles[0].Mounts = []MountSpec{{Source:filepath.Clean("/var/lib/scarlix/models/qwen"),Target:"/models",ReadOnly:false}}
+	cfg.Profiles[0].Mounts = []MountSpec{{Source: filepath.Clean("/var/lib/scarlix/models/qwen"), Target: "/models", ReadOnly: false}}
 	if err := validateDockerConfig(cfg); err == nil {
 		t.Fatal("expected writable host mount to be rejected")
 	}
-	cfg.Profiles[0].Mounts = []MountSpec{{Source:"relative-model-path",Target:"/models",ReadOnly:true}}
+	cfg.Profiles[0].Mounts = []MountSpec{{Source: "relative-model-path", Target: "/models", ReadOnly: true}}
 	if err := validateDockerConfig(cfg); err == nil {
 		t.Fatal("expected relative mount source to be rejected")
 	}
 }
 
 func TestDockerMountsAreAlwaysReadOnly(t *testing.T) {
-	mounts := (&DockerExecutor{}).dockerMounts([]MountSpec{{Source:"/var/lib/scarlix/models/qwen",Target:"/models",ReadOnly:true}})
-	if len(mounts)!=1 || mounts[0]["ReadOnly"] != true || mounts[0]["Type"] != "bind" {
-		t.Fatalf("unexpected Docker mount request: %#v",mounts)
+	mounts := (&DockerExecutor{}).dockerMounts([]MountSpec{{Source: "/var/lib/scarlix/models/qwen", Target: "/models", ReadOnly: true}})
+	if len(mounts) != 1 || mounts[0]["ReadOnly"] != true || mounts[0]["Type"] != "bind" {
+		t.Fatalf("unexpected Docker mount request: %#v", mounts)
 	}
 }
