@@ -15,7 +15,7 @@ func validDockerConfigForTest() DockerExecutorConfig {
 			Image:       "registry.example.invalid/scarlix/sglang@sha256:" + strings.Repeat("a", 64),
 			Command:     []string{"python", "-m", "sglang.launch_server", "--model-path", "/models/qwen3-14b-awq", "--host", "0.0.0.0", "--port", "30000"},
 			AllowedGPUs: []string{"gpu.nvidia.0"}, AllowedPorts: []int{30000},
-			HealthPath: "/health", Network: "scarlix-compute",
+			HealthPath: "/health", Network: "scarlix-compute", MemoryBytes: 24 * 1024 * 1024 * 1024, NanoCPUs: 4_000_000_000, PidsLimit: 2048,
 		}},
 	}
 }
