@@ -15,6 +15,7 @@ Make component ownership, dependencies, and integration invariants explicit befo
 - `scarlihq/internal/integrationcontract/contract.go`: strict JSON decoding and structural validation.
 - `scarlihq/internal/integrationcontract/contract_test.go`: regression tests for malformed dependencies, unknown contracts, duplicate components, and cycles.
 - This report: scope, boundaries, and acceptance criteria.
+- `scarlihq/internal/integrationcontract/interfaces_test.go`: cross-package checks for runtime allowlist parity, Resource Contract v1 JSON stability, inventory schema stability, GPU UUID privacy, and Allocation v1 compatibility.
 
 ## Component ownership decisions
 
@@ -44,6 +45,17 @@ The JSON registry is the canonical machine-readable source for this ownership ma
 8. **Memory isolation:** ScarliNote owns user-scoped memory/context policy; ScarliHQ requests access through a contract and does not directly read its storage.
 9. **Auditability:** cross-component operations carry correlation IDs, explicit outcomes, and sanitized errors; secrets and raw bearer tokens are never persisted.
 10. **Compatibility:** existing frozen Resource Contract v1 and Allocation schema v1 are not silently renamed or broken. Breaking changes require an explicit new schema version and migration plan.
+
+## Concrete integration checks
+
+The P4 gate imports the existing domain packages instead of validating only a descriptive registry:
+
+- The set of configured inventory runtime IDs must exactly equal the Resource Contract v1 runtime allowlist. A request must not be accepted for a runtime the inventory cannot represent, and an inventory runtime must not be rejected by the contract.
+- Resource Contract v1 empty runtime/model slices serialize as JSON arrays, not `null`.
+- Inventory snapshot arrays remain arrays and the internal GPU UUID stays excluded from public inventory JSON.
+- Allocation records continue to use schema v1 and preserve the Resource Contract v1 version reference and non-null transition history.
+
+This gate exposed a stale `smg` example in the Resource Contract documentation: it was not present in the current inventory runtime table and was not accepted by validation. P4 removes that unsupported example rather than falsely advertising an unavailable runtime. Adding SMG to the runtime request allowlist requires an actual inventory/runtime adapter plus tests.
 
 ## Deliberate non-goals
 
