@@ -36,12 +36,12 @@ See [`SCARLIX_COMPUTE_FABRIC_P5_1_HOST_ACCEPTANCE.md`](SCARLIX_COMPUTE_FABRIC_P5
 
 ## Required next work
 
-1. Add an explicit host service entrypoint and systemd unit running under a dedicated service identity.
-2. Decide the transport identity model before granting ScarliHQ access: Unix socket ownership/group and container GID mapping must be least-privilege. Never use world-writable socket permissions.
-3. Implement runtime-specific adapters using fixed, typed operations and pre-approved runtime configuration. Do not pass user-supplied command lines, image names, environment maps, or file paths.
-4. Add request idempotency/reconciliation keyed by allocation ID so retry after a timeout cannot create duplicate workloads.
-5. Complete runtime composition/API wiring without adding privileged operations to ScarliHQ; the `internal/compute` helper now provides the first injection seam, but no production API caller exists yet.
-6. Add CI tests, service packaging, installer/rollback handling, and target-host acceptance before release.
+1. **End-to-end API wiring:** define the trusted principal mapping and allocation intake path before adding start/stop routes. The current API authenticates one shared bearer token and has no allocation creation route; do not trust a caller-supplied owner or expose workload start/stop until that identity boundary is explicit.
+2. **Socket identity:** resolve the container UID/GID and Unix socket access model. The service socket is mode `0600`; do not weaken it to group/world writable. Keep the service disabled until the intended client identity can be authorized and tested.
+3. **Resource admission and reservation release:** integrate allocation/reservation bookkeeping so GPU, port, CPU, memory, shared-memory and PID capacity are reserved before Start and released only after verified Stop.
+4. **Host acceptance:** run the full lifecycle matrix in `SCARLIX_COMPUTE_FABRIC_P5_1_HOST_ACCEPTANCE.md` on the target machine with real Docker, NVIDIA driver, model files and pinned images. Attach evidence to the PR.
+5. **Security review:** review the Docker-group (host-root-equivalent) trust boundary, systemd hardening, image digest pinning, mount constraints, Docker network isolation and rollback behavior before enabling the service.
+6. **Release gates:** rerun CI for the exact final SHA, resolve all findings, then move the PR out of draft. Do not claim production-ready execution before host acceptance passes.
 
 ## Acceptance gates
 
