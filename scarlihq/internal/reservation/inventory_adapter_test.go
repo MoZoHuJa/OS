@@ -40,12 +40,12 @@ func TestNewInventorySnapshotFromInventory_UsesStableGPUUUID(t *testing.T) {
 func TestNewInventorySnapshotFromInventory_GenerationChangesWithCapacity(t *testing.T) {
 	now := time.Now().UTC()
 	gpu := inventory.GPU{ID: "gpu.nvidia.0", UUID: "GPU-12345678-abcd-1234-abcd-123456789abc", Vendor: "nvidia", Healthy: true, VRAMFreeMB: 8000}
-	first, err := NewInventorySnapshotFromInventory("", now, []inventory.GPU{gpu}, nil, nil, nil)
+	first, err := NewInventorySnapshotFromInventory("source-generation-1", now, []inventory.GPU{gpu}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	gpu.VRAMFreeMB = 4000
-	second, err := NewInventorySnapshotFromInventory("", now, []inventory.GPU{gpu}, nil, nil, nil)
+	second, err := NewInventorySnapshotFromInventory("source-generation-1", now, []inventory.GPU{gpu}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
