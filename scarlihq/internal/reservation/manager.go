@@ -251,6 +251,15 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 		}
 	}
 
+	// An allocation owns exactly one durable reservation bundle. If a request
+	// did not match the existing idempotency identity above, it must not append
+	// a second independent bundle to the same allocation.
+	for _, existing := range records {
+		if existing.AllocationID == allocationID {
+			return nil, fmt.Errorf("%w: allocation %s already has a reservation bundle; retry with the original idempotency key", ErrIdempotencyConflict, allocationID)
+		}
+	}
+
 	// Revalidate inventory while holding the cross-process reservation lock.
 	snap2 := m.inventory.GetSnapshot()
 	if err := m.validateInventorySnapshot(snap2); err != nil {
