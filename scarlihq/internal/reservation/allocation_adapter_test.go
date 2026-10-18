@@ -42,10 +42,10 @@ func TestAllocationReservationAdapter_FinalizeReservation(t *testing.T) {
 		t.Fatalf("ValidateForReservation: %v", err)
 	}
 	reservations := []*Reservation{
-		{AllocationID: "alloc-1", ResourceID: "gpu.nvidia.GPU-12345678-abcd-1234-abcd-123456789abc", ResourceType: ResourceTypeGPUDevice, LeaseID: "lease-bundle", LeaseExpiry: time.Now().Add(5*time.Minute)},
-		{AllocationID: "alloc-1", ResourceID: "runtime.sglang", ResourceType: ResourceTypeRuntimeSlot, LeaseID: "lease-bundle", LeaseExpiry: time.Now().Add(5*time.Minute)},
-		{AllocationID: "alloc-1", ResourceID: "model.qwen3-14b", ResourceType: ResourceTypeModelSlot, LeaseID: "lease-bundle", LeaseExpiry: time.Now().Add(5*time.Minute)},
-		{AllocationID: "alloc-1", ResourceID: "port.30000", ResourceType: ResourceTypePort, LeaseID: "lease-bundle", LeaseExpiry: time.Now().Add(5*time.Minute)},
+		{AllocationID: "alloc-1", ResourceID: "gpu.nvidia.GPU-12345678-abcd-1234-abcd-123456789abc", ResourceType: ResourceTypeGPUDevice, LeaseID: "lease-bundle", LeaseExpiry: time.Now().Add(5 * time.Minute)},
+		{AllocationID: "alloc-1", ResourceID: "runtime.sglang", ResourceType: ResourceTypeRuntimeSlot, LeaseID: "lease-bundle", LeaseExpiry: time.Now().Add(5 * time.Minute)},
+		{AllocationID: "alloc-1", ResourceID: "model.qwen3-14b", ResourceType: ResourceTypeModelSlot, LeaseID: "lease-bundle", LeaseExpiry: time.Now().Add(5 * time.Minute)},
+		{AllocationID: "alloc-1", ResourceID: "port.30000", ResourceType: ResourceTypePort, LeaseID: "lease-bundle", LeaseExpiry: time.Now().Add(5 * time.Minute)},
 	}
 	if err := adapter.FinalizeReservation("alloc-1", reservations); err != nil {
 		t.Fatalf("FinalizeReservation: %v", err)
