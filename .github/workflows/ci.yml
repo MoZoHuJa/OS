@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, 'v*', '19.2.10.*']
+    branches: [main, 'v*', '19.2.10.*', '19.2.11.*']
     # v18.7.6 P1: trigger on tags (was: branches only → v18.7.6 tag push skipped CI)
     tags: ['v*']
   pull_request:
