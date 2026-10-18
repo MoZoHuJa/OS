@@ -1,4 +1,4 @@
-# SCARLIX OS v19.2.8 — Data Contracts
+# SCARLIX OS v19.2.9 — Data Contracts
 
 > Purpose: Single source of truth for the JSON schema of every normalized
 > observability structure in v19.0.7. The bash `scarlix` CLI **must** emit JSON
