@@ -35,6 +35,19 @@ func NewAllocationReservationAdapter(store AllocationStore) (*AllocationReservat
 	return &AllocationReservationAdapter{store: store}, nil
 }
 
+// ValidateAllocationOwner prevents a caller from reserving resources for an
+// allocation owned by another authenticated principal.
+func (a *AllocationReservationAdapter) ValidateAllocationOwner(id, principal string) error {
+	record, err := a.store.Get(id)
+	if err != nil {
+		return fmt.Errorf("allocation %s not found: %w", id, err)
+	}
+	if principal == "" || record.Owner != principal {
+		return fmt.Errorf("reservation: allocation %s is not owned by the authenticated principal", id)
+	}
+	return nil
+}
+
 func (a *AllocationReservationAdapter) ValidateForReservation(id string) error {
 	record, err := a.store.Get(id)
 	if err != nil {
