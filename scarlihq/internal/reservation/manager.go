@@ -1,6 +1,7 @@
 package reservation
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -261,6 +262,7 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 
 	now := m.clock.Now().UTC()
 	leaseExpiry := now.Add(normalized[0].request.LeaseTTL)
+	bundleLeaseID := generateID()
 	allReservations := make([]*Reservation, 0, len(records)+len(normalized))
 	for _, record := range records {
 		allReservations = append(allReservations, record)
@@ -295,7 +297,7 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 			ResourceID:          item.canonical,
 			ResourceType:        item.request.ResourceType,
 			Owner:               identity.Principal(),
-			LeaseID:             generateID(),
+			LeaseID:             bundleLeaseID,
 			LeaseExpiry:         leaseExpiry,
 			LastRenewedAt:       now,
 			InventoryGeneration: snap2.Generation,
@@ -573,36 +575,92 @@ func (m *Manager) RunLeaseReaper(ctx context.Context, reconcilerToken string, in
 	}
 }
 
-// RenewLease extends the lease TTL.
+// RenewLease renews the entire allocation's reservation bundle. The
+// reservationID identifies the bundle; no member can outlive its siblings.
 func (m *Manager) RenewLease(reservationID, token string, newTTL time.Duration) (*Reservation, error) {
+	record, err := m.store.Get(reservationID)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.RenewBundleLease(record.AllocationID, token, newTTL); err != nil {
+		return nil, err
+	}
+	return m.store.Get(reservationID)
+}
+
+// RenewBundleLease atomically extends every HELD reservation for an allocation.
+// The reservation store is authoritative; allocation metadata is updated after
+// the durable bundle rewrite and is repairable through ReconcilePending.
+func (m *Manager) RenewBundleLease(allocationID, token string, newTTL time.Duration) error {
 	identity, err := m.resolveIdentity(token)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("reservation: identity resolution failed: %w", err)
+	}
+	if allocationID == "" {
+		return fmt.Errorf("reservation: allocation_id is required")
 	}
 	if !m.policy.ValidateLeaseTTL(newTTL) {
-		return nil, fmt.Errorf("reservation: lease TTL %v outside range", newTTL)
+		return fmt.Errorf("reservation: lease TTL %v outside range [%v, %v]", newTTL, m.policy.LeaseMinTTL, m.policy.LeaseMaxTTL)
 	}
-	var updated *Reservation
-	err = m.store.update(reservationID, func(r *Reservation) error {
-		if r.Owner != identity.Principal() {
+	unlock, err := m.resourceLock.Lock()
+	if err != nil {
+		return fmt.Errorf("reservation: cannot acquire resource lock: %w", err)
+	}
+	defer unlock()
+	records, corrupt, err := m.store.loadLocked()
+	if err != nil {
+		return err
+	}
+	if len(corrupt) > 0 {
+		return fmt.Errorf("%w: %d corrupt lines", ErrReservationStoreCorrupt, len(corrupt))
+	}
+	var bundle []*Reservation
+	for _, record := range records {
+		if record.AllocationID != allocationID {
+			continue
+		}
+		if record.Owner != identity.Principal() {
 			return ErrLeaseNotOwned
 		}
-		if r.Status != StatusHeld {
-			return fmt.Errorf("reservation: cannot renew in status %s", r.Status)
+		if record.Status != StatusHeld {
+			return fmt.Errorf("reservation: cannot renew bundle with reservation %s in status %s", record.ReservationID, record.Status)
 		}
-		if r.IsExpired(m.clock.Now()) {
+		if record.IsExpired(m.clock.Now()) {
 			return ErrLeaseExpired
 		}
-		r.LeaseExpiry = m.clock.Now().Add(newTTL)
-		r.LastRenewedAt = m.clock.Now()
-		r.UpdatedAt = m.clock.Now()
-		updated = r
-		return nil
-	})
-	if err != nil {
-		return nil, err
+		bundle = append(bundle, record)
 	}
-	return updated, nil
+	if len(bundle) == 0 {
+		return ErrResourceNotFound
+	}
+	expectedSize := 0
+	for _, record := range bundle {
+		if record.BundleSize > expectedSize {
+			expectedSize = record.BundleSize
+		}
+	}
+	if expectedSize > 0 && len(bundle) != expectedSize {
+		return fmt.Errorf("%w: allocation %s has incomplete reservation bundle", ErrReconciliationRequired, allocationID)
+	}
+	now := m.clock.Now().UTC()
+	expiry := now.Add(newTTL)
+	for _, record := range bundle {
+		record.LeaseExpiry = expiry
+		record.LastRenewedAt = now
+		record.UpdatedAt = now
+		record.Revision++
+	}
+	if err := m.store.rewriteAll(records); err != nil {
+		return fmt.Errorf("%w: cannot persist lease renewal: %w", ErrPersistence, err)
+	}
+	if updater, ok := m.allocVal.(interface {
+		UpdateReservationLease(allocationID, leaseID string, expiry time.Time) error
+	}); ok {
+		if err := updater.UpdateReservationLease(allocationID, bundle[0].LeaseID, expiry); err != nil {
+			return fmt.Errorf("%w: lease renewed in reservation store but allocation metadata is pending repair: %w", ErrReconciliationRequired, err)
+		}
+	}
+	return nil
 }
 
 // RequestRelease starts the release process.
