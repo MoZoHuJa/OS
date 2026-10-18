@@ -210,6 +210,13 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 	if len(corrupt) > 0 {
 		return nil, fmt.Errorf("%w: %d corrupt lines", ErrReservationStoreCorrupt, len(corrupt))
 	}
+	// Re-check ownership inside the same critical section as reservation commit
+	// to close the validation-to-claim race.
+	if ownerValidator, ok := m.allocVal.(allocationOwnershipValidator); ok {
+		if err := ownerValidator.ValidateAllocationOwner(allocationID, identity.Principal()); err != nil {
+			return nil, err
+		}
+	}
 
 	// Idempotency lookup precedes BeginReservation. Existing bundle records are
 	// validated as a set, not just by finding one matching line.
