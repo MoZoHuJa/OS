@@ -93,7 +93,7 @@ func LoadDockerExecutorConfig(path string) (DockerExecutorConfig, error) {
 
 func validateDockerConfig(cfg DockerExecutorConfig) error {
 	if cfg.DockerSocket != "/var/run/docker.sock" {
-		return errors.New("hostbridge: Docker socket path must be absolute")
+		return errors.New("hostbridge: Docker socket must be exactly /var/run/docker.sock")
 	}
 	if len(cfg.Profiles) == 0 {
 		return errors.New("hostbridge: at least one explicitly configured runtime profile is required")
