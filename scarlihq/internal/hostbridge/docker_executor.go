@@ -91,7 +91,7 @@ func LoadDockerExecutorConfig(path string) (DockerExecutorConfig, error) {
 }
 
 func validateDockerConfig(cfg DockerExecutorConfig) error {
-	if !filepath.IsAbs(cfg.DockerSocket) || strings.ContainsRune(cfg.DockerSocket, '\x00') {
+	if cfg.DockerSocket != "/var/run/docker.sock" {
 		return errors.New("hostbridge: Docker socket path must be absolute")
 	}
 	if len(cfg.Profiles) == 0 {
@@ -143,7 +143,7 @@ func validateDockerConfig(cfg DockerExecutorConfig) error {
 		}
 		if len(p.AllowedPorts) == 0 || p.HealthPath == "" || !strings.HasPrefix(p.HealthPath, "/") ||
 			strings.Contains(p.HealthPath, "?") || strings.Contains(p.HealthPath, "#") ||
-			!networkPattern.MatchString(p.Network) {
+			p.Network != "scarlix-compute" || !networkPattern.MatchString(p.Network) {
 			return errors.New("hostbridge: profile requires allowed ports, fixed health path and network")
 		}
 		portSeen := map[int]bool{}
