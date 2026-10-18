@@ -36,7 +36,7 @@ func NewClient(socketPath string) (*Client, error) {
 	}
 	return &Client{
 		socketPath: socketPath,
-		httpClient: &http.Client{Transport: transport, Timeout: 35 * time.Second},
+		httpClient: &http.Client{Transport: transport, Timeout: 6 * time.Minute},
 	}, nil
 }
 
