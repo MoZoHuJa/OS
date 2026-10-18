@@ -21,9 +21,9 @@ type RecoverableExecutor interface {
 // IdempotentExecutor serializes lifecycle calls with a durable ledger. It
 // deliberately refuses to wrap an Executor that cannot reconcile external state.
 type IdempotentExecutor struct {
-	inner RecoverableExecutor
+	inner  RecoverableExecutor
 	ledger *Ledger
-	mu sync.Mutex
+	mu     sync.Mutex
 }
 
 func NewIdempotentExecutor(inner RecoverableExecutor, ledger *Ledger) (*IdempotentExecutor, error) {
