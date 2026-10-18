@@ -15,7 +15,7 @@ set -euo pipefail
 # USAGE:
 #   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
-#   git checkout v19.2.10   # ALWAYS checkout specific tag (main may be ahead)
+#   git checkout 19.2.10.G1   # candidate branch; release tag is created only after CI/acceptance gates pass
 #   bash install.sh
 # ============================================================================
 
