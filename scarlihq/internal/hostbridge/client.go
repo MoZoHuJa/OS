@@ -43,15 +43,15 @@ func NewClient(socketPath string) (*Client, error) {
 func (c *Client) Start(ctx context.Context, request workload.StartRequest) (workload.StartResult, error) {
 	payload := startPayload{
 		AllocationID: request.AllocationID,
-		RuntimeID: request.RuntimeID,
-		ModelID: request.ModelID,
-		GPUID: request.GPUID,
-		Port: request.Port,
+		RuntimeID:    request.RuntimeID,
+		ModelID:      request.ModelID,
+		GPUID:        request.GPUID,
+		Port:         request.Port,
 	}
 	var response struct {
-		Ref string `json:"ref"`
-		Ready bool `json:"ready"`
-		Owned bool `json:"owned"`
+		Ref   string `json:"ref"`
+		Ready bool   `json:"ready"`
+		Owned bool   `json:"owned"`
 	}
 	if err := c.post(ctx, "/v1/workloads/start", payload, &response); err != nil {
 		return workload.StartResult{}, err
@@ -70,8 +70,8 @@ func (c *Client) Stop(ctx context.Context, request workload.StopRequest) (worklo
 		AllocationID: request.AllocationID,
 		RuntimeID: request.RuntimeID,
 		ModelID: request.ModelID,
-		Ref: request.Ref,
-		Owned: request.Owned,
+		Ref:          request.Ref,
+		Owned:        request.Owned,
 	}
 	var response struct {
 		Verified bool `json:"verified"`
