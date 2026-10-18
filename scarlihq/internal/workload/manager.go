@@ -67,7 +67,12 @@ func (m *Manager) Start(ctx context.Context, allocationID, principal string) (Re
 
 	started, startErr := m.driver.Start(ctx, request)
 	if startErr != nil || !started.Ready || strings.TrimSpace(started.Ref) == "" {
-		_ = m.markStartUncertain(allocationID, principal, started)
+		if markErr := m.markStartUncertain(allocationID, principal, started); markErr != nil {
+			// Do not hide a failed persistence attempt: the external side effect may
+			// exist while durable state still says STARTING. This is a higher-severity
+			// reconciliation case and must be surfaced to the caller.
+			return Result{}, fmt.Errorf("%w: uncertain start could not be persisted", ErrReconciliationRequired)
+		}
 		if startErr != nil {
 			return Result{}, fmt.Errorf("%w: workload driver start failed", ErrReconciliationRequired)
 		}
