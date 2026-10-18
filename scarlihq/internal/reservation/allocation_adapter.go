@@ -1,10 +1,10 @@
 package reservation
 
 import (
-	"time"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
 )
