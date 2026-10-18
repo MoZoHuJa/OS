@@ -2,6 +2,7 @@ package reservation
 
 import (
 	"errors"
+	"time"
 	"fmt"
 	"strconv"
 	"strings"
@@ -137,6 +138,19 @@ func (a *AllocationReservationAdapter) FinalizeReservation(id string, reservatio
 
 var _ AllocationValidator = (*AllocationReservationAdapter)(nil)
 var _ ReservationAssignmentFinalizer = (*AllocationReservationAdapter)(nil)
+
+// UpdateReservationLease mirrors the durable bundle lease to the allocation
+// record. Reservation storage remains authoritative if this second write fails.
+func (a *AllocationReservationAdapter) UpdateReservationLease(id, leaseID string, expiry time.Time) error {
+	return a.store.Update(id, func(record *allocation.Allocation) error {
+		if record.State != allocation.StateReserved {
+			return fmt.Errorf("allocation %s cannot update lease from %s", id, record.State)
+		}
+		record.LeaseID = leaseID
+		record.LeaseExpiry = expiry
+		return nil
+	})
+}
 
 // ErrAllocationStoreNotFound exposes allocation not-found classification to
 // callers without coupling reservation errors to the concrete store type.
