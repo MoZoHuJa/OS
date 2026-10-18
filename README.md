@@ -1,28 +1,65 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScarLiXoS v19.2.8 — Sovereign AI Cloud" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScaRgeN CuLT — ScarLiXoS v19.2.8 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">SCARLIX OS v19.2.8</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.2.8</h1>
 
 <p align="center">
-  <strong>Suverénny domáci OS pre AI cloud, coding, gaming a rodinnú zábavu.</strong><br/>
-  Architektúra Secure Host-Bridge · Token autentifikácia · State machine · Privilege boundary
+  <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
+  ScaRgeN CuLT (ekosystém) · ScarLiXoS (OS) · ScarliHQ (control plane) · Compute Fabric (Phase 3)
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.2.8"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.8-06b6d4?style=flat-square" /></a>
-  <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-14b8a6?style=flat-square" /></a>
-  <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-10b981?style=flat-square" /></a>
-  <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-22d3ee?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.2.8"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.8-B87333?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-D4A574?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-A8C5D4?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-D4A574?style=flat-square" /></a>
 </p>
 
 ---
+
+
+---
+
+## 🎨 Obsidian Lattice — Visual Identity
+
+**ScaRgeN CuLT** používa **Obsidian Lattice** branding kit — tichá sila, nie generický neon.
+
+| Color | Hex | Meaning |
+|-------|-----|---------|
+| **OBSIDIAN** | `#0B0C0E` | Hlboká čierna — základ, stabilita, tichá prítomnosť |
+| **CHARCOAL** | `#1A1D24` | Tmavá šedá — elevated surfaces, karty, panely |
+| **LIVING COPPER** | `#B87333` | Meď — aktívny stav, hranica oprávnení, primárny akcent |
+| **COPPER GLOW** | `#D4A574` | Teplá svetlá meď — sekundárny akcent, dôraz, linie |
+| **SOFT PLASMA** | `#A8C5D4` | Jemná modrá — živá inteligencia, terciárny akcent |
+| **BONE** | `#E8E4DF` | Off-white — text, čitateľnosť, kontrast |
+
+**Filozofia:** Meď = aktívny stav a hranica oprávnení. Plasma = živá inteligencia. Bez neónového preťaženia.
+
+### Brand Architecture
+
+| Brand | Role |
+|-------|------|
+| **ScaRgeN CuLT** | Kultúra a ekosystémová vízia |
+| **ScarLiXoS** | Operačný systém a systémový základ |
+| **ScarliHQ** | Riadiaca plocha a control plane |
+| **ScarliNote** | Osobná inteligencia, kontext (roadmapa) |
+| **Compute / Agent / Memory Fabric** | Technické vrstvy (postupne) |
+
+### Päť princípov
+
+1. **Dôkaz namiesto sľubu** — funkcia je hotová až po overení kódom a testom
+2. **Oddelenie moci** — UI ani LLM nesmú mať priamy privilegovaný prístup
+3. **Lokálne vlastníctvo** — modely, dáta a rozhodnutia pod kontrolou používateľa
+4. **Modulárnosť** — každá vrstva má kontrakt, hranice a možnosť výmeny
+5. **Controlled Accumulation** — rozširovať po malých, vratných krokoch
+
 
 > **Working AI Path**: model-aware, fail-hard, healthcheck + fallback.
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.2.8 | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.2.8 | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
