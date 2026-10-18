@@ -83,6 +83,25 @@ func TestAllocationReservationAdapter_RejectsDifferentOwner(t *testing.T) {
 	}
 }
 
+func TestAllocationReservationAdapter_ListsPendingClaims(t *testing.T) {
+	store := allocation.NewStore(filepath.Join(t.TempDir(), "allocations.jsonl"))
+	newPlannedAllocation(t, store, "alloc-1")
+	adapter, err := NewAllocationReservationAdapter(store)
+	if err != nil {
+		t.Fatalf("NewAllocationReservationAdapter: %v", err)
+	}
+	if err := adapter.BeginReservation("alloc-1"); err != nil {
+		t.Fatalf("BeginReservation: %v", err)
+	}
+	ids, err := adapter.ListPendingReservationAllocations()
+	if err != nil {
+		t.Fatalf("ListPendingReservationAllocations: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "alloc-1" {
+		t.Fatalf("pending IDs=%v, want [alloc-1]", ids)
+	}
+}
+
 func TestAllocationReservationAdapter_AbortOrphanedClaim(t *testing.T) {
 	store := allocation.NewStore(filepath.Join(t.TempDir(), "allocations.jsonl"))
 	newPlannedAllocation(t, store, "alloc-1")
