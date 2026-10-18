@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
@@ -31,6 +32,20 @@ func (f *fakeDriver) Stop(_ context.Context, request StopRequest) (StopResult, e
 	f.stopCalls++
 	f.lastStop = request
 	return f.stopResult, f.stopErr
+}
+
+type failingUpdateStore struct {
+	AllocationStore
+	calls  int
+	failAt int
+}
+
+func (s *failingUpdateStore) Update(id string, modify func(*allocation.Allocation) error) error {
+	s.calls++
+	if s.calls == s.failAt {
+		return errors.New("simulated durable store failure")
+	}
+	return s.AllocationStore.Update(id, modify)
 }
 
 func newReservedAllocation(t *testing.T, state allocation.State) (*allocation.Store, string) {
@@ -304,5 +319,30 @@ func TestStartRejectsUnsupportedRuntimeBeforeDriverCall(t *testing.T) {
 	}
 	if driver.startCalls != 0 {
 		t.Fatalf("driver called %d times for unsupported runtime", driver.startCalls)
+	}
+}
+
+
+func TestStartSurfacesFailureToPersistUncertainOutcome(t *testing.T) {
+	store, id := newReservedAllocation(t, allocation.StateReserved)
+	failingStore := &failingUpdateStore{AllocationStore: store, failAt: 2}
+	driver := &fakeDriver{startErr: errors.New("simulated host timeout")}
+	manager, err := NewManager(failingStore, driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.Start(context.Background(), id, "agent.test")
+	if !errors.Is(err, ErrReconciliationRequired) {
+		t.Fatalf("Start() error = %v, want reconciliation required", err)
+	}
+	if !strings.Contains(err.Error(), "uncertain start could not be persisted") {
+		t.Fatalf("Start() error = %v, want persistence failure surfaced", err)
+	}
+	record, err := store.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != allocation.StateStarting {
+		t.Fatalf("state = %s, want STARTING because simulated persistence failed", record.State)
 	}
 }
