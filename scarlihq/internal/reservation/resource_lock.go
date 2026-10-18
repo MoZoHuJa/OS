@@ -2,7 +2,6 @@ package reservation
 
 import (
 	"fmt"
-	"os"
 	"syscall"
 )
 
@@ -36,5 +35,3 @@ func (l *ResourceLock) Lock() (func(), error) {
 	return unlock, nil
 }
 
-// Compile-time guard that the lock's OS handle remains a real file descriptor.
-var _ *os.File
