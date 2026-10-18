@@ -271,7 +271,8 @@ func TestGPU_UUIDIsNotSerializedIntoFrozenPublicSchema(t *testing.T) {
 		t.Fatalf("internal UUID leaked into frozen public inventory JSON: %s", data)
 	}
 }
-\n// --- table-driven: CollectGPUHealth edge cases ----------------------------
+
+// --- table-driven: CollectGPUHealth edge cases ----------------------------
 
 func TestCollectGPUHealth_TableDriven(t *testing.T) {
 	// Cover the health-derivation logic across a range of edge cases.
