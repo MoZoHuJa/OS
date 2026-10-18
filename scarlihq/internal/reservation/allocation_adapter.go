@@ -1,7 +1,6 @@
 package reservation
 
 import (
-	"errors"
 	"time"
 	"fmt"
 	"strconv"
@@ -152,6 +151,3 @@ func (a *AllocationReservationAdapter) UpdateReservationLease(id, leaseID string
 	})
 }
 
-// ErrAllocationStoreNotFound exposes allocation not-found classification to
-// callers without coupling reservation errors to the concrete store type.
-var ErrAllocationStoreNotFound = errors.New("reservation: allocation store record not found")
