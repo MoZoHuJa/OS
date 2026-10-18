@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -172,5 +171,4 @@ func TestDockerExecutorUsesTypedCreateAndVerifiedStop(t *testing.T) {
 	if err != nil || found {
 		t.Fatalf("resource still present after stop: found=%v err=%v", found, err)
 	}
-	_ = url.Values{} // Keep URL parsing dependencies explicit in the fake API contract.
 }
