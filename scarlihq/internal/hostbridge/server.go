@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	resourcecontract "github.com/MoZoHuJa/OS/scarlihq/internal/contract"
@@ -70,6 +71,10 @@ func ListenUnix(path string) (net.Listener, error) {
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0022 != 0 {
 		return nil, errors.New("hostbridge: socket parent must be a real directory not writable by group/other")
+	}
+	parentStat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || parentStat.Uid != uint32(os.Geteuid()) {
+		return nil, errors.New("hostbridge: socket parent must be owned by the service identity")
 	}
 	if _, err := os.Lstat(path); err == nil {
 		return nil, errors.New("hostbridge: socket path already exists; inspect and remove it manually")
