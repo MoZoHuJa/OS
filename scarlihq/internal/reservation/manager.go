@@ -34,14 +34,14 @@ func (f *FakeClock) Advance(d time.Duration) { f.T = f.T.Add(d) }
 // resolved to an Identity via TrustedIdentityProvider. Callers cannot
 // forge identity.
 type Manager struct {
-	store      *Store
+	store        *Store
 	resourceLock *ResourceLock
-	policy     ReservationPolicy
-	clock      Clock
-	inventory  InventoryProvider
-	allocVal   AllocationValidator
-	cleanupVer CleanupVerifier
-	idProv     TrustedIdentityProvider // P1-01 (v19.2.9): resolves tokens to identities
+	policy       ReservationPolicy
+	clock        Clock
+	inventory    InventoryProvider
+	allocVal     AllocationValidator
+	cleanupVer   CleanupVerifier
+	idProv       TrustedIdentityProvider // P1-01 (v19.2.9): resolves tokens to identities
 }
 
 // NewManager creates a Manager.
@@ -539,11 +539,9 @@ func (m *Manager) ReconcilePending(allocationID, token string) error {
 // finalized from its complete durable reservation bundle or safely aborted
 // when no reservation record was committed.
 func (m *Manager) ReconcileAllPending(token string) error {
-	identity, err := m.resolveReconciler(token)
-	if err != nil {
+	if _, err := m.resolveReconciler(token); err != nil {
 		return err
 	}
-	_ = identity
 	scanner, ok := m.allocVal.(pendingAllocationScanner)
 	if !ok {
 		return fmt.Errorf("%w: allocation validator does not support startup scanning", ErrReconciliationRequired)
