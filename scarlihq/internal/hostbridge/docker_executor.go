@@ -43,6 +43,9 @@ type RuntimeProfile struct {
 	HealthPath   string      `json:"health_path"`
 	Network      string      `json:"network"`
 	ShmSizeBytes int64       `json:"shm_size_bytes,omitempty"`
+	MemoryBytes  int64       `json:"memory_bytes"`
+	NanoCPUs     int64       `json:"nano_cpus"`
+	PidsLimit    int64       `json:"pids_limit"`
 }
 
 type DockerExecutorConfig struct {
@@ -161,7 +164,10 @@ func validateDockerConfig(cfg DockerExecutorConfig) error {
 		if len(p.AllowedPorts) == 0 || p.HealthPath == "" || !strings.HasPrefix(p.HealthPath, "/") ||
 			strings.Contains(p.HealthPath, "?") || strings.Contains(p.HealthPath, "#") ||
 			p.Network != "scarlix-compute" || !networkPattern.MatchString(p.Network) ||
-			p.ShmSizeBytes < 0 || p.ShmSizeBytes > 16*1024*1024*1024 {
+			p.ShmSizeBytes < 0 || p.ShmSizeBytes > 16*1024*1024*1024 ||
+			p.MemoryBytes < 1*1024*1024*1024 || p.MemoryBytes > 48*1024*1024*1024 ||
+			p.NanoCPUs < 1*1000*1000*1000 || p.NanoCPUs > 24*1000*1000*1000 ||
+			p.PidsLimit < 128 || p.PidsLimit > 8192 {
 			return errors.New("hostbridge: profile requires allowed ports, fixed health path and network")
 		}
 		portSeen := map[int]bool{}
@@ -284,6 +290,9 @@ func (e *DockerExecutor) Start(ctx context.Context, req workload.StartRequest) (
 			"AutoRemove":     false,
 			"ReadonlyRootfs": true,
 			"ShmSize":        profileShmSize(profile),
+			"Memory":         profile.MemoryBytes,
+			"NanoCpus":       profile.NanoCPUs,
+			"PidsLimit":      profile.PidsLimit,
 			"CapDrop":        []string{"ALL"},
 			"SecurityOpt":    []string{"no-new-privileges:true"},
 			"NetworkMode":    profile.Network,
