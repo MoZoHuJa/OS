@@ -304,6 +304,7 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 			UpdatedAt:            now,
 			IdempotencyKey:       idempotencyKey,
 			RequestFingerprint:   fingerprint,
+			BundleSize:           len(normalized),
 			Revision:             0,
 		}
 		created = append(created, record)
@@ -403,6 +404,9 @@ func validateIdempotentBundle(existing []*Reservation, requests []normalizedRequ
 		if !ok || record.Owner != owner || record.AllocationID != allocationID {
 			return ErrIdempotencyConflict
 		}
+		if record.BundleSize != 0 && record.BundleSize != len(requests) {
+			return ErrIdempotencyConflict
+		}
 		if record.RequestFingerprint != fingerprint {
 			if len(requests) != 1 {
 				return ErrIdempotencyConflict
@@ -481,7 +485,21 @@ func (m *Manager) ReconcilePending(allocationID, token string) error {
 		bundle = append(bundle, record)
 	}
 	if len(bundle) == 0 {
-		return ErrResourceNotFound
+		// Crash recovery: if the allocation was claimed but the atomic
+		// reservation-store commit never happened, fail the orphaned claim.
+		if err := m.allocVal.EndReservation(allocationID, false); err != nil {
+			return fmt.Errorf("%w: no reservation records for allocation %s and orphan claim could not be aborted: %w", ErrReconciliationRequired, allocationID, err)
+		}
+		return nil
+	}
+	expectedBundleSize := 0
+	for _, record := range bundle {
+		if record.BundleSize > expectedBundleSize {
+			expectedBundleSize = record.BundleSize
+		}
+	}
+	if expectedBundleSize > 0 && len(bundle) != expectedBundleSize {
+		return fmt.Errorf("%w: allocation %s has %d/%d reservation records", ErrReconciliationRequired, allocationID, len(bundle), expectedBundleSize)
 	}
 	sortReservations(bundle)
 	if err := m.finalizeAllocation(allocationID, bundle); err != nil {
