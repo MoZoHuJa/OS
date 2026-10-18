@@ -103,7 +103,7 @@
     {"id": "SEC-001", "rule": "Identity and authorization are verified at the receiving trust boundary; UI-supplied identity is never authoritative."},
     {"id": "IDENT-001", "rule": "Stable canonical IDs are used for ownership and exclusivity; display names and mutable indices are not authority."},
     {"id": "COMPUTE-001", "rule": "Planning is side-effect free; reservation is explicit, durable, idempotent, and recoverable; no partial bundle is exposed as committed."},
-    {"id": "RUNTIME-001", "rule": "Runtime lifecycle is behind a backend-neutral interface; callers do not depend on backend-specific process or API details."},
+    {"id": "RUNTIME-001", "rule": "Runtime lifecycle is behind a backend-neutral interface; callers do not depend on backend-specific process or API details. Runtime IDs accepted by Resource Contract v1 must match the configured inventory runtime IDs."},
     {"id": "AGENT-001", "rule": "All tool/agent execution has explicit permissions, correlation IDs, bounded inputs, auditable outcomes, and a dry-run path where applicable."},
     {"id": "MEMORY-001", "rule": "Memory access is user-scoped, purpose-limited, auditable, and independent from inference backend selection."},
     {"id": "HOST-001", "rule": "Privileged host actions cross one narrow host-agent boundary using allowlisted operations and validated payloads."},
