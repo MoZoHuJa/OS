@@ -68,6 +68,21 @@ func TestAllocationReservationAdapter_FinalizeReservation(t *testing.T) {
 	}
 }
 
+func TestAllocationReservationAdapter_RejectsDifferentOwner(t *testing.T) {
+	store := allocation.NewStore(filepath.Join(t.TempDir(), "allocations.jsonl"))
+	newPlannedAllocation(t, store, "alloc-1")
+	adapter, err := NewAllocationReservationAdapter(store)
+	if err != nil {
+		t.Fatalf("NewAllocationReservationAdapter: %v", err)
+	}
+	if err := adapter.ValidateAllocationOwner("alloc-1", "attacker"); err == nil {
+		t.Fatal("expected foreign allocation owner to be rejected")
+	}
+	if err := adapter.ValidateAllocationOwner("alloc-1", "agent"); err != nil {
+		t.Fatalf("valid owner rejected: %v", err)
+	}
+}
+
 func TestAllocationReservationAdapter_AbortOrphanedClaim(t *testing.T) {
 	store := allocation.NewStore(filepath.Join(t.TempDir(), "allocations.jsonl"))
 	newPlannedAllocation(t, store, "alloc-1")
