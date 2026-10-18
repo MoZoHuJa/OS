@@ -137,13 +137,13 @@ func (l *Ledger) Create(req workload.StartRequest) error {
 	}
 	entry := LedgerEntry{
 		AllocationID: req.AllocationID,
-		Fingerprint: requestFingerprint(req),
-		RuntimeID: req.RuntimeID,
-		ModelID: req.ModelID,
-		GPUID: req.GPUID,
-		Port: req.Port,
-		State: "STARTING",
-		UpdatedAt: time.Now().UTC(),
+		Fingerprint:  requestFingerprint(req),
+		RuntimeID:    req.RuntimeID,
+		ModelID:      req.ModelID,
+		GPUID:        req.GPUID,
+		Port:         req.Port,
+		State:        "STARTING",
+		UpdatedAt:    time.Now().UTC(),
 	}
 	return l.withLock(func(data *ledgerFile) error {
 		if _, exists := data.Entries[req.AllocationID]; exists {
