@@ -76,6 +76,21 @@ func (e *IdempotentExecutor) Start(ctx context.Context, req workload.StartReques
 			return workload.StartResult{}, errors.New("hostbridge: could not persist retry intent")
 		}
 	} else {
+		entries, err := e.ledger.List()
+		if err != nil {
+			return workload.StartResult{}, err
+		}
+		for _, active := range entries {
+			if active.State == "STOPPED" {
+				continue
+			}
+			if req.GPUID != "" && active.GPUID == req.GPUID {
+				return workload.StartResult{}, errors.New("hostbridge: GPU already reserved by another active allocation")
+			}
+			if active.Port == req.Port {
+				return workload.StartResult{}, errors.New("hostbridge: port already reserved by another active allocation")
+			}
+		}
 		if err := e.ledger.Create(req); err != nil {
 			return workload.StartResult{}, err
 		}
