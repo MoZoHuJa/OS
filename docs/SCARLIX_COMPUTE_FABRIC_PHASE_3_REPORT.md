@@ -53,7 +53,7 @@ This candidate implements those items while keeping runtime startup/termination 
 - A failed second-store metadata update returns `ErrReconciliationRequired`; the durable reservation lease remains authoritative and can be repaired.
 
 ### 2.6 Stable GPU identity
-- `inventory.GPU` gains an optional `uuid` field.
+- `inventory.GPU` gains an internal-only `UUID` field populated from `nvidia-smi`; it is excluded from JSON so the frozen public inventory schema remains unchanged.
 - The NVIDIA collector queries UUID from `nvidia-smi`.
 - The reservation inventory adapter uses stable GPU UUIDs, never mutable display indices, and fails closed for missing/malformed UUIDs.
 - Only healthy GPUs, enabled/healthy runtimes, present models, and explicitly configured ports are exposed as reservable.
@@ -69,6 +69,8 @@ This candidate implements those items while keeping runtime startup/termination 
 - `scarlihq/internal/reservation/reservation_test.go`
 - `scarlihq/internal/reservation/allocation_adapter_test.go`
 - `scarlihq/internal/reservation/inventory_adapter_test.go`
+- `scarlihq/internal/reservation/token_identity.go`
+- `scarlihq/internal/reservation/token_identity_test.go`
 - `scarlihq/internal/inventory/types.go`
 - `scarlihq/internal/inventory/gpu.go`
 - `scarlihq/internal/inventory/gpu_test.go`
