@@ -6,7 +6,7 @@ on:
     # v18.7.6 P1: trigger on tags (was: branches only → v18.7.6 tag push skipped CI)
     tags: ['v*']
   pull_request:
-    branches: [main]
+    branches: [main, '19.2.10.G1']
 
 jobs:
   shellcheck:
