@@ -260,7 +260,6 @@ func TestGPU_JSONRoundTrip(t *testing.T) {
 	}
 }
 
-
 func TestGPU_UUIDIsNotSerializedIntoFrozenPublicSchema(t *testing.T) {
 	gpu := GPU{ID: "gpu.nvidia.0", UUID: "GPU-12345678-abcd-1234-abcd-123456789abc", Name: "RTX 5060 Ti"}
 	data, err := json.Marshal(gpu)
