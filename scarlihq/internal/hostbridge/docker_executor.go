@@ -24,16 +24,23 @@ import (
 
 const dockerAPIVersion = "v1.45"
 
+type MountSpec struct {
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	ReadOnly bool   `json:"read_only"`
+}
+
 type RuntimeProfile struct {
-	RuntimeID   string            `json:"runtime_id"`
-	ModelID     string            `json:"model_id"`
-	Image       string            `json:"image"`
-	Command     []string          `json:"command"`
-	Environment []string          `json:"environment,omitempty"`
-	AllowedGPUs []string          `json:"allowed_gpus,omitempty"`
-	AllowedPorts []int            `json:"allowed_ports"`
-	HealthPath  string            `json:"health_path"`
-	Network     string            `json:"network"`
+	RuntimeID    string            `json:"runtime_id"`
+	ModelID      string            `json:"model_id"`
+	Image        string            `json:"image"`
+	Command      []string          `json:"command"`
+	Environment  []string          `json:"environment,omitempty"`
+	Mounts       []MountSpec       `json:"mounts,omitempty"`
+	AllowedGPUs  []string          `json:"allowed_gpus,omitempty"`
+	AllowedPorts []int             `json:"allowed_ports"`
+	HealthPath   string            `json:"health_path"`
+	Network      string            `json:"network"`
 }
 
 type DockerExecutorConfig struct {
@@ -113,6 +120,17 @@ func validateDockerConfig(cfg DockerExecutorConfig) error {
 			parts := strings.SplitN(env, "=", 2)
 			if len(parts) != 2 || !envNamePattern.MatchString(parts[0]) || strings.ContainsRune(parts[1], '\x00') {
 				return errors.New("hostbridge: invalid static environment entry")
+			}
+		}
+		for _, mount := range p.Mounts {
+			if !mount.ReadOnly || !filepath.IsAbs(mount.Source) || !filepath.IsAbs(mount.Target) ||
+				filepath.Clean(mount.Target) != mount.Target || strings.Contains(mount.Target, "/../") ||
+				strings.ContainsRune(mount.Source, '\x00') || strings.ContainsRune(mount.Target, '\x00') {
+				return errors.New("hostbridge: only absolute, read-only, normalized bind mounts are permitted")
+			}
+			sourceInfo, sourceErr := os.Lstat(mount.Source)
+			if sourceErr != nil || sourceInfo.Mode()&os.ModeSymlink != 0 || (!sourceInfo.IsDir() && !sourceInfo.Mode().IsRegular()) {
+				return errors.New("hostbridge: bind mount source must exist and must not be a symlink")
 			}
 		}
 		if len(p.AllowedPorts) == 0 || p.HealthPath == "" || !strings.HasPrefix(p.HealthPath, "/") ||
@@ -220,6 +238,7 @@ func (e *DockerExecutor) Start(ctx context.Context, req workload.StartRequest) (
 			"PortBindings": map[string]any{portKey: []map[string]string{{"HostIp":"127.0.0.1", "HostPort":fmt.Sprint(req.Port)}}},
 			"Tmpfs": map[string]string{"/tmp":"rw,noexec,nosuid,size=256m"},
 			"DeviceRequests": e.deviceRequests(profile, req.GPUID),
+			"Mounts": e.dockerMounts(profile.Mounts),
 		},
 	}
 	raw, _ := json.Marshal(createBody)
@@ -335,6 +354,14 @@ func (e *DockerExecutor) Stop(ctx context.Context, req workload.StopRequest) (wo
 	_,stillFound,err := e.Find(ctx,req.AllocationID)
 	if err != nil || stillFound { return workload.StopResult{},errors.New("hostbridge: Docker cleanup could not be verified") }
 	return workload.StopResult{Verified:true},nil
+}
+
+func (e *DockerExecutor) dockerMounts(mounts []MountSpec) []map[string]any {
+	result := make([]map[string]any, 0, len(mounts))
+	for _, mount := range mounts {
+		result = append(result, map[string]any{"Type":"bind", "Source":mount.Source, "Target":mount.Target, "ReadOnly":true})
+	}
+	return result
 }
 
 func (e *DockerExecutor) deviceRequests(profile RuntimeProfile, gpuID string) []map[string]any {
