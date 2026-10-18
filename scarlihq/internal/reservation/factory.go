@@ -29,7 +29,7 @@ func NewFileBackedManager(
 	if err != nil {
 		return nil, fmt.Errorf("reservation: resolve reservation store path: %w", err)
 	}
-	allocationPath, err := filepath.Abs(filepath.Clean(allocationPath))
+	allocationPath, err = filepath.Abs(filepath.Clean(allocationPath))
 	if err != nil {
 		return nil, fmt.Errorf("reservation: resolve allocation store path: %w", err)
 	}
