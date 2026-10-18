@@ -13,6 +13,7 @@ Introduce a narrow host-side boundary between the ScarliHQ lifecycle manager and
 
 - Typed HTTP operations: `POST /v1/workloads/start` and `POST /v1/workloads/stop`.
 - A `workload.Driver` client that connects exclusively through a configured Unix socket, with bounded response reads and no TCP fallback.
+- A composition helper in `internal/compute` that injects the client into the existing `workload.Manager`; it does not add new dashboard/API routes.
 - The server is exposed as an HTTP handler, but the only provided listener is a Unix-domain socket helper. Do not expose it on TCP.
 - Socket creation requires an absolute path and a pre-existing real parent directory; existing paths are rejected instead of unlinked; mode is set to `0600`.
 - JSON requests are size-bounded, reject unknown fields and trailing JSON values, and require `application/json`.
@@ -25,7 +26,9 @@ Introduce a narrow host-side boundary between the ScarliHQ lifecycle manager and
 
 ## Deliberate limitations
 
-This is the **protocol and security core**, not yet a working host execution adapter. There is no production `Executor` implementation, service unit, installer wiring, or wiring of the new client into ScarliHQ's `workload.Manager` in this commit. The client and protocol are covered by unit-level Unix-socket integration tests, not by a deployed host service. The API must fail closed until a separately reviewed executor is supplied. Do not mark P5.1 complete or claim host workload execution works from these tests alone.
+This is the **protocol and composition core**, not yet a working host execution adapter. There is no production `Executor` implementation, workload service entrypoint/unit, installer wiring, persistent idempotency/reconciliation implementation, or connection from the dashboard API to this manager. The client and protocol are covered by unit-level Unix-socket integration tests, not by a deployed host service. The API must fail closed until a separately reviewed executor is supplied. Do not mark P5.1 complete or claim host workload execution works from these tests alone.
+
+See [`SCARLIX_COMPUTE_FABRIC_P5_1_HOST_ACCEPTANCE.md`](SCARLIX_COMPUTE_FABRIC_P5_1_HOST_ACCEPTANCE.md) for the security model, rollout gates, lifecycle matrix, and evidence required from the target host.
 
 ## Required next work
 
@@ -33,7 +36,7 @@ This is the **protocol and security core**, not yet a working host execution ada
 2. Decide the transport identity model before granting ScarliHQ access: Unix socket ownership/group and container GID mapping must be least-privilege. Never use world-writable socket permissions.
 3. Implement runtime-specific adapters using fixed, typed operations and pre-approved runtime configuration. Do not pass user-supplied command lines, image names, environment maps, or file paths.
 4. Add request idempotency/reconciliation keyed by allocation ID so retry after a timeout cannot create duplicate workloads.
-5. Add a narrow ScarliHQ client implementing the existing `workload.Driver` interface; keep API and Resource Contract v1 stable.
+5. Complete runtime composition/API wiring without adding privileged operations to ScarliHQ; the `internal/compute` helper now provides the first injection seam, but no production API caller exists yet.
 6. Add CI tests, service packaging, installer/rollback handling, and target-host acceptance before release.
 
 ## Acceptance gates
