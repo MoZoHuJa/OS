@@ -409,6 +409,33 @@ func TestManager_Reserve_SameAllocationCannotBypassCapacity(t *testing.T) {
 	}
 }
 
+
+// KPK v19.2.10: canonical-equivalent resource IDs must share an idempotency fingerprint.
+func TestManager_Reserve_IdempotencyCanonicalResourceID(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+	upper := ReserveRequest{
+		AllocationID: "alloc-1", ResourceID: "gpu.nvidia.GPU-ABCDEF12-ABCD-1234-ABCD-123456789ABC",
+		ResourceType: ResourceTypeGPUDevice, LeaseTTL: 5 * time.Minute, IdempotencyKey: "idem-canonical",
+	}
+	lower := upper
+	lower.ResourceID = "gpu.nvidia.GPU-abcdef12-abcd-1234-abcd-123456789abc"
+
+	first, err := mgr.Reserve(upper, "user-token")
+	if err != nil {
+		t.Fatalf("first Reserve: %v", err)
+	}
+	second, err := mgr.Reserve(lower, "user-token")
+	if err != nil {
+		t.Fatalf("canonical-equivalent replay: %v", err)
+	}
+	if second.Created {
+		t.Fatal("canonical-equivalent replay must not create a second reservation")
+	}
+	if first.Reservation.ReservationID != second.Reservation.ReservationID {
+		t.Fatalf("reservation IDs differ: %s vs %s", first.Reservation.ReservationID, second.Reservation.ReservationID)
+	}
+}
+
 func TestManager_Reserve_Idempotent(t *testing.T) {
 	mgr, _, _ := newTestManager(t)
 	req := ReserveRequest{
