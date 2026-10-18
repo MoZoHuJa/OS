@@ -43,12 +43,30 @@ func newReservedAllocation(t *testing.T, state allocation.State) (*allocation.St
 		resourcecontract.PriorityInteractive,
 		"agent.test",
 	)
-	for _, next := range []allocation.State{
+	states := []allocation.State{
 		allocation.StateValidating,
 		allocation.StatePlanned,
 		allocation.StateReserving,
 		allocation.StateReserved,
-	} {
+	}
+	switch state {
+	case allocation.StateReserved:
+	case allocation.StateStarting:
+		states = append(states, allocation.StateStarting)
+	case allocation.StateReady:
+		states = append(states, allocation.StateStarting, allocation.StateReady)
+	case allocation.StateRunning:
+		states = append(states, allocation.StateStarting, allocation.StateReady, allocation.StateRunning)
+	case allocation.StateFailed:
+		states = append(states, allocation.StateFailed)
+	case allocation.StateCancelled:
+		states = append(states, allocation.StateCancelled)
+	case allocation.StateCleanupRequired:
+		states = append(states, allocation.StateStarting, allocation.StateCleanupRequired)
+	default:
+		t.Fatalf("unsupported test setup state %s", state)
+	}
+	for _, next := range states {
 		if _, err := record.Transition(next, "test setup"); err != nil {
 			t.Fatalf("transition to %s: %v", next, err)
 		}
@@ -59,14 +77,6 @@ func newReservedAllocation(t *testing.T, state allocation.State) (*allocation.St
 	record.AssignedPort = 30000
 	if err := store.Append(record); err != nil {
 		t.Fatalf("append allocation: %v", err)
-	}
-	if state != allocation.StateReserved {
-		if err := store.Update(record.AllocationID, func(current *allocation.Allocation) error {
-			_, err := current.Transition(state, "test setup")
-			return err
-		}); err != nil {
-			t.Fatalf("transition stored allocation to %s: %v", state, err)
-		}
 	}
 	return store, record.AllocationID
 }
