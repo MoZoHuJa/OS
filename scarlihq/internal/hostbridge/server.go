@@ -242,7 +242,7 @@ func NewHTTPServer(handler http.Handler) *http.Server {
 		Handler:           handler,
 		ReadHeaderTimeout: 3 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      6 * time.Minute,
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 	}
