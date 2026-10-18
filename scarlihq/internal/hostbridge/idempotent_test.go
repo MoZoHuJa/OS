@@ -58,6 +58,9 @@ func (f *recoverableFake) Find(_ context.Context, id string) (workload.StartResu
 func newTestIdempotent(t *testing.T, inner RecoverableExecutor) (*IdempotentExecutor, *Ledger) {
 	t.Helper()
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	ledger, err := NewLedger(filepath.Join(dir, "ledger.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -156,6 +159,9 @@ func TestLedgerRejectsUnsafeParentAndCorruptFile(t *testing.T) {
 		t.Fatal("expected group/other-accessible directory to be rejected")
 	}
 	dir2 := t.TempDir()
+	if err := os.Chmod(dir2, 0700); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(dir2, "ledger.json")
 	if err := os.WriteFile(path, []byte("{broken"), 0600); err != nil {
 		t.Fatal(err)
