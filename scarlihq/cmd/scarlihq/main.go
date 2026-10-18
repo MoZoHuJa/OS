@@ -5,9 +5,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time" // v18.6 P1: explicit server timeouts
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/api"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/compute"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/mcp"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
@@ -19,7 +22,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.0.0"
+var Version = "19.2.14"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -58,6 +61,28 @@ func main() {
 	// REST API + MCP + WS — all behind token auth
 	// v18.2 P1: pass Version to Handler (was: separate const — ldflags couldn't override)
 	apiHandler := api.NewHandler(g, mode, pf, authToken, Version)
+	// Compute lifecycle is opt-in. The bearer token maps to one configured principal;
+	// do not enable this shared-token mode for multi-user deployments.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("SCARLIHQ_COMPUTE_ENABLED")), "true") {
+		socketPath := strings.TrimSpace(os.Getenv("SCARLIHQ_COMPUTE_SOCKET"))
+		allocationPath := strings.TrimSpace(os.Getenv("SCARLIHQ_ALLOCATION_STORE"))
+		principal := strings.TrimSpace(os.Getenv("SCARLIHQ_COMPUTE_PRINCIPAL"))
+		if socketPath == "" || allocationPath == "" || principal == "" {
+			log.Fatal("compute lifecycle enabled but SCARLIHQ_COMPUTE_SOCKET, SCARLIHQ_ALLOCATION_STORE, or SCARLIHQ_COMPUTE_PRINCIPAL is missing")
+		}
+		store := allocation.NewStore(allocationPath)
+		runtime, err := compute.New(store, socketPath)
+		if err != nil {
+			log.Fatalf("compute lifecycle initialization failed: %v", err)
+		}
+		if err := apiHandler.ConfigureCompute(runtime.Manager, principal); err != nil {
+			runtime.Close()
+			log.Fatalf("compute lifecycle configuration failed: %v", err)
+		}
+		log.Printf("Compute lifecycle API enabled (allocation store: %s); resource release remains reconciliation-gated", allocationPath)
+	} else {
+		log.Printf("Compute lifecycle API disabled; set SCARLIHQ_COMPUTE_ENABLED=true only after host bridge acceptance")
+	}
 	apiHandler.RegisterRoutes(mux)
 
 	mcpServer := mcp.NewServer(g, mode, pf, authToken, Version)

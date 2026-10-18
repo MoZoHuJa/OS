@@ -15,11 +15,12 @@ import (
 	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/status"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/workload"
 )
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.0.0"
+var Version = "19.2.14"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -150,11 +151,13 @@ func ReserveWSTicket(ticket string) bool {
 
 // Handler holds dependencies for API routes.
 type Handler struct {
-	guard     *guard.Guard
-	mode      *scarlix_mode.Mode
-	profiles  *profiles.Manager
-	authToken string
-	version   string // v18.2: passed from main (ldflags-injected)
+	guard            *guard.Guard
+	mode             *scarlix_mode.Mode
+	profiles         *profiles.Manager
+	authToken        string
+	version          string // v18.2: passed from main (ldflags-injected)
+	computeManager   *workload.Manager
+	computePrincipal string
 }
 
 // NewHandler creates a new API handler.
@@ -177,6 +180,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/profiles", h.auth(h.listProfiles))
 	mux.HandleFunc("/api/status", h.auth(h.fullStatus))
 	mux.HandleFunc("/api/ws-ticket", h.auth(h.issueWSTicket))
+	mux.HandleFunc("/api/compute/start", h.auth(h.computeStart))
+	mux.HandleFunc("/api/compute/stop", h.auth(h.computeStop))
 }
 
 // auth middleware: validates Bearer token header only.
