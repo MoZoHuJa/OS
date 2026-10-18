@@ -67,7 +67,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.2.10   # ALWAYS checkout specific tag (main may be ahead)
+git checkout 19.2.10.G1   # candidate branch; release tag follows CI/acceptance gates
 nano install.sh         # review
 bash install.sh
 ```
