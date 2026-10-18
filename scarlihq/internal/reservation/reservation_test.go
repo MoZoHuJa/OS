@@ -446,6 +446,7 @@ func TestManager_Reserve_FinalizationFailureKeepsDurableReservation(t *testing.T
 	store := newTestStore(t)
 	clock := &FakeClock{T: time.Now().UTC()}
 	inv := newStubInventory()
+	inv.snap.AsOf = clock.Now()
 	allocVal := newStubAllocValidator("alloc-1")
 	allocVal.endErr = fmt.Errorf("simulated allocation finalization failure")
 	cleanupVer := &stubCleanupVerifier{verified: true, clock: clock}
