@@ -35,9 +35,9 @@ func NewManager(store AllocationStore, driver Driver) (*Manager, error) {
 
 // Result is the safe, minimal execution outcome returned to trusted callers.
 type Result struct {
-	AllocationID string
-	State        allocation.State
-	WorkloadRef  string
+	AllocationID  string
+	State         allocation.State
+	WorkloadRef   string
 	WorkloadOwned bool
 }
 
