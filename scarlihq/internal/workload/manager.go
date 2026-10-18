@@ -148,7 +148,15 @@ func (m *Manager) Stop(ctx context.Context, allocationID, principal string) (Res
 		return Result{}, err
 	}
 
-	stopped, stopErr := m.driver.Stop(ctx, request)
+	// Defense in depth: a shared/pre-existing runtime is not owned by this
+	// allocation, so the manager must not invoke the host driver to stop it.
+	// There is no allocation-owned process to clean up; Phase 6 may release
+	// this allocation's reservation without terminating the shared runtime.
+	stopped := StopResult{Verified: !request.Owned}
+	var stopErr error
+	if request.Owned {
+		stopped, stopErr = m.driver.Stop(ctx, request)
+	}
 	if stopErr != nil || !stopped.Verified {
 		if err := m.store.Update(allocationID, func(record *allocation.Allocation) error {
 			if err := verifyOwner(record, principal); err != nil {
