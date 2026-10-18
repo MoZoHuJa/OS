@@ -4,8 +4,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"syscall"
+	"sort"
 	"time"
 )
 
@@ -32,6 +33,7 @@ func (f *FakeClock) Advance(d time.Duration) { f.T = f.T.Add(d) }
 // forge identity.
 type Manager struct {
 	store      *Store
+	resourceLock *ResourceLock
 	policy     ReservationPolicy
 	clock      Clock
 	inventory  InventoryProvider
@@ -64,7 +66,11 @@ func NewManager(store *Store, policy ReservationPolicy, clock Clock, inventory I
 	if err := policy.Validate(); err != nil {
 		return nil, fmt.Errorf("reservation: invalid policy: %w", err)
 	}
-	return &Manager{store: store, policy: policy, clock: clock, inventory: inventory, allocVal: allocVal, cleanupVer: cleanupVer, idProv: idProv}, nil
+	resourceLock, err := NewResourceLock(store)
+	if err != nil {
+		return nil, err
+	}
+	return &Manager{store: store, resourceLock: resourceLock, policy: policy, clock: clock, inventory: inventory, allocVal: allocVal, cleanupVer: cleanupVer, idProv: idProv}, nil
 }
 
 func generateID() string {
@@ -126,77 +132,103 @@ type ReserveResult struct {
 	Created     bool
 }
 
-// Reserve creates a reservation.
-// P1-02 (v19.2.9): Uses BeginReservation/EndReservation for atomicity.
+// Reserve creates one reservation. It remains source-compatible with the original API;
+// use ReserveBundle when one allocation must atomically claim multiple resources.
 func (m *Manager) Reserve(req ReserveRequest, token string) (*ReserveResult, error) {
+	bundle, err := m.ReserveBundle([]ReserveRequest{req}, token)
+	if bundle == nil {
+		return nil, err
+	}
+	if len(bundle.Reservations) != 1 {
+		return nil, fmt.Errorf("reservation: internal error: single-resource call returned %d records", len(bundle.Reservations))
+	}
+	return &ReserveResult{Reservation: bundle.Reservations[0], Created: bundle.Created}, err
+}
+
+// ReserveBundleResult is the outcome of an atomic multi-resource reservation.
+type ReserveBundleResult struct {
+	Reservations []*Reservation
+	Created      bool
+}
+
+type normalizedRequest struct {
+	request   ReserveRequest
+	canonical string
+}
+
+// ReserveBundle reserves all resources for one allocation under one global
+// reservation lock and one atomic reservation-store rewrite. The allocation
+// claim is made only after idempotency has been checked, so a replay does not
+// attempt to claim an allocation that is already RESERVED.
+//
+// A successful durable reservation is never rolled back merely because the
+// allocation-store finalization failed. In that case the result is returned
+// with ErrReconciliationRequired and can be repaired by ReconcilePending.
+func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result *ReserveBundleResult, retErr error) {
 	identity, err := m.resolveIdentity(token)
 	if err != nil {
 		return nil, fmt.Errorf("reservation: identity resolution failed: %w", err)
 	}
-
-	// 1. Validate request.
-	if req.AllocationID == "" {
-		return nil, fmt.Errorf("reservation: allocation_id is required")
-	}
-	if req.ResourceID == "" {
-		return nil, fmt.Errorf("reservation: resource_id is required")
-	}
-	if !req.ResourceType.IsValid() {
-		return nil, fmt.Errorf("reservation: invalid resource type %q", req.ResourceType)
-	}
-	canonID, err := CanonicalResourceID(req.ResourceID, req.ResourceType)
+	normalized, err := normalizeRequests(requests, m.policy)
 	if err != nil {
-		return nil, fmt.Errorf("reservation: invalid resource_id: %w", err)
+		return nil, err
 	}
-	if req.LeaseTTL <= 0 {
-		return nil, fmt.Errorf("reservation: lease TTL must be > 0")
-	}
-	if !m.policy.ValidateLeaseTTL(req.LeaseTTL) {
-		return nil, fmt.Errorf("reservation: lease TTL %v outside range [%v, %v]",
-			req.LeaseTTL, m.policy.LeaseMinTTL, m.policy.LeaseMaxTTL)
-	}
+	allocationID := normalized[0].request.AllocationID
+	idempotencyKey := normalized[0].request.IdempotencyKey
+	fingerprint := bundleFingerprint(normalized)
 
-	// P1-03/P2-01: First inventory snapshot — full validation.
 	snap := m.inventory.GetSnapshot()
 	if err := m.validateInventorySnapshot(snap); err != nil {
 		return nil, fmt.Errorf("reservation: %w", err)
 	}
-	if !snap.ResourceExists(canonID) {
-		return nil, ErrResourceNotFound
-	}
-
-	leaseExpiry := m.clock.Now().Add(req.LeaseTTL)
-
-	// Acquire flock.
-	lockFile, err := m.store.acquireFlock()
-	if err != nil {
-		return nil, fmt.Errorf("reservation: cannot acquire flock: %w", err)
-	}
-	defer func() {
-		syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
-		lockFile.Close()
-	}()
-
-	// P1-02 (v19.2.9): BeginReservation — atomically claim allocation.
-	// This prevents the allocation from transitioning to terminal state.
-	if err := m.allocVal.BeginReservation(req.AllocationID); err != nil {
-		return nil, fmt.Errorf("reservation: cannot begin reservation for allocation: %w", err)
-	}
-
-	// Ensure EndReservation is called on all exit paths.
-	reservationSuccess := false
-	defer func() {
-		if !reservationSuccess {
-			_ = m.allocVal.EndReservation(req.AllocationID, false)
+	for _, item := range normalized {
+		if !snap.ResourceExists(item.canonical) {
+			return nil, fmt.Errorf("%w: %s", ErrResourceNotFound, item.canonical)
 		}
-	}()
-
-	// P1-02: Validate allocation INSIDE flock.
-	if err := m.allocVal.ValidateForReservation(req.AllocationID); err != nil {
-		return nil, fmt.Errorf("reservation: allocation validation failed: %w", err)
 	}
 
-	// P2-01: Second inventory snapshot — SAME validation as first.
+	unlock, err := m.resourceLock.Lock()
+	if err != nil {
+		return nil, fmt.Errorf("reservation: cannot acquire resource lock: %w", err)
+	}
+	defer unlock()
+
+	records, corrupt, err := m.store.loadLocked()
+	if err != nil {
+		return nil, fmt.Errorf("reservation: cannot load store: %w", err)
+	}
+	if len(corrupt) > 0 {
+		return nil, fmt.Errorf("%w: %d corrupt lines", ErrReservationStoreCorrupt, len(corrupt))
+	}
+
+	// Idempotency lookup precedes BeginReservation. Existing bundle records are
+	// validated as a set, not just by finding one matching line.
+	if idempotencyKey != "" {
+		existing := make([]*Reservation, 0, len(normalized))
+		for _, record := range records {
+			if record.IdempotencyKey == idempotencyKey && record.Owner == identity.Principal() {
+				existing = append(existing, record)
+			}
+		}
+		if len(existing) > 0 {
+			if err := validateIdempotentBundle(existing, normalized, identity.Principal(), fingerprint); err != nil {
+				return nil, err
+			}
+			for _, record := range existing {
+				if record.Status == StatusReleased {
+					return nil, fmt.Errorf("%w: idempotency key cannot be reused after release", ErrIdempotencyConflict)
+				}
+			}
+			sortReservations(existing)
+			if err := m.allocVal.EndReservation(allocationID, true); err != nil {
+				return &ReserveBundleResult{Reservations: existing, Created: false},
+					fmt.Errorf("%w: existing reservation bundle is persisted but allocation finalization is pending: %w", ErrReconciliationRequired, err)
+			}
+			return &ReserveBundleResult{Reservations: existing, Created: false}, nil
+		}
+	}
+
+	// Revalidate inventory while holding the cross-process reservation lock.
 	snap2 := m.inventory.GetSnapshot()
 	if err := m.validateInventorySnapshot(snap2); err != nil {
 		return nil, fmt.Errorf("reservation: %w", err)
@@ -204,105 +236,199 @@ func (m *Manager) Reserve(req ReserveRequest, token string) (*ReserveResult, err
 	if snap.Generation != snap2.Generation {
 		return nil, ErrStaleInventory
 	}
-	if !snap2.ResourceExists(canonID) {
-		return nil, ErrResourceNotFound
+	for _, item := range normalized {
+		if !snap2.ResourceExists(item.canonical) {
+			return nil, fmt.Errorf("%w: %s", ErrResourceNotFound, item.canonical)
+		}
 	}
 
-	records, corrupt, err := m.store.loadLocked()
-	if err != nil {
-		return nil, fmt.Errorf("reservation: cannot load: %w", err)
+	if err := m.allocVal.BeginReservation(allocationID); err != nil {
+		return nil, fmt.Errorf("reservation: cannot begin reservation for allocation: %w", err)
 	}
-	if len(corrupt) > 0 {
-		return nil, fmt.Errorf("%w: %d corrupt lines", ErrReservationStoreCorrupt, len(corrupt))
-	}
-
-	// Idempotency check. Fingerprint canonical request fields so equivalent resource IDs
-	// map to the same idempotency identity. Accept the legacy raw-input fingerprint
-	// for reservations written by earlier versions.
-	canonicalReq := req
-	canonicalReq.ResourceID = canonID
-	fingerprint := computeFingerprint(canonicalReq)
-	legacyFingerprint := computeFingerprint(req)
-	if req.IdempotencyKey != "" {
-		for _, existing := range records {
-			if existing.IdempotencyKey == req.IdempotencyKey && existing.Owner == identity.Principal() {
-				if existing.RequestFingerprint != fingerprint && existing.RequestFingerprint != legacyFingerprint {
-					return nil, ErrIdempotencyConflict
-				}
-				if existing.Status == StatusReleased {
-					return nil, fmt.Errorf("reservation: idempotency key reused after release")
-				}
-				// The reservation already exists durably. Never roll its allocation
-				// claim back if finalization fails; report the pending repair explicitly.
-				reservationSuccess = true
-				if err := m.allocVal.EndReservation(req.AllocationID, true); err != nil {
-					return nil, fmt.Errorf("reservation: existing reservation %s is persisted but allocation finalization is pending: %w", existing.ReservationID, err)
-				}
-				return &ReserveResult{Reservation: existing, Created: false}, nil
+	claimOpen := true
+	committed := false
+	defer func() {
+		if claimOpen && !committed {
+			if rollbackErr := m.allocVal.EndReservation(allocationID, false); rollbackErr != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("reservation: allocation rollback/failure transition failed: %w", rollbackErr))
 			}
 		}
+	}()
+
+	if err := m.allocVal.ValidateForReservation(allocationID); err != nil {
+		return nil, fmt.Errorf("reservation: allocation validation failed: %w", err)
 	}
 
-	allReservations := make([]*Reservation, 0, len(records))
-	for _, r := range records {
-		allReservations = append(allReservations, r)
+	now := m.clock.Now().UTC()
+	leaseExpiry := now.Add(normalized[0].request.LeaseTTL)
+	allReservations := make([]*Reservation, 0, len(records)+len(normalized))
+	for _, record := range records {
+		allReservations = append(allReservations, record)
+	}
+	created := make([]*Reservation, 0, len(normalized))
+	for _, item := range normalized {
+		switch item.request.ResourceType {
+		case ResourceTypeGPUDevice:
+			if !m.policy.CanReserveGPU(item.canonical, allReservations) {
+				return nil, &ReservationError{Err: ErrReservationConflict, ResourceID: item.canonical, Owner: identity.Principal(), Detail: "GPU already reserved"}
+			}
+		case ResourceTypeRuntimeSlot:
+			if !m.policy.CanReserveRuntimeSlot(item.canonical, allReservations) {
+				return nil, &ReservationError{Err: ErrCapacityExceeded, ResourceID: item.canonical, Owner: identity.Principal(), Detail: "runtime slot capacity exceeded"}
+			}
+		case ResourceTypeModelSlot:
+			if !m.policy.CanReserveModelSlot(item.canonical, allReservations) {
+				return nil, &ReservationError{Err: ErrCapacityExceeded, ResourceID: item.canonical, Owner: identity.Principal(), Detail: "model slot capacity exceeded"}
+			}
+		case ResourceTypePort:
+			if !m.policy.CanReservePort(item.canonical, allReservations) {
+				return nil, &ReservationError{Err: ErrReservationConflict, ResourceID: item.canonical, Owner: identity.Principal(), Detail: "port already reserved"}
+			}
+		default:
+			return nil, fmt.Errorf("reservation: unsupported resource type %q", item.request.ResourceType)
+		}
+
+		record := &Reservation{
+			ReservationID:       generateID(),
+			AllocationID:        allocationID,
+			SchemaVersion:       ReservationSchemaVersion,
+			ResourceID:          item.canonical,
+			ResourceType:        item.request.ResourceType,
+			Owner:               identity.Principal(),
+			LeaseID:             generateID(),
+			LeaseExpiry:         leaseExpiry,
+			LastRenewedAt:       now,
+			InventoryGeneration: snap2.Generation,
+			Status:              StatusHeld,
+			CreatedAt:            now,
+			UpdatedAt:            now,
+			IdempotencyKey:       idempotencyKey,
+			RequestFingerprint:   fingerprint,
+			Revision:             0,
+		}
+		created = append(created, record)
+		allReservations = append(allReservations, record)
 	}
 
-	switch req.ResourceType {
-	case ResourceTypeGPUDevice:
-		if !m.policy.CanReserveGPU(canonID, allReservations) {
-			return nil, &ReservationError{Err: ErrReservationConflict, ResourceID: canonID, Detail: "GPU already reserved"}
-		}
-	case ResourceTypeRuntimeSlot:
-		if !m.policy.CanReserveRuntimeSlot(canonID, allReservations) {
-			return nil, &ReservationError{Err: ErrCapacityExceeded, ResourceID: canonID, Detail: "runtime slot capacity exceeded"}
-		}
-	case ResourceTypeModelSlot:
-		if !m.policy.CanReserveModelSlot(canonID, allReservations) {
-			return nil, &ReservationError{Err: ErrCapacityExceeded, ResourceID: canonID, Detail: "model slot capacity exceeded"}
-		}
-	case ResourceTypePort:
-		if !m.policy.CanReservePort(canonID, allReservations) {
-			return nil, &ReservationError{Err: ErrReservationConflict, ResourceID: canonID, Detail: "port already reserved"}
-		}
-	default:
-		return nil, fmt.Errorf("reservation: unsupported resource type %q", req.ResourceType)
+	for _, record := range created {
+		records[record.ReservationID] = record
 	}
-
-	now := m.clock.Now()
-	r := &Reservation{
-		ReservationID:       generateID(),
-		AllocationID:        req.AllocationID,
-		SchemaVersion:       ReservationSchemaVersion,
-		ResourceID:          canonID,
-		ResourceType:        req.ResourceType,
-		Owner:               identity.Principal(),
-		LeaseID:             generateID(),
-		LeaseExpiry:         leaseExpiry,
-		LastRenewedAt:       now,
-		InventoryGeneration: snap2.Generation,
-		Status:              StatusHeld,
-		CreatedAt:           now,
-		UpdatedAt:           now,
-		IdempotencyKey:      req.IdempotencyKey,
-		RequestFingerprint:  fingerprint,
-		Revision:            0,
-	}
-
-	records[r.ReservationID] = r
 	if err := m.store.rewriteAll(records); err != nil {
-		return nil, fmt.Errorf("reservation: cannot persist: %w", err)
+		return nil, fmt.Errorf("%w: cannot persist reservation bundle: %w", ErrPersistence, err)
 	}
 
-	// The reservation is durably committed. From this point onward, a failure to
-	// finalize the allocation is a recoverable reconciliation condition, NOT a
-	// reason to roll the allocation claim back.
-	reservationSuccess = true
-	if err := m.allocVal.EndReservation(req.AllocationID, true); err != nil {
-		return nil, fmt.Errorf("reservation: reservation %s is persisted but allocation finalization is pending: %w", r.ReservationID, err)
+	committed = true
+	claimOpen = false
+	sortReservations(created)
+	result = &ReserveBundleResult{Reservations: created, Created: true}
+	if err := m.allocVal.EndReservation(allocationID, true); err != nil {
+		return result, fmt.Errorf("%w: reservation bundle for allocation %s is persisted but allocation finalization is pending: %w", ErrReconciliationRequired, allocationID, err)
 	}
+	return result, nil
+}
 
-	return &ReserveResult{Reservation: r, Created: true}, nil
+func normalizeRequests(requests []ReserveRequest, policy ReservationPolicy) ([]normalizedRequest, error) {
+	if len(requests) == 0 {
+		return nil, fmt.Errorf("reservation: at least one resource is required")
+	}
+	result := make([]normalizedRequest, 0, len(requests))
+	allocationID, idempotencyKey := requests[0].AllocationID, requests[0].IdempotencyKey
+	ttl := requests[0].LeaseTTL
+	seen := make(map[string]bool, len(requests))
+	for _, req := range requests {
+		if req.AllocationID == "" || req.AllocationID != allocationID {
+			return nil, fmt.Errorf("reservation: all resources must have the same non-empty allocation_id")
+		}
+		if req.IdempotencyKey != idempotencyKey {
+			return nil, fmt.Errorf("reservation: all resources in a bundle must use the same idempotency key")
+		}
+		if req.ResourceID == "" {
+			return nil, fmt.Errorf("reservation: resource_id is required")
+		}
+		if !req.ResourceType.IsValid() {
+			return nil, fmt.Errorf("reservation: invalid resource type %q", req.ResourceType)
+		}
+		canonical, err := CanonicalResourceID(req.ResourceID, req.ResourceType)
+		if err != nil {
+			return nil, fmt.Errorf("reservation: invalid resource_id: %w", err)
+		}
+		if req.LeaseTTL <= 0 || !policy.ValidateLeaseTTL(req.LeaseTTL) {
+			return nil, fmt.Errorf("reservation: lease TTL %v outside range [%v, %v]", req.LeaseTTL, policy.LeaseMinTTL, policy.LeaseMaxTTL)
+		}
+		if req.LeaseTTL != ttl {
+			return nil, fmt.Errorf("reservation: all resources in a bundle must use the same lease TTL")
+		}
+		key := string(req.ResourceType) + "\x00" + canonical
+		if seen[key] {
+			return nil, fmt.Errorf("reservation: duplicate resource in bundle: %s", canonical)
+		}
+		seen[key] = true
+		result = append(result, normalizedRequest{request: req, canonical: canonical})
+	}
+	return result, nil
+}
+
+func bundleFingerprint(requests []normalizedRequest) string {
+	if len(requests) == 1 {
+		req := requests[0].request
+		req.ResourceID = requests[0].canonical
+		return computeFingerprint(req)
+	}
+	sorted := append([]normalizedRequest(nil), requests...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].request.ResourceType != sorted[j].request.ResourceType {
+			return sorted[i].request.ResourceType < sorted[j].request.ResourceType
+		}
+		return sorted[i].canonical < sorted[j].canonical
+	})
+	h := sha256.New()
+	for _, item := range sorted {
+		fmt.Fprintf(h, "%d:%s%d:%s", len(item.request.ResourceType), item.request.ResourceType, len(item.canonical), item.canonical)
+	}
+	fmt.Fprintf(h, "%d:%s%d:%d", len(sorted[0].request.AllocationID), sorted[0].request.AllocationID, len(sorted[0].request.LeaseTTL.String()), sorted[0].request.LeaseTTL)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func validateIdempotentBundle(existing []*Reservation, requests []normalizedRequest, owner, fingerprint string) error {
+	if len(existing) != len(requests) {
+		return ErrIdempotencyConflict
+	}
+	expected := make(map[string]normalizedRequest, len(requests))
+	for _, item := range requests {
+		expected[string(item.request.ResourceType)+"\x00"+item.canonical] = item
+	}
+	for _, record := range existing {
+		key := string(record.ResourceType) + "\x00" + record.ResourceID
+		item, ok := expected[key]
+		if !ok || record.Owner != owner {
+			return ErrIdempotencyConflict
+		}
+		if record.RequestFingerprint != fingerprint {
+			if len(requests) != 1 {
+				return ErrIdempotencyConflict
+			}
+			legacy := computeFingerprint(item.request)
+			persistedTTL := record.LeaseExpiry.Sub(record.LastRenewedAt)
+			persisted := ReserveRequest{AllocationID: record.AllocationID, ResourceID: record.ResourceID, ResourceType: record.ResourceType, LeaseTTL: persistedTTL}
+			if record.RequestFingerprint != legacy && computeFingerprint(persisted) != fingerprint {
+				return ErrIdempotencyConflict
+			}
+		}
+		delete(expected, key)
+	}
+	if len(expected) != 0 {
+		return ErrIdempotencyConflict
+	}
+	return nil
+}
+
+func sortReservations(records []*Reservation) {
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].ResourceType != records[j].ResourceType {
+			return records[i].ResourceType < records[j].ResourceType
+		}
+		return records[i].ResourceID < records[j].ResourceID
+	})
 }
 
 // RenewLease extends the lease TTL.
