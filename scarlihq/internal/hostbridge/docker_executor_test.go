@@ -12,8 +12,8 @@ func validDockerConfigForTest() DockerExecutorConfig {
 		GPUDevices:   map[string]string{"gpu.nvidia.0": "GPU-0123456789abcdef0123456789abcdef"},
 		Profiles: []RuntimeProfile{{
 			RuntimeID: "sglang", ModelID: "qwen3-14b-awq",
-			Image: "registry.example.invalid/scarlix/sglang@sha256:" + strings.Repeat("a", 64),
-			Command: []string{"python", "-m", "sglang.launch_server", "--model-path", "/models/qwen3-14b-awq", "--host", "0.0.0.0", "--port", "30000"},
+			Image:       "registry.example.invalid/scarlix/sglang@sha256:" + strings.Repeat("a", 64),
+			Command:     []string{"python", "-m", "sglang.launch_server", "--model-path", "/models/qwen3-14b-awq", "--host", "0.0.0.0", "--port", "30000"},
 			AllowedGPUs: []string{"gpu.nvidia.0"}, AllowedPorts: []int{30000},
 			HealthPath: "/health", Network: "scarlix-compute",
 		}},
