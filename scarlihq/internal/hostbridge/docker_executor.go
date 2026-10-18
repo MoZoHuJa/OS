@@ -309,7 +309,8 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 		return workload.StartResult{},false,errors.New("hostbridge: Docker inspect failed")
 	}
 	var inspected struct {
-		Config struct { Labels map[string]string `json:"Labels"` } `json:"Config"`
+		Name string `json:"Name"`
+		Config struct { Image string `json:"Image"`; Labels map[string]string `json:"Labels"` } `json:"Config"`
 		State struct { Running bool `json:"Running"` } `json:"State"`
 		HostConfig struct { PortBindings map[string][]struct { HostPort string `json:"HostPort"` } `json:"PortBindings"` } `json:"HostConfig"`
 	}
@@ -317,8 +318,11 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 	runtimeID = inspected.Config.Labels["scarlix.runtime_id"]
 	modelID = inspected.Config.Labels["scarlix.model_id"]
 	profile, ok := e.profiles[profileKey(runtimeID,modelID)]
-	if !ok || inspected.Config.Labels["scarlix.allocation_id"] != allocationID {
-		return workload.StartResult{},false,errors.New("hostbridge: Docker labels do not match configured profile")
+	if !ok || inspected.Config.Labels["scarlix.allocation_id"] != allocationID ||
+		inspected.Config.Image != profile.Image || inspected.Name != "/"+dockerContainerName(allocationID) ||
+		inspected.Config.Labels["scarlix.managed"] != "true" ||
+		inspected.Config.Labels["scarlix.owned"] != "true" {
+		return workload.StartResult{},false,errors.New("hostbridge: Docker resource identity does not match configured allocation")
 	}
 	port := 0
 	for _, candidate := range profile.AllowedPorts {
