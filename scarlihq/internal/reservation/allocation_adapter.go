@@ -91,8 +91,6 @@ func (a *AllocationReservationAdapter) BeginReservation(id string) error {
 		switch record.State {
 		case allocation.StateReserving:
 			return nil // recover/retry an interrupted claim
-		case allocation.StateReserved:
-			return nil // idempotent replay; finalization will verify the durable bundle
 		case allocation.StatePlanned:
 			_, err := record.Transition(allocation.StateReserving, "phase 3 resource reservation started")
 			return err
