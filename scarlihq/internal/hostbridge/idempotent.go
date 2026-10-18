@@ -3,8 +3,9 @@ package hostbridge
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/workload"
@@ -63,13 +64,16 @@ func (e *IdempotentExecutor) Start(ctx context.Context, req workload.StartReques
 			}
 			return observed, nil
 		}
-		// An earlier record with no runtime resource can safely retry only after
-		// Find positively confirms absence. A stopped allocation is handled above.
+		// Only an interrupted STARTING intent may retry after the runtime positively
+		// confirms absence. RUNNING/RECONCILE_REQUIRED must fail closed.
+		if entry.State != "STARTING" {
+			return workload.StartResult{}, errors.New("hostbridge: existing allocation is not safely retryable; reconciliation required")
+		}
 		if err := e.ledger.SetState(req.AllocationID, "STARTING", "", false); err != nil {
 			return workload.StartResult{}, errors.New("hostbridge: could not persist retry intent")
 		}
 	} else {
-		if err := e.ledger.Create(req.AllocationID, fingerprint); err != nil {
+		if err := e.ledger.Create(req); err != nil {
 			return workload.StartResult{}, err
 		}
 	}
