@@ -352,7 +352,7 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 		return workload.StartResult{}, false, errors.New("hostbridge: Docker inspect failed")
 	}
 	var inspected struct {
-		Name string `json:"Name"`
+		Name   string `json:"Name"`
 		Config struct {
 			Image  string            `json:"Image"`
 			Labels map[string]string `json:"Labels"`
