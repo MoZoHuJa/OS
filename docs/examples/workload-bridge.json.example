@@ -34,7 +34,8 @@
         30000
       ],
       "health_path": "/health",
-      "network": "scarlix-compute"
+      "network": "scarlix-compute",
+      "shm_size_bytes": 1073741824
     }
   ]
 }
