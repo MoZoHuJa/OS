@@ -451,6 +451,10 @@ type allocationOwnershipValidator interface {
 	ValidateAllocationOwner(allocationID, principal string) error
 }
 
+type pendingAllocationScanner interface {
+	ListPendingReservationAllocations() ([]string, error)
+}
+
 type reservationAssignmentFinalizer interface {
 	FinalizeReservation(allocationID string, reservations []*Reservation) error
 }
@@ -516,11 +520,46 @@ func (m *Manager) ReconcilePending(allocationID, token string) error {
 	if expectedBundleSize > 0 && len(bundle) != expectedBundleSize {
 		return fmt.Errorf("%w: allocation %s has %d/%d reservation records", ErrReconciliationRequired, allocationID, len(bundle), expectedBundleSize)
 	}
+	if len(bundle) > 1 {
+		for _, record := range bundle {
+			if record.BundleSize == 0 {
+				return fmt.Errorf("%w: allocation %s mixes legacy single-resource and bundle records", ErrReconciliationRequired, allocationID)
+			}
+		}
+	}
 	sortReservations(bundle)
 	if err := m.finalizeAllocation(allocationID, bundle); err != nil {
 		return fmt.Errorf("%w: cannot finalize allocation %s: %w", ErrReconciliationRequired, allocationID, err)
 	}
 	return nil
+}
+
+// ReconcileAllPending repairs interrupted Phase 3 claims on startup. The
+// allocation adapter supplies allocation IDs left in RESERVING; each is
+// finalized from its complete durable reservation bundle or safely aborted
+// when no reservation record was committed.
+func (m *Manager) ReconcileAllPending(token string) error {
+	identity, err := m.resolveReconciler(token)
+	if err != nil {
+		return err
+	}
+	_ = identity
+	scanner, ok := m.allocVal.(pendingAllocationScanner)
+	if !ok {
+		return fmt.Errorf("%w: allocation validator does not support startup scanning", ErrReconciliationRequired)
+	}
+	ids, err := scanner.ListPendingReservationAllocations()
+	if err != nil {
+		return fmt.Errorf("%w: cannot list pending allocations: %w", ErrReconciliationRequired, err)
+	}
+	sort.Strings(ids)
+	var failures []error
+	for _, id := range ids {
+		if err := m.ReconcilePending(id, token); err != nil {
+			failures = append(failures, fmt.Errorf("allocation %s: %w", id, err))
+		}
+	}
+	return errors.Join(failures...)
 }
 
 // ReapExpiredOnce marks expired leases and asks the trusted cleanup verifier
