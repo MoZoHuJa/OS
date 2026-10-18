@@ -53,8 +53,8 @@ func TestDockerExecutorUsesTypedCreateAndVerifiedStop(t *testing.T) {
 				return
 			}
 			response, _ := json.Marshal([]map[string]any{{
-				"Id": containerID,
-				"State": map[bool]string{true: "running", false: "exited"}[running],
+				"Id":     containerID,
+				"State":  map[bool]string{true: "running", false: "exited"}[running],
 				"Labels": labels,
 			}})
 			_, _ = w.Write(response)
@@ -83,9 +83,9 @@ func TestDockerExecutorUsesTypedCreateAndVerifiedStop(t *testing.T) {
 				fmt.Sprintf("%d/tcp", port): {{"HostIp": "127.0.0.1", "HostPort": fmt.Sprint(port)}},
 			}
 			response, _ := json.Marshal(map[string]any{
-				"Name": "/" + containerName,
-				"Config": map[string]any{"Image": image, "Labels": labels},
-				"State": map[string]any{"Running": running},
+				"Name":       "/" + containerName,
+				"Config":     map[string]any{"Image": image, "Labels": labels},
+				"State":      map[string]any{"Running": running},
 				"HostConfig": map[string]any{"PortBindings": bindings},
 			})
 			_, _ = w.Write(response)
@@ -112,14 +112,14 @@ func TestDockerExecutorUsesTypedCreateAndVerifiedStop(t *testing.T) {
 			"gpu.nvidia.0": "GPU-0123456789abcdef0123456789abcdef",
 		},
 		Profiles: []RuntimeProfile{{
-			RuntimeID: "sglang",
-			ModelID: "qwen3-14b-awq",
-			Image: "registry.example.invalid/scarlix/sglang@sha256:" + strings.Repeat("a", 64),
-			Command: []string{"python", "-m", "sglang.launch_server"},
-			AllowedGPUs: []string{"gpu.nvidia.0"},
+			RuntimeID:    "sglang",
+			ModelID:      "qwen3-14b-awq",
+			Image:        "registry.example.invalid/scarlix/sglang@sha256:" + strings.Repeat("a", 64),
+			Command:      []string{"python", "-m", "sglang.launch_server"},
+			AllowedGPUs:  []string{"gpu.nvidia.0"},
 			AllowedPorts: []int{port},
-			HealthPath: "/health",
-			Network: "scarlix-compute",
+			HealthPath:   "/health",
+			Network:      "scarlix-compute",
 		}},
 	}
 	executor, err := NewDockerExecutor(cfg)
@@ -128,10 +128,10 @@ func TestDockerExecutorUsesTypedCreateAndVerifiedStop(t *testing.T) {
 	}
 	req := workload.StartRequest{
 		AllocationID: "alloc-test-1",
-		RuntimeID: "sglang",
-		ModelID: "qwen3-14b-awq",
-		GPUID: "gpu.nvidia.0",
-		Port: port,
+		RuntimeID:    "sglang",
+		ModelID:      "qwen3-14b-awq",
+		GPUID:        "gpu.nvidia.0",
+		Port:         port,
 	}
 	started, err := executor.Start(context.Background(), req)
 	if err != nil {
@@ -159,10 +159,10 @@ func TestDockerExecutorUsesTypedCreateAndVerifiedStop(t *testing.T) {
 
 	stopped, err := executor.Stop(context.Background(), workload.StopRequest{
 		AllocationID: req.AllocationID,
-		RuntimeID: req.RuntimeID,
-		ModelID: req.ModelID,
-		Ref: started.Ref,
-		Owned: true,
+		RuntimeID:    req.RuntimeID,
+		ModelID:      req.ModelID,
+		Ref:          started.Ref,
+		Owned:        true,
 	})
 	if err != nil || !stopped.Verified {
 		t.Fatalf("Stop: result=%+v err=%v", stopped, err)
