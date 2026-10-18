@@ -7,6 +7,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
 )
 
 func TestManager_ConcurrentReserveAcrossManagersSameGPU(t *testing.T) {
@@ -98,5 +101,55 @@ func TestManager_RejectsSecondBundleForSameAllocation(t *testing.T) {
 	}}, "user-token")
 	if !errors.Is(err, ErrIdempotencyConflict) {
 		t.Fatalf("second independent bundle error=%v, want ErrIdempotencyConflict", err)
+	}
+}
+
+func TestManager_Reserve_RejectsGPUOutsideAllocationPlan(t *testing.T) {
+	clock := &FakeClock{T: time.Now().UTC()}
+	allocStore := allocation.NewStore(filepath.Join(t.TempDir(), "allocations.jsonl"))
+	newPlannedAllocation(t, allocStore, "alloc-1")
+	if err := allocStore.Update("alloc-1", func(record *allocation.Allocation) error {
+		record.SelectedGPU = "gpu.nvidia.0"
+		return nil
+	}); err != nil {
+		t.Fatalf("set allocation plan: %v", err)
+	}
+	adapter, err := NewAllocationReservationAdapter(allocStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := NewInventorySnapshotFromInventory("source-1", clock.Now(), []inventory.GPU{
+		{ID: "gpu.nvidia.0", UUID: "GPU-12345678-abcd-1234-abcd-123456789abc", Vendor: "nvidia", Healthy: true},
+		{ID: "gpu.nvidia.1", UUID: "GPU-87654321-dcba-4321-dcba-987654321cba", Vendor: "nvidia", Healthy: true},
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv := &stubInventoryProvider{snap: snapshot}
+	store := NewStore(filepath.Join(t.TempDir(), "reservations.jsonl"))
+	mgr, err := NewManager(store, DefaultPolicy(), clock, inv, adapter, &stubCleanupVerifier{verified: true, clock: clock}, newStubIdentityProvider())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mgr.Reserve(ReserveRequest{
+		AllocationID: "alloc-1", ResourceID: "gpu.nvidia.GPU-87654321-dcba-4321-dcba-987654321cba",
+		ResourceType: ResourceTypeGPUDevice, LeaseTTL: 5 * time.Minute,
+	}, "user-token")
+	if err == nil {
+		t.Fatal("reservation for a GPU outside the allocation plan must be rejected")
+	}
+	records, corrupt, loadErr := store.Load()
+	if loadErr != nil || len(corrupt) != 0 {
+		t.Fatalf("Load: records=%d corrupt=%d err=%v", len(records), len(corrupt), loadErr)
+	}
+	if len(records) != 0 {
+		t.Fatalf("unexpected reservation records persisted: %d", len(records))
+	}
+	allocationRecord, err := allocStore.Get("alloc-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocationRecord.State != allocation.StatePlanned {
+		t.Fatalf("allocation state=%s, want PLANNED", allocationRecord.State)
 	}
 }
