@@ -92,9 +92,16 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	if !methodAndContentType(w, r) {
 		return
 	}
-	var request workload.StartRequest
-	if !decodeStrict(w, r, &request) {
+	var payload startPayload
+	if !decodeStrict(w, r, &payload) {
 		return
+	}
+	request := workload.StartRequest{
+		AllocationID: payload.AllocationID,
+		RuntimeID:    payload.RuntimeID,
+		ModelID:      payload.ModelID,
+		GPUID:        payload.GPUID,
+		Port:         payload.Port,
 	}
 	if !validCommon(request.AllocationID, request.RuntimeID, request.ModelID) ||
 		request.Port < 1 || request.Port > 65535 || !validGPU(request.GPUID) {
@@ -102,7 +109,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.executor.Start(r.Context(), request)
-	if err != nil || !validReference(result.Ref) {
+	if err != nil || !result.Ready || !validReference(result.Ref) {
 		writeError(w, http.StatusBadGateway, "execution_failed")
 		return
 	}
@@ -110,16 +117,23 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		Ref   string `json:"ref"`
 		Ready bool   `json:"ready"`
 		Owned bool   `json:"owned"`
-	}{Ref: result.Ref, Ready: result.Ready, Owned: result.Owned})
+	}{Ref: result.Ref, Ready: true, Owned: result.Owned})
 }
 
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	if !methodAndContentType(w, r) {
 		return
 	}
-	var request workload.StopRequest
-	if !decodeStrict(w, r, &request) {
+	var payload stopPayload
+	if !decodeStrict(w, r, &payload) {
 		return
+	}
+	request := workload.StopRequest{
+		AllocationID: payload.AllocationID,
+		RuntimeID:    payload.RuntimeID,
+		ModelID:      payload.ModelID,
+		Ref:          payload.Ref,
+		Owned:        payload.Owned,
 	}
 	if !validCommon(request.AllocationID, request.RuntimeID, request.ModelID) ||
 		!validReference(request.Ref) || !request.Owned {
@@ -135,6 +149,22 @@ func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, struct {
 		Verified bool `json:"verified"`
 	}{Verified: true})
+}
+
+type startPayload struct {
+	AllocationID string `json:"allocation_id"`
+	RuntimeID    string `json:"runtime_id"`
+	ModelID      string `json:"model_id"`
+	GPUID        string `json:"gpu_id"`
+	Port         int    `json:"port"`
+}
+
+type stopPayload struct {
+	AllocationID string `json:"allocation_id"`
+	RuntimeID    string `json:"runtime_id"`
+	ModelID      string `json:"model_id"`
+	Ref          string `json:"ref"`
+	Owned        bool   `json:"owned"`
 }
 
 func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
