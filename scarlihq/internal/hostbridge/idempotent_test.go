@@ -12,11 +12,11 @@ import (
 )
 
 type recoverableFake struct {
-	mu sync.Mutex
-	resources map[string]workload.StartResult
+	mu         sync.Mutex
+	resources  map[string]workload.StartResult
 	startCalls int
-	stopCalls int
-	startErr error
+	stopCalls  int
+	startErr   error
 }
 
 func (f *recoverableFake) Start(_ context.Context, r workload.StartRequest) (workload.StartResult, error) {
