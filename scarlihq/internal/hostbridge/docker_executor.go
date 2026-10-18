@@ -15,8 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/workload"
@@ -31,16 +31,16 @@ type MountSpec struct {
 }
 
 type RuntimeProfile struct {
-	RuntimeID    string            `json:"runtime_id"`
-	ModelID      string            `json:"model_id"`
-	Image        string            `json:"image"`
-	Command      []string          `json:"command"`
-	Environment  []string          `json:"environment,omitempty"`
-	Mounts       []MountSpec       `json:"mounts,omitempty"`
-	AllowedGPUs  []string          `json:"allowed_gpus,omitempty"`
-	AllowedPorts []int             `json:"allowed_ports"`
-	HealthPath   string            `json:"health_path"`
-	Network      string            `json:"network"`
+	RuntimeID    string      `json:"runtime_id"`
+	ModelID      string      `json:"model_id"`
+	Image        string      `json:"image"`
+	Command      []string    `json:"command"`
+	Environment  []string    `json:"environment,omitempty"`
+	Mounts       []MountSpec `json:"mounts,omitempty"`
+	AllowedGPUs  []string    `json:"allowed_gpus,omitempty"`
+	AllowedPorts []int       `json:"allowed_ports"`
+	HealthPath   string      `json:"health_path"`
+	Network      string      `json:"network"`
 }
 
 type DockerExecutorConfig struct {
@@ -50,8 +50,8 @@ type DockerExecutorConfig struct {
 }
 
 type DockerExecutor struct {
-	client   *http.Client
-	profiles map[string]RuntimeProfile
+	client     *http.Client
+	profiles   map[string]RuntimeProfile
 	gpuDevices map[string]string
 }
 
@@ -191,8 +191,8 @@ func NewDockerExecutor(cfg DockerExecutorConfig) (*DockerExecutor, error) {
 		DisableKeepAlives: true,
 	}
 	executor := &DockerExecutor{
-		client: &http.Client{Transport: transport, Timeout: 70 * time.Second},
-		profiles: map[string]RuntimeProfile{},
+		client:     &http.Client{Transport: transport, Timeout: 70 * time.Second},
+		profiles:   map[string]RuntimeProfile{},
 		gpuDevices: cfg.GPUDevices,
 	}
 	for _, p := range cfg.Profiles {
@@ -226,26 +226,26 @@ func (e *DockerExecutor) Start(ctx context.Context, req workload.StartRequest) (
 	portKey := fmt.Sprintf("%d/tcp", req.Port)
 	createBody := map[string]any{
 		"Image": profile.Image,
-		"Cmd": profile.Command,
-		"Env": profile.Environment,
+		"Cmd":   profile.Command,
+		"Env":   profile.Environment,
 		"Labels": map[string]string{
-			"scarlix.managed": "true",
+			"scarlix.managed":       "true",
 			"scarlix.allocation_id": req.AllocationID,
-			"scarlix.runtime_id": req.RuntimeID,
-			"scarlix.model_id": req.ModelID,
-			"scarlix.owned": "true",
+			"scarlix.runtime_id":    req.RuntimeID,
+			"scarlix.model_id":      req.ModelID,
+			"scarlix.owned":         "true",
 		},
 		"ExposedPorts": map[string]any{portKey: map[string]any{}},
 		"HostConfig": map[string]any{
-			"AutoRemove": false,
+			"AutoRemove":     false,
 			"ReadonlyRootfs": true,
-			"CapDrop": []string{"ALL"},
-			"SecurityOpt": []string{"no-new-privileges:true"},
-			"NetworkMode": profile.Network,
-			"PortBindings": map[string]any{portKey: []map[string]string{{"HostIp":"127.0.0.1", "HostPort":fmt.Sprint(req.Port)}}},
-			"Tmpfs": map[string]string{"/tmp":"rw,noexec,nosuid,size=256m"},
+			"CapDrop":        []string{"ALL"},
+			"SecurityOpt":    []string{"no-new-privileges:true"},
+			"NetworkMode":    profile.Network,
+			"PortBindings":   map[string]any{portKey: []map[string]string{{"HostIp": "127.0.0.1", "HostPort": fmt.Sprint(req.Port)}}},
+			"Tmpfs":          map[string]string{"/tmp": "rw,noexec,nosuid,size=256m"},
 			"DeviceRequests": e.deviceRequests(profile, req.GPUID),
-			"Mounts": e.dockerMounts(profile.Mounts),
+			"Mounts":         e.dockerMounts(profile.Mounts),
 		},
 	}
 	raw, _ := json.Marshal(createBody)
@@ -255,7 +255,9 @@ func (e *DockerExecutor) Start(ctx context.Context, req workload.StartRequest) (
 	if err != nil {
 		return workload.StartResult{}, err
 	}
-	var created struct { ID string `json:"Id"` }
+	var created struct {
+		ID string `json:"Id"`
+	}
 	if resp.StatusCode == http.StatusConflict {
 		// Name conflicts are reconciled by the allocation label, never by deleting
 		// a container with a conflicting name.
@@ -283,7 +285,7 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 	if !idPattern.MatchString(allocationID) {
 		return workload.StartResult{}, false, errors.New("hostbridge: invalid allocation ID for runtime lookup")
 	}
-	filters, _ := json.Marshal(map[string][]string{"label":{"scarlix.allocation_id="+allocationID,"scarlix.managed=true"}})
+	filters, _ := json.Marshal(map[string][]string{"label": {"scarlix.allocation_id=" + allocationID, "scarlix.managed=true"}})
 	query := url.Values{}
 	query.Set("all","1")
 	query.Set("filters",string(filters))
@@ -291,8 +293,8 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 	if err != nil { return workload.StartResult{},false,err }
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return workload.StartResult{},false,errors.New("hostbridge: Docker lookup failed") }
 	var containers []struct {
-		ID string `json:"Id"`
-		State string `json:"State"`
+		ID     string            `json:"Id"`
+		State  string            `json:"State"`
 		Labels map[string]string `json:"Labels"`
 	}
 	if err := json.Unmarshal(data,&containers); err != nil { return workload.StartResult{},false,errors.New("hostbridge: invalid Docker lookup response") }
@@ -318,14 +320,25 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 	}
 	var inspected struct {
 		Name string `json:"Name"`
-		Config struct { Image string `json:"Image"`; Labels map[string]string `json:"Labels"` } `json:"Config"`
-		State struct { Running bool `json:"Running"` } `json:"State"`
-		HostConfig struct { PortBindings map[string][]struct { HostPort string `json:"HostPort"` } `json:"PortBindings"` } `json:"HostConfig"`
+		Config struct {
+			Image  string            `json:"Image"`
+			Labels map[string]string `json:"Labels"`
+		} `json:"Config"`
+		State struct {
+			Running bool `json:"Running"`
+		} `json:"State"`
+		HostConfig struct {
+			PortBindings map[string][]struct {
+				HostPort string `json:"HostPort"`
+			} `json:"PortBindings"`
+		} `json:"HostConfig"`
 	}
-	if err := json.Unmarshal(inspectData,&inspected); err != nil { return workload.StartResult{},false,errors.New("hostbridge: invalid Docker inspect response") }
+	if err := json.Unmarshal(inspectData, &inspected); err != nil {
+		return workload.StartResult{}, false, errors.New("hostbridge: invalid Docker inspect response")
+	}
 	runtimeID = inspected.Config.Labels["scarlix.runtime_id"]
 	modelID = inspected.Config.Labels["scarlix.model_id"]
-	profile, ok := e.profiles[profileKey(runtimeID,modelID)]
+	profile, ok := e.profiles[profileKey(runtimeID, modelID)]
 	if !ok || inspected.Config.Labels["scarlix.allocation_id"] != allocationID ||
 		inspected.Config.Image != profile.Image || inspected.Name != "/"+dockerContainerName(allocationID) ||
 		inspected.Config.Labels["scarlix.managed"] != "true" ||
@@ -334,11 +347,15 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 	}
 	port := 0
 	for _, candidate := range profile.AllowedPorts {
-		bindings := inspected.HostConfig.PortBindings[fmt.Sprintf("%d/tcp",candidate)]
-		if len(bindings) == 0 { continue }
+		bindings := inspected.HostConfig.PortBindings[fmt.Sprintf("%d/tcp", candidate)]
+		if len(bindings) == 0 {
+			continue
+		}
 		for _, binding := range bindings {
-			if binding.HostPort == "" { continue }
-			if p, convErr := strconv.Atoi(binding.HostPort); convErr == nil && containsInt(profile.AllowedPorts,p) {
+			if binding.HostPort == "" {
+				continue
+			}
+			if p, convErr := strconv.Atoi(binding.HostPort); convErr == nil && containsInt(profile.AllowedPorts, p) {
 				port = p
 				break
 			}
@@ -349,25 +366,33 @@ func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workloa
 	return *found,true,nil
 }
 
-func (e *DockerExecutor) Stop(ctx context.Context, req workload.StopRequest) (workload.StopResult,error) {
-	if !req.Owned || !containerIDPattern.MatchString(req.Ref) { return workload.StopResult{},errors.New("hostbridge: invalid owned container reference") }
+func (e *DockerExecutor) Stop(ctx context.Context, req workload.StopRequest) (workload.StopResult, error) {
+	if !req.Owned || !containerIDPattern.MatchString(req.Ref) {
+		return workload.StopResult{}, errors.New("hostbridge: invalid owned container reference")
+	}
 	observed, found, err := e.Find(ctx,req.AllocationID)
 	if err != nil { return workload.StopResult{},err }
 	if !found { return workload.StopResult{Verified:true},nil }
-	if observed.Ref != req.Ref || !observed.Owned { return workload.StopResult{},errors.New("hostbridge: container reference does not match allocation") }
+	if observed.Ref != req.Ref || !observed.Owned {
+		return workload.StopResult{}, errors.New("hostbridge: container reference does not match allocation")
+	}
 	stopResp,_,err := e.do(ctx,http.MethodPost,"/containers/"+req.Ref+"/stop?t=10",nil)
 	if err != nil { return workload.StopResult{},err }
 	if stopResp.StatusCode != http.StatusNoContent && stopResp.StatusCode != http.StatusNotModified && stopResp.StatusCode != http.StatusNotFound {
 		return workload.StopResult{},errors.New("hostbridge: Docker stop failed")
 	}
-	deleteResp,_,err := e.do(ctx,http.MethodDelete,"/containers/"+req.Ref+"?force=0&v=0",nil)
-	if err != nil { return workload.StopResult{},err }
+	deleteResp, _, err := e.do(ctx, http.MethodDelete, "/containers/"+req.Ref+"?force=0&v=0", nil)
+	if err != nil {
+		return workload.StopResult{}, err
+	}
 	if deleteResp.StatusCode != http.StatusNoContent && deleteResp.StatusCode != http.StatusNotFound {
 		return workload.StopResult{},errors.New("hostbridge: Docker remove failed")
 	}
-	_,stillFound,err := e.Find(ctx,req.AllocationID)
-	if err != nil || stillFound { return workload.StopResult{},errors.New("hostbridge: Docker cleanup could not be verified") }
-	return workload.StopResult{Verified:true},nil
+	_, stillFound, err := e.Find(ctx, req.AllocationID)
+	if err != nil || stillFound {
+		return workload.StopResult{}, errors.New("hostbridge: Docker cleanup could not be verified")
+	}
+	return workload.StopResult{Verified: true}, nil
 }
 
 func (e *DockerExecutor) dockerMounts(mounts []MountSpec) []map[string]any {
@@ -379,46 +404,65 @@ func (e *DockerExecutor) dockerMounts(mounts []MountSpec) []map[string]any {
 }
 
 func (e *DockerExecutor) deviceRequests(profile RuntimeProfile, gpuID string) []map[string]any {
-	if gpuID == "" { return []map[string]any{} }
+	if gpuID == "" {
+		return []map[string]any{}
+	}
 	deviceID := e.gpuDevices[gpuID]
-	if deviceID == "" { return []map[string]any{} }
-	return []map[string]any{{"Driver":"nvidia","Count":0,"DeviceIDs":[]string{deviceID},"Capabilities":[][]string{{"gpu"}}}}
+	if deviceID == "" {
+		return []map[string]any{}
+	}
+	return []map[string]any{{"Driver": "nvidia", "Count": 0, "DeviceIDs": []string{deviceID}, "Capabilities": [][]string{{"gpu"}}}}
 }
 
 func (e *DockerExecutor) waitReady(ctx context.Context, port int, path string) error {
 	deadline, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	ticker := time.NewTicker(500*time.Millisecond)
+	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if e.healthCheck(deadline,port,path) { return nil }
+		if e.healthCheck(deadline, port, path) {
+			return nil
+		}
 		select {
-		case <-deadline.Done(): return errors.New("hostbridge: workload readiness timeout")
+		case <-deadline.Done():
+			return errors.New("hostbridge: workload readiness timeout")
 		case <-ticker.C:
 		}
 	}
 }
 
 func (e *DockerExecutor) healthCheck(ctx context.Context, port int, path string) bool {
-	req,err := http.NewRequestWithContext(ctx,http.MethodGet,fmt.Sprintf("http://127.0.0.1:%d%s",port,path),nil)
-	if err != nil { return false }
-	resp,err := (&http.Client{Timeout:1500*time.Millisecond}).Do(req)
-	if err != nil { return false }
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d%s", port, path), nil)
+	if err != nil {
+		return false
+	}
+	resp, err := (&http.Client{Timeout: 1500 * time.Millisecond}).Do(req)
+	if err != nil {
+		return false
+	}
 	defer resp.Body.Close()
-	_,_ = io.Copy(io.Discard,io.LimitReader(resp.Body,4096))
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
-func (e *DockerExecutor) do(ctx context.Context, method, path string, body []byte) (*http.Response,[]byte,error) {
-	req,err := http.NewRequestWithContext(ctx,method,"http://docker/"+dockerAPIVersion+path,bytes.NewReader(body))
-	if err != nil { return nil,nil,errors.New("hostbridge: invalid Docker API request") }
-	if body != nil { req.Header.Set("Content-Type","application/json") }
-	resp,err := e.client.Do(req)
-	if err != nil { return nil,nil,errors.New("hostbridge: Docker API unavailable") }
+func (e *DockerExecutor) do(ctx context.Context, method, path string, body []byte) (*http.Response, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, "http://docker/"+dockerAPIVersion+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, nil, errors.New("hostbridge: invalid Docker API request")
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return nil, nil, errors.New("hostbridge: Docker API unavailable")
+	}
 	defer resp.Body.Close()
-	data,err := io.ReadAll(io.LimitReader(resp.Body,1<<20+1))
-	if err != nil || len(data)>1<<20 { return resp,nil,errors.New("hostbridge: invalid Docker API response body") }
-	return resp,data,nil
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20+1))
+	if err != nil || len(data) > 1<<20 {
+		return resp, nil, errors.New("hostbridge: invalid Docker API response body")
+	}
+	return resp, data, nil
 }
 
 func dockerContainerName(allocationID string) string {
@@ -426,7 +470,21 @@ func dockerContainerName(allocationID string) string {
 	return "scarlix-wl-" + hex.EncodeToString(sum[:12])
 }
 
-func containsInt(values []int, value int) bool { for _,v := range values { if v==value { return true } }; return false }
-func containsString(values []string, value string) bool { for _,v := range values { if v==value { return true } }; return false }
+func containsInt(values []int, value int) bool {
+	for _, v := range values {
+		if v == value {
+			return true
+		}
+	}
+	return false
+}
+func containsString(values []string, value string) bool {
+	for _, v := range values {
+		if v == value {
+			return true
+		}
+	}
+	return false
+}
 
 var containerIDPattern = regexp.MustCompile(`^[a-f0-9]{12,64}$`)
