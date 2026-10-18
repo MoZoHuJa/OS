@@ -88,12 +88,15 @@ func LoadDockerExecutorConfig(path string) (DockerExecutorConfig, error) {
 	if err := validateDockerConfig(cfg); err != nil {
 		return cfg, err
 	}
+	if cfg.DockerSocket != "/var/run/docker.sock" {
+		return cfg, errors.New("hostbridge: config Docker socket must be /var/run/docker.sock")
+	}
 	return cfg, nil
 }
 
 func validateDockerConfig(cfg DockerExecutorConfig) error {
-	if cfg.DockerSocket != "/var/run/docker.sock" {
-		return errors.New("hostbridge: Docker socket must be exactly /var/run/docker.sock")
+	if !filepath.IsAbs(cfg.DockerSocket) || strings.ContainsRune(cfg.DockerSocket, '\x00') {
+		return errors.New("hostbridge: Docker socket path must be absolute")
 	}
 	if len(cfg.Profiles) == 0 {
 		return errors.New("hostbridge: at least one explicitly configured runtime profile is required")
@@ -179,6 +182,15 @@ func resourceRuntimeAllowed(id string) bool {
 }
 
 func NewDockerExecutor(cfg DockerExecutorConfig) (*DockerExecutor, error) {
+	if cfg.DockerSocket != "/var/run/docker.sock" {
+		return nil, errors.New("hostbridge: Docker socket must be exactly /var/run/docker.sock")
+	}
+	return newDockerExecutor(cfg)
+}
+
+// newDockerExecutor is the package-private constructor used by Unix-socket
+// integration tests. Production callers must use NewDockerExecutor.
+func newDockerExecutor(cfg DockerExecutorConfig) (*DockerExecutor, error) {
 	if err := validateDockerConfig(cfg); err != nil {
 		return nil, err
 	}
