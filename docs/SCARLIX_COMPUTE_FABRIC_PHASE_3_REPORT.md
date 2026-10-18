@@ -67,6 +67,7 @@ This candidate implements those items while keeping runtime startup/termination 
 - `scarlihq/internal/reservation/allocation_adapter.go`
 - `scarlihq/internal/reservation/inventory_adapter.go`
 - `scarlihq/internal/reservation/reservation_test.go`
+- `scarlihq/internal/reservation/phase3_integration_test.go`
 - `scarlihq/internal/reservation/allocation_adapter_test.go`
 - `scarlihq/internal/reservation/inventory_adapter_test.go`
 - `scarlihq/internal/reservation/token_identity.go`
@@ -83,6 +84,7 @@ The candidate includes tests for:
 - all resources in a bundle renew to the same expiry and lease ID;
 - pending allocation finalization can be retried by a trusted reconciler;
 - allocation ownership is checked against the trusted principal;
+- a second independent reservation bundle for an already-allocated allocation is rejected;
 - assignment and `RESERVED` state are persisted together;
 - interrupted allocation claims can be enumerated for startup recovery;
 - GPU inventory snapshots use canonical stable UUIDs and reject unhealthy/missing resources;
@@ -90,7 +92,7 @@ The candidate includes tests for:
 
 ## 5. Verification status
 
-**No test result is claimed yet.** The GitHub integration permits branch writes, but this execution environment has not run Go commands against a local checkout. Earlier attempts to clone the repository were blocked by DNS/network resolution. GitHub CI status must be checked on the candidate PR.
+**Test execution is delegated to GitHub Actions for this candidate branch.** The initial CI run exposed a fake-clock mismatch in one regression test; that setup was corrected. The latest run must complete on the final candidate SHA before the acceptance gate can be marked green. This environment has not run Go commands against a local checkout.
 
 Required checks before merge:
 ```bash
