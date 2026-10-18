@@ -86,7 +86,7 @@ func (e *IdempotentExecutor) Start(ctx context.Context, req workload.StartReques
 			}
 			return observed, nil
 		}
-		_ = e.ledger.SetState(req.AllocationID, "RECONCILE_REQUIRED", "", false)
+		_ = e.ledger.SetState(req.AllocationID, "RECONCILE_REQUIRED", result.Ref, result.Owned)
 		if startErr != nil {
 			return workload.StartResult{}, errors.New("hostbridge: start outcome uncertain; reconciliation required")
 		}
