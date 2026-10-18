@@ -37,6 +37,23 @@ func main() {
 	if err != nil {
 		log.Fatalf("host workload bridge executor unavailable: %v", err)
 	}
+	// Reconcile durable records against Docker before accepting new requests.
+	// Ambiguous or unavailable runtime state stays fail-closed and is logged.
+	reconcileCtx, reconcileCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	entries, err := ledger.List()
+	if err != nil {
+		reconcileCancel()
+		log.Fatalf("host workload bridge ledger cannot be read: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.State == "STOPPED" {
+			continue
+		}
+		if err := executor.ReconcileOne(reconcileCtx, entry.AllocationID); err != nil {
+			log.Printf("allocation %q remains fail-closed pending reconciliation: %v", entry.AllocationID, err)
+		}
+	}
+	reconcileCancel()
 	api, err := hostbridge.NewServer(executor)
 	if err != nil {
 		log.Fatalf("host workload bridge API unavailable: %v", err)
