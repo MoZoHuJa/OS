@@ -68,8 +68,8 @@ func ListenUnix(path string) (net.Listener, error) {
 	if err != nil {
 		return nil, errors.New("hostbridge: socket parent directory is unavailable")
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("hostbridge: socket parent must be a real directory")
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0022 != 0 {
+		return nil, errors.New("hostbridge: socket parent must be a real directory not writable by group/other")
 	}
 	if _, err := os.Lstat(path); err == nil {
 		return nil, errors.New("hostbridge: socket path already exists; inspect and remove it manually")
