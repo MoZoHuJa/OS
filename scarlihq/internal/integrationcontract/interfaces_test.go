@@ -93,14 +93,14 @@ func TestResourceContractV1EmptySlicesSerializeAsArrays(t *testing.T) {
 
 func TestInventorySnapshotKeepsStableArraysAndHidesGPUUUID(t *testing.T) {
 	snapshot := inventory.SystemStatus{
-		Version:  "19.2.10",
-		Mode:     "ai",
+		Version:   "19.2.10",
+		Mode:      "ai",
 		Timestamp: "2026-10-18T00:00:00Z",
-		GPUs:     []inventory.GPU{{ID: "gpu.nvidia.0", UUID: "GPU-private-test-uuid", Vendor: "nvidia", Name: "test"}},
-		Runtimes: []inventory.Runtime{},
-		Models:   []inventory.Model{},
-		Services: []inventory.Service{},
-		Health:   []inventory.Health{},
+		GPUs:      []inventory.GPU{{ID: "gpu.nvidia.0", UUID: "GPU-private-test-uuid", Vendor: "nvidia", Name: "test"}},
+		Runtimes:  []inventory.Runtime{},
+		Models:    []inventory.Model{},
+		Services:  []inventory.Service{},
+		Health:    []inventory.Health{},
 	}
 	data, err := json.Marshal(snapshot)
 	if err != nil {
