@@ -268,7 +268,6 @@ func TestStopNeverStopsSharedWorkload(t *testing.T) {
 	}
 }
 
-
 func TestStartFailsClosedWhenDriverDoesNotConfirmReadiness(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -321,7 +320,6 @@ func TestStartRejectsUnsupportedRuntimeBeforeDriverCall(t *testing.T) {
 		t.Fatalf("driver called %d times for unsupported runtime", driver.startCalls)
 	}
 }
-
 
 func TestStartSurfacesFailureToPersistUncertainOutcome(t *testing.T) {
 	store, id := newReservedAllocation(t, allocation.StateReserved)
