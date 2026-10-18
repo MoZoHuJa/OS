@@ -1,6 +1,7 @@
 package reservation
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -454,12 +455,18 @@ func TestManager_Reserve_FinalizationFailureKeepsDurableReservation(t *testing.T
 		t.Fatalf("NewManager: %v", err)
 	}
 
-	_, err = mgr.Reserve(ReserveRequest{
+	result, err := mgr.Reserve(ReserveRequest{
 		AllocationID: "alloc-1", ResourceID: testGPUUUID0,
 		ResourceType: ResourceTypeGPUDevice, LeaseTTL: 5 * time.Minute,
 	}, "user-token")
 	if err == nil {
 		t.Fatal("expected allocation finalization error")
+	}
+	if result == nil {
+		t.Fatalf("expected persisted reservation result with pending-finalization error, got nil result: %v", err)
+	}
+	if !errors.Is(err, ErrReconciliationRequired) {
+		t.Fatalf("expected ErrReconciliationRequired after durable commit, got: %v", err)
 	}
 
 	got, getErr := store.ListByAllocation("alloc-1")
@@ -467,7 +474,7 @@ func TestManager_Reserve_FinalizationFailureKeepsDurableReservation(t *testing.T
 		t.Fatalf("reservation must remain readable after finalization failure: %v", getErr)
 	}
 	if len(got) != 1 {
-		t.Fatalf("durable reservation count = %d, want 1", len(got))
+		t.Fatalf("durable reservation count = %d, want 1; reserve error=%v", len(got), err)
 	}
 	if got[0].Status != StatusHeld {
 		t.Fatalf("durable reservation status = %s, want HELD", got[0].Status)
