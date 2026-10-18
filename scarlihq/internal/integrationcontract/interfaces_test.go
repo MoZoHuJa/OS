@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	resourcecontract "github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
 	resourcecontract "github.com/MoZoHuJa/OS/scarlihq/internal/contract"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
 )
