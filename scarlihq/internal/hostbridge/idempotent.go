@@ -118,6 +118,9 @@ func (e *IdempotentExecutor) Stop(ctx context.Context, req workload.StopRequest)
 		_ = e.ledger.SetState(req.AllocationID, "RECONCILE_REQUIRED", entry.Ref, entry.Owned)
 		return workload.StopResult{}, errors.New("hostbridge: cannot reconcile workload before stop")
 	}
+	if entry.State == "STOPPED" && found {
+		return workload.StopResult{}, errors.New("hostbridge: stopped allocation unexpectedly has a runtime resource; manual reconciliation required")
+	}
 	if found && (observed.Ref != entry.Ref || observed.RuntimeID != entry.RuntimeID || observed.ModelID != entry.ModelID || observed.GPUID != entry.GPUID || observed.Port != entry.Port) {
 		return workload.StopResult{}, errors.New("hostbridge: runtime reference does not match ownership record")
 	}
