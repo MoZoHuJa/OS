@@ -300,6 +300,13 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 	if err := m.allocVal.ValidateForReservation(allocationID); err != nil {
 		return nil, fmt.Errorf("reservation: allocation validation failed: %w", err)
 	}
+	// Re-check the immutable plan after the allocation claim transitions to
+	// RESERVING, closing a plan-change race between validation and BeginReservation.
+	if validator, ok := m.allocVal.(allocationPlanValidator); ok {
+		if err := validator.ValidateReservationPlan(allocationID, normalized, snap2); err != nil {
+			return nil, err
+		}
+	}
 
 	now := m.clock.Now().UTC()
 	leaseExpiry := now.Add(normalized[0].request.LeaseTTL)
