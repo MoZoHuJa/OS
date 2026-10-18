@@ -81,8 +81,10 @@ func ListenUnix(path string) (net.Listener, error) {
 		return nil, errors.New("hostbridge: cannot create Unix socket")
 	}
 	if err := os.Chmod(path, 0600); err != nil {
+		// Close our listener, but do not unlink the pathname here: another
+		// privileged process could have replaced it after Listen returned.
+		// Leave any residual path for an administrator to inspect safely.
 		_ = listener.Close()
-		_ = os.Remove(path)
 		return nil, errors.New("hostbridge: cannot secure Unix socket permissions")
 	}
 	return listener, nil
