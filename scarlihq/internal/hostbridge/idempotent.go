@@ -82,7 +82,7 @@ func (e *IdempotentExecutor) Start(ctx context.Context, req workload.StartReques
 	}
 
 	result, startErr := e.inner.Start(ctx, req)
-	if startErr != nil || !result.Ready || result.Ref == "" {
+	if startErr != nil || !result.Ready || result.Ref == "" || result.RuntimeID != req.RuntimeID || result.ModelID != req.ModelID || result.GPUID != req.GPUID || result.Port != req.Port {
 		observed, found, findErr := e.inner.Find(ctx, req.AllocationID)
 		if findErr == nil && found && observed.Ready && observed.Ref != "" && observed.RuntimeID == req.RuntimeID && observed.ModelID == req.ModelID && observed.GPUID == req.GPUID && observed.Port == req.Port {
 			if persistErr := e.ledger.SetState(req.AllocationID, "RUNNING", observed.Ref, observed.Owned); persistErr != nil {
