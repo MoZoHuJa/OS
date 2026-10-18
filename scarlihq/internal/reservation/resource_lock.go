@@ -34,4 +34,3 @@ func (l *ResourceLock) Lock() (func(), error) {
 	}
 	return unlock, nil
 }
-
