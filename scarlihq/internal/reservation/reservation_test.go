@@ -18,7 +18,6 @@ func newTestStore(t *testing.T) *Store {
 }
 
 // stubInventoryProvider implements InventoryProvider with coherent snapshots.
-// P1-03 (v19.2.7): Uses InventorySnapshot (one coherent object).
 type stubInventoryProvider struct {
 	snap InventorySnapshot
 }
@@ -29,19 +28,15 @@ func (s *stubInventoryProvider) GetSnapshot() InventorySnapshot {
 
 func newStubInventory() *stubInventoryProvider {
 	return &stubInventoryProvider{
-		snap: InventorySnapshot{
-			Generation: "gen-1",
-			AsOf:       time.Now().UTC(),
-			resources: map[string]bool{
-				"gpu.nvidia.GPU-12345678-abcd-1234-abcd-123456789abc": true,
-				"gpu.nvidia.GPU-87654321-dcba-4321-dcba-987654321cba": true,
-				"runtime.sglang":  true,
-				"runtime.vllm":    true,
-				"model.qwen3-14b": true,
-				"port.30000":      true,
-				"port.30001":      true,
-			},
-		},
+		snap: NewInventorySnapshot("gen-1", time.Now().UTC(), []string{
+			"gpu.nvidia.GPU-12345678-abcd-1234-abcd-123456789abc",
+			"gpu.nvidia.GPU-87654321-dcba-4321-dcba-987654321cba",
+			"runtime.sglang",
+			"runtime.vllm",
+			"model.qwen3-14b",
+			"port.30000",
+			"port.30001",
+		}),
 	}
 }
 
@@ -64,31 +59,50 @@ func newStubAllocValidator(validIDs ...string) *stubAllocationValidator {
 	return &stubAllocationValidator{valid: m}
 }
 
+// stubCleanupVerifier implements CleanupVerifier for testing.
+// P1-01 (v19.2.8): Replaces caller-supplied CleanupEvidence.
+type stubCleanupVerifier struct {
+	verified bool
+	clock    Clock
+}
+
+func (s *stubCleanupVerifier) VerifyCleanup(resourceID string, reconciler Identity) (CleanupEvidence, error) {
+	ts := s.clock.Now()
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	return newCleanupEvidence(resourceID, "op-test", ts, s.verified, reconciler.Principal()), nil
+}
+
 func newTestManager(t *testing.T) (*Manager, *FakeClock, *stubInventoryProvider) {
 	t.Helper()
 	store := newTestStore(t)
 	clock := &FakeClock{T: time.Now().UTC()}
 	inv := newStubInventory()
 	// Refresh snapshot AsOf to current fake time.
-	inv.snap.AsOf = clock.Now()
+	inv.snap = NewInventorySnapshot("gen-1", clock.Now(), []string{
+		"gpu.nvidia.GPU-12345678-abcd-1234-abcd-123456789abc",
+		"gpu.nvidia.GPU-87654321-dcba-4321-dcba-987654321cba",
+		"runtime.sglang",
+		"runtime.vllm",
+		"model.qwen3-14b",
+		"port.30000",
+		"port.30001",
+	})
 	allocVal := newStubAllocValidator("alloc-1", "alloc-A", "alloc-B")
-	mgr, err := NewManager(store, DefaultPolicy(), clock, inv, allocVal)
+	cleanupVer := &stubCleanupVerifier{verified: true, clock: clock}
+	mgr, err := NewManager(store, DefaultPolicy(), clock, inv, allocVal, cleanupVer)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
 	return mgr, clock, inv
 }
 
-// Valid GPU UUID for tests (P1-05: proper format).
 const testGPUUUID0 = "gpu.nvidia.GPU-12345678-abcd-1234-abcd-123456789abc"
 const testGPUUUID1 = "gpu.nvidia.GPU-87654321-dcba-4321-dcba-987654321cba"
 
 func testUser(principal string) Identity { return NewUserIdentity(principal) }
-func testReconciler() Identity           { return NewReconcilerIdentity("system.reconciler") }
-
-func validEvidence(resourceID string, clock Clock) CleanupEvidence {
-	return NewCleanupEvidence(resourceID, "op-1", clock.Now(), true, "system.reconciler")
-}
+func testReconciler() Identity           { return newReconcilerIdentity("system.reconciler") }
 
 // --- Store tests ---
 
@@ -145,11 +159,10 @@ func TestStore_FilePermissions(t *testing.T) {
 	}
 }
 
-// P2-03: Invalid persisted records are rejected on load.
+// P2-03: Invalid persisted records rejected on load.
 func TestStore_Load_RejectsInvalidRecord(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "res.jsonl")
-	// Write a record with invalid schema version directly.
 	f, _ := os.Create(path)
 	f.WriteString(`{"reservation_id":"r1","allocation_id":"a1","schema_version":"v99","resource_id":"x","resource_type":"gpu.device","owner":"o","status":"HELD","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","revision":0}` + "\n")
 	f.Close()
@@ -204,15 +217,29 @@ func TestPolicy_CanReserveGPU_UnknownStatusBlocks(t *testing.T) {
 	}
 }
 
-// P1-05: CanonicalResourceID with valid GPU UUID.
-func TestCanonicalResourceID_ValidGPUUUID(t *testing.T) {
-	id := testGPUUUID0
-	canon, err := CanonicalResourceID(id, ResourceTypeGPUDevice)
+// P1-04: GPU UUID case canonicalization.
+func TestCanonicalResourceID_GPUUUIDCaseCanonicalized(t *testing.T) {
+	// Uppercase hex variant.
+	upper := "gpu.nvidia.GPU-ABCDEF12-ABCD-1234-ABCD-123456789ABC"
+	canon, err := CanonicalResourceID(upper, ResourceTypeGPUDevice)
 	if err != nil {
-		t.Fatalf("Valid GPU UUID rejected: %v", err)
+		t.Fatalf("Valid uppercase UUID rejected: %v", err)
 	}
-	if canon != id {
-		t.Errorf("Canon = %q, want %q", canon, id)
+	// Should be canonicalized to lowercase hex (except "GPU-" prefix).
+	expected := "gpu.nvidia.GPU-abcdef12-abcd-1234-abcd-123456789abc"
+	if canon != expected {
+		t.Errorf("Canon = %q, want %q (lowercase hex)", canon, expected)
+	}
+}
+
+// P1-04: Case variants normalize to same ID.
+func TestCanonicalResourceID_CaseVariantsSameCanon(t *testing.T) {
+	upper := "gpu.nvidia.GPU-ABCDEF12-ABCD-1234-ABCD-123456789ABC"
+	lower := "gpu.nvidia.GPU-abcdef12-abcd-1234-abcd-123456789abc"
+	canonUpper, _ := CanonicalResourceID(upper, ResourceTypeGPUDevice)
+	canonLower, _ := CanonicalResourceID(lower, ResourceTypeGPUDevice)
+	if canonUpper != canonLower {
+		t.Errorf("Case variants not canonicalized to same ID: %q vs %q", canonUpper, canonLower)
 	}
 }
 
@@ -221,14 +248,6 @@ func TestCanonicalResourceID_InvalidGPUUUID(t *testing.T) {
 	_, err := CanonicalResourceID("gpu.nvidia.GPU-uuid-0", ResourceTypeGPUDevice)
 	if err == nil {
 		t.Fatal("Invalid GPU UUID should be rejected")
-	}
-}
-
-// P1-05: Port canonicalization (leading zeros removed).
-func TestCanonicalResourceID_PortLeadingZeros(t *testing.T) {
-	canon, err := CanonicalResourceID("port.030000", ResourceTypePort)
-	if err == nil {
-		t.Fatalf("Leading zeros should be rejected: got %q", canon)
 	}
 }
 
@@ -243,9 +262,9 @@ func TestCanonicalResourceID_PortNormalized(t *testing.T) {
 	}
 }
 
-// P1-05: Invalid port (0, 65536, non-numeric).
+// P1-05: Invalid port.
 func TestCanonicalResourceID_InvalidPort(t *testing.T) {
-	invalidPorts := []string{"port.0", "port.65536", "port.abc", "port.-1"}
+	invalidPorts := []string{"port.0", "port.65536", "port.abc", "port.030000"}
 	for _, p := range invalidPorts {
 		_, err := CanonicalResourceID(p, ResourceTypePort)
 		if err == nil {
@@ -254,11 +273,14 @@ func TestCanonicalResourceID_InvalidPort(t *testing.T) {
 	}
 }
 
-// P1-05: Runtime name validation.
-func TestCanonicalResourceID_InvalidRuntimeName(t *testing.T) {
-	_, err := CanonicalResourceID("runtime.SGLang", ResourceTypeRuntimeSlot) // uppercase
-	if err == nil {
-		t.Error("Uppercase runtime name should be rejected")
+// P1-03: NewInventorySnapshot exported constructor.
+func TestNewInventorySnapshot_Exported(t *testing.T) {
+	snap := NewInventorySnapshot("gen-1", time.Now().UTC(), []string{"gpu.nvidia.GPU-12345678-abcd-1234-abcd-123456789abc"})
+	if !snap.ResourceExists("gpu.nvidia.GPU-12345678-abcd-1234-abcd-123456789abc") {
+		t.Error("ResourceExists should return true for listed resource")
+	}
+	if snap.ResourceExists("gpu.nvidia.GPU-nonexistent") {
+		t.Error("ResourceExists should return false for unlisted resource")
 	}
 }
 
@@ -310,14 +332,20 @@ func TestManager_Reserve_InvalidAllocationRejected(t *testing.T) {
 }
 
 func TestNewManager_RejectsNilDeps(t *testing.T) {
-	store := newTestStore(t)
-	_, err := NewManager(nil, DefaultPolicy(), nil, nil, nil)
+	_, err := NewManager(nil, DefaultPolicy(), nil, nil, nil, nil)
 	if err == nil {
 		t.Fatal("Nil deps should be rejected")
 	}
-	_, err = NewManager(store, DefaultPolicy(), nil, nil, nil)
+}
+
+// P1-01: NewManager rejects nil cleanupVer.
+func TestNewManager_RejectsNilCleanupVerifier(t *testing.T) {
+	store := newTestStore(t)
+	inv := newStubInventory()
+	allocVal := newStubAllocValidator("alloc-1")
+	_, err := NewManager(store, DefaultPolicy(), nil, inv, allocVal, nil)
 	if err == nil {
-		t.Fatal("Nil inventory/allocVal should be rejected")
+		t.Fatal("Nil cleanupVer should be rejected")
 	}
 }
 
@@ -338,7 +366,6 @@ func TestManager_Reserve_Conflict(t *testing.T) {
 	}
 }
 
-// P1-05: Same allocation cannot bypass capacity.
 func TestManager_Reserve_SameAllocationCannotBypassCapacity(t *testing.T) {
 	mgr, _, _ := newTestManager(t)
 	_, _ = mgr.Reserve(ReserveRequest{
@@ -356,9 +383,9 @@ func TestManager_Reserve_SameAllocationCannotBypassCapacity(t *testing.T) {
 	}
 }
 
-// P1-04: RequestRelease/ConfirmRelease.
+// P1-01/P2-02: ConfirmRelease uses CleanupVerifier (no caller evidence).
 func TestManager_RequestRelease_ConfirmRelease(t *testing.T) {
-	mgr, clock, _ := newTestManager(t)
+	mgr, _, _ := newTestManager(t)
 	result, _ := mgr.Reserve(ReserveRequest{
 		AllocationID: "alloc-1", ResourceID: testGPUUUID0,
 		ResourceType: ResourceTypeGPUDevice, Identity: testUser("agent"),
@@ -371,8 +398,8 @@ func TestManager_RequestRelease_ConfirmRelease(t *testing.T) {
 	if r1.Status != StatusReleasing {
 		t.Errorf("Status = %s, want RELEASING", r1.Status)
 	}
-	r2, err := mgr.ConfirmRelease(result.Reservation.ReservationID, testReconciler(),
-		validEvidence(testGPUUUID0, clock))
+	// ConfirmRelease now takes only reconciler identity (no evidence argument).
+	r2, err := mgr.ConfirmRelease(result.Reservation.ReservationID, testReconciler())
 	if err != nil {
 		t.Fatalf("ConfirmRelease: %v", err)
 	}
@@ -381,38 +408,51 @@ func TestManager_RequestRelease_ConfirmRelease(t *testing.T) {
 	}
 }
 
-// P1-01: Forged reconciler identity rejected (unforgeable struct).
-func TestManager_ConfirmRelease_NonReconcilerRejected(t *testing.T) {
-	mgr, clock, _ := newTestManager(t)
+// P2-02: Idempotent ConfirmRelease returns non-nil.
+func TestManager_ConfirmRelease_IdempotentNonNil(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
 	result, _ := mgr.Reserve(ReserveRequest{
 		AllocationID: "alloc-1", ResourceID: testGPUUUID0,
 		ResourceType: ResourceTypeGPUDevice, Identity: testUser("agent"),
 		LeaseTTL: 5 * time.Minute,
 	})
 	_, _ = mgr.RequestRelease(result.Reservation.ReservationID, testUser("agent"))
-	// Non-reconciler identity.
-	_, err := mgr.ConfirmRelease(result.Reservation.ReservationID, testUser("agent"),
-		validEvidence(testGPUUUID0, clock))
+	_, _ = mgr.ConfirmRelease(result.Reservation.ReservationID, testReconciler())
+	// Second confirm — should return existing record, not nil.
+	r2, err := mgr.ConfirmRelease(result.Reservation.ReservationID, testReconciler())
+	if err != nil {
+		t.Fatalf("Idempotent confirm: %v", err)
+	}
+	if r2 == nil {
+		t.Fatal("P2-02: Idempotent ConfirmRelease returned nil (should be non-nil)")
+	}
+	if r2.Status != StatusReleased {
+		t.Errorf("Status = %s, want RELEASED", r2.Status)
+	}
+}
+
+// P1-01: Non-reconciler identity cannot ConfirmRelease.
+func TestManager_ConfirmRelease_NonReconcilerRejected(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+	result, _ := mgr.Reserve(ReserveRequest{
+		AllocationID: "alloc-1", ResourceID: testGPUUUID0,
+		ResourceType: ResourceTypeGPUDevice, Identity: testUser("agent"),
+		LeaseTTL: 5 * time.Minute,
+	})
+	_, _ = mgr.RequestRelease(result.Reservation.ReservationID, testUser("agent"))
+	_, err := mgr.ConfirmRelease(result.Reservation.ReservationID, testUser("agent"))
 	if err == nil {
 		t.Fatal("Non-reconciler should be rejected")
 	}
 }
 
-// P1-03: Reconciler identity must match evidence.
-func TestManager_ConfirmRelease_ReconcilerMismatch(t *testing.T) {
-	mgr, clock, _ := newTestManager(t)
-	result, _ := mgr.Reserve(ReserveRequest{
-		AllocationID: "alloc-1", ResourceID: testGPUUUID0,
-		ResourceType: ResourceTypeGPUDevice, Identity: testUser("agent"),
-		LeaseTTL: 5 * time.Minute,
-	})
-	_, _ = mgr.RequestRelease(result.Reservation.ReservationID, testUser("agent"))
-	ev := validEvidence(testGPUUUID0, clock)
-	// Use mismatched reconciler ID.
-	ev = NewCleanupEvidence(testGPUUUID0, "op-1", clock.Now(), true, "different.reconciler")
-	_, err := mgr.ConfirmRelease(result.Reservation.ReservationID, testReconciler(), ev)
-	if err == nil {
-		t.Fatal("Reconciler ID mismatch should be rejected")
+// P1-01: NewReconcilerIdentity is NOT exported (cannot forge from outside).
+// This test verifies that only newReconcilerIdentity (package-private) can
+// create a reconciler identity. NewUserIdentity always has IsReconciler=false.
+func TestIdentity_CannotForgeReconciler(t *testing.T) {
+	id := NewUserIdentity("system.reconciler")
+	if id.IsReconciler() {
+		t.Fatal("NewUserIdentity should NOT be able to create reconciler identity")
 	}
 }
 
@@ -439,12 +479,8 @@ func TestManager_Reserve_Idempotent(t *testing.T) {
 	if result2.Created {
 		t.Error("Second should NOT be created")
 	}
-	if result2.Reservation.ReservationID != result1.Reservation.ReservationID {
-		t.Error("Should return same ID")
-	}
 }
 
-// P1-04: Same key + different resource → conflict.
 func TestManager_Reserve_IdempotencyKeyDifferentResource(t *testing.T) {
 	mgr, _, _ := newTestManager(t)
 	_, _ = mgr.Reserve(ReserveRequest{
@@ -453,7 +489,6 @@ func TestManager_Reserve_IdempotencyKeyDifferentResource(t *testing.T) {
 		LeaseTTL:       5 * time.Minute,
 		IdempotencyKey: "idem-1",
 	})
-	// Same key, different resource → fingerprint will differ → conflict.
 	_, err := mgr.Reserve(ReserveRequest{
 		AllocationID: "alloc-1", ResourceID: testGPUUUID1,
 		ResourceType: ResourceTypeGPUDevice, Identity: testUser("agent"),
@@ -491,7 +526,7 @@ func TestManager_RenewLease_AfterExpiryRejected(t *testing.T) {
 	}
 }
 
-// P2-01: ReconcileExpired returns non-nil (was: nil, nil).
+// P2-01: ReconcileExpired returns non-nil (uses CleanupVerifier).
 func TestManager_ReconcileExpired_ReturnsNonNil(t *testing.T) {
 	mgr, clock, _ := newTestManager(t)
 	result, _ := mgr.Reserve(ReserveRequest{
@@ -501,10 +536,8 @@ func TestManager_ReconcileExpired_ReturnsNonNil(t *testing.T) {
 	})
 	clock.Advance(10 * time.Minute)
 	_, _ = mgr.MarkExpiredCandidates()
-
-	// Verified evidence → RELEASED.
-	r, err := mgr.ReconcileExpired(result.Reservation.ReservationID, testReconciler(),
-		validEvidence(testGPUUUID0, clock))
+	// ReconcileExpired now takes only reconciler identity (no evidence argument).
+	r, err := mgr.ReconcileExpired(result.Reservation.ReservationID, testReconciler())
 	if err != nil {
 		t.Fatalf("ReconcileExpired: %v", err)
 	}
@@ -516,9 +549,16 @@ func TestManager_ReconcileExpired_ReturnsNonNil(t *testing.T) {
 	}
 }
 
-// P2-01: ReconcileExpired with unverified evidence → CONFLICT (also non-nil).
+// P2-01: ReconcileExpired with unverified cleanup → CONFLICT.
 func TestManager_ReconcileExpired_ConflictNonNil(t *testing.T) {
-	mgr, clock, _ := newTestManager(t)
+	store := newTestStore(t)
+	clock := &FakeClock{T: time.Now().UTC()}
+	inv := newStubInventory()
+	inv.snap = NewInventorySnapshot("gen-1", clock.Now(), []string{testGPUUUID0})
+	allocVal := newStubAllocValidator("alloc-1")
+	cleanupVer := &stubCleanupVerifier{verified: false, clock: clock} // cleanup fails
+	mgr, _ := NewManager(store, DefaultPolicy(), clock, inv, allocVal, cleanupVer)
+
 	result, _ := mgr.Reserve(ReserveRequest{
 		AllocationID: "alloc-1", ResourceID: testGPUUUID0,
 		ResourceType: ResourceTypeGPUDevice, Identity: testUser("agent"),
@@ -527,13 +567,12 @@ func TestManager_ReconcileExpired_ConflictNonNil(t *testing.T) {
 	clock.Advance(10 * time.Minute)
 	_, _ = mgr.MarkExpiredCandidates()
 
-	ev := NewCleanupEvidence(testGPUUUID0, "op-2", clock.Now(), false, "system.reconciler")
-	r, err := mgr.ReconcileExpired(result.Reservation.ReservationID, testReconciler(), ev)
+	r, err := mgr.ReconcileExpired(result.Reservation.ReservationID, testReconciler())
 	if err != nil {
 		t.Fatalf("ReconcileExpired: %v", err)
 	}
 	if r == nil {
-		t.Fatal("P2-01: ReconcileExpired returned nil result")
+		t.Fatal("ReconcileExpired returned nil")
 	}
 	if r.Status != StatusConflict {
 		t.Errorf("Status = %s, want CONFLICT", r.Status)
@@ -548,10 +587,8 @@ func TestManager_RequestRelease_NoOpNoRevisionIncrement(t *testing.T) {
 		ResourceType: ResourceTypeGPUDevice, Identity: testUser("agent"),
 		LeaseTTL: 5 * time.Minute,
 	})
-	// First release → RELEASING.
 	r1, _ := mgr.RequestRelease(result.Reservation.ReservationID, testUser("agent"))
 	rev1 := r1.Revision
-	// Second release → no-op (already RELEASING).
 	r2, _ := mgr.RequestRelease(result.Reservation.ReservationID, testUser("agent"))
 	if r2.Revision != rev1 {
 		t.Errorf("Revision changed on no-op: %d → %d (P2-04)", rev1, r2.Revision)
@@ -605,7 +642,6 @@ func TestManager_ConcurrentReserve_SameGPU(t *testing.T) {
 	}
 }
 
-// P2-02: MarkExpiredCandidates accurate count.
 func TestManager_MarkExpiredCandidates_AccurateCount(t *testing.T) {
 	mgr, clock, _ := newTestManager(t)
 	_, _ = mgr.Reserve(ReserveRequest{

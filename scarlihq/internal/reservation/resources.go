@@ -2,6 +2,7 @@ package reservation
 
 import (
 	"fmt"
+
 	"time"
 )
 
@@ -127,7 +128,9 @@ func truncateID(s string) string {
 }
 
 // ValidateRecord validates a Reservation's invariants.
-// P2-03 (v19.2.7): Called on load and before persistence to reject invalid records.
+// P2-03 (v19.2.8): Called on load AND before persistence (append/update).
+// P2-03 (v19.2.8): Added canonical resource ID check, UpdatedAt >= CreatedAt,
+// and idempotency fingerprint required when key is present.
 func (r *Reservation) ValidateRecord() error {
 	if r == nil {
 		return fmt.Errorf("reservation: nil record")
@@ -147,6 +150,10 @@ func (r *Reservation) ValidateRecord() error {
 	if r.ResourceID == "" {
 		return fmt.Errorf("reservation: resource_id is empty")
 	}
+	// P2-03: Validate canonical resource ID.
+	if _, err := CanonicalResourceID(r.ResourceID, r.ResourceType); err != nil {
+		return fmt.Errorf("reservation: resource_id not canonical: %w", err)
+	}
 	if !r.Status.IsValid() {
 		return fmt.Errorf("reservation: invalid status %q", r.Status)
 	}
@@ -159,65 +166,63 @@ func (r *Reservation) ValidateRecord() error {
 	if r.UpdatedAt.IsZero() {
 		return fmt.Errorf("reservation: updated_at is zero")
 	}
-	// Lease consistency: if LeaseExpiry is set, LeaseID must be non-empty.
+	// P2-03: UpdatedAt must be >= CreatedAt.
+	if r.UpdatedAt.Before(r.CreatedAt) {
+		return fmt.Errorf("reservation: updated_at before created_at")
+	}
+	// Lease consistency.
 	if !r.LeaseExpiry.IsZero() && r.LeaseID == "" {
 		return fmt.Errorf("reservation: lease_expiry set but lease_id is empty")
 	}
+	// P2-03: If idempotency key is present, fingerprint must be non-empty.
+	if r.IdempotencyKey != "" && r.RequestFingerprint == "" {
+		return fmt.Errorf("reservation: idempotency_key present but request_fingerprint is empty")
+	}
+	// NOTE: Lease validation (non-zero expiry for HELD) is enforced by Manager.Reserve(),
+	// not by ValidateRecord — store tests create HELD records without leases.
 	return nil
 }
 
-// --- P1-01 (v19.2.7): Unforgeable identity and evidence ---
+// --- P1-01 (v19.2.8): Unforgeable identity and evidence ---
 
 // Identity represents a verified principal identity.
-// P1-01 (v19.2.7): This struct is NOT directly constructible by untrusted callers.
-// Use NewIdentity() (package-private) or TrustedIdentityProvider to create
-// verified identities. The fields are read-only after construction.
+// P1-01 (v19.2.8): Exported constructors for privileged identities REMOVED.
+// Use NewUserIdentity() for non-privileged identity (safe for export).
+// Reconciler identity is ONLY available via TrustedIdentityProvider.ResolveIdentity()
+// which is injected into Manager at construction. No public function can create
+// a reconciler identity.
 type Identity struct {
 	principal    string
 	isReconciler bool
 }
 
-// Principal returns the authenticated principal name.
-func (i Identity) Principal() string { return i.principal }
-
-// IsReconciler reports whether this identity is a trusted system reconciler.
+func (i Identity) Principal() string  { return i.principal }
 func (i Identity) IsReconciler() bool { return i.isReconciler }
+func (i Identity) String() string     { return i.principal }
 
-// String returns the principal name.
-func (i Identity) String() string { return i.principal }
-
-// newIdentity creates an Identity. Package-private — only Manager and
-// TrustedIdentityProvider can create identities.
-func newIdentity(principal string, isReconciler bool) Identity {
-	return Identity{principal: principal, isReconciler: isReconciler}
-}
-
-// NewUserIdentity creates a non-reconciler identity for testing.
-// Production code should use TrustedIdentityProvider.
+// NewUserIdentity creates a non-reconciler identity.
+// This is safe to export — it CANNOT create a reconciler identity.
 func NewUserIdentity(principal string) Identity {
-	return newIdentity(principal, false)
+	return Identity{principal: principal, isReconciler: false}
 }
 
-// NewReconcilerIdentity creates a reconciler identity for testing.
-// Production code should use TrustedIdentityProvider.
-func NewReconcilerIdentity(principal string) Identity {
-	return newIdentity(principal, true)
+// newReconcilerIdentity creates a reconciler identity. Package-private.
+// P1-01 (v19.2.8): NOT exported — only TrustedIdentityProvider or test helpers
+// (in _test.go) can create this.
+func newReconcilerIdentity(principal string) Identity {
+	return Identity{principal: principal, isReconciler: true}
 }
 
-// TrustedIdentityProvider is the interface for resolving authenticated identities.
-// P1-01 (v19.2.7): Production code MUST use this instead of constructing
-// Identity directly from request data.
+// TrustedIdentityProvider resolves authenticated identities.
+// P1-01 (v19.2.8): Production code MUST inject this into Manager.
+// The implementation authenticates the caller and returns an unforgeable Identity.
 type TrustedIdentityProvider interface {
-	// ResolveIdentity resolves an authenticated token/credential to a verified Identity.
-	// Returns an error if the token is invalid or the principal is unknown.
 	ResolveIdentity(token string) (Identity, error)
 }
 
 // CleanupEvidence is typed proof that a resource has been cleaned up.
-// P1-01 (v19.2.7): This struct is NOT directly constructible by untrusted callers.
-// Use NewCleanupEvidence() (package-private) to create verified evidence.
-// The cleanup/reconciliation service creates this ONLY after independently
-// verifying that the resource is actually free.
+// P1-01 (v19.2.8): Exported constructor for verified evidence REMOVED.
+// Evidence is ONLY created by the trusted cleanup service (injected into Manager).
 type CleanupEvidence struct {
 	resourceID   string
 	operationID  string
@@ -226,23 +231,14 @@ type CleanupEvidence struct {
 	reconcilerID string
 }
 
-// ResourceID returns the resource that was cleaned up.
-func (e CleanupEvidence) ResourceID() string { return e.resourceID }
-
-// OperationID returns the unique cleanup operation identifier.
-func (e CleanupEvidence) OperationID() string { return e.operationID }
-
-// ObservedAt returns when the cleanup was verified.
+func (e CleanupEvidence) ResourceID() string    { return e.resourceID }
+func (e CleanupEvidence) OperationID() string   { return e.operationID }
 func (e CleanupEvidence) ObservedAt() time.Time { return e.observedAt }
+func (e CleanupEvidence) Verified() bool        { return e.verified }
+func (e CleanupEvidence) ReconcilerID() string  { return e.reconcilerID }
 
-// Verified returns the cleanup outcome.
-func (e CleanupEvidence) Verified() bool { return e.verified }
-
-// ReconcilerID returns the identity of the trusted reconciler.
-func (e CleanupEvidence) ReconcilerID() string { return e.reconcilerID }
-
-// newCleanupEvidence creates CleanupEvidence. Package-private — only the
-// trusted cleanup service should create evidence.
+// newCleanupEvidence creates CleanupEvidence. Package-private.
+// P1-01 (v19.2.8): NOT exported — only trusted cleanup service creates this.
 func newCleanupEvidence(resourceID, operationID string, observedAt time.Time, verified bool, reconcilerID string) CleanupEvidence {
 	return CleanupEvidence{
 		resourceID:   resourceID,
@@ -253,22 +249,39 @@ func newCleanupEvidence(resourceID, operationID string, observedAt time.Time, ve
 	}
 }
 
-// NewCleanupEvidence creates CleanupEvidence for testing.
-// Production code should use the trusted cleanup service.
-func NewCleanupEvidence(resourceID, operationID string, observedAt time.Time, verified bool, reconcilerID string) CleanupEvidence {
-	return newCleanupEvidence(resourceID, operationID, observedAt, verified, reconcilerID)
+// CleanupVerifier is the interface for the trusted cleanup service.
+// P1-01 (v19.2.8): Production code injects this into Manager. The implementation
+// independently verifies that a resource is actually free before creating evidence.
+type CleanupVerifier interface {
+	// VerifyCleanup checks if the resource identified by resourceID is actually free.
+	// Returns CleanupEvidence with Verified=true if cleanup is confirmed.
+	VerifyCleanup(resourceID string, reconciler Identity) (CleanupEvidence, error)
 }
 
-// --- P1-03 (v19.2.7): Coherent inventory snapshot ---
+// --- P1-03 (v19.2.8): Coherent inventory snapshot with exported constructor ---
 
 // InventorySnapshot is a single coherent point-in-time view of inventory.
-// P1-03 (v19.2.7): Replaces separate SnapshotGeneration/SnapshotAge/ResourceExists
-// calls with one immutable snapshot that ties generation, age, and resource
-// health together.
+// P1-03 (v19.2.8): Exported constructor added — providers in other packages
+// can now create snapshots with resource data.
 type InventorySnapshot struct {
 	Generation string
 	AsOf       time.Time
-	resources  map[string]bool // resourceID → exists/healthy
+	resources  map[string]bool
+}
+
+// NewInventorySnapshot creates an InventorySnapshot with a defensive copy
+// of the resource map. P1-03 (v19.2.8): Exported so external providers
+// can construct snapshots.
+func NewInventorySnapshot(generation string, asOf time.Time, resourceIDs []string) InventorySnapshot {
+	m := make(map[string]bool, len(resourceIDs))
+	for _, id := range resourceIDs {
+		m[id] = true
+	}
+	return InventorySnapshot{
+		Generation: generation,
+		AsOf:       asOf,
+		resources:  m,
+	}
 }
 
 // ResourceExists checks if a resource exists in this snapshot.
@@ -277,15 +290,12 @@ func (s InventorySnapshot) ResourceExists(resourceID string) bool {
 }
 
 // InventoryProvider supplies trusted inventory snapshots.
-// P1-03 (v19.2.7): GetSnapshot returns one coherent immutable snapshot.
 type InventoryProvider interface {
-	// GetSnapshot returns a coherent point-in-time inventory snapshot.
 	GetSnapshot() InventorySnapshot
 }
 
 // AllocationValidator validates that an allocation is eligible for reservation.
+// P1-02 (v19.2.8): Called INSIDE the reservation flock critical section.
 type AllocationValidator interface {
-	// ValidateForReservation checks that allocID exists and is eligible.
-	// P1-02 (v19.2.7): Called INSIDE the reservation flock critical section.
 	ValidateForReservation(allocID string) error
 }

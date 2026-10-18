@@ -31,17 +31,17 @@ func (f *FakeClock) Advance(d time.Duration) { f.T = f.T.Add(d) }
 // go through Manager. Identity fields are unexported (caller-forgeable
 // boolean removed).
 type Manager struct {
-	store     *Store
-	policy    ReservationPolicy
-	clock     Clock
-	inventory InventoryProvider
-	allocVal  AllocationValidator
+	store      *Store
+	policy     ReservationPolicy
+	clock      Clock
+	inventory  InventoryProvider
+	allocVal   AllocationValidator
+	cleanupVer CleanupVerifier // P1-01 (v19.2.8): trusted cleanup verifier
 }
 
 // NewManager creates a Manager.
-// P1-06 (v19.2.6): All deps mandatory (nil rejected).
-// P2-05 (v19.2.6): Store mandatory.
-func NewManager(store *Store, policy ReservationPolicy, clock Clock, inventory InventoryProvider, allocVal AllocationValidator) (*Manager, error) {
+// P1-01 (v19.2.8): cleanupVer is mandatory for ConfirmRelease/ReconcileExpired.
+func NewManager(store *Store, policy ReservationPolicy, clock Clock, inventory InventoryProvider, allocVal AllocationValidator, cleanupVer CleanupVerifier) (*Manager, error) {
 	if store == nil {
 		return nil, fmt.Errorf("reservation: store is required (nil rejected)")
 	}
@@ -54,10 +54,13 @@ func NewManager(store *Store, policy ReservationPolicy, clock Clock, inventory I
 	if allocVal == nil {
 		return nil, fmt.Errorf("reservation: allocation validator is required (nil rejected)")
 	}
+	if cleanupVer == nil {
+		return nil, fmt.Errorf("reservation: cleanup verifier is required (nil rejected)")
+	}
 	if err := policy.Validate(); err != nil {
 		return nil, fmt.Errorf("reservation: invalid policy: %w", err)
 	}
-	return &Manager{store: store, policy: policy, clock: clock, inventory: inventory, allocVal: allocVal}, nil
+	return &Manager{store: store, policy: policy, clock: clock, inventory: inventory, allocVal: allocVal, cleanupVer: cleanupVer}, nil
 }
 
 func generateID() string {
@@ -135,8 +138,25 @@ func (m *Manager) Reserve(req ReserveRequest) (*ReserveResult, error) {
 	// P1-03: Get one coherent inventory snapshot.
 	snap := m.inventory.GetSnapshot()
 
+	// P2-01 (v19.2.8): Reject future-dated/zero AsOf snapshots.
+	if snap.AsOf.IsZero() {
+		return nil, fmt.Errorf("reservation: inventory snapshot AsOf is zero")
+	}
+	if snap.Generation == "" {
+		return nil, fmt.Errorf("reservation: inventory snapshot Generation is empty")
+	}
+	now := m.clock.Now()
+	if snap.AsOf.After(now.Add(1 * time.Second)) {
+		return nil, fmt.Errorf("reservation: inventory snapshot AsOf is in the future")
+	}
+
 	// P1-03: Check freshness from snapshot.
-	snapAge := m.clock.Now().Sub(snap.AsOf)
+	snapAge := now.Sub(snap.AsOf)
+	// P2-01 (v19.2.8): Reject negative age (future timestamp already rejected above,
+	// but this is defense-in-depth against clock skew).
+	if snapAge < 0 {
+		return nil, fmt.Errorf("reservation: inventory snapshot has negative age (clock skew?)")
+	}
 	if m.policy.IsInventoryStale(snapAge) {
 		return nil, ErrStaleInventory
 	}
@@ -235,8 +255,6 @@ func (m *Manager) Reserve(req ReserveRequest) (*ReserveResult, error) {
 	// Create reservation.
 	resID := generateID()
 	leaseID := generateID()
-	now := m.clock.Now()
-
 	r := &Reservation{
 		ReservationID:       resID,
 		AllocationID:        req.AllocationID,
@@ -246,11 +264,11 @@ func (m *Manager) Reserve(req ReserveRequest) (*ReserveResult, error) {
 		Owner:               req.Identity.Principal(),
 		LeaseID:             leaseID,
 		LeaseExpiry:         leaseExpiry,
-		LastRenewedAt:       now,
+		LastRenewedAt:       m.clock.Now(),
 		InventoryGeneration: snap2.Generation, // P1-03: exact snapshot generation
 		Status:              StatusHeld,
-		CreatedAt:           now,
-		UpdatedAt:           now,
+		CreatedAt:           m.clock.Now(),
+		UpdatedAt:           m.clock.Now(),
 		IdempotencyKey:      req.IdempotencyKey,
 		RequestFingerprint:  fingerprint, // P1-04: internally computed
 		Revision:            0,
@@ -328,28 +346,53 @@ func (m *Manager) RequestRelease(reservationID string, identity Identity) (*Rese
 }
 
 // ConfirmRelease transitions RELEASING → RELEASED using verified CleanupEvidence.
-// P1-01 (v19.2.7): Identity is unforgeable (fields unexported).
-// P1-03 (v19.2.7): Evidence fields are unexported (caller-forgeable struct removed).
-func (m *Manager) ConfirmRelease(reservationID string, reconciler Identity, evidence CleanupEvidence) (*Reservation, error) {
+// P1-01 (v19.2.8): Evidence is created by CleanupVerifier (injected), NOT by caller.
+// The caller passes the reconciler Identity; the Manager calls cleanupVer.VerifyCleanup()
+// to independently verify the resource is free.
+// P2-02 (v19.2.8): Idempotent repeat (already RELEASED) returns the existing record, not nil.
+func (m *Manager) ConfirmRelease(reservationID string, reconciler Identity) (*Reservation, error) {
 	if reconciler.Principal() == "" || !reconciler.IsReconciler() {
 		return nil, fmt.Errorf("reservation: only trusted reconcilers can confirm release")
 	}
-	if evidence.ReconcilerID() != reconciler.Principal() {
-		return nil, fmt.Errorf("reservation: evidence reconciler_id does not match reconciler principal")
+
+	// Read the reservation to get the resource ID for cleanup verification.
+	r, err := m.store.Get(reservationID)
+	if err != nil {
+		return nil, err
 	}
-	if evidence.ObservedAt().IsZero() {
-		return nil, fmt.Errorf("reservation: evidence observed_at is zero")
+	if r.Status != StatusReleasing && r.Status != StatusReleased {
+		return nil, fmt.Errorf("reservation: cannot confirm release from status %s (must be RELEASING)", r.Status)
+	}
+
+	// If already released, return the existing record (P2-02: non-nil idempotent).
+	if r.Status == StatusReleased {
+		return r, nil
+	}
+
+	// P1-01 (v19.2.8): Use CleanupVerifier to independently verify cleanup.
+	// Evidence is created by the trusted verifier, NOT by the caller.
+	evidence, err := m.cleanupVer.VerifyCleanup(r.ResourceID, reconciler)
+	if err != nil {
+		return nil, fmt.Errorf("reservation: cleanup verification failed: %w", err)
+	}
+
+	// Validate evidence is from this reconciler.
+	if evidence.ReconcilerID() != reconciler.Principal() {
+		return nil, fmt.Errorf("reservation: evidence reconciler_id mismatch (internal error)")
 	}
 	now := m.clock.Now()
+	if evidence.ObservedAt().IsZero() {
+		return nil, fmt.Errorf("reservation: evidence observed_at is zero (internal error)")
+	}
 	if evidence.ObservedAt().After(now.Add(1 * time.Second)) {
-		return nil, fmt.Errorf("reservation: evidence observed_at is in the future")
+		return nil, fmt.Errorf("reservation: evidence observed_at is in the future (internal error)")
 	}
 	if now.Sub(evidence.ObservedAt()) > 5*time.Minute {
-		return nil, fmt.Errorf("reservation: evidence is stale")
+		return nil, fmt.Errorf("reservation: evidence is stale (internal error)")
 	}
 
 	var updated *Reservation
-	err := m.store.update(reservationID, func(r *Reservation) error {
+	err = m.store.update(reservationID, func(r *Reservation) error {
 		if evidence.ResourceID() != r.ResourceID {
 			return fmt.Errorf("reservation: evidence resource_id mismatch")
 		}
@@ -366,15 +409,15 @@ func (m *Manager) ConfirmRelease(reservationID string, reconciler Identity, evid
 				}
 			}
 		case StatusReleased:
-			// Idempotent — no change (P2-04).
-			return errNoChange
+			// P2-02 (v19.2.8): Already released — return existing record (non-nil).
 		default:
-			return fmt.Errorf("reservation: cannot confirm release from status %s (must be RELEASING)", r.Status)
+			return fmt.Errorf("reservation: cannot confirm release from status %s", r.Status)
 		}
+		// P2-02: Always set updated = r (including idempotent path).
 		updated = r
 		return nil
 	})
-	if err != nil && err != errNoChange {
+	if err != nil {
 		return nil, err
 	}
 	return updated, nil
@@ -421,27 +464,43 @@ func (m *Manager) MarkExpiredCandidates() (int, error) {
 }
 
 // ReconcileExpired transitions EXPIRED_PENDING_RECONCILIATION.
-// P2-01 (v19.2.7): Fixed — sets updated = r after transition (was: returned nil, nil).
-func (m *Manager) ReconcileExpired(reservationID string, reconciler Identity, evidence CleanupEvidence) (*Reservation, error) {
+// P1-01 (v19.2.8): Uses CleanupVerifier (injected) to independently verify cleanup.
+// Caller passes reconciler Identity only; evidence is created by the verifier.
+func (m *Manager) ReconcileExpired(reservationID string, reconciler Identity) (*Reservation, error) {
 	if reconciler.Principal() == "" || !reconciler.IsReconciler() {
 		return nil, fmt.Errorf("reservation: only trusted reconcilers can reconcile")
 	}
-	if evidence.ReconcilerID() != reconciler.Principal() {
-		return nil, fmt.Errorf("reservation: evidence reconciler_id does not match")
+
+	// Read reservation to get resource ID.
+	r, err := m.store.Get(reservationID)
+	if err != nil {
+		return nil, err
 	}
-	if evidence.ObservedAt().IsZero() {
-		return nil, fmt.Errorf("reservation: evidence observed_at is zero")
+	if r.Status != StatusExpiredPendingReconciliation {
+		return nil, fmt.Errorf("reservation: cannot reconcile from status %s", r.Status)
+	}
+
+	// P1-01 (v19.2.8): Use CleanupVerifier to independently verify cleanup.
+	evidence, err := m.cleanupVer.VerifyCleanup(r.ResourceID, reconciler)
+	if err != nil {
+		return nil, fmt.Errorf("reservation: cleanup verification failed: %w", err)
+	}
+	if evidence.ReconcilerID() != reconciler.Principal() {
+		return nil, fmt.Errorf("reservation: evidence reconciler_id mismatch (internal error)")
 	}
 	now := m.clock.Now()
+	if evidence.ObservedAt().IsZero() {
+		return nil, fmt.Errorf("reservation: evidence observed_at is zero (internal error)")
+	}
 	if evidence.ObservedAt().After(now.Add(1 * time.Second)) {
-		return nil, fmt.Errorf("reservation: evidence observed_at is in the future")
+		return nil, fmt.Errorf("reservation: evidence observed_at is in the future (internal error)")
 	}
 	if now.Sub(evidence.ObservedAt()) > 5*time.Minute {
-		return nil, fmt.Errorf("reservation: evidence is stale")
+		return nil, fmt.Errorf("reservation: evidence is stale (internal error)")
 	}
 
 	var updated *Reservation
-	err := m.store.update(reservationID, func(r *Reservation) error {
+	err = m.store.update(reservationID, func(r *Reservation) error {
 		if r.Status != StatusExpiredPendingReconciliation {
 			return fmt.Errorf("reservation: cannot reconcile from status %s", r.Status)
 		}
@@ -458,7 +517,7 @@ func (m *Manager) ReconcileExpired(reservationID string, reconciler Identity, ev
 				return err
 			}
 		}
-		// P2-01 (v19.2.7): SET updated = r after successful transition.
+		// P2-01: Always set updated = r after transition.
 		updated = r
 		return nil
 	})

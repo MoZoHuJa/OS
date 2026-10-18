@@ -181,11 +181,13 @@ func CanonicalResourceID(resourceID string, resourceType ResourceType) (string, 
 			return "", fmt.Errorf("gpu resource_id missing UUID after 'gpu.nvidia.'")
 		}
 		// P1-05: Validate NVIDIA GPU UUID format.
-		// Format: GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (case-insensitive hex)
 		if !isValidGPUUUID(uuid) {
 			return "", fmt.Errorf("gpu resource_id has invalid UUID format %q (expected GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)", uuid)
 		}
-		return resourceID, nil
+		// P1-04 (v19.2.8): Canonicalize to lowercase to prevent case aliases.
+		// "GPU-" prefix stays uppercase (NVIDIA convention), hex digits lowercased.
+		canonUUID := "GPU-" + strings.ToLower(uuid[4:])
+		return "gpu.nvidia." + canonUUID, nil
 	case ResourceTypeRuntimeSlot:
 		if !strings.HasPrefix(resourceID, "runtime.") {
 			return "", fmt.Errorf("runtime resource_id must start with 'runtime.' (got %q)", resourceID)
