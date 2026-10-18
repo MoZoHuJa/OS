@@ -211,7 +211,7 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 			}
 		}
 		if len(existing) > 0 {
-			if err := validateIdempotentBundle(existing, normalized, identity.Principal(), fingerprint); err != nil {
+			if err := validateIdempotentBundle(existing, normalized, identity.Principal(), allocationID, fingerprint); err != nil {
 				return nil, err
 			}
 			for _, record := range existing {
@@ -220,7 +220,7 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 				}
 			}
 			sortReservations(existing)
-			if err := m.allocVal.EndReservation(allocationID, true); err != nil {
+			if err := m.finalizeAllocation(allocationID, existing); err != nil {
 				return &ReserveBundleResult{Reservations: existing, Created: false},
 					fmt.Errorf("%w: existing reservation bundle is persisted but allocation finalization is pending: %w", ErrReconciliationRequired, err)
 			}
@@ -321,7 +321,7 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 	claimOpen = false
 	sortReservations(created)
 	result = &ReserveBundleResult{Reservations: created, Created: true}
-	if err := m.allocVal.EndReservation(allocationID, true); err != nil {
+	if err := m.finalizeAllocation(allocationID, created); err != nil {
 		return result, fmt.Errorf("%w: reservation bundle for allocation %s is persisted but allocation finalization is pending: %w", ErrReconciliationRequired, allocationID, err)
 	}
 	return result, nil
@@ -389,7 +389,7 @@ func bundleFingerprint(requests []normalizedRequest) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func validateIdempotentBundle(existing []*Reservation, requests []normalizedRequest, owner, fingerprint string) error {
+func validateIdempotentBundle(existing []*Reservation, requests []normalizedRequest, owner, allocationID, fingerprint string) error {
 	if len(existing) != len(requests) {
 		return ErrIdempotencyConflict
 	}
@@ -400,7 +400,7 @@ func validateIdempotentBundle(existing []*Reservation, requests []normalizedRequ
 	for _, record := range existing {
 		key := string(record.ResourceType) + "\x00" + record.ResourceID
 		item, ok := expected[key]
-		if !ok || record.Owner != owner {
+		if !ok || record.Owner != owner || record.AllocationID != allocationID {
 			return ErrIdempotencyConflict
 		}
 		if record.RequestFingerprint != fingerprint {
@@ -429,6 +429,100 @@ func sortReservations(records []*Reservation) {
 		}
 		return records[i].ResourceID < records[j].ResourceID
 	})
+}
+
+
+type reservationAssignmentFinalizer interface {
+	FinalizeReservation(allocationID string, reservations []*Reservation) error
+}
+
+func (m *Manager) finalizeAllocation(allocationID string, reservations []*Reservation) error {
+	if finalizer, ok := m.allocVal.(reservationAssignmentFinalizer); ok {
+		return finalizer.FinalizeReservation(allocationID, reservations)
+	}
+	return m.allocVal.EndReservation(allocationID, true)
+}
+
+// ReconcilePending completes allocation finalization for a reservation bundle
+// that was durably committed before the process failed. It is restricted to
+// trusted reconcilers and only accepts a complete bundle of active HELD leases.
+func (m *Manager) ReconcilePending(allocationID, token string) error {
+	identity, err := m.resolveIdentity(token)
+	if err != nil {
+		return fmt.Errorf("reservation: identity resolution failed: %w", err)
+	}
+	if !identity.IsReconciler() {
+		return fmt.Errorf("reservation: only trusted reconcilers can reconcile pending allocations")
+	}
+	if allocationID == "" {
+		return fmt.Errorf("reservation: allocation_id is required")
+	}
+	unlock, err := m.resourceLock.Lock()
+	if err != nil {
+		return fmt.Errorf("reservation: cannot acquire resource lock: %w", err)
+	}
+	defer unlock()
+
+	records, corrupt, err := m.store.loadLocked()
+	if err != nil {
+		return err
+	}
+	if len(corrupt) > 0 {
+		return fmt.Errorf("%w: %d corrupt lines", ErrReservationStoreCorrupt, len(corrupt))
+	}
+	var bundle []*Reservation
+	for _, record := range records {
+		if record.AllocationID != allocationID {
+			continue
+		}
+		if record.Status != StatusHeld {
+			return fmt.Errorf("%w: allocation %s has reservation %s in status %s", ErrReconciliationRequired, allocationID, record.ReservationID, record.Status)
+		}
+		bundle = append(bundle, record)
+	}
+	if len(bundle) == 0 {
+		return ErrResourceNotFound
+	}
+	sortReservations(bundle)
+	if err := m.finalizeAllocation(allocationID, bundle); err != nil {
+		return fmt.Errorf("%w: cannot finalize allocation %s: %w", ErrReconciliationRequired, allocationID, err)
+	}
+	return nil
+}
+
+// ReapExpiredOnce marks expired leases and asks the trusted cleanup verifier
+// to reconcile each candidate. Errors are aggregated so one broken resource
+// does not prevent other expired leases from being processed.
+func (m *Manager) ReapExpiredOnce(reconcilerToken string) (int, error) {
+	if _, err := m.resolveReconciler(reconcilerToken); err != nil {
+		return 0, err
+	}
+	marked, err := m.MarkExpiredCandidates()
+	if err != nil {
+		return 0, err
+	}
+	candidates, err := m.store.ListByStatus(StatusExpiredPendingReconciliation)
+	if err != nil {
+		return marked, err
+	}
+	var failures []error
+	for _, candidate := range candidates {
+		if _, err := m.ReconcileExpired(candidate.ReservationID, reconcilerToken); err != nil {
+			failures = append(failures, fmt.Errorf("reservation %s: %w", candidate.ReservationID, err))
+		}
+	}
+	return marked, errors.Join(failures...)
+}
+
+func (m *Manager) resolveReconciler(token string) (Identity, error) {
+	identity, err := m.resolveIdentity(token)
+	if err != nil {
+		return Identity{}, fmt.Errorf("reservation: identity resolution failed: %w", err)
+	}
+	if !identity.IsReconciler() {
+		return Identity{}, fmt.Errorf("reservation: only trusted reconcilers can perform this operation")
+	}
+	return identity, nil
 }
 
 // RenewLease extends the lease TTL.
