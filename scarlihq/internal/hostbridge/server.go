@@ -117,7 +117,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.executor.Start(r.Context(), request)
 	if err != nil || !result.Ready || !validReference(result.Ref) {
-		writeError(w, http.StatusBadGateway, "execution_failed")
+		writeStartFailure(w, result)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
@@ -125,6 +125,20 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		Ready bool   `json:"ready"`
 		Owned bool   `json:"owned"`
 	}{Ref: result.Ref, Ready: true, Owned: result.Owned})
+}
+
+func writeStartFailure(w http.ResponseWriter, result workload.StartResult) {
+	response := struct {
+		Error string `json:"error"`
+		Ref   string `json:"ref,omitempty"`
+		Owned bool   `json:"owned,omitempty"`
+		Ready bool   `json:"ready"`
+	}{Error: "execution_failed", Ready: false}
+	if result.Owned && validReference(result.Ref) {
+		response.Ref = result.Ref
+		response.Owned = true
+	}
+	writeJSON(w, http.StatusBadGateway, response)
 }
 
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
