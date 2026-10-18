@@ -39,6 +39,11 @@ type StartResult struct {
 	// Owned is true only if this allocation caused the workload to be started.
 	// Pre-existing/shared runtimes must report false and must never be stopped by this allocation.
 	Owned bool
+	// Observed assignment from a recoverable host executor; not client authority.
+	RuntimeID string
+	ModelID   string
+	GPUID     string
+	Port      int
 }
 
 // StopRequest identifies only the workload previously returned for this allocation.
