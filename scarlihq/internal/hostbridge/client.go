@@ -54,7 +54,10 @@ func (c *Client) Start(ctx context.Context, request workload.StartRequest) (work
 		Owned bool   `json:"owned"`
 	}
 	if err := c.post(ctx, "/v1/workloads/start", payload, &response); err != nil {
-		return workload.StartResult{}, err
+		return workload.StartResult{
+			Ref: response.Ref, Ready: response.Ready, Owned: response.Owned,
+			RuntimeID: request.RuntimeID, ModelID: request.ModelID, GPUID: request.GPUID, Port: request.Port,
+		}, err
 	}
 	if !response.Ready || !validReference(response.Ref) {
 		return workload.StartResult{}, errors.New("hostbridge: start response did not confirm readiness")
@@ -106,6 +109,9 @@ func (c *Client) post(ctx context.Context, path string, payload any, response an
 		return errors.New("hostbridge: invalid response body")
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		// Start failures may still carry a verified owned reference so the
+		// allocation manager can request cleanup instead of orphaning a workload.
+		_ = json.Unmarshal(data, response)
 		var remote struct {
 			Error string `json:"error"`
 		}
