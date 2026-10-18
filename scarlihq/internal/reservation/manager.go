@@ -217,6 +217,11 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 			return nil, err
 		}
 	}
+	if validator, ok := m.allocVal.(allocationPlanValidator); ok {
+		if err := validator.ValidateReservationPlan(allocationID, normalized, snap); err != nil {
+			return nil, err
+		}
+	}
 
 	// Idempotency lookup precedes BeginReservation. Existing bundle records are
 	// validated as a set, not just by finding one matching line.
@@ -271,6 +276,11 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 	for _, item := range normalized {
 		if !snap2.ResourceExists(item.canonical) {
 			return nil, fmt.Errorf("%w: %s", ErrResourceNotFound, item.canonical)
+		}
+	}
+	if validator, ok := m.allocVal.(allocationPlanValidator); ok {
+		if err := validator.ValidateReservationPlan(allocationID, normalized, snap2); err != nil {
+			return nil, err
 		}
 	}
 
@@ -470,6 +480,10 @@ func sortReservations(records []*Reservation) {
 
 type allocationOwnershipValidator interface {
 	ValidateAllocationOwner(allocationID, principal string) error
+}
+
+type allocationPlanValidator interface {
+	ValidateReservationPlan(allocationID string, requests []normalizedRequest, snapshot InventorySnapshot) error
 }
 
 type pendingAllocationScanner interface {

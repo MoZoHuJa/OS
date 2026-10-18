@@ -68,6 +68,44 @@ func TestAllocationReservationAdapter_FinalizeReservation(t *testing.T) {
 	}
 }
 
+func TestAllocationReservationAdapter_ValidatesSelectedResourcePlan(t *testing.T) {
+	store := allocation.NewStore(filepath.Join(t.TempDir(), "allocations.jsonl"))
+	newPlannedAllocation(t, store, "alloc-1")
+	if err := store.Update("alloc-1", func(record *allocation.Allocation) error {
+		record.SelectedGPU = "gpu.nvidia.0"
+		record.SelectedRuntime = "sglang"
+		record.SelectedModel = "qwen3-14b-awq"
+		return nil
+	}); err != nil {
+		t.Fatalf("set plan: %v", err)
+	}
+	adapter, err := NewAllocationReservationAdapter(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := NewInventorySnapshotFromInventory("g1", time.Now().UTC(),
+		[]inventory.GPU{{ID: "gpu.nvidia.0", UUID: "GPU-12345678-abcd-1234-abcd-123456789abc", Vendor: "nvidia", Healthy: true}},
+		[]inventory.Runtime{{ID: "sglang", Enabled: true, Healthy: true}},
+		[]inventory.Model{{ID: "qwen3-14b-awq", Present: true}},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := []normalizedRequest{
+		{request: ReserveRequest{AllocationID: "alloc-1", ResourceType: ResourceTypeGPUDevice}, canonical: "gpu.nvidia.GPU-12345678-abcd-1234-abcd-123456789abc"},
+		{request: ReserveRequest{AllocationID: "alloc-1", ResourceType: ResourceTypeRuntimeSlot}, canonical: "runtime.sglang"},
+		{request: ReserveRequest{AllocationID: "alloc-1", ResourceType: ResourceTypeModelSlot}, canonical: "model.qwen3-14b-awq"},
+	}
+	if err := adapter.ValidateReservationPlan("alloc-1", requests, snapshot); err != nil {
+		t.Fatalf("valid plan rejected: %v", err)
+	}
+	requests[0].canonical = "gpu.nvidia.GPU-87654321-dcba-4321-dcba-987654321cba"
+	if err := adapter.ValidateReservationPlan("alloc-1", requests, snapshot); err == nil {
+		t.Fatal("mismatched GPU UUID must be rejected")
+	}
+}
+
 func TestAllocationReservationAdapter_RejectsDifferentOwner(t *testing.T) {
 	store := allocation.NewStore(filepath.Join(t.TempDir(), "allocations.jsonl"))
 	newPlannedAllocation(t, store, "alloc-1")

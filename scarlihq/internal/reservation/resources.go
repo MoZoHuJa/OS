@@ -281,6 +281,7 @@ type InventorySnapshot struct {
 	Generation string
 	AsOf       time.Time
 	resources  map[string]bool
+	displayIDs map[string]string
 }
 
 // NewInventorySnapshot creates an InventorySnapshot with a defensive copy
@@ -301,6 +302,7 @@ func NewInventorySnapshot(generation string, asOf time.Time, resourceIDs []strin
 		Generation: generation,
 		AsOf:       asOf,
 		resources:  m,
+		displayIDs: make(map[string]string),
 	}
 }
 
@@ -329,6 +331,12 @@ func canonicalizeAnyResourceID(id string) string {
 		}
 	}
 	return ""
+}
+
+// DisplayIDForResource returns the stable inventory/display identifier associated
+// with a canonical resource ID, if the snapshot has that mapping.
+func (s InventorySnapshot) DisplayIDForResource(resourceID string) string {
+	return s.displayIDs[resourceID]
 }
 
 // ResourceExists checks if a resource exists in this snapshot.

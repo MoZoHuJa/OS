@@ -32,6 +32,9 @@ func TestNewInventorySnapshotFromInventory_UsesStableGPUUUID(t *testing.T) {
 			t.Errorf("unexpected resource %q in snapshot", id)
 		}
 	}
+	if got := snapshot.DisplayIDForResource("gpu.nvidia.GPU-12345678-abcd-1234-abcd-123456789abc"); got != "gpu.nvidia.0" {
+		t.Fatalf("GPU display mapping=%q, want gpu.nvidia.0", got)
+	}
 	if snapshot.Generation == "" {
 		t.Fatal("snapshot generation must be deterministic and non-empty")
 	}

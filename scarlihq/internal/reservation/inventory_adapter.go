@@ -29,6 +29,7 @@ func NewInventorySnapshotFromInventory(
 		return InventorySnapshot{}, fmt.Errorf("reservation: inventory snapshot timestamp is required")
 	}
 	ids := make([]string, 0, len(gpus)+len(runtimes)+len(models)+len(managedPorts))
+	displayIDs := make(map[string]string, len(gpus))
 	for _, gpu := range gpus {
 		if !strings.EqualFold(gpu.Vendor, "nvidia") || gpu.UUID == "" || !gpu.Healthy {
 			continue
@@ -40,6 +41,10 @@ func NewInventorySnapshotFromInventory(
 			continue
 		}
 		ids = append(ids, canonical)
+		if prior, exists := displayIDs[canonical]; exists && prior != gpu.ID {
+			return InventorySnapshot{}, fmt.Errorf("reservation: duplicate GPU UUID %q maps to both %q and %q", canonical, prior, gpu.ID)
+		}
+		displayIDs[canonical] = gpu.ID
 	}
 	for _, runtime := range runtimes {
 		if !runtime.Enabled || !runtime.Healthy {
@@ -89,7 +94,9 @@ func NewInventorySnapshotFromInventory(
 		fmt.Fprintf(h, "%d:%s;", len(id), id)
 	}
 	generation = hex.EncodeToString(h.Sum(nil))
-	return NewInventorySnapshot(generation, asOf.UTC(), ids), nil
+	snapshot := NewInventorySnapshot(generation, asOf.UTC(), ids)
+	snapshot.displayIDs = displayIDs
+	return snapshot, nil
 }
 
 func uniqueStrings(values []string) []string {

@@ -83,6 +83,45 @@ func (a *AllocationReservationAdapter) ValidateAllocationOwner(id, principal str
 	return nil
 }
 
+// ValidateReservationPlan enforces that the resources being reserved match
+// the immutable allocation plan. GPU UUIDs are resolved back to inventory IDs
+// so a caller cannot silently reserve a different GPU than the planner selected.
+func (a *AllocationReservationAdapter) ValidateReservationPlan(id string, requests []normalizedRequest, snapshot InventorySnapshot) error {
+	record, err := a.getSafe(id)
+	if err != nil {
+		return err
+	}
+	if record.State != allocation.StatePlanned && record.State != allocation.StateReserving && record.State != allocation.StateReserved {
+		return fmt.Errorf("allocation %s cannot validate a reservation plan from %s", id, record.State)
+	}
+	for _, item := range requests {
+		switch item.request.ResourceType {
+		case ResourceTypeGPUDevice:
+			displayID := snapshot.DisplayIDForResource(item.canonical)
+			if displayID == "" {
+				return fmt.Errorf("%w: no stable UUID-to-inventory mapping for GPU %s", ErrReconciliationRequired, item.canonical)
+			}
+			if record.SelectedGPU == "" || record.SelectedGPU != displayID {
+				return fmt.Errorf("reservation: GPU %s does not match allocation plan %q", item.canonical, record.SelectedGPU)
+			}
+		case ResourceTypeRuntimeSlot:
+			selected := strings.TrimPrefix(item.canonical, "runtime.")
+			if record.SelectedRuntime == "" || record.SelectedRuntime != selected {
+				return fmt.Errorf("reservation: runtime %s does not match allocation plan %q", selected, record.SelectedRuntime)
+			}
+		case ResourceTypeModelSlot:
+			selected := strings.TrimPrefix(item.canonical, "model.")
+			if record.SelectedModel == "" || record.SelectedModel != selected {
+				return fmt.Errorf("reservation: model %s does not match allocation plan %q", selected, record.SelectedModel)
+			}
+		case ResourceTypePort:
+			// Port assignment is selected only after the planner has a trusted
+			// managed-port policy; the snapshot already restricts it to configured ports.
+		}
+	}
+	return nil
+}
+
 func (a *AllocationReservationAdapter) ValidateForReservation(id string) error {
 	record, err := a.getSafe(id)
 	if err != nil {
