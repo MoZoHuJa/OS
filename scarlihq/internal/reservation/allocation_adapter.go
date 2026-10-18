@@ -20,6 +20,22 @@ type AllocationStore interface {
 // allocation state machine. Allocation transitions remain validated by the
 // frozen allocation.Transition table and are persisted under the allocation
 // store's own cross-process lock.
+
+type ReservationAssignmentFinalizer interface {
+	FinalizeReservation(allocationID string, reservations []*Reservation) error
+}
+
+type AllocationReservationAdapter struct {
+	store AllocationStore
+}
+
+func NewAllocationReservationAdapter(store AllocationStore) (*AllocationReservationAdapter, error) {
+	if store == nil {
+		return nil, fmt.Errorf("reservation: allocation store is required")
+	}
+	return &AllocationReservationAdapter{store: store}, nil
+}
+
 // ListPendingReservationAllocations finds claims interrupted between
 // PLANNED → RESERVING and durable reservation commit/finalization.
 func (a *AllocationReservationAdapter) ListPendingReservationAllocations() ([]string, error) {
@@ -37,21 +53,6 @@ func (a *AllocationReservationAdapter) ListPendingReservationAllocations() ([]st
 		}
 	}
 	return ids, nil
-}
-
-type ReservationAssignmentFinalizer interface {
-	FinalizeReservation(allocationID string, reservations []*Reservation) error
-}
-
-type AllocationReservationAdapter struct {
-	store AllocationStore
-}
-
-func NewAllocationReservationAdapter(store AllocationStore) (*AllocationReservationAdapter, error) {
-	if store == nil {
-		return nil, fmt.Errorf("reservation: allocation store is required")
-	}
-	return &AllocationReservationAdapter{store: store}, nil
 }
 
 func (a *AllocationReservationAdapter) getSafe(id string) (*allocation.Allocation, error) {
