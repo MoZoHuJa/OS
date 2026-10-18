@@ -233,6 +233,8 @@ func (e *DockerExecutor) Start(ctx context.Context, req workload.StartRequest) (
 			"scarlix.allocation_id": req.AllocationID,
 			"scarlix.runtime_id":    req.RuntimeID,
 			"scarlix.model_id":      req.ModelID,
+			"scarlix.gpu_id":        req.GPUID,
+			"scarlix.port":          fmt.Sprint(req.Port),
 			"scarlix.owned":         "true",
 		},
 		"ExposedPorts": map[string]any{portKey: map[string]any{}},
