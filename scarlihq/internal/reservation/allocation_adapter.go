@@ -1,0 +1,137 @@
+package reservation
+
+import (
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
+)
+
+// AllocationStore is the minimal allocation-store surface required by the
+// reservation adapter. It is intentionally narrower than allocation.Store.
+type AllocationStore interface {
+	Get(id string) (*allocation.Allocation, error)
+	Update(id string, modify func(*allocation.Allocation) error) error
+}
+
+// AllocationReservationAdapter binds Phase 3 reservations to the Phase 2
+// allocation state machine. Allocation transitions remain validated by the
+// frozen allocation.Transition table and are persisted under the allocation
+// store's own cross-process lock.
+type AllocationReservationAdapter struct {
+	store AllocationStore
+}
+
+func NewAllocationReservationAdapter(store AllocationStore) (*AllocationReservationAdapter, error) {
+	if store == nil {
+		return nil, fmt.Errorf("reservation: allocation store is required")
+	}
+	return &AllocationReservationAdapter{store: store}, nil
+}
+
+func (a *AllocationReservationAdapter) ValidateForReservation(id string) error {
+	record, err := a.store.Get(id)
+	if err != nil {
+		return fmt.Errorf("allocation %s not found: %w", id, err)
+	}
+	if record.State != allocation.StateReserving {
+		return fmt.Errorf("allocation %s must be RESERVING, got %s", id, record.State)
+	}
+	if record.Owner == "" {
+		return fmt.Errorf("allocation %s has no owner", id)
+	}
+	return nil
+}
+
+func (a *AllocationReservationAdapter) BeginReservation(id string) error {
+	return a.store.Update(id, func(record *allocation.Allocation) error {
+		switch record.State {
+		case allocation.StateReserving:
+			return nil // recover/retry an interrupted claim
+		case allocation.StateReserved:
+			return nil // idempotent replay; finalization will verify the durable bundle
+		case allocation.StatePlanned:
+			_, err := record.Transition(allocation.StateReserving, "phase 3 resource reservation started")
+			return err
+		default:
+			return fmt.Errorf("allocation %s cannot begin reservation from %s", id, record.State)
+		}
+	})
+}
+
+func (a *AllocationReservationAdapter) EndReservation(id string, success bool) error {
+	if success {
+		return a.store.Update(id, func(record *allocation.Allocation) error {
+			if record.State == allocation.StateReserved {
+				return nil
+			}
+			if record.State != allocation.StateReserving {
+				return fmt.Errorf("allocation %s cannot finalize reservation from %s", id, record.State)
+			}
+			_, err := record.Transition(allocation.StateReserved, "phase 3 resource reservation committed")
+			return err
+		})
+	}
+	return a.store.Update(id, func(record *allocation.Allocation) error {
+		if record.State == allocation.StateFailed || record.State == allocation.StateCancelled {
+			return nil
+		}
+		if record.State != allocation.StateReserving {
+			return fmt.Errorf("allocation %s cannot abort reservation from %s", id, record.State)
+		}
+		_, err := record.Transition(allocation.StateFailed, "phase 3 resource reservation aborted")
+		return err
+	})
+}
+
+// FinalizeReservation commits the assignment and RESERVED state in one
+// allocation-store transaction. This is preferred to EndReservation(true).
+func (a *AllocationReservationAdapter) FinalizeReservation(id string, reservations []*Reservation) error {
+	if len(reservations) == 0 {
+		return fmt.Errorf("reservation: cannot finalize an empty reservation bundle")
+	}
+	return a.store.Update(id, func(record *allocation.Allocation) error {
+		if record.State != allocation.StateReserving && record.State != allocation.StateReserved {
+			return fmt.Errorf("allocation %s cannot finalize reservation from %s", id, record.State)
+		}
+		for _, reservation := range reservations {
+			if reservation == nil || reservation.AllocationID != id {
+				return fmt.Errorf("reservation: invalid reservation assignment for allocation %s", id)
+			}
+			switch reservation.ResourceType {
+			case ResourceTypeGPUDevice:
+				record.AssignedGPU = reservation.ResourceID
+			case ResourceTypeRuntimeSlot:
+				record.AssignedRuntime = strings.TrimPrefix(reservation.ResourceID, "runtime.")
+			case ResourceTypeModelSlot:
+				record.AssignedModel = strings.TrimPrefix(reservation.ResourceID, "model.")
+			case ResourceTypePort:
+				port, err := strconv.Atoi(strings.TrimPrefix(reservation.ResourceID, "port."))
+				if err != nil {
+					return fmt.Errorf("reservation: invalid persisted port %q: %w", reservation.ResourceID, err)
+				}
+				record.AssignedPort = port
+			default:
+				return fmt.Errorf("reservation: unsupported resource type %q", reservation.ResourceType)
+			}
+			record.LeaseID = reservation.LeaseID
+			record.LeaseExpiry = reservation.LeaseExpiry
+		}
+		if record.State == allocation.StateReserved {
+			return nil // idempotent replay also repairs assigned fields
+		}
+		_, err := record.Transition(allocation.StateReserved, "phase 3 reservation bundle committed")
+		return err
+	})
+}
+
+var _ AllocationValidator = (*AllocationReservationAdapter)(nil)
+var _ interface {
+	FinalizeReservation(string, []*Reservation) error
+} = (*AllocationReservationAdapter)(nil)
+
+// ErrAllocationStoreNotFound exposes allocation not-found classification to
+// callers without coupling reservation errors to the concrete store type.
+var ErrAllocationStoreNotFound = errors.New("reservation: allocation store record not found")
