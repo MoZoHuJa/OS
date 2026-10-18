@@ -537,6 +537,57 @@ func TestManager_ReserveBundle_IdempotentReplayDoesNotBeginClaimAgain(t *testing
 	}
 }
 
+
+func TestManager_RenewBundleLease_ExtendsAllReservationsTogether(t *testing.T) {
+	mgr, clock, _ := newTestManager(t)
+	requests := []ReserveRequest{
+		{AllocationID: "alloc-1", ResourceID: testGPUUUID0, ResourceType: ResourceTypeGPUDevice, LeaseTTL: 5 * time.Minute, IdempotencyKey: "lease-bundle"},
+		{AllocationID: "alloc-1", ResourceID: "runtime.vllm", ResourceType: ResourceTypeRuntimeSlot, LeaseTTL: 5 * time.Minute, IdempotencyKey: "lease-bundle"},
+	}
+	result, err := mgr.ReserveBundle(requests, "user-token")
+	if err != nil {
+		t.Fatalf("ReserveBundle: %v", err)
+	}
+	clock.Advance(time.Minute)
+	if err := mgr.RenewBundleLease("alloc-1", "user-token", 10*time.Minute); err != nil {
+		t.Fatalf("RenewBundleLease: %v", err)
+	}
+	records, err := mgr.store.ListByAllocation("alloc-1")
+	if err != nil {
+		t.Fatalf("ListByAllocation: %v", err)
+	}
+	if len(records) != len(result.Reservations) || len(records) != 2 {
+		t.Fatalf("got %d records, want 2", len(records))
+	}
+	wantExpiry := clock.Now().Add(10 * time.Minute)
+	for _, record := range records {
+		if !record.LeaseExpiry.Equal(wantExpiry) {
+			t.Errorf("reservation %s expiry=%v, want %v", record.ReservationID, record.LeaseExpiry, wantExpiry)
+		}
+		if record.LeaseID != records[0].LeaseID {
+			t.Errorf("bundle lease IDs differ: %q vs %q", record.LeaseID, records[0].LeaseID)
+		}
+	}
+}
+
+func TestManager_ReconcilePendingRepairsFinalizationFailure(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+	validator := mgr.allocVal.(*stubAllocationValidator)
+	validator.endErr = fmt.Errorf("simulated allocation finalization failure")
+	result, err := mgr.Reserve(ReserveRequest{
+		AllocationID: "alloc-1", ResourceID: testGPUUUID0,
+		ResourceType: ResourceTypeGPUDevice, LeaseTTL: 5 * time.Minute, IdempotencyKey: "pending-1",
+	}, "user-token")
+	if err == nil || result == nil {
+		t.Fatalf("expected a persisted result plus pending-finalization error; result=%+v err=%v", result, err)
+	}
+	validator.mu.Lock()
+	validator.endErr = nil
+	validator.mu.Unlock()
+	if err := mgr.ReconcilePending("alloc-1", "reconciler-token"); err != nil {
+		t.Fatalf("ReconcilePending: %v", err)
+	}
+}
 func TestManager_Reserve_Idempotent(t *testing.T) {
 	mgr, _, _ := newTestManager(t)
 	req := ReserveRequest{
