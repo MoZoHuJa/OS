@@ -1,6 +1,7 @@
 package reservation
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -80,5 +81,22 @@ func TestManager_ReapExpiredOnce(t *testing.T) {
 	}
 	if record.Status != StatusReleased {
 		t.Fatalf("status=%s, want RELEASED", record.Status)
+	}
+}
+
+func TestManager_RejectsSecondBundleForSameAllocation(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+	if _, err := mgr.Reserve(ReserveRequest{
+		AllocationID: "alloc-1", ResourceID: testGPUUUID0,
+		ResourceType: ResourceTypeGPUDevice, LeaseTTL: 5 * time.Minute,
+	}, "user-token"); err != nil {
+		t.Fatalf("first reservation: %v", err)
+	}
+	_, err := mgr.ReserveBundle([]ReserveRequest{{
+		AllocationID: "alloc-1", ResourceID: "runtime.sglang",
+		ResourceType: ResourceTypeRuntimeSlot, LeaseTTL: 5 * time.Minute, IdempotencyKey: "second-bundle",
+	}}, "user-token")
+	if !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("second independent bundle error=%v, want ErrIdempotencyConflict", err)
 	}
 }
