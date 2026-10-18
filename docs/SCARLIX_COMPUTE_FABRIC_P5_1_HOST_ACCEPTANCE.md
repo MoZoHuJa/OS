@@ -72,3 +72,15 @@ For each case, attach command output/log excerpt, before/after resource inventor
 - Preserve the allocation ledger and service logs for reconciliation.
 - Disable/stop only the new workload service. Do not disable the existing dashboard/mode bridge.
 - Remove only resources whose allocation ownership has been positively verified.
+
+## Operator setup (do not enable before acceptance)
+
+1. Ensure the model directory exists as a real, non-symlink directory and is readable by the service identity. The adapter only permits read-only model mounts sourced below `/var/lib/scarlix/models` and mapped below `/models`.
+2. Create a dedicated Docker network named `scarlix-compute`. Do not use host networking. Prefer an isolated/internal bridge network after confirming the runtime can operate without outbound internet access.
+3. Pre-pull each exact digest-pinned image listed in the active config. The executor does not pull mutable tags or resolve image tags dynamically.
+4. Copy the example to `/etc/scarlix/workload-bridge.json`, replace the image digest and GPU UUID placeholders, ensure every profile has explicit CPU, memory, PID, shared-memory, port, network and health-check settings, then install it root-owned and not writable by group/other (for example root:docker mode 0640).
+5. Confirm `/var/run/docker.sock` is root-owned and group-accessible to `docker`. The bridge service account is in the Docker group; this is host-root-equivalent privilege and must be treated as such.
+6. The installer packages the binary, unit and example config but does **not** enable the service or install the example as active config. Keep `scarlix-workload-bridge.service` disabled until the review and host lifecycle matrix pass.
+7. Do not mount `/var/run/docker.sock` into ScarliHQ. Do not mount the workload socket into ScarliHQ until the authenticated allocation/principal API is wired and reviewed.
+
+The current executor conservatively permits only one active allocation per logical GPU and per host port. A `STARTING`, `RUNNING`, or `RECONCILE_REQUIRED` ledger entry continues reserving those resources until reconciliation positively marks it stopped. CPU/memory/PID limits are per workload; aggregate resource admission and reservation release must be integrated before multi-workload production use.
