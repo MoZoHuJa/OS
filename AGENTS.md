@@ -1,4 +1,4 @@
-# SCARLIX OS v19.2.7 — Agent Architecture
+# SCARLIX OS v19.2.8 — Agent Architecture
 
 ## Inference Stack
 
