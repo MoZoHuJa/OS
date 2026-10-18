@@ -25,8 +25,14 @@ func NewFileBackedManager(
 	if strings.TrimSpace(reservationPath) == "" || strings.TrimSpace(allocationPath) == "" {
 		return nil, fmt.Errorf("reservation: reservation and allocation store paths are required")
 	}
-	reservationPath = filepath.Clean(reservationPath)
-	allocationPath = filepath.Clean(allocationPath)
+	reservationPath, err := filepath.Abs(filepath.Clean(reservationPath))
+	if err != nil {
+		return nil, fmt.Errorf("reservation: resolve reservation store path: %w", err)
+	}
+	allocationPath, err := filepath.Abs(filepath.Clean(allocationPath))
+	if err != nil {
+		return nil, fmt.Errorf("reservation: resolve allocation store path: %w", err)
+	}
 	if reservationPath == allocationPath {
 		return nil, fmt.Errorf("reservation: reservation and allocation stores must use different files")
 	}
