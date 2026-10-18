@@ -426,7 +426,7 @@ func (e *DockerExecutor) deviceRequests(profile RuntimeProfile, gpuID string) []
 }
 
 func (e *DockerExecutor) waitReady(ctx context.Context, port int, path string) error {
-	deadline, cancel := context.WithTimeout(ctx, 60*time.Second)
+	deadline, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
