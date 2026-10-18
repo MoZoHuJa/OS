@@ -905,6 +905,16 @@ else
     ok "VERSION file installed ($(cat "$REPO_DIR/VERSION"))"
   fi
 
+  # P5.1: Install the workload bridge example only as a template. Never place
+  # its placeholder digest in the active config or enable the service automatically.
+  if [ -f "$REPO_DIR/docs/examples/workload-bridge.json.example" ]; then
+    mkdir -p /usr/local/share/scarlix
+    install -m 0644 "$REPO_DIR/docs/examples/workload-bridge.json.example" /usr/local/share/scarlix/workload-bridge.json.example
+    ok "Installed workload bridge config template (service remains disabled)"
+  else
+    warn "P5.1 workload bridge config template missing — optional host workload service remains disabled"
+  fi
+
   # Pacman hooks
   log "Installing pacman hooks..."
   mkdir -p /etc/pacman.d/hooks
