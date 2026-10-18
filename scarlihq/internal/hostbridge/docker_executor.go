@@ -214,8 +214,7 @@ func (e *DockerExecutor) Start(ctx context.Context, req workload.StartRequest) (
 		if existing.Ready { return existing, nil }
 		return workload.StartResult{}, errors.New("hostbridge: allocation resource exists but is not ready")
 	}
-	sum := sha256.Sum256([]byte(req.AllocationID))
-	containerName := "scarlix-wl-" + hex.EncodeToString(sum[:12])
+	containerName := dockerContainerName(req.AllocationID)
 	portKey := fmt.Sprintf("%d/tcp", req.Port)
 	createBody := map[string]any{
 		"Image": profile.Image,
@@ -273,6 +272,9 @@ func (e *DockerExecutor) Start(ctx context.Context, req workload.StartRequest) (
 }
 
 func (e *DockerExecutor) Find(ctx context.Context, allocationID string) (workload.StartResult, bool, error) {
+	if !idPattern.MatchString(allocationID) {
+		return workload.StartResult{}, false, errors.New("hostbridge: invalid allocation ID for runtime lookup")
+	}
 	filters, _ := json.Marshal(map[string][]string{"label":{"scarlix.allocation_id="+allocationID,"scarlix.managed=true"}})
 	query := url.Values{}
 	query.Set("all","1")
@@ -405,6 +407,11 @@ func (e *DockerExecutor) do(ctx context.Context, method, path string, body []byt
 	data,err := io.ReadAll(io.LimitReader(resp.Body,1<<20+1))
 	if err != nil || len(data)>1<<20 { return resp,nil,errors.New("hostbridge: invalid Docker API response body") }
 	return resp,data,nil
+}
+
+func dockerContainerName(allocationID string) string {
+	sum := sha256.Sum256([]byte(allocationID))
+	return "scarlix-wl-" + hex.EncodeToString(sum[:12])
 }
 
 func containsInt(values []int, value int) bool { for _,v := range values { if v==value { return true } }; return false }
