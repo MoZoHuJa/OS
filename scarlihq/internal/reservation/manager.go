@@ -228,6 +228,12 @@ func (m *Manager) ReserveBundle(requests []ReserveRequest, token string) (result
 				if record.Status == StatusReleased {
 					return nil, fmt.Errorf("%w: idempotency key cannot be reused after release", ErrIdempotencyConflict)
 				}
+				if record.Status != StatusHeld {
+					return nil, fmt.Errorf("%w: idempotent reservation %s is in non-active status %s", ErrReconciliationRequired, record.ReservationID, record.Status)
+				}
+				if record.IsExpired(m.clock.Now()) {
+					return nil, ErrLeaseExpired
+				}
 			}
 			sortReservations(existing)
 			if err := m.finalizeAllocation(allocationID, existing); err != nil {
