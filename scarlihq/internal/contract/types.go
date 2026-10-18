@@ -86,7 +86,7 @@ type ComputeSpec struct {
 // RuntimeSpec describes which inference runtimes the agent prefers.
 //
 // Preferred is an ordered list of runtime IDs (e.g. "sglang", "vllm",
-// "beellama", "ollama", "litellm", "smg"). The scheduler tries them in
+// "beellama", "ollama", "litellm"). The scheduler tries them in
 // order. Empty list means "no preference". Must serialize as [] not null.
 type RuntimeSpec struct {
 	Preferred []string `json:"preferred" yaml:"preferred"`
