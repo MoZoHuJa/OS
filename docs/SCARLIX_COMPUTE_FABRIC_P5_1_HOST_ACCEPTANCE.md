@@ -4,9 +4,9 @@ Status: **not accepted on a target host**. This runbook defines the evidence req
 
 ## Current implementation boundary
 
-The P5.1 branch contains the typed Unix-socket protocol, client implementing `workload.Driver`, validation tests, and a composition helper that injects the client into `workload.Manager`. It does **not** yet contain a production `Executor`, a workload-bridge daemon, a runtime adapter, or an installer-managed service. Do not install or enable a new privileged workload service based on the protocol package alone.
+The P5.1 branch contains the typed Unix-socket protocol, client implementing `workload.Driver`, a fixed-profile Docker Engine executor, durable owner-only ledger, idempotency/reconciliation wrapper, service entrypoint, systemd unit, installer packaging, and a composition helper that injects the client into `workload.Manager`. The service is packaged but intentionally not enabled; target-host acceptance remains outstanding. Do not enable it with the example placeholder config.
 
-The existing `scarlix-host-bridge.service` and `scarlix-host-bridge.timer` are the dashboard/mode bridge. They are not the P5.1 workload executor and must not be repurposed without a separate review.
+The existing `scarlix-host-bridge.service` and `scarlix-host-bridge.timer` are the dashboard/mode bridge. They are not the P5.1 workload executor and must not be repurposed without a separate review. The new `scarlix-workload-bridge.service` uses a narrow API but belongs to the `docker` group, which is effectively host-root-equivalent; keep it disabled until its config and host acceptance are reviewed.
 
 ## Security model required before service installation
 
@@ -19,7 +19,7 @@ The existing `scarlix-host-bridge.service` and `scarlix-host-bridge.timer` are t
 
 ## Required idempotency/reconciliation behavior
 
-- The allocation ID is the idempotency key.
+- The allocation ID is the idempotency key. The durable ledger fingerprint also binds runtime, model, GPU ID, and port. A mismatched assignment must never be treated as a successful retry.
 - Repeated Start for the same allocation must discover and return the existing matching workload rather than create another.
 - Reusing an allocation ID with a different runtime/model/GPU/port assignment must fail closed.
 - A timeout after the runtime created a workload must be reconciled by querying runtime-owned metadata (for example, an allocation label), not by blindly retrying creation.
