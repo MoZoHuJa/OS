@@ -35,7 +35,10 @@
       ],
       "health_path": "/health",
       "network": "scarlix-compute",
-      "shm_size_bytes": 1073741824
+      "shm_size_bytes": 1073741824,
+      "memory_bytes": 25769803776,
+      "nano_cpus": 4000000000,
+      "pids_limit": 2048
     }
   ]
 }
