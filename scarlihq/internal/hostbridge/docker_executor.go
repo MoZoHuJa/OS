@@ -260,7 +260,7 @@ func (e *DockerExecutor) Start(ctx context.Context, req workload.StartRequest) (
 	}
 	resp, _, err = e.do(ctx, http.MethodPost, "/containers/"+created.ID+"/start", nil)
 	if err != nil { return workload.StartResult{Ref:created.ID, Owned:true}, err }
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.Status304NotModified {
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotModified {
 		return workload.StartResult{Ref:created.ID, Owned:true}, errors.New("hostbridge: Docker start failed")
 	}
 	result := workload.StartResult{Ref:created.ID, Owned:true}
