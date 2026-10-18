@@ -120,7 +120,8 @@ func TestStopRejectsSharedWorkloadBeforeExecutor(t *testing.T) {
 
 func TestStopRequiresVerifiedCleanup(t *testing.T) {
 	executor := &fakeExecutor{stopErr: errors.New("private detail")}
-	server, err := NewServer(executor); if err != nil {
+	server, err := NewServer(executor)
+	if err != nil {
 		t.Fatal(err)
 	}
 	body := `{"allocation_id":"alloc-1","runtime_id":"sglang","model_id":"model","ref":"container:owned","owned":true}`
@@ -134,7 +135,10 @@ func TestStopRequiresVerifiedCleanup(t *testing.T) {
 }
 
 func TestStartRejectsExtraJSONValue(t *testing.T) {
-	server, err := NewServer(&fakeExecutor{}); if err != nil { t.Fatal(err) }
+	server, err := NewServer(&fakeExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	body := `{"allocation_id":"alloc-1","runtime_id":"sglang","model_id":"model","gpu_id":"","port":30000} {}`
 	rec := request(t, server, http.MethodPost, "/v1/workloads/start", "application/json", body)
 	if rec.Code != http.StatusBadRequest {
@@ -145,7 +149,9 @@ func TestStartRejectsExtraJSONValue(t *testing.T) {
 func TestListenUnixUsesOwnerOnlyPermissionsAndRefusesExistingPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bridge.sock")
 	listener, err := ListenUnix(path)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer listener.Close()
 	info, err := os.Stat(path)
 	if err != nil {
