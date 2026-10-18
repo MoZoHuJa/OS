@@ -26,7 +26,7 @@ func (f *recoverableFake) Start(_ context.Context, r workload.StartRequest) (wor
 	if f.startErr != nil {
 		return workload.StartResult{}, f.startErr
 	}
-	result := workload.StartResult{Ref: "container-" + r.AllocationID, Ready: true, Owned: true}
+	result := workload.StartResult{Ref: "container-" + r.AllocationID, Ready: true, Owned: true, RuntimeID: r.RuntimeID, ModelID: r.ModelID, GPUID: r.GPUID, Port: r.Port}
 	if f.resources == nil {
 		f.resources = map[string]workload.StartResult{}
 	}
@@ -46,6 +46,12 @@ func (f *recoverableFake) Find(_ context.Context, id string) (workload.StartResu
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	result, ok := f.resources[id]
+	if ok {
+		result.RuntimeID = "sglang"
+		result.ModelID = "qwen3-14b-awq"
+		result.GPUID = "GPU-abc"
+		result.Port = 30000
+	}
 	return result, ok, nil
 }
 
