@@ -133,7 +133,7 @@ func nvidiaSmiQuery(fields string) [][]string {
 // emitted a malformed value), that GPU is skipped and a warning is logged
 // to stderr — but the rest of the GPUs are still returned.
 func CollectGPUs() []GPU {
-	const fields = "index,name,memory.total,memory.used,memory.free," +
+	const fields = "index,uuid,name,memory.total,memory.used,memory.free," +
 		"utilization.gpu,temperature.gpu,power.draw,driver_version,compute_cap"
 
 	rows := nvidiaSmiQuery(fields)
@@ -144,10 +144,10 @@ func CollectGPUs() []GPU {
 
 	gpus := make([]GPU, 0, len(rows))
 	for _, row := range rows {
-		// Each row must have at least 10 columns; if not, skip with a stderr
+		// Each row must have at least 11 columns; if not, skip with a stderr
 		// note (don't crash the whole collector for one malformed GPU).
-		if len(row) < 10 {
-			fmt.Fprintf(os.Stderr, "inventory: skipping malformed nvidia-smi row (got %d fields, want 10): %v\n", len(row), row)
+		if len(row) < 11 {
+			fmt.Fprintf(os.Stderr, "inventory: skipping malformed nvidia-smi row (got %d fields, want 11): %v\n", len(row), row)
 			continue
 		}
 
@@ -159,26 +159,28 @@ func CollectGPUs() []GPU {
 
 		// VRAM / util / temp are all integer fields in nvidia-smi output
 		// (no decimals because we passed --format=...,nounits).
-		vramTotal := atoiOr(row[2], 0, "memory.total", idx)
-		vramUsed := atoiOr(row[3], 0, "memory.used", idx)
-		vramFree := atoiOr(row[4], 0, "memory.free", idx)
-		util := atoiOr(row[5], 0, "utilization.gpu", idx)
-		temp := atoiOr(row[6], 0, "temperature.gpu", idx)
+		uuid := strings.TrimSpace(row[1])
+		vramTotal := atoiOr(row[3], 0, "memory.total", idx)
+		vramUsed := atoiOr(row[4], 0, "memory.used", idx)
+		vramFree := atoiOr(row[5], 0, "memory.free", idx)
+		util := atoiOr(row[6], 0, "utilization.gpu", idx)
+		temp := atoiOr(row[7], 0, "temperature.gpu", idx)
 
 		// power.draw can be "[N/A]" on idle GPUs (PM disabled) — normalise.
-		power := parsePowerW(row[7], idx)
+		power := parsePowerW(row[8], idx)
 
 		// driver_version is identical across GPUs on a host, but we take the
 		// per-row value rather than caching because future heterogeneous-driver
 		// setups (multi-NVIDIA-driver MIG) could differ.
-		driver := row[8]
-		computeCap := row[9]
+		driver := row[9]
+		computeCap := row[10]
 
 		gpus = append(gpus, GPU{
 			ID:             fmt.Sprintf("gpu.nvidia.%d", idx),
+			UUID:           uuid,
 			Index:          idx,
 			Vendor:         "nvidia",
-			Name:           row[1],
+			Name:           row[2],
 			VRAMTotalMB:    vramTotal,
 			VRAMUsedMB:     vramUsed,
 			VRAMFreeMB:     vramFree,

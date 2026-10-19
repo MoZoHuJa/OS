@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, 'v*']
+    branches: [main, 'v*', '19.2.10.*']
     # v18.7.6 P1: trigger on tags (was: branches only → v18.7.6 tag push skipped CI)
     tags: ['v*']
   pull_request:
@@ -256,6 +256,8 @@ jobs:
           if [ -n "$UNFORMATTED" ]; then
             echo "ERROR: unformatted Go files:"
             echo "$UNFORMATTED"
+            echo "gofmt diff:"
+            gofmt -d .
             exit 1
           fi
           echo "All Go files are gofmt-clean"
@@ -291,6 +293,9 @@ jobs:
           else
             echo "(no Go test files yet — OK)"
           fi
+      - name: Phase 3 race tests
+        working-directory: scarlihq
+        run: go test -race ./internal/allocation ./internal/inventory ./internal/reservation
 
   # v17.9.8 P2: Real ScarliHQ Docker build (catches Dockerfile + go.mod issues)
   # v17.9.9 P2: Added runtime smoke test (container starts + /api/health responds)

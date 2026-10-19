@@ -30,6 +30,7 @@ package inventory
 // (ScaRgeN master guide section 8 — GPU discovery)
 type GPU struct {
 	ID             string  `json:"id"`     // e.g. "gpu.nvidia.0"
+	UUID           string  `json:"-"`      // internal stable hardware UUID; deliberately excluded from frozen public inventory JSON
 	Index          int     `json:"index"`  // 0, 1, ...
 	Vendor         string  `json:"vendor"` // "nvidia", "amd", "intel"
 	Name           string  `json:"name"`   // "RTX 5060 Ti"
