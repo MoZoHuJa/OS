@@ -1,0 +1,164 @@
+package reservation
+
+import (
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
+)
+
+func newPlannedAllocation(t *testing.T, store *allocation.Store, id string) {
+	t.Helper()
+	record := allocation.NewAllocation(id, "v1", "coding", "interactive", "agent")
+	if err := store.Append(record); err != nil {
+		t.Fatalf("Append allocation: %v", err)
+	}
+	if err := store.Update(id, func(record *allocation.Allocation) error {
+		_, err := record.Transition(allocation.StateValidating, "test validation")
+		return err
+	}); err != nil {
+		t.Fatalf("transition VALIDATING: %v", err)
+	}
+	if err := store.Update(id, func(record *allocation.Allocation) error {
+		_, err := record.Transition(allocation.StatePlanned, "test plan")
+		return err
+	}); err != nil {
+		t.Fatalf("transition PLANNED: %v", err)
+	}
+}
+
+func TestAllocationReservationAdapter_FinalizeReservation(t *testing.T) {
+	store := allocation.NewStore(filepath.Join(t.TempDir(), "allocations.jsonl"))
+	newPlannedAllocation(t, store, "alloc-1")
+	adapter, err := NewAllocationReservationAdapter(store)
+	if err != nil {
+		t.Fatalf("NewAllocationReservationAdapter: %v", err)
+	}
+	if err := adapter.BeginReservation("alloc-1"); err != nil {
+		t.Fatalf("BeginReservation: %v", err)
+	}
+	if err := adapter.ValidateForReservation("alloc-1"); err != nil {
+		t.Fatalf("ValidateForReservation: %v", err)
+	}
+	reservations := []*Reservation{
+		{AllocationID: "alloc-1", ResourceID: "gpu.nvidia.GPU-12345678-abcd-1234-abcd-123456789abc", ResourceType: ResourceTypeGPUDevice, LeaseID: "lease-bundle", LeaseExpiry: time.Now().Add(5 * time.Minute)},
+		{AllocationID: "alloc-1", ResourceID: "runtime.sglang", ResourceType: ResourceTypeRuntimeSlot, LeaseID: "lease-bundle", LeaseExpiry: time.Now().Add(5 * time.Minute)},
+		{AllocationID: "alloc-1", ResourceID: "model.qwen3-14b", ResourceType: ResourceTypeModelSlot, LeaseID: "lease-bundle", LeaseExpiry: time.Now().Add(5 * time.Minute)},
+		{AllocationID: "alloc-1", ResourceID: "port.30000", ResourceType: ResourceTypePort, LeaseID: "lease-bundle", LeaseExpiry: time.Now().Add(5 * time.Minute)},
+	}
+	if err := adapter.FinalizeReservation("alloc-1", reservations); err != nil {
+		t.Fatalf("FinalizeReservation: %v", err)
+	}
+	got, err := store.Get("alloc-1")
+	if err != nil {
+		t.Fatalf("Get allocation: %v", err)
+	}
+	if got.State != allocation.StateReserved {
+		t.Fatalf("state=%s, want RESERVED", got.State)
+	}
+	if got.AssignedGPU != reservations[0].ResourceID || got.AssignedRuntime != "sglang" || got.AssignedModel != "qwen3-14b" || got.AssignedPort != 30000 {
+		t.Fatalf("assignment fields not populated: %+v", got)
+	}
+	if got.LeaseID != "lease-bundle" || got.LeaseExpiry.IsZero() {
+		t.Fatalf("lease metadata not populated: lease=%q expiry=%v", got.LeaseID, got.LeaseExpiry)
+	}
+	if err := adapter.FinalizeReservation("alloc-1", reservations); err != nil {
+		t.Fatalf("idempotent FinalizeReservation: %v", err)
+	}
+}
+
+func TestAllocationReservationAdapter_ValidatesSelectedResourcePlan(t *testing.T) {
+	store := allocation.NewStore(filepath.Join(t.TempDir(), "allocations.jsonl"))
+	newPlannedAllocation(t, store, "alloc-1")
+	if err := store.Update("alloc-1", func(record *allocation.Allocation) error {
+		record.SelectedGPU = "gpu.nvidia.0"
+		record.SelectedRuntime = "sglang"
+		record.SelectedModel = "qwen3-14b-awq"
+		return nil
+	}); err != nil {
+		t.Fatalf("set plan: %v", err)
+	}
+	adapter, err := NewAllocationReservationAdapter(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := NewInventorySnapshotFromInventory("g1", time.Now().UTC(),
+		[]inventory.GPU{{ID: "gpu.nvidia.0", UUID: "GPU-12345678-abcd-1234-abcd-123456789abc", Vendor: "nvidia", Healthy: true}},
+		[]inventory.Runtime{{ID: "sglang", Enabled: true, Healthy: true}},
+		[]inventory.Model{{ID: "qwen3-14b-awq", Present: true}},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := []normalizedRequest{
+		{request: ReserveRequest{AllocationID: "alloc-1", ResourceType: ResourceTypeGPUDevice}, canonical: "gpu.nvidia.GPU-12345678-abcd-1234-abcd-123456789abc"},
+		{request: ReserveRequest{AllocationID: "alloc-1", ResourceType: ResourceTypeRuntimeSlot}, canonical: "runtime.sglang"},
+		{request: ReserveRequest{AllocationID: "alloc-1", ResourceType: ResourceTypeModelSlot}, canonical: "model.qwen3-14b-awq"},
+	}
+	if err := adapter.ValidateReservationPlan("alloc-1", requests, snapshot); err != nil {
+		t.Fatalf("valid plan rejected: %v", err)
+	}
+	requests[0].canonical = "gpu.nvidia.GPU-87654321-dcba-4321-dcba-987654321cba"
+	if err := adapter.ValidateReservationPlan("alloc-1", requests, snapshot); err == nil {
+		t.Fatal("mismatched GPU UUID must be rejected")
+	}
+}
+
+func TestAllocationReservationAdapter_RejectsDifferentOwner(t *testing.T) {
+	store := allocation.NewStore(filepath.Join(t.TempDir(), "allocations.jsonl"))
+	newPlannedAllocation(t, store, "alloc-1")
+	adapter, err := NewAllocationReservationAdapter(store)
+	if err != nil {
+		t.Fatalf("NewAllocationReservationAdapter: %v", err)
+	}
+	if err := adapter.ValidateAllocationOwner("alloc-1", "attacker"); err == nil {
+		t.Fatal("expected foreign allocation owner to be rejected")
+	}
+	if err := adapter.ValidateAllocationOwner("alloc-1", "agent"); err != nil {
+		t.Fatalf("valid owner rejected: %v", err)
+	}
+}
+
+func TestAllocationReservationAdapter_ListsPendingClaims(t *testing.T) {
+	store := allocation.NewStore(filepath.Join(t.TempDir(), "allocations.jsonl"))
+	newPlannedAllocation(t, store, "alloc-1")
+	adapter, err := NewAllocationReservationAdapter(store)
+	if err != nil {
+		t.Fatalf("NewAllocationReservationAdapter: %v", err)
+	}
+	if err := adapter.BeginReservation("alloc-1"); err != nil {
+		t.Fatalf("BeginReservation: %v", err)
+	}
+	ids, err := adapter.ListPendingReservationAllocations()
+	if err != nil {
+		t.Fatalf("ListPendingReservationAllocations: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "alloc-1" {
+		t.Fatalf("pending IDs=%v, want [alloc-1]", ids)
+	}
+}
+
+func TestAllocationReservationAdapter_AbortOrphanedClaim(t *testing.T) {
+	store := allocation.NewStore(filepath.Join(t.TempDir(), "allocations.jsonl"))
+	newPlannedAllocation(t, store, "alloc-1")
+	adapter, err := NewAllocationReservationAdapter(store)
+	if err != nil {
+		t.Fatalf("NewAllocationReservationAdapter: %v", err)
+	}
+	if err := adapter.BeginReservation("alloc-1"); err != nil {
+		t.Fatalf("BeginReservation: %v", err)
+	}
+	if err := adapter.EndReservation("alloc-1", false); err != nil {
+		t.Fatalf("EndReservation(false): %v", err)
+	}
+	got, err := store.Get("alloc-1")
+	if err != nil {
+		t.Fatalf("Get allocation: %v", err)
+	}
+	if got.State != allocation.StateFailed {
+		t.Fatalf("state=%s, want FAILED", got.State)
+	}
+}

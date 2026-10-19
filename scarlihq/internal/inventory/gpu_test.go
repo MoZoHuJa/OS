@@ -200,7 +200,7 @@ func TestNvidiaSmiQuery_HandlesMissingBinary(t *testing.T) {
 // --- JSON round-trip ------------------------------------------------------
 
 func TestGPU_JSONRoundTrip(t *testing.T) {
-	// Populate ALL 14 fields of the GPU struct with realistic v19 values
+	// Populate the frozen public GPU schema with realistic v19 values
 	// (matching the data-contract example in docs/SCARLIX_DATA_CONTRACTS.md §2).
 	// Then marshal + unmarshal + spot-check JSON field names match the
 	// frozen contract exactly. If a future change renames a tag, this test
@@ -257,6 +257,17 @@ func TestGPU_JSONRoundTrip(t *testing.T) {
 	}
 	if dst != src {
 		t.Errorf("round-trip mismatch:\n src=%+v\n dst=%+v", src, dst)
+	}
+}
+
+func TestGPU_UUIDIsNotSerializedIntoFrozenPublicSchema(t *testing.T) {
+	gpu := GPU{ID: "gpu.nvidia.0", UUID: "GPU-12345678-abcd-1234-abcd-123456789abc", Name: "RTX 5060 Ti"}
+	data, err := json.Marshal(gpu)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), "uuid") || strings.Contains(string(data), "GPU-12345678") {
+		t.Fatalf("internal UUID leaked into frozen public inventory JSON: %s", data)
 	}
 }
 

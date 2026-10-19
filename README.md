@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.2.10"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.9-B87333?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/tree/19.2.10.G1"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.9-B87333?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-D4A574?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-A8C5D4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-D4A574?style=flat-square" /></a>
@@ -67,7 +67,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.2.10   # ALWAYS checkout specific tag (main may be ahead)
+git checkout 19.2.10.G1   # candidate branch; release tag follows CI/acceptance gates
 nano install.sh         # review
 bash install.sh
 ```

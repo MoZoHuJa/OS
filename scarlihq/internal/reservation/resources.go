@@ -82,6 +82,7 @@ type Reservation struct {
 	UpdatedAt           time.Time         `json:"updated_at"`
 	IdempotencyKey      string            `json:"idempotency_key,omitempty"`
 	RequestFingerprint  string            `json:"request_fingerprint,omitempty"`
+	BundleSize          int               `json:"bundle_size,omitempty"`
 	LastReason          string            `json:"last_reason,omitempty"`
 	Revision            int64             `json:"revision"`
 }
@@ -181,6 +182,9 @@ func (r *Reservation) ValidateRecord() error {
 		return fmt.Errorf("reservation: lease_expiry set but lease_id is empty")
 	}
 	// P2-03: If idempotency key is present, fingerprint must be non-empty.
+	if r.BundleSize < 0 {
+		return fmt.Errorf("reservation: bundle_size cannot be negative")
+	}
 	if r.IdempotencyKey != "" && r.RequestFingerprint == "" {
 		return fmt.Errorf("reservation: idempotency_key present but request_fingerprint is empty")
 	}
@@ -277,6 +281,7 @@ type InventorySnapshot struct {
 	Generation string
 	AsOf       time.Time
 	resources  map[string]bool
+	displayIDs map[string]string
 }
 
 // NewInventorySnapshot creates an InventorySnapshot with a defensive copy
@@ -297,6 +302,7 @@ func NewInventorySnapshot(generation string, asOf time.Time, resourceIDs []strin
 		Generation: generation,
 		AsOf:       asOf,
 		resources:  m,
+		displayIDs: make(map[string]string),
 	}
 }
 
@@ -325,6 +331,12 @@ func canonicalizeAnyResourceID(id string) string {
 		}
 	}
 	return ""
+}
+
+// DisplayIDForResource returns the stable inventory/display identifier associated
+// with a canonical resource ID, if the snapshot has that mapping.
+func (s InventorySnapshot) DisplayIDForResource(resourceID string) string {
+	return s.displayIDs[resourceID]
 }
 
 // ResourceExists checks if a resource exists in this snapshot.

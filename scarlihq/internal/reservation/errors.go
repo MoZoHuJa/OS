@@ -10,6 +10,9 @@ import (
 // or full request bodies.
 
 var (
+	// ErrUnauthenticated means the supplied bearer token is not configured.
+	ErrUnauthenticated = errors.New("reservation: unauthenticated")
+
 	// ErrResourceNotFound means the requested resource does not exist in inventory.
 	ErrResourceNotFound = errors.New("reservation: resource not found")
 

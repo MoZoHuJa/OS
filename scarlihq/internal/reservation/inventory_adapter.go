@@ -1,0 +1,113 @@
+package reservation
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
+)
+
+// NewInventorySnapshotFromInventory adapts the read-only inventory to the
+// reservation domain. GPU reservation IDs use stable hardware UUIDs; display
+// indices (gpu.nvidia.0) are not stable enough to be ownership identifiers.
+// Only healthy/enabled runtimes and present models are exposed as reservable.
+// Port resources are included only when explicitly supplied by trusted config.
+func NewInventorySnapshotFromInventory(
+	generation string,
+	asOf time.Time,
+	gpus []inventory.GPU,
+	runtimes []inventory.Runtime,
+	models []inventory.Model,
+	managedPorts []int,
+) (InventorySnapshot, error) {
+	if asOf.IsZero() {
+		return InventorySnapshot{}, fmt.Errorf("reservation: inventory snapshot timestamp is required")
+	}
+	ids := make([]string, 0, len(gpus)+len(runtimes)+len(models)+len(managedPorts))
+	displayIDs := make(map[string]string, len(gpus))
+	for _, gpu := range gpus {
+		if !strings.EqualFold(gpu.Vendor, "nvidia") || gpu.UUID == "" || !gpu.Healthy {
+			continue
+		}
+		canonical, err := CanonicalResourceID("gpu.nvidia."+gpu.UUID, ResourceTypeGPUDevice)
+		if err != nil {
+			// Fail closed for this GPU. A malformed or missing UUID must never
+			// fall back to the mutable display index.
+			continue
+		}
+		ids = append(ids, canonical)
+		if prior, exists := displayIDs[canonical]; exists && prior != gpu.ID {
+			return InventorySnapshot{}, fmt.Errorf("reservation: duplicate GPU UUID %q maps to both %q and %q", canonical, prior, gpu.ID)
+		}
+		displayIDs[canonical] = gpu.ID
+	}
+	for _, runtime := range runtimes {
+		if !runtime.Enabled || !runtime.Healthy {
+			continue
+		}
+		canonical, err := CanonicalResourceID("runtime."+strings.ToLower(runtime.ID), ResourceTypeRuntimeSlot)
+		if err == nil {
+			ids = append(ids, canonical)
+		}
+	}
+	for _, model := range models {
+		if !model.Present {
+			continue
+		}
+		canonical, err := CanonicalResourceID("model."+strings.ToLower(model.ID), ResourceTypeModelSlot)
+		if err == nil {
+			ids = append(ids, canonical)
+		}
+	}
+	for _, port := range managedPorts {
+		if port < 1 || port > 65535 {
+			return InventorySnapshot{}, fmt.Errorf("reservation: managed port %d outside [1,65535]", port)
+		}
+		canonical, err := CanonicalResourceID("port."+strconv.Itoa(port), ResourceTypePort)
+		if err != nil {
+			return InventorySnapshot{}, err
+		}
+		ids = append(ids, canonical)
+	}
+	sort.Strings(ids)
+	ids = uniqueStrings(ids)
+	// Always derive the final generation from source generation AND observed
+	// resource state. A caller that accidentally reuses its source generation
+	// cannot hide changes in GPU capacity, health, runtime state, or model presence.
+	h := sha256.New()
+	fmt.Fprintf(h, "source:%d:%s;", len(generation), generation)
+	for _, gpu := range gpus {
+		fmt.Fprintf(h, "gpu:%d:%s:%t:%d:%d;", gpu.Index, gpu.UUID, gpu.Healthy, gpu.VRAMFreeMB, gpu.UtilizationPct)
+	}
+	for _, runtime := range runtimes {
+		fmt.Fprintf(h, "runtime:%s:%t:%t:%t:%d;", runtime.ID, runtime.Enabled, runtime.Running, runtime.Healthy, runtime.Port)
+	}
+	for _, model := range models {
+		fmt.Fprintf(h, "model:%s:%t:%s:%d;", model.ID, model.Present, model.Quantization, model.EstimatedVRAM)
+	}
+	for _, id := range ids {
+		fmt.Fprintf(h, "%d:%s;", len(id), id)
+	}
+	generation = hex.EncodeToString(h.Sum(nil))
+	snapshot := NewInventorySnapshot(generation, asOf.UTC(), ids)
+	snapshot.displayIDs = displayIDs
+	return snapshot, nil
+}
+
+func uniqueStrings(values []string) []string {
+	if len(values) == 0 {
+		return []string{}
+	}
+	out := values[:1]
+	for _, value := range values[1:] {
+		if value != out[len(out)-1] {
+			out = append(out, value)
+		}
+	}
+	return out
+}
