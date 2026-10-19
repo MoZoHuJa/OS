@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/scarlixos-banner.png" alt="ScaRgeN CuLT — ScarLiXoS v19.2.10 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.2.10 · Obsidian Lattice" width="100%" />
 </p>
 
 <h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.2.10</h1>
