@@ -269,10 +269,14 @@ func (s *Store) loadLocked() (map[string]*Allocation, []error, error) {
 
 // Get reads a single allocation by ID.
 // Returns ErrNotFound if the ID does not exist.
+// P2-03 (v19.2.11): Returns corruption error when Load() detects corrupt records.
 func (s *Store) Get(id string) (*Allocation, error) {
-	records, _, err := s.Load()
+	records, corrupt, err := s.Load()
 	if err != nil {
 		return nil, err
+	}
+	if len(corrupt) > 0 {
+		return nil, fmt.Errorf("%w: store has %d corrupt records — cannot read safely", ErrCorruptData, len(corrupt))
 	}
 	a, ok := records[id]
 	if !ok {
@@ -424,15 +428,13 @@ func (s *Store) rewriteAll(records map[string]*Allocation) error {
 	}
 
 	// Atomic rename.
+	// P2-04 (v19.2.11): Removed post-rename chmod — it can return an error after
+	// the file has already been replaced, creating an ambiguous commit boundary.
+	// The temp file was already chmod'd to 0600 before writing, and rename
+	// preserves the mode. No post-rename chmod needed.
 	if err := os.Rename(tmpPath, s.path); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("allocation: cannot rename temp file to store: %w", err)
-	}
-
-	// KPK-02: Ensure final file has 0600 permissions (was 0644).
-	// Rename preserves the temp file's mode, but be explicit.
-	if err := os.Chmod(s.path, 0600); err != nil {
-		return fmt.Errorf("allocation: cannot chmod store file to 0600: %w", err)
 	}
 
 	// KPK-07 remaining (v19.2.4): fsync the parent directory to make the
@@ -457,19 +459,27 @@ func (s *Store) rewriteAll(records map[string]*Allocation) error {
 }
 
 // Count returns the number of allocation records in the store.
+// P2-03 (v19.2.11): Returns corruption error.
 func (s *Store) Count() (int, error) {
-	records, _, err := s.Load()
+	records, corrupt, err := s.Load()
 	if err != nil {
 		return 0, err
+	}
+	if len(corrupt) > 0 {
+		return 0, fmt.Errorf("%w: store has %d corrupt records", ErrCorruptData, len(corrupt))
 	}
 	return len(records), nil
 }
 
 // ListByState returns all allocations in the given state.
+// P2-03 (v19.2.11): Returns corruption error.
 func (s *Store) ListByState(state State) ([]*Allocation, error) {
-	records, _, err := s.Load()
+	records, corrupt, err := s.Load()
 	if err != nil {
 		return nil, err
+	}
+	if len(corrupt) > 0 {
+		return nil, fmt.Errorf("%w: store has %d corrupt records", ErrCorruptData, len(corrupt))
 	}
 	var result []*Allocation
 	for _, a := range records {

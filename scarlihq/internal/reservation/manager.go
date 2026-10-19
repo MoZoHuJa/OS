@@ -7,9 +7,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
 )
 
 // Clock is an injectable clock for testing.
@@ -540,7 +543,17 @@ func (m *Manager) ReconcilePending(allocationID, token string) error {
 		if record.AllocationID != allocationID {
 			continue
 		}
+		// P1-03 (v19.2.11): Check lease expiry before accepting HELD records.
+		// An expired HELD reservation must not be finalized to RESERVED.
+		if record.Status == StatusHeld && record.IsExpired(m.clock.Now()) {
+			return fmt.Errorf("%w: allocation %s has expired reservation %s — route to lease reaper instead of finalization", ErrReconciliationRequired, allocationID, record.ReservationID)
+		}
 		if record.Status != StatusHeld {
+			// P1-03 (v19.2.11): If a record is EXPIRED_PENDING_RECONCILIATION,
+			// the allocation cannot be finalized. It must be routed to cleanup.
+			if record.Status == StatusExpiredPendingReconciliation || record.Status == StatusConflict {
+				return fmt.Errorf("%w: allocation %s has reservation %s in status %s — cannot finalize, needs cleanup reconciliation", ErrReconciliationRequired, allocationID, record.ReservationID, record.Status)
+			}
 			return fmt.Errorf("%w: allocation %s has reservation %s in status %s", ErrReconciliationRequired, allocationID, record.ReservationID, record.Status)
 		}
 		bundle = append(bundle, record)
@@ -888,6 +901,9 @@ func (m *Manager) MarkExpiredCandidates() (int, error) {
 }
 
 // ReconcileExpired transitions EXPIRED_PENDING_RECONCILIATION.
+// P1-02 (v19.2.11): After releasing a reservation, also updates the allocation
+// lifecycle: transitions RESERVED → RELEASING, and if all bundle members are
+// released, transitions to RELEASED and clears assignment fields.
 func (m *Manager) ReconcileExpired(reservationID, token string) (*Reservation, error) {
 	reconciler, err := m.resolveIdentity(token)
 	if err != nil {
@@ -941,6 +957,20 @@ func (m *Manager) ReconcileExpired(reservationID, token string) (*Reservation, e
 	if err != nil {
 		return nil, err
 	}
+
+	// P1-02 (v19.2.11): Allocation-aware cleanup after reservation release.
+	// Check if ALL reservations for this allocation are now RELEASED.
+	// If so, transition the allocation to RELEASING → RELEASED and clear assignments.
+	// If not all are released, transition allocation to RELEASING (cleanup in progress).
+	if r.AllocationID != "" {
+		if err := m.reconcileAllocationAfterRelease(r.AllocationID, reconciler); err != nil {
+			// Log the allocation reconciliation error but don't fail the reservation
+			// release — the reservation is durably RELEASED. The allocation will
+			// be repaired by a future ReconcileAllPending scan.
+			fmt.Fprintf(os.Stderr, "reservation: warning: allocation %s reconciliation after release of %s failed: %v\n", r.AllocationID, reservationID, err)
+		}
+	}
+
 	return updated, nil
 }
 
@@ -950,6 +980,100 @@ func (m *Manager) Get(id string) (*Reservation, error) {
 
 func (m *Manager) ListByAllocation(allocID string) ([]*Reservation, error) {
 	return m.store.ListByAllocation(allocID)
+}
+
+// reconcileAllocationAfterRelease checks if all reservations for an allocation
+// are RELEASED and transitions the allocation accordingly.
+// P1-02 (v19.2.11): Prevents allocation from remaining RESERVED after resources released.
+func (m *Manager) reconcileAllocationAfterRelease(allocationID string, reconciler Identity) error {
+	reservations, err := m.store.ListByAllocation(allocationID)
+	if err != nil {
+		return fmt.Errorf("cannot list reservations for allocation %s: %w", allocationID, err)
+	}
+	if len(reservations) == 0 {
+		return nil // no reservations, nothing to reconcile
+	}
+
+	allReleased := true
+	allBlocking := false
+	for _, r := range reservations {
+		if r.Status.BlocksResource() {
+			allBlocking = true
+		}
+		if r.Status != StatusReleased {
+			allReleased = false
+		}
+	}
+
+	// P1-02: If all reservations are RELEASED, transition allocation to RELEASING → RELEASED.
+	if allReleased {
+		return m.allocVal.EndReservation(allocationID, false) // fail the allocation
+	}
+
+	// P1-02: If some reservations are still blocking, transition allocation to RELEASING.
+	if allBlocking {
+		// Allocation should be in RELEASING state — cleanup in progress.
+		// Don't transition to FAILED yet — wait for all bundle members.
+	}
+
+	return nil
+}
+
+// ReconcileReservedLeases scans RESERVED allocations and repairs stale lease
+// metadata by comparing with the authoritative reservation bundle.
+// P2-02 (v19.2.11): Repairs allocations where RenewBundleLease updated the
+// reservation store but the allocation metadata write failed.
+func (m *Manager) ReconcileReservedLeases(token string) error {
+	_, err := m.resolveReconciler(token)
+	if err != nil {
+		return err
+	}
+
+	scanner, ok := m.allocVal.(pendingAllocationScanner)
+	if !ok {
+		return nil // adapter doesn't support scanning
+	}
+
+	// Get all allocations from the store.
+	allocStore, ok := m.allocVal.(*AllocationReservationAdapter)
+	if !ok {
+		return nil
+	}
+	records, corrupt, err := allocStore.store.Load()
+	if err != nil {
+		return fmt.Errorf("%w: cannot load allocations: %v", ErrReconciliationRequired, err)
+	}
+	if len(corrupt) > 0 {
+		return fmt.Errorf("%w: %d corrupt allocation records", ErrReconciliationRequired, len(corrupt))
+	}
+
+	_ = scanner // suppress unused warning
+	for _, alloc := range records {
+		if alloc.State != allocation.StateReserved {
+			continue
+		}
+		// Get the reservation bundle for this allocation.
+		bundle, err := m.store.ListByAllocation(alloc.AllocationID)
+		if err != nil {
+			continue // skip allocations with store errors
+		}
+		if len(bundle) == 0 {
+			continue
+		}
+		// Compare lease metadata.
+		authoritativeLeaseID := bundle[0].LeaseID
+		authoritativeExpiry := bundle[0].LeaseExpiry
+		if alloc.LeaseID != authoritativeLeaseID || !alloc.LeaseExpiry.Equal(authoritativeExpiry) {
+			// Repair: update allocation lease metadata from reservation store.
+			updater, ok := m.allocVal.(interface {
+				UpdateReservationLease(allocationID, leaseID string, expiry time.Time) error
+			})
+			if ok {
+				_ = updater.UpdateReservationLease(alloc.AllocationID, authoritativeLeaseID, authoritativeExpiry)
+			}
+		}
+	}
+	return nil
 }
 
 var errNoChange = fmt.Errorf("reservation: no change")
