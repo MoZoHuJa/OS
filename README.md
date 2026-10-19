@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.2.10 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.2.11 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.2.10</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.2.11</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -59,7 +59,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.2.10 | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.2.11 | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -2174,7 +2174,7 @@ scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)
 
 ## 🆕 What's New in v19.2.9 — KpK Audit Closure (8 findings) (vs v19.2.2)
 
-## 🆕 What's New in v19.2.10 — Reservation Commit Consistency
+## 🆕 What's New in v19.2.11 — Reservation Commit Consistency
 
 - Prevents allocation rollback after a reservation has already been durably persisted.
 - Reports allocation finalization failures as pending reconciliation instead of pretending the reservation was not committed.
