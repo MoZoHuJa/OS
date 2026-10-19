@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScarLiXoS OS — Foundation of ScaRgeN CuLT · Obsidian Lattice" width="100%" />
+  <img src="docs/scarlixos-banner.png" alt="ScaRgeN CuLT — ScarLiXoS v19.2.10 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScarLiXoS OS · Foundation of ScaRgeN CuLT</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.2.10</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.2.9"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.9-B87333?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/releases/tag/v19.2.10"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.9-B87333?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-D4A574?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-A8C5D4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-D4A574?style=flat-square" /></a>
@@ -59,7 +59,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.2.9 | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.2.10 | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ## 🚀 Install (NO ISO)
 
@@ -67,7 +67,7 @@
 ```bash
 git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout v19.2.9   # ALWAYS checkout specific tag (main may be ahead)
+git checkout v19.2.10   # ALWAYS checkout specific tag (main may be ahead)
 nano install.sh         # review
 bash install.sh
 ```
@@ -2173,6 +2173,14 @@ scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)
 ---
 
 ## 🆕 What's New in v19.2.9 — KpK Audit Closure (8 findings) (vs v19.2.2)
+
+## 🆕 What's New in v19.2.10 — Reservation Commit Consistency
+
+- Prevents allocation rollback after a reservation has already been durably persisted.
+- Reports allocation finalization failures as pending reconciliation instead of pretending the reservation was not committed.
+- Uses canonical resource IDs in new idempotency fingerprints while accepting the legacy raw-input fingerprint for stored records.
+- Removes the post-rename chmod error path from reservation-store atomic replacement.
+- Adds regression coverage for canonical-equivalent idempotent reservation requests.
 
 **KpK (Kontrola Procesu Kódovania) audit closure.** 4 P1 + 4 P2 from independent audit of v19.2.2 allocation package. All 8 findings fixed, 9 new regression tests added.
 

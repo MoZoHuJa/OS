@@ -349,9 +349,8 @@ func (s *Store) rewriteAll(records map[string]*Reservation) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("reservation: rename: %w", err)
 	}
-	if err := os.Chmod(s.path, 0600); err != nil {
-		return fmt.Errorf("reservation: chmod store: %w", err)
-	}
+	// The temp file was chmodded to 0600 before writing and rename. Do not
+	// introduce a post-rename error path: the destination is already committed.
 
 	// Best-effort dir fsync.
 	if dirF, err := os.Open(dir); err == nil {

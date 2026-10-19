@@ -40,6 +40,7 @@ type stubAllocationValidator struct {
 	mu      sync.Mutex
 	valid   map[string]bool
 	claimed map[string]bool
+	endErr  error
 }
 
 func (s *stubAllocationValidator) ValidateForReservation(allocID string) error {
@@ -65,6 +66,9 @@ func (s *stubAllocationValidator) EndReservation(allocID string, success bool) e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.claimed[allocID] = false
+	if success && s.endErr != nil {
+		return s.endErr
+	}
 	if success {
 		// In a real implementation, this would transition to RESERVED.
 	}
@@ -406,6 +410,67 @@ func TestManager_Reserve_SameAllocationCannotBypassCapacity(t *testing.T) {
 	}, "user-token")
 	if err == nil {
 		t.Fatal("Same allocation should NOT bypass capacity")
+	}
+}
+
+
+// KPK v19.2.10: canonical-equivalent resource IDs must share an idempotency fingerprint.
+func TestManager_Reserve_IdempotencyCanonicalResourceID(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+	upper := ReserveRequest{
+		AllocationID: "alloc-1", ResourceID: "gpu.nvidia.GPU-12345678-ABCD-1234-ABCD-123456789ABC",
+		ResourceType: ResourceTypeGPUDevice, LeaseTTL: 5 * time.Minute, IdempotencyKey: "idem-canonical",
+	}
+	lower := upper
+	lower.ResourceID = "gpu.nvidia.GPU-12345678-abcd-1234-abcd-123456789abc"
+
+	first, err := mgr.Reserve(upper, "user-token")
+	if err != nil {
+		t.Fatalf("first Reserve: %v", err)
+	}
+	second, err := mgr.Reserve(lower, "user-token")
+	if err != nil {
+		t.Fatalf("canonical-equivalent replay: %v", err)
+	}
+	if second.Created {
+		t.Fatal("canonical-equivalent replay must not create a second reservation")
+	}
+	if first.Reservation.ReservationID != second.Reservation.ReservationID {
+		t.Fatalf("reservation IDs differ: %s vs %s", first.Reservation.ReservationID, second.Reservation.ReservationID)
+	}
+}
+
+
+func TestManager_Reserve_FinalizationFailureKeepsDurableReservation(t *testing.T) {
+	store := newTestStore(t)
+	clock := &FakeClock{T: time.Now().UTC()}
+	inv := newStubInventory()
+	allocVal := newStubAllocValidator("alloc-1")
+	allocVal.endErr = fmt.Errorf("simulated allocation finalization failure")
+	cleanupVer := &stubCleanupVerifier{verified: true, clock: clock}
+	idProv := newStubIdentityProvider()
+	mgr, err := NewManager(store, DefaultPolicy(), clock, inv, allocVal, cleanupVer, idProv)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	_, err = mgr.Reserve(ReserveRequest{
+		AllocationID: "alloc-1", ResourceID: testGPUUUID0,
+		ResourceType: ResourceTypeGPUDevice, LeaseTTL: 5 * time.Minute,
+	}, "user-token")
+	if err == nil {
+		t.Fatal("expected allocation finalization error")
+	}
+
+	got, getErr := store.ListByAllocation("alloc-1")
+	if getErr != nil {
+		t.Fatalf("reservation must remain readable after finalization failure: %v", getErr)
+	}
+	if len(got) != 1 {
+		t.Fatalf("durable reservation count = %d, want 1", len(got))
+	}
+	if got[0].Status != StatusHeld {
+		t.Fatalf("durable reservation status = %s, want HELD", got[0].Status)
 	}
 }
 

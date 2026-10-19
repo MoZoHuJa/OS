@@ -216,19 +216,28 @@ func (m *Manager) Reserve(req ReserveRequest, token string) (*ReserveResult, err
 		return nil, fmt.Errorf("%w: %d corrupt lines", ErrReservationStoreCorrupt, len(corrupt))
 	}
 
-	// Idempotency check.
-	fingerprint := computeFingerprint(req)
+	// Idempotency check. Fingerprint canonical request fields so equivalent resource IDs
+	// map to the same idempotency identity. Accept the legacy raw-input fingerprint
+	// for reservations written by earlier versions.
+	canonicalReq := req
+	canonicalReq.ResourceID = canonID
+	fingerprint := computeFingerprint(canonicalReq)
+	legacyFingerprint := computeFingerprint(req)
 	if req.IdempotencyKey != "" {
 		for _, existing := range records {
 			if existing.IdempotencyKey == req.IdempotencyKey && existing.Owner == identity.Principal() {
-				if existing.RequestFingerprint != fingerprint {
+				if existing.RequestFingerprint != fingerprint && existing.RequestFingerprint != legacyFingerprint {
 					return nil, ErrIdempotencyConflict
 				}
 				if existing.Status == StatusReleased {
 					return nil, fmt.Errorf("reservation: idempotency key reused after release")
 				}
-				reservationSuccess = true // existing reservation is valid
-				_ = m.allocVal.EndReservation(req.AllocationID, true)
+				// The reservation already exists durably. Never roll its allocation
+				// claim back if finalization fails; report the pending repair explicitly.
+				reservationSuccess = true
+				if err := m.allocVal.EndReservation(req.AllocationID, true); err != nil {
+					return nil, fmt.Errorf("reservation: existing reservation %s is persisted but allocation finalization is pending: %w", existing.ReservationID, err)
+				}
 				return &ReserveResult{Reservation: existing, Created: false}, nil
 			}
 		}
@@ -285,11 +294,13 @@ func (m *Manager) Reserve(req ReserveRequest, token string) (*ReserveResult, err
 		return nil, fmt.Errorf("reservation: cannot persist: %w", err)
 	}
 
-	// P1-02: Reservation committed — transition allocation to RESERVED.
-	if err := m.allocVal.EndReservation(req.AllocationID, true); err != nil {
-		return nil, fmt.Errorf("reservation: allocation EndReservation failed: %w", err)
-	}
+	// The reservation is durably committed. From this point onward, a failure to
+	// finalize the allocation is a recoverable reconciliation condition, NOT a
+	// reason to roll the allocation claim back.
 	reservationSuccess = true
+	if err := m.allocVal.EndReservation(req.AllocationID, true); err != nil {
+		return nil, fmt.Errorf("reservation: reservation %s is persisted but allocation finalization is pending: %w", r.ReservationID, err)
+	}
 
 	return &ReserveResult{Reservation: r, Created: true}, nil
 }
