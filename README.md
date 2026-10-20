@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.3.2 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.4.0 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.3.2</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.4.0</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.3.2-B87333?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.4.0-B87333?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-D4A574?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-A8C5D4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-D4A574?style=flat-square" /></a>
@@ -59,14 +59,15 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.3.2 (Compute Fabric closure) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.4.0 (Agent Kernel foundation) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
-### 📑 Changelog Index (v19.3.x / v19.2.x)
+### 📑 Changelog Index (v19.4.x / v19.3.x / v19.2.x)
 
 Chronological, newest first. Each entry links to its tag; entries with a dedicated README section are marked 📄.
 
 | Version | One line | Reference |
 |---------|----------|-----------|
+| **v19.4.0** | Agent Kernel foundation (AK-1): typed agent identity, closed capability enumeration (no shell/exec ever), bounded session state machine, deterministic permission engine with enforced capability grants, audit events | 📄 [What's New](#-whats-new-in-v1940--agent-kernel-foundation-ak-1) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.0) |
 | **v19.3.2** | Compute Fabric Closure: reservation governor (F-04 composition root), preferred-runtime soft hint (Zmor-7), owner-attested hardware acceptance, evidence taxonomy + strategy archive | 📄 [What's New](#-whats-new-in-v1932--compute-fabric-closure) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.3.2) |
 | **v19.3.1** | Unified release: Host Bridge workload lifecycle (P5.1+P6) merged into mainline + Gaming Stack (profiles, read-only inventory, unified docs) | 📄 [What's New](#-whats-new-in-v1931--host-bridge--gaming-stack-unification) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.3.1) |
 | **v19.3.0** | Hardware-validation candidate: fail-closed release capability, deterministic test cleanup, dynamic smoke-test version, clean EndeavourOS one-command install path | 📄 [What's New](#-whats-new-in-v1930--hardware-validation-candidate) · [main](https://github.com/MoZoHuJa/OS/tree/main) |
@@ -83,9 +84,9 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 ## 🚀 Install (NO ISO)
 
-### One-command install — v19.3.2 Compute Fabric closure
+### One-command install — v19.4.0 Agent Kernel foundation
 
-Run this on a **fresh EndeavourOS installation** from your normal user account. It clones the current v19.3.2 mainline and starts the installer; the installer requests sudo itself. Review the script first if you do not want to run the install immediately.
+Run this on a **fresh EndeavourOS installation** from your normal user account. It clones the current v19.4.0 mainline and starts the installer; the installer requests sudo itself. Review the script first if you do not want to run the install immediately.
 
 ```bash
 git clone --depth 1 --branch main https://github.com/MoZoHuJa/OS.git ~/scarlix-os && cd ~/scarlix-os && bash install.sh
@@ -115,6 +116,64 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.4.0 — Agent Kernel Foundation (AK-1)
+
+**Purpose:** open the **Agent Kernel theme (v19.4.x)** — the deterministic,
+typed core that every future agent capability flows through. Per the strategy
+document's rule *"Najprv dôveryhodný Compute Fabric. Až potom bezpečných
+agenti"* — the Compute Fabric closed in v19.3.2, so the kernel starts now.
+This release ships the **foundation contract only** (no HTTP/MCP wiring yet —
+that is AK-2+); nothing user-facing changes on the host.
+
+- **Agent identity (`AgentID` + `AgentIdentity`).** Typed, validated
+  `kind.name` identifiers (lowercase `[a-z0-9-]`, ≤64 chars, no anonymous
+  agents). Every agent carries an **owner principal** — an agent without an
+  accountable owner does not exist (ties into the reservation governor /
+  ScarliHQ principal space).
+- **Closed capability enumeration.** Six capabilities mirroring only existing
+  allowlisted surfaces: `status.read`, `gaming.read`, `mode.request`,
+  `compute.plan`, `compute.reserve`, `compute.release`. There is **no
+  `shell.exec`, no docker passthrough, no arbitrary file access** — strategy
+  p. 22 ("Žiadny voľný root shell"). Extending the set is a deliberate,
+  reviewed act; unknown capabilities are rejected at construction.
+- **Bounded session lifecycle.** `CREATED → ACTIVE → SUSPENDED → CLOSED`
+  (+ back from SUSPENDED); `CLOSED` is terminal; illegal transitions and
+  backwards timestamps are rejected — the same fail-closed state-machine
+  discipline as allocation/reservation.
+- **Deterministic permission engine (`Policy.Evaluate`).** Pure rule
+  evaluation, no LLM in the decision path — *"LLM navrhuje, politika
+  rozhoduje."* Rules in fixed order: session-required → session-owner →
+  session-state (ACTIVE) → capability-unknown → **capability-not-granted** →
+  capability-disabled → grant. Every denial names the fired rule; every allow
+  cites the grant. 100×-repetition determinism test included.
+- **Audit events.** `AuditEvent{Timestamp, AgentID, SessionID, Capability,
+  Decision}` — the traceable-lifecycle building block (strategy p. 24);
+  AK-4 will persist these append-only.
+- **Review finding closed before merge (honest note):** the AK-1 branch draft
+  declared the capability-grant rule in its doc comment but did not implement
+  it — any ACTIVE session could have used any enumerated capability
+  (fail-open). Caught in self-review, fixed before merging: `Evaluate` now
+  takes the agent's `CapabilitySet` and enforces `rule/capability-not-granted`
+  (nil/empty set denies everything). Design doc records the finding:
+  `docs/AGENT_KERNEL_AK1_DESIGN.md`.
+
+**Design + sub-phase plan (AK-1 … AK-5):**
+`docs/AGENT_KERNEL_AK1_DESIGN.md` — AK-2 session store + API surface,
+AK-3 persisted grants + admin switches, AK-4 append-only audit sink,
+AK-5 compute-intake capability flow.
+
+### Still honestly pending (not claimed by this release)
+
+- **AK-2:** session store + WS/REST surface (sessions created/closed via the
+  ScarliHQ API, auth-gated) — the kernel is not yet reachable from anywhere.
+- **AK-3:** capability grants persisted per agent + admin disable switches.
+- **AK-4:** audit sink (append-only JSONL, 0600, flock — same store
+  discipline as reservations).
+- **AK-5:** `compute.reserve`/`compute.release` flowing through the governor
+  stores (jointly with the compute intake API roadmap row).
 
 ---
 
@@ -418,9 +477,11 @@ scarlix-smoke-test.sh         → online: 18 PASS + 0 FAIL + 0 WARN (14 checks)
 | Fabric → `scarlix-mode` bridge (audit F-04) | **TESTED** (v19.3.2) | reservation governor shipped: `NewFileBackedManager` + `Recover()` + reaper ownership in a real service (`scarlix-reservation.service`, disabled by default, fail-closed config) — `docs/SCARLIX_COMPUTE_FABRIC_RESERVATION_GOVERNOR.md`; host enablement checks = open items in the acceptance gate |
 | Reservation governor host enablement | **PLANNED** (open checkboxes) | acceptance gate § v19.3.2 additions: service start, fail-closed probes, recovery idempotence, reaper convergence, upgrade/rollback |
 | Compute intake API (Reserve/Release) | **PLANNED** (next theme input) | P5.1 "Required next work" #1 — trusted principal mapping + allocation intake over the governor's stores; `user_tokens` config field validated and waiting |
+| Agent Kernel foundation (AK-1) | **TESTED** (v19.4.0) | `internal/agentkernel`: typed identity w/ owner principal, closed capability enumeration (6, `shell.exec` rejected), session state machine (CLOSED terminal), deterministic `Policy.Evaluate` incl. enforced capability grants (review fix), audit events; unit tests + race + determinism loop; design doc `docs/AGENT_KERNEL_AK1_DESIGN.md` |
+| Agent Kernel wiring (AK-2 … AK-5) | **PLANNED** | AK-2 session store + API surface · AK-3 persisted grants + admin switches · AK-4 append-only audit sink · AK-5 compute-intake capability flow |
 | Gaming stack integration | **TESTED** (v19.3.1) + owner-attested host run | profile-based `scarlix-gaming-install` (never removes), one shared manifest, read-only `/api/gaming` + dashboard card, smoke checks 15/16; `gaming/README.md` |
 
-**Theme status:** Compute Fabric is **software-complete** (Phases 2–7 TESTED; Phase 8–9 regression automation green: smoke 21 PASS / 0 FAIL / 0 WARN, race tests, 18 Go packages). Next theme per the strategy document: **Agent Kernel (v19.4.x)** — identity, sessions, capabilities, deterministic permission engine, audit; “LLM navrhuje, politika rozhoduje.”
+**Theme status:** Compute Fabric is **software-complete** (Phases 2–7 TESTED; Phase 8–9 regression automation green: smoke 21 PASS / 0 FAIL / 0 WARN, race tests, 18 Go packages). The **Agent Kernel theme (v19.4.x) is OPEN**: AK-1 foundation **TESTED** (v19.4.0 — identity, closed capability enumeration, bounded sessions, deterministic permission engine with enforced grants, audit events); AK-2…AK-5 are PLANNED. “LLM navrhuje, politika rozhoduje.”
 
 **v19.1.16 → v19.1.20 in one line each:** .16 heredoc P0 fix + security hardening · .17 fish `agent.env.fish` hardening · .18 audit closure + secret hardening · .19 audit closure + portable base64 · .20 mutation-hardened smoke guard.
 
