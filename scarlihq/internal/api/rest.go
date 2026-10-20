@@ -11,15 +11,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoZoHuJa/OS/scarlihq/internal/gaming"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/status"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/workload"
 )
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.0.0"
+var Version = "19.3.1"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -150,11 +152,13 @@ func ReserveWSTicket(ticket string) bool {
 
 // Handler holds dependencies for API routes.
 type Handler struct {
-	guard     *guard.Guard
-	mode      *scarlix_mode.Mode
-	profiles  *profiles.Manager
-	authToken string
-	version   string // v18.2: passed from main (ldflags-injected)
+	guard            *guard.Guard
+	mode             *scarlix_mode.Mode
+	profiles         *profiles.Manager
+	authToken        string
+	version          string // v18.2: passed from main (ldflags-injected)
+	computeManager   *workload.Manager
+	computePrincipal string
 }
 
 // NewHandler creates a new API handler.
@@ -176,7 +180,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mode", h.auth(h.modeHandler))
 	mux.HandleFunc("/api/profiles", h.auth(h.listProfiles))
 	mux.HandleFunc("/api/status", h.auth(h.fullStatus))
+	// v19.3.1: read-only gaming-stack inventory (Gaming Stack Integration Plan,
+	// Phase 4). Serves the host-bridge-detected entries only — no launch, no
+	// install, no arbitrary command surface is added here.
+	mux.HandleFunc("/api/gaming", h.auth(h.gamingInventory))
 	mux.HandleFunc("/api/ws-ticket", h.auth(h.issueWSTicket))
+	mux.HandleFunc("/api/compute/start", h.auth(h.computeStart))
+	mux.HandleFunc("/api/compute/stop", h.auth(h.computeStop))
 }
 
 // auth middleware: validates Bearer token header only.
@@ -241,6 +251,29 @@ func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) fullStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status.ReadOrStale())
+}
+
+// gamingInventory serves the read-only gaming-stack inventory detected by the
+// host bridge (Gaming Stack Integration Plan, Phase 4). It is strictly
+// read-only: ScarliHQ detects nothing itself and cannot launch or install
+// anything — the manifest-driven detection runs host-side in
+// scarlix-host-bridge and is published through host-status.json.
+// Entries are always a JSON array (never null) so clients need no nil branch.
+func (h *Handler) gamingInventory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "gaming inventory is read-only (GET)")
+		return
+	}
+	s := status.ReadOrStale()
+	entries := s.Gaming
+	if entries == nil {
+		entries = []gaming.Entry{}
+	}
+	writeJSON(w, map[string]interface{}{
+		"gaming":    entries,
+		"timestamp": s.Timestamp,
+		"stale":     s.Stale,
+	})
 }
 
 // modeHandler handles GET (return current + transition state) and POST (set desired mode).

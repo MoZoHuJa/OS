@@ -2,6 +2,7 @@ package contract
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -32,6 +33,30 @@ func (errs ValidationErrors) Error() string {
 // HasErrors returns true if the collection contains at least one error.
 func (errs ValidationErrors) HasErrors() bool {
 	return len(errs) > 0
+}
+
+// supportedRuntimes is the request-side allowlist. Keep this aligned with
+// inventory.ConfiguredRuntimeIDs; integrationcontract tests enforce that every
+// runtime advertised by inventory is accepted here. A runtime must not be
+// added here until the inventory/runtime adapter can actually represent it.
+var supportedRuntimes = map[string]bool{
+	"sglang": true, "vllm": true, "beellama": true, "ollama": true, "litellm": true,
+}
+
+// IsSupportedRuntime reports whether a runtime ID is currently accepted by
+// Resource Contract v1. It does not imply that the runtime is healthy or running.
+func IsSupportedRuntime(id string) bool {
+	return supportedRuntimes[id]
+}
+
+// SupportedRuntimeIDs returns the accepted runtime IDs in deterministic order.
+func SupportedRuntimeIDs() []string {
+	ids := make([]string, 0, len(supportedRuntimes))
+	for id := range supportedRuntimes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // allowed enum sets for validation
@@ -119,9 +144,8 @@ func (c *ResourceContract) Validate() ValidationErrors {
 	}
 
 	// 5. Runtime validation — check preferred runtimes against known set
-	knownRuntimes := map[string]bool{"sglang": true, "vllm": true, "beellama": true, "ollama": true, "litellm": true}
 	for _, r := range c.Runtime.Preferred {
-		if !knownRuntimes[r] {
+		if !IsSupportedRuntime(r) {
 			errs = append(errs, ValidationError{Field: "runtime.preferred", Message: fmt.Sprintf("unsupported runtime %q (known: sglang, vllm, beellama, ollama, litellm)", r)})
 		}
 	}

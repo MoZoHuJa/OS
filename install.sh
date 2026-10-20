@@ -5,21 +5,21 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v19.3.0 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v19.3.1 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
 # EndeavourOS/Arch bootstrap installer — NO ISO, runs on clean EndeavourOS.
 # 5 phases: packages → NVIDIA → Docker → copy files → wizard + ScarliHQ build.
 # Full changelog: see CHANGELOG.md or git log.
 #
-# USAGE (v19.3.0 hardware-validation candidate):
+# USAGE (v19.3.1 unified candidate — host bridge + gaming stack):
 #   git clone --depth 1 --branch main https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
 #   bash install.sh
 # Or run the one-line command documented in README.md.
 # ============================================================================
 
-VERSION="19.3.0"
+VERSION="19.3.1"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -647,6 +647,40 @@ else
     crit "scarlix-bridge-reader not built — required for secure host-bridge operation"
   fi
 
+  # P5.1: Build the optional host workload bridge daemon. It is installed
+  # disabled and must not be enabled until an operator replaces the example
+  # config with digest-pinned images and completes host acceptance.
+  HWB_SRC="$REPO_DIR/scarlihq/cmd/scarlix-host-workload-bridge/main.go"
+  HWB_OUT="$REPO_DIR/files/usr/local/bin/scarlix-host-workload-bridge"
+  if [ -f "$HWB_SRC" ]; then
+    if command -v go >/dev/null 2>&1; then
+      if (cd "$REPO_DIR/scarlihq" && CGO_ENABLED=0 GOFLAGS=-mod=mod go build -o "$HWB_OUT" ./cmd/scarlix-host-workload-bridge) >> "$LOG_FILE" 2>&1; then
+        chmod 755 "$HWB_OUT"
+        ok "scarlix-host-workload-bridge built (native Go)"
+      else
+        warn "scarlix-host-workload-bridge build failed — host workload service remains unavailable and disabled"
+      fi
+    elif command -v docker >/dev/null 2>&1; then
+      if docker run --rm \
+          -v "$REPO_DIR/scarlihq:/build" \
+          -v "$REPO_DIR/files/usr/local/bin:/out" \
+          -w /build \
+          -e GOFLAGS=-mod=mod \
+          golang:1.23-alpine \
+          go build -o /out/scarlix-host-workload-bridge ./cmd/scarlix-host-workload-bridge \
+          >> "$LOG_FILE" 2>&1; then
+        chmod 755 "$HWB_OUT"
+        ok "scarlix-host-workload-bridge built (via Go container)"
+      else
+        warn "scarlix-host-workload-bridge container build failed — host workload service remains disabled"
+      fi
+    else
+      warn "Neither Go nor Docker available — host workload bridge binary not built"
+    fi
+  else
+    warn "Host workload bridge source missing — optional P5.1 service not built"
+  fi
+
   # v19.0.8: Build scarlix-gpu (normalized GPU telemetry collector, Go binary).
   #   Used by `scarlix gpu status --json` for data-contract-compliant JSON output.
   #   Non-critical (warn on failure — the bash CLI falls back to nvidia-smi directly).
@@ -812,7 +846,7 @@ else
   #   elif branch means the build was skipped/aborted — crit here too for safety.
   log "Installing SCARLIX scripts (CRITICAL)..."
   # v18.8.3 P1 (A-a): Added generate-litellm-config.sh (dynamic LiteLLM config from models.yaml)
-  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge generate-sha256sums.sh generate-litellm-config.sh scarlix-bridge-reader scarlix-gpu scarlix-inventory scarlix-contract scarlix-monitor scarlix-scheduler scarlix scarlix-smoke-test.sh; do
+  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge generate-sha256sums.sh generate-litellm-config.sh scarlix-bridge-reader scarlix-gpu scarlix-inventory scarlix-contract scarlix-monitor scarlix-scheduler scarlix-host-workload-bridge scarlix scarlix-smoke-test.sh scarlix-gaming-install; do
     src="$REPO_DIR/files/usr/local/bin/$binfile"
     if [ -f "$src" ]; then
       # v19.1.13 P1: Fix copy loop regression. Was: `cp && chmod && ok || warn && continue`
@@ -822,7 +856,7 @@ else
         ok "/usr/local/bin/$binfile"
       else
         case "$binfile" in
-          scarlix-gpu|scarlix-inventory|scarlix-contract|scarlix-monitor|scarlix-scheduler)
+          scarlix-gpu|scarlix-inventory|scarlix-contract|scarlix-monitor|scarlix-scheduler|scarlix-host-workload-bridge|scarlix-gaming-install)
             warn "$binfile copy failed (non-critical)"
             ;;
           *)
@@ -833,6 +867,8 @@ else
     elif [ "$binfile" = "scarlix-bridge-reader" ]; then
       # v18.7.5 P0: was warn (shell fallback existed) — now crit (no fallback).
       crit "scarlix-bridge-reader not built — required for secure host-bridge operation"
+    elif [ "$binfile" = "scarlix-host-workload-bridge" ]; then
+      warn "scarlix-host-workload-bridge not built — optional P5.1 service remains disabled"
     else
       # v19.1.11 P1-8: Non-critical Go binaries (scarlix-gpu, -inventory, -contract,
       # -monitor, -scheduler) may not exist if Go/Docker build failed. Was: crit (abort
@@ -850,7 +886,7 @@ else
 
   # Systemd services (model-manager + host-bridge — first-boot removed Q6a)
   log "Installing systemd services..."
-  for f in model-manager.service model-manager.timer generate-env.sh scarlix-host-bridge.service scarlix-host-bridge.timer scarlix-tv-mode.service; do
+  for f in model-manager.service model-manager.timer generate-env.sh scarlix-host-bridge.service scarlix-host-bridge.timer scarlix-tv-mode.service scarlix-workload-bridge.service; do
     src="$REPO_DIR/files/etc/systemd/system/$f"
     if [ -f "$src" ]; then
       cp "$src" "/etc/systemd/system/$f"
@@ -875,6 +911,24 @@ else
       cp "$REPO_DIR/files/usr/local/share/scarlix/pi-bolt-install.sha256" /usr/local/share/scarlix/pi-bolt-install.sha256 2>/dev/null \
         || warn "Cannot copy pi-bolt-install.sha256 to /usr/local/share/scarlix/"
     fi
+    # v19.3.1: install the gaming package manifest (single source of truth for
+    #   scarlix-gaming-install AND the host-bridge gaming inventory detection).
+    #   warn-only: gaming is optional by design — an AI/server-only host must
+    #   still install cleanly without the optional gaming stack.
+    if [ -f "$REPO_DIR/files/usr/local/share/scarlix/gaming-packages.conf" ]; then
+      cp "$REPO_DIR/files/usr/local/share/scarlix/gaming-packages.conf" /usr/local/share/scarlix/gaming-packages.conf 2>/dev/null \
+        || warn "Cannot copy gaming-packages.conf to /usr/local/share/scarlix/ (optional gaming stack)"
+    fi
+  fi
+
+  # P5.1: Install the workload bridge example only as a template. Never place
+  # its placeholder digest in the active config or enable the service automatically.
+  if [ -f "$REPO_DIR/docs/examples/workload-bridge.json.example" ]; then
+    mkdir -p /usr/local/share/scarlix
+    install -m 0644 "$REPO_DIR/docs/examples/workload-bridge.json.example" /usr/local/share/scarlix/workload-bridge.json.example
+    ok "Installed workload bridge config template (service remains disabled)"
+  else
+    warn "P5.1 workload bridge config template missing — optional host workload service remains disabled"
   fi
 
   # Pacman hooks

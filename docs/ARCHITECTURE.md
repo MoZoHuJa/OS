@@ -51,6 +51,71 @@
 - **XOX** (daughter): 10k tokens, Creative theme, ai only, kids-safe
 - **Mon** (wife): 50k tokens, Elegant theme, ai+game
 
+## Gaming Stack (v19.3.1)
+
+Gaming is a **native desktop layer** — game launchers are host packages, not
+containers. Docker remains for `sunshine-tv` (TV streaming), Jellyfin (media
+server) and Minecraft (game server); those are services, not launchers.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Desktop session (user)                                          │
+│  Steam · Lutris · Heroic · Bottles · itch · RetroArch           │
+│  Wine(+Gecko/Mono) · Vulkan loaders (64/32-bit)                 │
+│  Gamescope · MangoHud · GameMode      ← full profile (opt-in)   │
+├─────────────────────────────────────────────────────────────────┤
+│ scarlix-mode game → native Sunshine (systemd, user-managed)     │
+│ scarlix-mode tv   → sunshine-tv (Docker, compose profile tv)    │
+├─────────────────────────────────────────────────────────────────┤
+│ One manifest: files/usr/local/share/scarlix/gaming-packages.conf│
+│  ├─ scarlix-gaming-install (profiles: minimal|full|headless)    │
+│  └─ scarlix-host-bridge inventory detection (read-only)         │
+│        pacman -Q · systemctl · docker ps · flatpak list         │
+│        → host-status.json ["gaming"] → GET /api/gaming (auth)   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **Profiles:** `minimal` (base set, mirrors the `packages.x86_64` gaming
+  block — default, unchanged), `full` (opt-in extras via
+  `scarlix-gaming-install --profile full`), `headless` (report-only; AI/server
+  hosts comment out the gaming block in `packages.x86_64` before install).
+- **Read-only inventory:** ScarliHQ never launches/installs/removes games.
+  Detection is host-side in the host bridge; the API is GET-only behind the
+  auth middleware. Full details: `gaming/README.md`.
+- **AI/game arbitration stays with scarlix-mode:** no second GPU manager;
+  `game` stops the AI path and starts Sunshine, `ai` returns (fail-closed,
+  stale-state repair).
+
+## Host Bridge workload lifecycle (v19.3.1, P5.1+P6 unified)
+
+The allowlisted privileged-operations path from the dashboard gained a typed
+workload control surface (previously the `19.2.14.P6` branch):
+
+```
+ScarliHQ (container, non-root, no docker.sock)
+   │ POST /api/compute/start|stop (auth, typed JSON, unknown fields rejected)
+   ▼
+workload.Manager (allocation store transitions: RESERVED→STARTING→READY→RUNNING,
+   uncertain starts fail closed into CLEANUP_REQUIRED / ErrReconciliationRequired)
+   ▼
+hostbridge.Client (Unix socket, 0600, admin-owned parent dir)
+   ▼
+scarlix-host-workload-bridge (host systemd service, User=65532 + docker group,
+   hardened: NoNewPrivileges, ProtectSystem=strict, …)
+   ▼
+hostbridge.Server (2 endpoints only: /v1/workloads/start|stop; 16 KiB request cap)
+   ▼
+IdempotentExecutor + Ledger → docker_executor (compose project ops)
+```
+
+The service ships **disabled by default** with a config template
+(`/usr/local/share/scarlix/workload-bridge.json.example`); enabling it is an
+explicit operator decision (see
+`docs/SCARLIX_COMPUTE_FABRIC_P5_1_HOST_BRIDGE.md`). The ScarliHQ container
+never receives the Docker socket — the docker-group bridge binary runs on
+the host and exposes only the two typed operations. Integration contract:
+`scarlihq/internal/integrationcontract/integration-contract.v1.json`.
+
 ## GPU Arbitration (scarlix-mode)
 
 | Mode | GPU 0 | GPU 1 | CPU | Notes |

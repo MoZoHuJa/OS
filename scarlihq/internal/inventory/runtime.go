@@ -142,6 +142,18 @@ var runtimeMetadata = []runtimeMeta{
 	},
 }
 
+// ConfiguredRuntimeIDs returns the stable runtime IDs represented by this build's
+// static runtime metadata. It does not probe Docker and returns a fresh slice.
+// Consumers use this to check cross-package contract compatibility without
+// triggering host commands or depending on runtime availability.
+func ConfiguredRuntimeIDs() []string {
+	ids := make([]string, 0, len(runtimeMetadata))
+	for _, runtime := range runtimeMetadata {
+		ids = append(ids, runtime.ID)
+	}
+	return ids
+}
+
 // CollectRuntimes queries Docker for inference runtime status + returns
 // normalized Runtime structs. Returns empty []Runtime{} (never nil) —
 // when Docker is unavailable every runtime has Running=false but the

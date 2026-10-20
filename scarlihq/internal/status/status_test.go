@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/MoZoHuJa/OS/scarlihq/internal/gaming"
 )
 
 // v18.8.2 P2: Unit tests for status.Read() stale detection
@@ -141,5 +143,109 @@ func TestReadOrStaleReturnsStaleOnError(t *testing.T) {
 	s := ReadOrStale()
 	if !s.Stale {
 		t.Error("ReadOrStale should return Stale=true on error")
+	}
+}
+
+// v19.3.1: gaming inventory parse tests (Gaming Stack Integration Plan,
+// Phase 4). The host bridge publishes a "gaming" array; pre-19.3.1 status
+// files have no such field and must keep parsing with an empty inventory.
+
+func TestReadGamingField(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "host-status.json")
+	now := time.Now().Format(time.RFC3339)
+	data := `{
+                "timestamp": "` + now + `",
+                "version": "19.3.1",
+                "mode": "ai",
+                "gpus": [],
+                "containers": [],
+                "gaming": [
+                        {
+                                "id": "steam",
+                                "name": "Steam",
+                                "kind": "launcher",
+                                "source": "pacman",
+                                "installed": true,
+                                "version": "1.0.0.87-3",
+                                "running": false,
+                                "health": "not_applicable",
+                                "optional": false,
+                                "last_checked": "` + now + `"
+                        },
+                        {
+                                "id": "heroic-games-launcher-bin",
+                                "name": "Heroic Games Launcher",
+                                "kind": "launcher",
+                                "source": "aur",
+                                "installed": false,
+                                "running": false,
+                                "health": "not_installed",
+                                "optional": true,
+                                "last_checked": "` + now + `"
+                        },
+                        {
+                                "id": "sunshine",
+                                "name": "Sunshine (native, game mode)",
+                                "kind": "streaming",
+                                "source": "systemd",
+                                "installed": true,
+                                "running": true,
+                                "health": "running",
+                                "optional": true,
+                                "last_checked": "` + now + `"
+                        }
+                ]
+        }`
+	os.WriteFile(f, []byte(data), 0644)
+	testStatusFile = f
+	defer func() { testStatusFile = "" }()
+	s, err := Read()
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+	if len(s.Gaming) != 3 {
+		t.Fatalf("gaming entries = %d, want 3", len(s.Gaming))
+	}
+	steam := s.Gaming[0]
+	if steam.ID != "steam" || !steam.Installed || steam.Version != "1.0.0.87-3" ||
+		steam.Kind != gaming.KindLauncher || steam.Source != gaming.SourcePacman ||
+		steam.Health != gaming.HealthNotApplicable || steam.Optional {
+		t.Fatalf("steam entry mismatch: %+v", steam)
+	}
+	heroic := s.Gaming[1]
+	if heroic.Installed || heroic.Health != gaming.HealthNotInstalled || !heroic.Optional {
+		t.Fatalf("heroic entry mismatch: %+v", heroic)
+	}
+	sunshine := s.Gaming[2]
+	if !sunshine.Running || sunshine.Health != gaming.HealthRunning || sunshine.Source != gaming.SourceSystemd {
+		t.Fatalf("sunshine entry mismatch: %+v", sunshine)
+	}
+}
+
+func TestReadLegacyStatusWithoutGamingField(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "host-status.json")
+	now := time.Now().Format(time.RFC3339)
+	// Exactly the pre-19.3.1 shape (no "gaming" key).
+	data := `{
+                "timestamp": "` + now + `",
+                "version": "19.2.13",
+                "mode": "game",
+                "gpus": [],
+                "containers": [{"name": "sunshine-tv", "status": "Up 2 hours", "ports": ""}]
+        }`
+	os.WriteFile(f, []byte(data), 0644)
+	testStatusFile = f
+	defer func() { testStatusFile = "" }()
+	s, err := Read()
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+	if s.Gaming != nil {
+		t.Fatalf("legacy status should parse with nil Gaming, got %+v", s.Gaming)
+	}
+	if len(s.Containers) != 1 || s.Containers[0].Name != "sunshine-tv" {
+		t.Fatalf("legacy containers mismatch: %+v", s.Containers)
 	}
 }

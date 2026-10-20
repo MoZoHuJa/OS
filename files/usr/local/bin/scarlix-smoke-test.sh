@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SCARLIX OS regression smoke test (version read from VERSION)
 #
-# Runs 14 integrity checks against the SCARLIX OS repo and prints a
+# Runs 16 integrity checks against the SCARLIX OS repo and prints a
 # PASS/FAIL/WARN line for each. Exits 0 if no check FAILed, 1 otherwise.
 # WARNs (e.g. missing tool, network error) do NOT fail the run.
 #
@@ -253,10 +253,25 @@ check_04_systemd() {
         warn "no systemd unit files found under files/etc/systemd/system/"
         return
     fi
+    # v19.3.1: deterministic dependency resolution. scarlix-workload-bridge
+    # requires docker.service — present on real hosts (install.sh Phase 3) and
+    # on CI runners, but NOT in minimal dev sandboxes, which made verify fail
+    # on environment, not on the repo. SYSTEMD_UNIT_PATH with a trailing colon
+    # appends the default search paths, so ONLY docker.service is stubbed —
+    # every other missing dependency still fails the check.
+    local stubdir
+    stubdir=$(mktemp -d)
+    printf '%s\n' \
+        '[Unit]' \
+        'Description=Docker Engine stub for static unit verification only' \
+        '[Service]' \
+        'ExecStart=/bin/true' \
+        'Type=oneshot' > "$stubdir/docker.service"
     # Filter dev-box noise: "marked executable" / "not marked executable" /
     # "chmod" hints. Remaining output indicates real unit errors.
     local raw filtered
-    raw=$(systemd-analyze verify "${units[@]}" 2>&1 || true)
+    raw=$(SYSTEMD_UNIT_PATH="$stubdir:" systemd-analyze verify "${units[@]}" 2>&1 || true)
+    rm -rf "$stubdir"
     filtered=$(printf '%s\n' "$raw" \
         | grep -vE 'executable|chmod|Empty|cached' || true)
     if [[ -z "$filtered" ]]; then
@@ -751,6 +766,117 @@ CASES
     pass "only the exact SCARLIX_ALLOW_SHARED_GPU=1 line enables GPU sharing; malformed/duplicate values fail closed (P2-02)"
 }
 
+
+# ---------------------------------------------------------------------------
+# v19.3.1 — Gaming Stack Integration Plan regression checks
+# ---------------------------------------------------------------------------
+check_15_gaming_manifest_and_installer() {
+    echo "--- [15] Gaming manifest well-formed; installer never removes packages ---"
+    local manifest="$REPO_DIR/files/usr/local/share/scarlix/gaming-packages.conf"
+    local installer="$REPO_DIR/files/usr/local/bin/scarlix-gaming-install"
+    if [[ ! -f "$manifest" ]]; then
+        fail "gaming manifest missing: files/usr/local/share/scarlix/gaming-packages.conf"
+        return
+    fi
+    if [[ ! -f "$installer" ]]; then
+        fail "gaming installer missing: files/usr/local/bin/scarlix-gaming-install"
+        return
+    fi
+    # Manifest format: every non-comment row has exactly 5 pipe-separated
+    # fields with valid profile/channel tokens and no duplicate packages.
+    local bad_fields bad_tokens dup
+    bad_fields=$(grep -vE '^\s*#|^\s*$' "$manifest" | awk -F'|' 'NF != 5 {print NR}' | wc -l)
+    if (( bad_fields > 0 )); then
+        fail "gaming manifest has $bad_fields malformed row(s) (need exactly 5 fields)"
+        return
+    fi
+    bad_tokens=$(grep -vE '^\s*#|^\s*$' "$manifest" | awk -F'|' '
+        { p=$1; c=$2; k=$4;
+          gsub(/^ +| +$/, "", p); gsub(/^ +| +$/, "", c); gsub(/^ +| +$/, "", k);
+          if (p !~ /^(minimal|full|inventory)$/) print "profile:" p;
+          if (c !~ /^(pacman|aur|flatpak|systemd|compose)$/) print "channel:" c;
+          if (k !~ /^(launcher|compatibility|performance|streaming|server)$/) print "kind:" k }' | wc -l)
+    if (( bad_tokens > 0 )); then
+        fail "gaming manifest has $bad_tokens invalid profile/channel/kind token(s)"
+        return
+    fi
+    dup=$(grep -vE '^\s*#|^\s*$' "$manifest" | awk -F'|' '{gsub(/^ +| +$/, "", $2); gsub(/^ +| +$/, "", $3); print $2 "|" $3}' | sort | uniq -d | wc -l)
+    if (( dup > 0 )); then
+        fail "gaming manifest has $dup duplicate (channel, package) row(s)"
+        return
+    fi
+    # The minimal profile must mirror the packages.x86_64 base gaming block.
+    local missing_base
+    missing_base=0
+    local pkg
+    for pkg in steam wine wine-gecko wine-mono lutris; do
+        if ! grep -vE '^\s*#|^\s*$' "$manifest" | awk -F'|' '{gsub(/^ +| +$/, "", $1); gsub(/^ +| +$/, "", $2); gsub(/^ +| +$/, "", $3)} $1=="minimal" && $2=="pacman" && $3=="'"$pkg"'" {found=1} END{exit !found}' ; then
+            missing_base=$((missing_base + 1))
+        fi
+    done
+    if (( missing_base > 0 )); then
+        fail "gaming manifest minimal profile is missing $missing_base base package(s) from the packages.x86_64 gaming block"
+        return
+    fi
+    # The installer must be bash-clean and NEVER remove packages (the plan's
+    # no-auto-removal rule — user game data must never be at risk).
+    if ! bash -n "$installer" 2>/dev/null; then
+        fail "scarlix-gaming-install fails bash -n"
+        return
+    fi
+    # Removal commands must not appear in EXECUTED positions. The headless
+    # profile legitimately PRINTS manual-removal guidance (log/echo lines);
+    # those documentation strings are filtered out before the check.
+    if grep -vE '^[[:space:]]*(log|warn|fail|printf|echo)[[:space:]]' "$installer" | grep -qE '(pacman|yay) +-R'; then
+        fail "scarlix-gaming-install contains package-removal commands (forbidden: never remove user packages)"
+        return
+    fi
+    # AUR installs must refuse root (yay must never run as root).
+    if ! grep -q 'id -u.*-eq 0' "$installer" || ! grep -q 'yay refuses root' "$installer"; then
+        fail "scarlix-gaming-install must fail closed when AUR installs are attempted as root"
+        return
+    fi
+    pass "gaming manifest well-formed (5 fields, valid tokens, no dupes, base block mirrored); installer never removes packages"
+}
+
+check_16_gaming_readonly_api() {
+    echo "--- [16] Gaming inventory is read-only (no exec, no launch, auth-gated) ---"
+    local rest="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local gamingdir="$REPO_DIR/scarlihq/internal/gaming"
+    if [[ ! -f "$rest" ]] || [[ ! -d "$gamingdir" ]]; then
+        fail "gaming API contract files missing (rest.go / internal/gaming)"
+        return
+    fi
+    # The endpoint must exist AND sit behind the auth middleware.
+    if ! grep -q 'mux.HandleFunc("/api/gaming", h.auth(h.gamingInventory))' "$rest"; then
+        fail "/api/gaming must be registered via h.auth() — an unauthenticated gaming endpoint is a regression"
+        return
+    fi
+    # Read-only: non-GET methods must be rejected by the handler.
+    if ! grep -q 'gaming inventory is read-only' "$rest"; then
+        fail "gamingInventory handler must reject non-GET methods (read-only contract)"
+        return
+    fi
+    # The Go gaming package is a pure data contract: no command execution,
+    # no docker socket, no arbitrary host access. (Detection is host-side.)
+    if grep -rqE 'os/exec|exec.Command|Docker' "$gamingdir"; then
+        fail "internal/gaming must stay a pure data contract — no exec/docker usage allowed"
+        return
+    fi
+    # The host bridge must publish the gaming array into host-status.json.
+    local bridge="$REPO_DIR/files/usr/local/bin/scarlix-host-bridge"
+    if ! grep -q 'STATUS_GAMING=' "$bridge" || ! grep -q '"gaming": json.loads' "$bridge"; then
+        fail "scarlix-host-bridge must publish the gaming inventory in host-status.json"
+        return
+    fi
+    # The status contract must expose the typed entries.
+    if ! grep -q 'Gaming.*\[\]gaming.Entry' "$REPO_DIR/scarlihq/internal/status/status.go"; then
+        fail "HostStatus must expose the typed Gaming entries (single source of truth)"
+        return
+    fi
+    pass "/api/gaming: auth-gated, GET-only, pure data contract, published via host-bridge host-status.json"
+}
+
 # ===========================================================================
 # Run all checks
 # ===========================================================================
@@ -768,6 +894,8 @@ check_11_single_gpu_adaptation
 check_12_pibolt_sha256_pin
 check_13_pibolt_user_owned_execution
 check_14_strict_gpu_optin_parsing
+check_15_gaming_manifest_and_installer
+check_16_gaming_readonly_api
 
 # ===========================================================================
 # Summary

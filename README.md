@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.3.0 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.3.1 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.3.0</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.3.1</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.3.0-B87333?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.3.1-B87333?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-D4A574?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-A8C5D4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-D4A574?style=flat-square" /></a>
@@ -59,7 +59,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.3.0 (hardware validation) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.3.1 (unified: host bridge + gaming) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ### 📑 Changelog Index (v19.3.x / v19.2.x)
 
@@ -67,6 +67,7 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 | Version | One line | Reference |
 |---------|----------|-----------|
+| **v19.3.1** | Unified release: Host Bridge workload lifecycle (P5.1+P6) merged into mainline + Gaming Stack (profiles, read-only inventory, unified docs) | 📄 [What's New](#-whats-new-in-v1931--host-bridge--gaming-stack-unification) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.3.1) |
 | **v19.3.0** | Hardware-validation candidate: fail-closed release capability, deterministic test cleanup, dynamic smoke-test version, clean EndeavourOS one-command install path | 📄 [What's New](#-whats-new-in-v1930--hardware-validation-candidate) · [main](https://github.com/MoZoHuJa/OS/tree/main) |
 | **v19.2.13** | Interrupted-release recovery completion + strict opt-in parsing + Pi-Bolt user-owned execution (KPK audit of v19.2.12) | 📄 [What's New](#-whats-new-in-v19213--interrupted-release-closure) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.13) |
 | v19.2.12 | Release-lifecycle closure + supply-chain pins (2 audits of v19.2.11) | 📄 [What's New](#-whats-new-in-v19212--release-lifecycle-closure) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.12) |
@@ -81,15 +82,15 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 ## 🚀 Install (NO ISO)
 
-### One-command install — v19.3.0 hardware validation
+### One-command install — v19.3.1 unified candidate
 
-Run this on a **fresh EndeavourOS installation** from your normal user account. It clones the current v19.3.0 mainline and starts the installer; the installer requests sudo itself. Review the script first if you do not want to run the install immediately.
+Run this on a **fresh EndeavourOS installation** from your normal user account. It clones the current v19.3.1 mainline and starts the installer; the installer requests sudo itself. Review the script first if you do not want to run the install immediately.
 
 ```bash
 git clone --depth 1 --branch main https://github.com/MoZoHuJa/OS.git ~/scarlix-os && cd ~/scarlix-os && bash install.sh
 ```
 
-This is a hardware-validation candidate, not a claim that target-hardware E2E has already passed. The installer performs system upgrades, changes NVIDIA/Docker configuration and installs packages; use a machine you can recover and keep a backup.
+This is a unified release candidate (host bridge + gaming stack); the hardware-acceptance gate is still pending on the target machine. The installer performs system upgrades, changes NVIDIA/Docker configuration and installs packages; use a machine you can recover and keep a backup.
 
 ### Manual review before install
 ```bash
@@ -139,6 +140,65 @@ scarlix-mode ai
 Until these pass on the actual host, v19.3.0 is a **hardware-validation candidate**, not a certified production release.
 
 Hardware checklist: [`docs/RELEASE_19.3.0_HARDWARE_ACCEPTANCE.md`](docs/RELEASE_19.3.0_HARDWARE_ACCEPTANCE.md).
+
+---
+
+## 🆕 What's New in v19.3.1 — Host Bridge + Gaming Stack Unification
+
+**Purpose:** one coherent release that unifies everything that was previously
+sitting on side branches — nothing left aside. Built on top of the v19.3.0
+hardware-validation candidate, including all of its KpK closures.
+
+- **Host Bridge workload lifecycle (P5.1 + P6) merged into the mainline.**
+  The previously unmerged `19.2.14.P6` line (+4,200 lines, CI-green) is now
+  part of main: typed workload `start`/`stop` contract, Unix-socket-only
+  host bridge server (0600, admin-owned parent dir, no TCP), docker
+  executor, idempotency ledger, `scarlix-workload-bridge.service` (hardened,
+  disabled by default), ScarliHQ `/api/compute/start|stop` endpoints and the
+  integration contract (`integration-contract.v1.json`). See
+  `docs/SCARLIX_COMPUTE_FABRIC_P6_SCARLIHQ_INTEGRATION.md`.
+- **Gaming Stack Integration Plan implemented (Phases 0–6):**
+  - `scarlix-gaming-install` — profile-based (minimal / full / headless),
+    idempotent, per-package error reporting, never removes anything, AUR via
+    the existing non-root yay flow (root refused with guidance).
+  - One authoritative manifest
+    (`files/usr/local/share/scarlix/gaming-packages.conf`) shared by the
+    installer AND the host-bridge inventory detection.
+  - Read-only `GET /api/gaming` (auth-gated, GET-only) + typed
+    `internal/gaming` contract + dashboard **Gaming Stack** card — detection
+    runs host-side (batched `pacman -Q`, systemctl, docker ps, optional
+    flatpak list), published through `host-status.json`. ScarliHQ gains zero
+    new privileges. See `gaming/README.md`.
+  - Full profile: RetroArch (+ per-UI assets), Gamescope, MangoHud, GameMode
+    (64+32-bit), Heroic, itch, Bottles — all opt-in; the default install set
+    is unchanged.
+  - RetroArch manifest/documentation mismatch resolved (assets ship as three
+    per-UI packages; verified via the official Arch package API).
+  - Vulkan loaders (64+32-bit) declared explicitly in the minimal profile.
+- **Test reliability:** hostbridge Unix-socket tests are umask-independent
+  (`secureSocketDir` tightens `t.TempDir()` to 0700 — ambient umask 0002 no
+  longer fails the security check spuriously); smoke-test `check_04` resolves
+  unit dependencies deterministically (docker.service stub instead of relying
+  on the runner's package set).
+- **Smoke tests 15/16:** gaming manifest well-formedness + installer
+  no-removal invariant; read-only gaming API contract.
+- **Docs unified:** gaming/README.md, ARCHITECTURE gaming/host-bridge
+  sections, SECURITY_MAP host-bridge + gaming sections, hardware acceptance
+  gate re-targeted to v19.3.1.
+
+### Still honestly pending (not claimed by this release)
+
+- **Target-host E2E / hardware acceptance** — unchanged gate; the checklist
+  now targets v19.3.1 (`docs/RELEASE_19.3.0_HARDWARE_ACCEPTANCE.md` applies
+  to this candidate). CI green ≠ hardware-proven.
+- **Reservation-engine production composition root** — the Host Bridge now
+  provides the allowlisted workload lifecycle path, but the file-backed
+  reservation manager (`NewFileBackedManager` + `Recover()` + reaper
+  ownership) still has no production service caller. This remains the
+  documented Phase 5 next step, tracked in the roadmap table.
+- **Gaming target-host validation** — Steam/Lutris/Vulkan/Heroic/Bottles/
+  RetroArch runtime checks and `ai → game → ai` on real hardware belong to
+  the hardware acceptance run, not to CI.
 
 ---
 
@@ -278,8 +338,10 @@ scarlix-smoke-test.sh         → online: 18 PASS + 0 FAIL + 0 WARN (14 checks)
 | Single-GPU detection | **done** (v19.2.12, strict parsing v19.2.13) | `scarlix-mode` detects GPU_COUNT, gates vLLM, exact `SCARLIX_ALLOW_SHARED_GPU=1` opt-in (duplicates rejected) with generated compose override; smoke-test checks 11+14 |
 | Pi-Bolt supply-chain pin | **done** (v19.2.12, user-owned execution v19.2.13) | installer downloaded to temp + SHA-256 verified against `files/usr/local/share/scarlix/pi-bolt-install.sha256`; **user-owned verified copy** executed as `$REAL_USER`; both temps trapped for cleanup; smoke-test checks 12+13; scheduled pin-freshness CI job |
 | Model integrity + image digest pinning | **deferred** | default AI images stay tag-pinned; experimental `:latest` images documented as residual risk in SECURITY_MAP (F-08) |
-| Target-host GPU E2E acceptance (Phase 3) | **pending** (v19.2.14 target) | `docs/PHASE3_G1_ACCEPTANCE.md` checklist still unchecked — Phase 3 is domain-complete in CI, host E2E NOT yet proven |
-| Fabric → `scarlix-mode` bridge (Phase 5+) | **deferred** | Host-Bridge allowlist operation design; see audit F-04 |
+| Target-host GPU E2E acceptance (Phase 3) | **pending** (re-targeted to the v19.3.1 hardware run) | `docs/PHASE3_G1_ACCEPTANCE.md` checklist still unchecked — Phase 3 is domain-complete in CI, host E2E NOT yet proven |
+| Host Bridge workload lifecycle (P5.1+P6) | **done** (v19.3.1) | typed start/stop contract, Unix-socket bridge (0600, admin-owned parent), docker executor + idempotency ledger, hardened `scarlix-workload-bridge.service` (disabled by default), `/api/compute/start\|stop`; merged from CI-green `19.2.14.P6`; `docs/SCARLIX_COMPUTE_FABRIC_P6_SCARLIHQ_INTEGRATION.md` |
+| Fabric → `scarlix-mode` bridge (audit F-04) | **partial** (v19.3.1) | Host-Bridge allowlisted workload path now exists (above); the production reservation composition root (`NewFileBackedManager` + `Recover()` + reaper ownership in a real service) is still the next documented step |
+| Gaming stack integration | **done** (v19.3.1) | profile-based `scarlix-gaming-install` (never removes), one shared manifest, read-only `/api/gaming` + dashboard card, smoke checks 15/16; `gaming/README.md` |
 
 **v19.1.16 → v19.1.20 in one line each:** .16 heredoc P0 fix + security hardening · .17 fish `agent.env.fish` hardening · .18 audit closure + secret hardening · .19 audit closure + portable base64 · .20 mutation-hardened smoke guard.
 
