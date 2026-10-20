@@ -1,8 +1,10 @@
-# SCARLIX OS v19.2.12 — Security Map
+# SCARLIX OS v19.2.13 — Security Map
 
 > Purpose: Catalog every security boundary in the v19.0.6 tree — the privilege separation model, atomic file operations, the TOCTOU-safe reader, the fail-closed env loader, lock file topology, and the systemd hardening matrix. All values cited from files on branch `fix-v19.0.6`.
 >
 > **v19.2.12 update:** added section (h) — experimental image supply-chain residual risk (Deep Audit F-08) and section (i) — Pi-Bolt installer SHA-256 pin (Deep Audit F-01).
+>
+> **v19.2.13 update:** section (i) extended with the user-owned verified-copy execution handoff (KPK-19.2.12-P2-01) and the scheduled pin-freshness CI job; new section (j) — reservation-layer CleanupVerified semantics (KpK audit P2-02).
 
 ## (a) Host-Bridge privilege separation
 
@@ -156,6 +158,20 @@ The **default AI path is tag-pinned** (`sglang`, `vllm`, `ollama`, `llamacpp` co
 | Mismatch handling | loud warning + skip (Pi-Bolt is optional); **never** silent continue, **never** execute an unverified installer |
 | Pin refresh | deliberate manual action when upgrading to a newer Pi-Bolt installer — recompute the hash and commit the pin file with the release |
 | Enforcement | smoke-test check 12 fails the release if the pin or the verification logic is missing |
+| **v19.2.13 execution handoff** (KPK-19.2.12-P2-01) | the verified installer was a root-owned `mktemp` file (mode `0600`) executed via `sudo -u "$REAL_USER" bash` — the unprivileged user could never READ it, so the pinned install always failed at execution. Now the verified content is handed to a **user-owned private copy**: user-side `mktemp` as `$REAL_USER` + `install -o $REAL_USER -m 0600` from root (never world-readable; integrity preserved between verification and execution). Both temp copies are cleaned up on every success/failure/interrupt path (`EXIT`/`INT`/`TERM` traps). Smoke-test check 13 verifies the pattern and the runtime mechanic. |
+| **v19.2.13 pin freshness** (KpK audit P2-01) | scheduled CI job (`.github/workflows/pin-freshness.yml`, weekly) re-downloads the installer and compares the hash with the shipped pin — drift fails the job. Pi-Bolt pin last verified: **2026-10-20**. |
+
+## (j) Reservation-layer `CleanupVerified` semantics (v19.2.13, KpK audit P2-02)
+
+An allocation reaching `RELEASED` implies **reservation-layer verified cleanup**: every
+reservation bundle member's release required positive cleanup evidence at the reservation
+layer (`CleanupVerifier.VerifyCleanup`), and `CompleteAllocationRelease` records
+`CleanupVerified = true` **before** the terminal transition (frozen KPK-01 invariant).
+
+**Hardware proof is the verifier implementation's responsibility.** In CI and unit tests the
+verifier is a stub; a production `CleanupVerifier` (real `nvidia-smi` / port / container
+state observation) is required before `RELEASED` can be treated as hardware-proven — that
+wiring is part of Phase 5 / target-host E2E acceptance (`docs/PHASE3_G1_ACCEPTANCE.md`).
 
 ## Other security properties
 

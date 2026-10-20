@@ -1,0 +1,56 @@
+name: Pin Freshness
+
+# KPK-19.2.13 (KpK audit of v19.2.12, P2-01 — pin freshness procesu):
+# The Pi-Bolt installer SHA-256 pin is static in the repo. When upstream
+# changes the installer, every fresh installation silently skips Pi-Bolt
+# until someone commits a new pin. This scheduled job makes the drift loud:
+# it re-downloads the installer weekly and compares the hash with the
+# shipped pin — a mismatch (or an unreachable upstream) fails the job, so
+# the operators know to refresh files/usr/local/share/scarlix/pi-bolt-install.sha256
+# deliberately (and update the "last verified" date in README/SECURITY_MAP).
+
+on:
+  schedule:
+    # Weekly, Monday 04:00 UTC (quiet hours; avoids the top of the hour).
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+  # Also run on releases so a tag never ships with an already-stale pin.
+  push:
+    tags: ['v*']
+
+jobs:
+  pibolt-pin-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare live Pi-Bolt installer hash with the shipped pin
+        run: |
+          set -euo pipefail
+          PIN_FILE="files/usr/local/share/scarlix/pi-bolt-install.sha256"
+          INSTALLER_URL="https://pi-bolt.opensec.in/install.sh"
+
+          if [ ! -f "$PIN_FILE" ]; then
+            echo "::error::Pi-Bolt pin file missing ($PIN_FILE)"
+            exit 1
+          fi
+          if ! grep -qE '^[0-9a-f]{64}  pi-bolt-install\.sh$' "$PIN_FILE"; then
+            echo "::error::Pi-Bolt pin file malformed (expected '<64-hex>  pi-bolt-install.sh')"
+            exit 1
+          fi
+
+          pinned="$(awk 'NR==1 {print $1}' "$PIN_FILE")"
+          tmp="$(mktemp)"
+          if ! curl -fsSL --max-time 60 "$INSTALLER_URL" -o "$tmp"; then
+            echo "::error::Cannot download the live Pi-Bolt installer ($INSTALLER_URL) — upstream unreachable. Verify manually before the next release."
+            exit 1
+          fi
+          live="$(sha256sum "$tmp" | awk '{print $1}')"
+          rm -f "$tmp"
+
+          echo "pinned: $pinned"
+          echo "live:   $live"
+          if [ "$live" != "$pinned" ]; then
+            echo "::error::Pi-Bolt installer hash DRIFTED from the shipped pin. Upstream released a new installer. Refresh $PIN_FILE deliberately (recompute the hash, verify the installer, update the 'last verified' date in README.md and SECURITY_MAP) and re-run this job."
+            exit 1
+          fi
+          echo "OK — live installer hash matches the shipped pin."

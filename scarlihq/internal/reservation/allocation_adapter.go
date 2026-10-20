@@ -284,6 +284,12 @@ func (a *AllocationReservationAdapter) BeginAllocationRelease(id string) error {
 // KPK-19.2.12-P1-01: RELEASING → RELEASED clears the assignment fields and
 // lease metadata so a released GPU/runtime/model/port can never remain
 // visibly assigned to the allocation.
+// KPK-19.2.13-P1-02: FAILED and CANCELLED allocations with a reservation
+// bundle can no longer jump directly to RELEASED — the frozen transition
+// table forbids FAILED → RELEASED and CANCELLED → RELEASED (only
+// FAILED/CANCELLED → RELEASING/CLEANUP_REQUIRED are legal). They now walk
+// through RELEASING first, exactly like the RESERVED and CLEANUP_REQUIRED
+// paths, so the terminal transition below is always table-legal.
 //
 // A crash between the reservation release and this call is repaired by the
 // startup recovery scan: RESERVED → RELEASING → RELEASED is walked inside a
@@ -307,8 +313,17 @@ func (a *AllocationReservationAdapter) CompleteAllocationRelease(id string) erro
 			if _, err := record.Transition(allocation.StateReleasing, "release completion replay"); err != nil {
 				return err
 			}
-		case allocation.StateReleasing, allocation.StateFailed, allocation.StateCancelled:
-			// Legal direct paths into the terminal release below.
+		case allocation.StateFailed, allocation.StateCancelled:
+			// KPK-19.2.13-P1-02: the frozen table does NOT permit
+			// FAILED/CANCELLED → RELEASED. Walk through RELEASING first —
+			// both FAILED → RELEASING and CANCELLED → RELEASING are legal —
+			// so the terminal transition below is table-legal for every source
+			// state this method accepts.
+			if _, err := record.Transition(allocation.StateReleasing, "release completion for failed/cancelled allocation with reservation bundle"); err != nil {
+				return err
+			}
+		case allocation.StateReleasing:
+			// Direct legal path into the terminal release below.
 		case allocation.StateCleanupRequired:
 			// Reached when every bundle member was subsequently released with
 			// verified cleanup evidence. The frozen table allows
@@ -369,11 +384,16 @@ func (a *AllocationReservationAdapter) MarkAllocationCleanupRequired(id, reason 
 	})
 }
 
-// ListReleasingAllocations returns allocation IDs in RELEASING or
-// CLEANUP_REQUIRED — the states the startup recovery scan must complete or
-// keep blocked. KPK-19.2.12-P1-01: ReconcileAllPending only enumerated
-// RESERVING allocations, so an allocation interrupted mid-release could
-// never be discovered again.
+// ListReleasingAllocations returns allocation IDs whose release lifecycle
+// must be completed or kept blocked by the recovery scan: RELEASING,
+// CLEANUP_REQUIRED, and — KPK-19.2.13-P1-02 — FAILED and CANCELLED.
+// A FAILED/CANCELLED allocation that still has a reservation bundle with
+// release progress is an interrupted release in a legal source state of the
+// frozen release lifecycle; without this scan it could never converge
+// (ListReservedAllocations only covers RESERVED).
+// KPK-19.2.12-P1-01: ReconcileAllPending only enumerated RESERVING
+// allocations, so an allocation interrupted mid-release could never be
+// discovered again.
 func (a *AllocationReservationAdapter) ListReleasingAllocations() ([]string, error) {
 	records, corrupt, err := a.store.Load()
 	if err != nil {
@@ -387,7 +407,8 @@ func (a *AllocationReservationAdapter) ListReleasingAllocations() ([]string, err
 		if record == nil {
 			continue
 		}
-		if record.State == allocation.StateReleasing || record.State == allocation.StateCleanupRequired {
+		switch record.State {
+		case allocation.StateReleasing, allocation.StateCleanupRequired, allocation.StateFailed, allocation.StateCancelled:
 			if record.AllocationID != "" {
 				ids = append(ids, record.AllocationID)
 			}

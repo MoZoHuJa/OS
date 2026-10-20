@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v19.2.12 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v19.2.13 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
 # EndeavourOS/Arch bootstrap installer — NO ISO, runs on clean EndeavourOS.
@@ -19,7 +19,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="19.2.12"
+VERSION="19.2.13"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -1003,10 +1003,32 @@ else
   #   when upgrading to a newer Pi-Bolt installer.
   #   NOTE: the Pi-Bolt installer itself verifies release checksums from the
   #   GitHub release, so pinning the installer closes the remaining gap.
+  # v19.2.13 KPK-19.2.12-P2-01: the verified installer is downloaded by ROOT
+  #   into a root-owned mktemp file (mode 0600). Executing it via
+  #   `sudo -u "$REAL_USER" bash` would ALWAYS fail — the unprivileged user
+  #   cannot READ a root-owned 0600 file. Now the VERIFIED content is handed
+  #   to a user-owned private copy before execution:
+  #     1. the user-side path is created with mktemp AS the user,
+  #     2. root copies the verified content with `install -o -m 0600`
+  #        (never world-readable; integrity preserved between verification
+  #        and execution),
+  #     3. the user-owned copy is executed.
+  # v19.2.13 KPK-19.2.12-P3-01: both temp copies are cleaned up on every
+  #   success/failure/interrupt path (EXIT/INT/TERM traps + inline removal).
   log "Installing Pi-Bolt (coding agent, SHA-256 pinned)..."
   PI_BOLT_INSTALLER_URL="https://pi-bolt.opensec.in/install.sh"
   PI_BOLT_SHA256_FILE="$REPO_DIR/files/usr/local/share/scarlix/pi-bolt-install.sha256"
   PI_BOLT_TMP="$(mktemp /tmp/pi-bolt-install.XXXXXX.sh)"
+  PI_BOLT_USER_TMP=""
+  pi_bolt_cleanup() {
+    rm -f "$PI_BOLT_TMP" 2>/dev/null || true
+    if [ -n "$PI_BOLT_USER_TMP" ]; then
+      rm -f "$PI_BOLT_USER_TMP" 2>/dev/null || true
+    fi
+  }
+  trap pi_bolt_cleanup EXIT
+  trap 'pi_bolt_cleanup; exit 130' INT
+  trap 'pi_bolt_cleanup; exit 143' TERM
   pi_bolt_verified=0
   if curl -fsSL "$PI_BOLT_INSTALLER_URL" -o "$PI_BOLT_TMP" >> "$LOG_FILE" 2>&1; then
     if [ -f "$PI_BOLT_SHA256_FILE" ]; then
@@ -1028,8 +1050,16 @@ else
     warn "Pi-Bolt installer download failed — user can install manually after verifying the checksum"
   fi
   if [ "$pi_bolt_verified" -eq 1 ]; then
-    if sudo -u "$REAL_USER" bash "$PI_BOLT_TMP" >> "$LOG_FILE" 2>&1; then
-      ok "Pi-Bolt installed (as $REAL_USER)"
+    # KPK-19.2.12-P2-01 (fixed in v19.2.13): hand the verified installer to a
+    # user-owned private copy before executing it as the unprivileged user.
+    if [ -z "$REAL_USER" ]; then
+      warn "REAL_USER not resolved — cannot install Pi-Bolt as an unprivileged user. Skipping."
+    elif ! PI_BOLT_USER_TMP="$(sudo -u "$REAL_USER" mktemp /tmp/pi-bolt-install-user.XXXXXX.sh)"; then
+      warn "Cannot create a user-owned temp file for the Pi-Bolt installer — skipping Pi-Bolt install."
+    elif ! install -o "$REAL_USER" -m 0600 "$PI_BOLT_TMP" "$PI_BOLT_USER_TMP" >> "$LOG_FILE" 2>&1; then
+      warn "Cannot hand the verified Pi-Bolt installer to $REAL_USER — skipping Pi-Bolt install."
+    elif sudo -u "$REAL_USER" bash "$PI_BOLT_USER_TMP" >> "$LOG_FILE" 2>&1; then
+      ok "Pi-Bolt installed (as $REAL_USER, user-owned verified copy)"
       # Verify the binary is available
       if sudo -u "$REAL_USER" bash -c 'command -v pi-bolt >/dev/null 2>&1' || [ -f "/home/$REAL_USER/.local/bin/pi-bolt" ]; then
         ok "pi-bolt binary available"
@@ -1132,8 +1162,11 @@ else
       warn "Pi-Bolt installer failed — manual install: download https://pi-bolt.opensec.in/install.sh, verify its SHA-256 against files/usr/local/share/scarlix/pi-bolt-install.sha256, then run it"
     fi
   fi
-  # v19.2.12 F-01: always remove the downloaded installer temp file.
-  rm -f "$PI_BOLT_TMP" 2>/dev/null || true
+  # v19.2.12 F-01 / v19.2.13 P2-01+P3-01: remove BOTH temp copies (root and
+  # user) and clear the section traps — the EXIT/INT/TERM handlers above also
+  # cover aborts inside the section itself.
+  pi_bolt_cleanup
+  trap - EXIT INT TERM
 
   # Enable model-manager timer (weekly HF auto-pull)
   if [ -f /etc/systemd/system/model-manager.timer ]; then
