@@ -877,6 +877,81 @@ check_16_gaming_readonly_api() {
     pass "/api/gaming: auth-gated, GET-only, pure data contract, published via host-bridge host-status.json"
 }
 
+check_17_reservation_governor() {
+    echo "--- [17] Reservation governor (F-04): fail-closed, disabled by default, off the HTTP plane ---"
+    local gov_src="$REPO_DIR/scarlihq/cmd/scarlix-reservation/main.go"
+    local gov_pkg="$REPO_DIR/scarlihq/internal/reservationops"
+    local unit="$REPO_DIR/files/etc/systemd/system/scarlix-reservation.service"
+    local tmpl="$REPO_DIR/docs/examples/reservation.json.example"
+    local installer="$REPO_DIR/install.sh"
+
+    if [[ ! -f "$gov_src" ]] || [[ ! -d "$gov_pkg" ]] || [[ ! -f "$unit" ]]; then
+        fail "reservation governor source/unit missing (F-04 composition root)"
+        return
+    fi
+
+    # The unit must keep the hardened shape: unprivileged user, strict
+    # filesystem protection, dedicated state dir, docker group (read-only
+    # consumer), bounded restarts.
+    for directive in "User=65532" "ProtectSystem=strict" "StateDirectory=scarlix-reservation" "SupplementaryGroups=docker" "Restart=on-failure" "StartLimitBurst=5"; do
+        if ! grep -q "^${directive}$" "$unit"; then
+            fail "scarlix-reservation.service must keep hardening directive: $directive"
+            return
+        fi
+    done
+
+    # Store paths in ExecStart must be distinct files (reservation store ≠
+    # allocation store) — NewFileBackedManager enforces this at runtime; the
+    # unit must not drift from it.
+    local exec_line reservations_path allocations_path
+    exec_line=$(grep '^ExecStart=' "$unit" | head -1)
+    reservations_path=$(echo "$exec_line" | grep -o '\--reservations [^ ]*' | awk '{print $2}')
+    allocations_path=$(echo "$exec_line" | grep -o '\--allocations [^ ]*' | awk '{print $2}')
+    if [[ -z "$reservations_path" || -z "$allocations_path" ]] || [[ "$reservations_path" == "$allocations_path" ]]; then
+        fail "governor ExecStart must use distinct --reservations/--allocations store paths (got '$reservations_path' vs '$allocations_path')"
+        return
+    fi
+
+    # Off the HTTP plane: the governor reconciles — it must not listen on
+    # anything. A socket/API here would create a second privileged surface.
+    if grep -qE 'http\.Listen|net\.Listen|ListenUnix|--serve|--socket' "$gov_src"; then
+        fail "reservation governor must stay off the HTTP plane (no listeners allowed)"
+        return
+    fi
+
+    # The template must carry only placeholders — a copied template can
+    # never boot the service with a live-looking token.
+    if [[ ! -f "$tmpl" ]]; then
+        fail "reservation.json.example template missing"
+        return
+    fi
+    if ! grep -q '"CHANGE_ME"' "$tmpl"; then
+        fail "reservation.json.example must use CHANGE_ME placeholder tokens (fail-closed template)"
+        return
+    fi
+    if grep -qE '"[0-9a-f]{32,}"' "$tmpl"; then
+        fail "reservation.json.example must not contain token-shaped values"
+        return
+    fi
+
+    # Never enabled automatically: install.sh may copy/build the governor
+    # but must never systemctl enable it (operator decision, like the
+    # workload bridge).
+    if grep -qE 'systemctl +enable.*scarlix-reservation' "$installer"; then
+        fail "install.sh must NEVER enable scarlix-reservation automatically"
+        return
+    fi
+
+    # The compose opt-in must remain commented — compute enablement is an
+    # operator decision with documented prerequisites.
+    if ! grep -q '#   - SCARLIHQ_COMPUTE_ENABLED=true' "$REPO_DIR/scarlihq/docker-compose.yml"; then
+        fail "compose compute opt-in must stay commented out (opt-in contract from v19.3.2)"
+        return
+    fi
+
+    pass "reservation governor: hardened unit, distinct stores, no listeners, placeholder-only template, never auto-enabled"
+}
+
 # ===========================================================================
 # Run all checks
 # ===========================================================================
@@ -896,6 +971,7 @@ check_13_pibolt_user_owned_execution
 check_14_strict_gpu_optin_parsing
 check_15_gaming_manifest_and_installer
 check_16_gaming_readonly_api
+check_17_reservation_governor
 
 # ===========================================================================
 # Summary

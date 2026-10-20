@@ -1,0 +1,59 @@
+[Unit]
+Description=ScarLiX OS Reservation Governor (F-04 composition root: Recover + lease reaper)
+Documentation=file:/usr/local/share/scarlix/reservation.json.example
+# The governor needs docker to (a) observe runtime inventory state and
+# (b) verify that no managed workload still occupies a resource before
+# releasing it. It never executes docker mutations — cleanup verification is
+# read-only (docker ps); workload start/stop stays on the workload bridge.
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+# The durable allocation store is shared (flock-serialized) with the ScarliHQ
+# compute lifecycle; do not start both against mismatched store paths.
+# The workload bridge owns the actual start/stop execution path.
+After=scarlix-workload-bridge.service
+# A corrupt store makes the governor exit immediately; bound the restart
+# storm so the unit parks in failed state for operator intervention.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=65532
+Group=65532
+SupplementaryGroups=docker
+UMask=0077
+StateDirectory=scarlix-reservation
+StateDirectoryMode=0700
+ExecStart=/usr/local/bin/scarlix-reservation --config /etc/scarlix/reservation.json --reservations /var/lib/scarlix-reservation/reservations.jsonl --allocations /var/lib/scarlix-reservation/allocations.jsonl --reap-interval 30s
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/var/lib/scarlix-reservation
+# Docker-group access is effectively host-root-equivalent (same caveat as the
+# workload bridge): the governor must remain a read-only docker consumer
+# (inventory + cleanup verification). It exposes NO socket and NO API — it
+# only reconciles. Do not add docker mutation paths here.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

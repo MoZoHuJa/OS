@@ -216,6 +216,39 @@ surface (merged from the `19.2.14.P6` line):
   libraries as `not_applicable` — the dashboard never guesses. A launcher
   being installed never implies any game is installed.
 
+## (m) Reservation governor (v19.3.2, F-04)
+
+- **Off the HTTP plane:** `scarlix-reservation` has no socket, no API, no
+  listener (smoke-test check_17 rejects listener patterns in the binary
+  source). It reconciles — it cannot be driven remotely at all. Workload
+  start/stop stays on the workload bridge (k); future Reserve/Release intake
+  is a separately designed, separately reviewed surface.
+- **Docker group, read-only consumer:** like the workload bridge, the
+  governor runs with `SupplementaryGroups=docker` (host-root-equivalent) but
+  only ever executes `docker ps --filter label=scarlix.managed=true` for
+  inventory + cleanup verification. It performs **no docker mutations**.
+- **Config trust:** `/etc/scarlix/reservation.json` must be root-owned,
+  0640-class (group/other-writable rejected, world-readable rejected — it
+  carries tokens), non-symlink, with a non-group/world-writable root-owned
+  parent. The reconciler token is a **separate secret** from
+  `SCARLIHQ_TOKEN` (KPK precedent: reconciler identities are separately
+  trusted); the loader rejects user tokens claiming the reconciler principal
+  and tokens shorter than policy minimums. The shipped template contains
+  only `CHANGE_ME` placeholders that intentionally fail validation.
+- **Fail-closed release semantics:** docker unavailability during cleanup
+  verification is an **error** (retried next tick — nothing is released on a
+  maybe); unmappable/unknown resource IDs produce `Verified=false` evidence
+  → the reservation converges to **CONFLICT** (blocks, operator-visible),
+  never a silent `RELEASED`. A corrupt store aborts startup; the unit parks
+  in failed state after bounded restarts.
+- **Store hygiene:** reservations + allocations live under
+  `/var/lib/scarlix-reservation/` (StateDirectory 0700, files 0600, atomic
+  rewrites, flock). `pruneReleased` stays unwired by choice (audit-trail
+  retention). The governor never deletes user data.
+- **Enablement is an operator decision:** install.sh copies binary + unit +
+  template but never enables the service (smoke-test check_17 asserts the
+  absence of any `systemctl enable scarlix-reservation`).
+
 ## Other security properties
 
 - **REST/MCP/WS auth:** Bearer token only (no `?token=` URL — v18.6 P2 removed the URL fallback that leaked tokens into logs/referrer/proxy). `crypto/subtle.ConstantTimeCompare` (v18.0.0 P1 — was: custom `secureCompare`).
