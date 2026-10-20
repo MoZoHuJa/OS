@@ -1,6 +1,8 @@
-# SCARLIX OS v19.2.9 — Security Map
+# SCARLIX OS v19.2.12 — Security Map
 
 > Purpose: Catalog every security boundary in the v19.0.6 tree — the privilege separation model, atomic file operations, the TOCTOU-safe reader, the fail-closed env loader, lock file topology, and the systemd hardening matrix. All values cited from files on branch `fix-v19.0.6`.
+>
+> **v19.2.12 update:** added section (h) — experimental image supply-chain residual risk (Deep Audit F-08) and section (i) — Pi-Bolt installer SHA-256 pin (Deep Audit F-01).
 
 ## (a) Host-Bridge privilege separation
 
@@ -129,6 +131,31 @@ Note: `ProtectSystem=strict` and `ReadOnlyPaths=/etc` are NOT used because `scar
 | Token updates | `update_kv()` uses `awk` + `ENVIRON[]` (v19.0.1 P1-b — was: `awk -v v=...` re-processed backslashes + `$2=v` corrupted tokens containing `=`) |
 | Required-key validation | `REQUIRED_KEYS="SCARLIHQ_TOKEN LITELLM_MASTER_KEY SMG_MASTER_KEY RESTIC_PASSWORD"` — exit 1 if any empty |
 | Telegram token update | fail-closed (v18.9.5 P2-01 — was `\|\| true` masked failure) |
+
+## (h) Experimental image supply chain — documented residual risk (v19.2.12, Deep Audit F-08)
+
+The **default AI path is tag-pinned** (`sglang`, `vllm`, `ollama`, `llamacpp` compose files reference immutable `:tag` images, not `:latest`). The following **experimental-only** services still reference `:latest` and are accepted as a **documented residual risk**:
+
+| Service | Image | Scope | Risk accepted because |
+|---|---|---|---|
+| needle | `ghcr.io/cactus-compute/needle:latest` | `profiles: [experimental]` — never started by the default mode path | experimental opt-in only; NO_ACCESS note in tree (image unverifiable offline) |
+| freetoken | `freetoken/serving:latest` | experimental profile | same |
+| browser-mcp | `mcp/playwright-server:latest` | experimental profile | same |
+| laya | `laya/decision-engine:latest` | experimental profile + single-GPU gate applies (device_ids 1) | same |
+
+**Rule (enforced by review, not yet by CI):** any NEW service added to the DEFAULT path must be tag- or digest-pinned — `:latest` is permitted only under `profiles: [experimental]`. Digest pinning for the four services above is **deferred** (see README roadmap status table) until their registries can be reached from the release pipeline to record immutable digests.
+
+**Mitigation for operators:** do not enable `.experimental` / experimental profiles on hosts that cannot tolerate an unpinned image pull; Pi-Bolt-style SHA-256 verification does not apply to Docker image tags — only digest pinning does.
+
+## (i) Pi-Bolt installer supply-chain pin (v19.2.12, Deep Audit F-01)
+
+| Property | Value |
+|---|---|
+| Old behaviour | `curl -fsSL https://pi-bolt.opensec.in/install.sh \| sh` — remote script executed without verification |
+| New behaviour | download to temp file → SHA-256 compared against `files/usr/local/share/scarlix/pi-bolt-install.sha256` (shipped with the release, also installed to `/usr/local/share/scarlix/`) → execute only on match |
+| Mismatch handling | loud warning + skip (Pi-Bolt is optional); **never** silent continue, **never** execute an unverified installer |
+| Pin refresh | deliberate manual action when upgrading to a newer Pi-Bolt installer — recompute the hash and commit the pin file with the release |
+| Enforcement | smoke-test check 12 fails the release if the pin or the verification logic is missing |
 
 ## Other security properties
 

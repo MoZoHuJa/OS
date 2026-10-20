@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# SCARLIX OS v19.2.9 — Regression Smoke Test (baseline freeze + P0 checks)
+# SCARLIX OS v19.2.12 — Regression Smoke Test (baseline freeze + P0 checks)
 #
-# Runs 10 integrity checks against the SCARLIX OS repo and prints a
+# Runs 12 integrity checks against the SCARLIX OS repo and prints a
 # PASS/FAIL/WARN line for each. Exits 0 if no check FAILed, 1 otherwise.
 # WARNs (e.g. missing tool, network error) do NOT fail the run.
 #
@@ -38,7 +38,7 @@ WARN_COUNT=0
 # ---------------------------------------------------------------------------
 usage() {
     cat <<'EOF'
-scarlix-smoke-test.sh — SCARLIX OS v19.2.9 regression smoke test
+scarlix-smoke-test.sh — SCARLIX OS v19.2.12 regression smoke test
 
 Usage:
   scarlix-smoke-test.sh [--offline] [--help]
@@ -104,7 +104,7 @@ done
 # ---------------------------------------------------------------------------
 # Preamble
 # ---------------------------------------------------------------------------
-printf "${BOLD}=== SCARLIX OS v19.2.9 regression smoke test ===${NC}\n"
+printf "${BOLD}=== SCARLIX OS v19.2.12 regression smoke test ===${NC}\n"
 printf "Repo:   %s\n" "$REPO_DIR"
 printf "Offline: %s\n" "$([[ $OFFLINE -eq 1 ]] && echo yes || echo no)"
 echo
@@ -511,6 +511,93 @@ check_10_vllm_trust_p0() {
 }
 
 # ===========================================================================
+# Check 11 — v19.2.12 F-02 (Deep Audit): single-GPU adaptation present
+# The vLLM compose pins device_ids ["1"] which cannot exist on single-GPU
+# hosts. scarlix-mode must gate vLLM behind GPU_COUNT detection with an
+# explicit SCARLIX_ALLOW_SHARED_GPU opt-in. This check verifies the gate
+# exists and that on single-GPU hosts the vLLM path is adapted, never a
+# raw hardcoded device-1 start.
+# ===========================================================================
+check_11_single_gpu_adaptation() {
+    echo "--- [11] Single-GPU adaptation: vLLM gated by GPU_COUNT + sharing opt-in ---"
+    local mode="$REPO_DIR/files/usr/local/bin/scarlix-mode"
+    if [[ ! -f "$mode" ]]; then
+        fail "scarlix-mode not found"
+        return
+    fi
+    local has_detection has_gate has_optin has_override
+    has_detection=$(grep -c 'nvidia-smi -L' "$mode" || true)
+    has_gate=$(grep -c 'vllm_allowed_on_this_host' "$mode" || true)
+    has_optin=$(grep -c 'SCARLIX_ALLOW_SHARED_GPU' "$mode" || true)
+    has_override=$(grep -c 'docker-compose.gpu-adapter.yml' "$mode" || true)
+    if (( has_detection == 0 )); then
+        fail "scarlix-mode: GPU_COUNT detection (nvidia-smi -L) missing — single-GPU hosts cannot adapt (F-02)"
+        return
+    fi
+    if (( has_gate == 0 )); then
+        fail "scarlix-mode: vllm_allowed_on_this_host gate missing — vLLM would hardcode device 1 on single-GPU hosts (F-02)"
+        return
+    fi
+    if (( has_optin == 0 )); then
+        fail "scarlix-mode: SCARLIX_ALLOW_SHARED_GPU opt-in missing (F-02)"
+        return
+    fi
+    if (( has_override == 0 )); then
+        fail "scarlix-mode: GPU-adapter override generation missing (F-02)"
+        return
+    fi
+    # Live check when nvidia-smi is available: on a single-GPU host the
+    # effective compose invocation must not pin device 1 without adaptation.
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        local gpu_count
+        gpu_count=$(nvidia-smi -L 2>/dev/null | wc -l || echo 0)
+        if (( gpu_count < 2 )); then
+            if [[ -f /opt/scarlix/ai/vllm/docker-compose.gpu-adapter.yml ]] \
+               || ! grep -q '^SCARLIX_ALLOW_SHARED_GPU=1' /etc/scarlix/.env 2>/dev/null; then
+                pass "single-GPU host (GPU_COUNT=$gpu_count): vLLM adapted or gated off (F-02)"
+            else
+                fail "single-GPU host with sharing opt-in but no GPU adapter override generated (F-02)"
+            fi
+            return
+        fi
+    fi
+    pass "GPU_COUNT detection, vLLM gate, sharing opt-in and override generation present (F-02)"
+}
+
+# ===========================================================================
+# Check 12 — v19.2.12 F-01 (Deep Audit): Pi-Bolt installer SHA-256 pin
+# install.sh must never pipe an unverified remote installer into a shell.
+# Requires: the pin file ships with the repo AND install.sh verifies it.
+# ===========================================================================
+check_12_pibolt_sha256_pin() {
+    echo "--- [12] Pi-Bolt installer is SHA-256 pinned (no raw curl|sh) ---"
+    local installer="$REPO_DIR/install.sh"
+    local pin="$REPO_DIR/files/usr/local/share/scarlix/pi-bolt-install.sha256"
+    if [[ ! -f "$installer" ]]; then
+        fail "install.sh not found"
+        return
+    fi
+    if grep -q 'pi-bolt.opensec.in/install.sh. | sh' "$installer" \
+       || grep -qE "curl -fsSL https://pi-bolt[^']*\| *sh" "$installer"; then
+        fail "install.sh still contains an unpinned curl|sh for the Pi-Bolt installer (F-01)"
+        return
+    fi
+    if [[ ! -f "$pin" ]]; then
+        fail "Pi-Bolt SHA-256 pin file missing: files/usr/local/share/scarlix/pi-bolt-install.sha256 (F-01)"
+        return
+    fi
+    if ! grep -qE '^[0-9a-f]{64}  pi-bolt-install\.sh$' "$pin"; then
+        fail "Pi-Bolt pin file malformed (expected '<64-hex>  pi-bolt-install.sh') (F-01)"
+        return
+    fi
+    if ! grep -q 'pi_bolt_verified' "$installer" || ! grep -q 'sha256sum' "$installer"; then
+        fail "install.sh does not verify the Pi-Bolt installer hash before executing it (F-01)"
+        return
+    fi
+    pass "Pi-Bolt installer downloaded to temp, SHA-256 verified against the shipped pin, executed only on match (F-01)"
+}
+
+# ===========================================================================
 # Run all checks
 # ===========================================================================
 check_01_bash_syntax
@@ -523,6 +610,8 @@ check_07_registry
 check_08_ollama_main
 check_09_docs_v12
 check_10_vllm_trust_p0
+check_11_single_gpu_adaptation
+check_12_pibolt_sha256_pin
 
 # ===========================================================================
 # Summary

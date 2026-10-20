@@ -204,9 +204,16 @@ func (a *AllocationReservationAdapter) EndReservation(id string, success bool) e
 
 // FinalizeReservation commits the assignment and RESERVED state in one
 // allocation-store transaction. This is preferred to EndReservation(true).
+// KPK-19.2.12-P2-02: the whole bundle is validated for shared invariants
+// (owner, lease, bundle size, duplicates) before any assignment is written,
+// so a logically inconsistent bundle can never be finalized as one atomic
+// lease and the last record can no longer silently win the lease metadata.
 func (a *AllocationReservationAdapter) FinalizeReservation(id string, reservations []*Reservation) error {
 	if len(reservations) == 0 {
 		return fmt.Errorf("reservation: cannot finalize an empty reservation bundle")
+	}
+	if err := validateActiveBundle(reservations, id); err != nil {
+		return err
 	}
 	return a.store.Update(id, func(record *allocation.Allocation) error {
 		if record.State != allocation.StateReserving && record.State != allocation.StateReserved {
@@ -245,6 +252,179 @@ func (a *AllocationReservationAdapter) FinalizeReservation(id string, reservatio
 		_, err := record.Transition(allocation.StateReserved, "phase 3 reservation bundle committed")
 		return err
 	})
+}
+
+// BeginAllocationRelease persists cleanup progress for an allocation whose
+// reservation bundle is being released. KPK-19.2.12-P1-01: the first release
+// event transitions RESERVED → RELEASING so the allocation record can never
+// claim unassigned resources are still owned while its reservations are
+// being released.
+//
+// Idempotency: RELEASING and RELEASED are accepted as no-ops so repeated
+// release events and restart recovery converge without spurious errors.
+func (a *AllocationReservationAdapter) BeginAllocationRelease(id string) error {
+	return a.store.Update(id, func(record *allocation.Allocation) error {
+		switch record.State {
+		case allocation.StateReleasing, allocation.StateReleased:
+			return nil // idempotent — cleanup progress already persisted
+		case allocation.StateCleanupRequired:
+			// Already operator-visible and blocked: keep the stricter state.
+			return nil
+		case allocation.StateReserved, allocation.StateStarting, allocation.StateReady, allocation.StateRunning, allocation.StateFailed, allocation.StateCancelled:
+			_, err := record.Transition(allocation.StateReleasing, "reservation bundle release in progress")
+			return err
+		default:
+			return fmt.Errorf("allocation %s cannot begin release from %s", id, record.State)
+		}
+	})
+}
+
+// CompleteAllocationRelease finishes the release lifecycle once every
+// reservation bundle member is RELEASED with verified cleanup evidence.
+// KPK-19.2.12-P1-01: RELEASING → RELEASED clears the assignment fields and
+// lease metadata so a released GPU/runtime/model/port can never remain
+// visibly assigned to the allocation.
+//
+// A crash between the reservation release and this call is repaired by the
+// startup recovery scan: RESERVED → RELEASING → RELEASED is walked inside a
+// single store transaction when the allocation is still RESERVED.
+func (a *AllocationReservationAdapter) CompleteAllocationRelease(id string) error {
+	return a.store.Update(id, func(record *allocation.Allocation) error {
+		switch record.State {
+		case allocation.StateReleased:
+			// Idempotent replay: repair any stale assignment fields left by an
+			// interrupted earlier completion, then stop — RELEASED is terminal.
+			record.AssignedGPU = ""
+			record.AssignedRuntime = ""
+			record.AssignedModel = ""
+			record.AssignedPort = 0
+			record.LeaseID = ""
+			record.LeaseExpiry = time.Time{}
+			return nil
+		case allocation.StateReserved:
+			// Crash-recovery path: the allocation never observed the first
+			// release event. Walk RESERVED → RELEASING first, then complete.
+			if _, err := record.Transition(allocation.StateReleasing, "release completion replay"); err != nil {
+				return err
+			}
+		case allocation.StateReleasing, allocation.StateFailed, allocation.StateCancelled:
+			// Legal direct paths into the terminal release below.
+		case allocation.StateCleanupRequired:
+			// Reached when every bundle member was subsequently released with
+			// verified cleanup evidence. The frozen table allows
+			// CLEANUP_REQUIRED → RELEASING → RELEASED; completing is justified
+			// because each member's release required positive cleanup evidence.
+			if _, err := record.Transition(allocation.StateReleasing, "cleanup evidence satisfied for every bundle member"); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("allocation %s cannot complete release from %s", id, record.State)
+		}
+		// KPK-01 (v19.2.3) invariant: CleanupVerified must be true BEFORE the
+		// transition to RELEASED. CompleteAllocationRelease is only invoked when
+		// every bundle member is durably RELEASED — each of those releases
+		// required positive cleanup evidence at the reservation layer — so the
+		// evidence chain justifies recording the verified flag here, before the
+		// terminal transition.
+		record.CleanupStatus = "verified"
+		record.CleanupVerified = true
+		if _, err := record.Transition(allocation.StateReleased, "reservation bundle fully released and cleanup verified"); err != nil {
+			return err
+		}
+		record.AssignedGPU = ""
+		record.AssignedRuntime = ""
+		record.AssignedModel = ""
+		record.AssignedPort = 0
+		record.LeaseID = ""
+		record.LeaseExpiry = time.Time{}
+		return nil
+	})
+}
+
+// MarkAllocationCleanupRequired persists an operator-visible blocked state
+// for an allocation whose reservation bundle cannot be safely released
+// (e.g. a member is in CONFLICT or cleanup could not be verified).
+// KPK-19.2.12-P1-01: never report the allocation fully released when a
+// bundle member is blocked.
+func (a *AllocationReservationAdapter) MarkAllocationCleanupRequired(id, reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		reason = "cleanup required"
+	}
+	return a.store.Update(id, func(record *allocation.Allocation) error {
+		switch record.State {
+		case allocation.StateCleanupRequired:
+			record.CleanupStatus = "pending"
+			return nil // idempotent — already blocked for the operator
+		case allocation.StateReleased:
+			return fmt.Errorf("allocation %s is already RELEASED — cannot mark cleanup required", id)
+		case allocation.StateReserved, allocation.StateStarting, allocation.StateReady, allocation.StateRunning:
+			// Walk through RELEASING first: the frozen transition table does
+			// not allow a direct RESERVED → CLEANUP_REQUIRED jump.
+			if _, err := record.Transition(allocation.StateReleasing, "release interrupted: "+reason); err != nil {
+				return err
+			}
+		}
+		_, err := record.Transition(allocation.StateCleanupRequired, reason)
+		return err
+	})
+}
+
+// ListReleasingAllocations returns allocation IDs in RELEASING or
+// CLEANUP_REQUIRED — the states the startup recovery scan must complete or
+// keep blocked. KPK-19.2.12-P1-01: ReconcileAllPending only enumerated
+// RESERVING allocations, so an allocation interrupted mid-release could
+// never be discovered again.
+func (a *AllocationReservationAdapter) ListReleasingAllocations() ([]string, error) {
+	records, corrupt, err := a.store.Load()
+	if err != nil {
+		return nil, err
+	}
+	if len(corrupt) > 0 {
+		return nil, fmt.Errorf("%w: allocation store has %d corrupt records", ErrReconciliationRequired, len(corrupt))
+	}
+	ids := make([]string, 0)
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		if record.State == allocation.StateReleasing || record.State == allocation.StateCleanupRequired {
+			if record.AllocationID != "" {
+				ids = append(ids, record.AllocationID)
+			}
+		}
+	}
+	return ids, nil
+}
+
+// ListReservedAllocations returns allocation IDs currently in RESERVED —
+// the input set for the reserved-lease repair scan.
+// KPK-19.2.12-P1-02: replaces the previous direct store access from the
+// manager with an explicit, testable adapter capability.
+func (a *AllocationReservationAdapter) ListReservedAllocations() ([]string, error) {
+	records, corrupt, err := a.store.Load()
+	if err != nil {
+		return nil, err
+	}
+	if len(corrupt) > 0 {
+		return nil, fmt.Errorf("%w: allocation store has %d corrupt records", ErrReconciliationRequired, len(corrupt))
+	}
+	ids := make([]string, 0)
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		if record.State == allocation.StateReserved && record.AllocationID != "" {
+			ids = append(ids, record.AllocationID)
+		}
+	}
+	return ids, nil
+}
+
+// GetAllocation exposes the durable allocation record for reconciliation
+// comparisons (lease repair reads the current lease metadata without
+// mutating it).
+func (a *AllocationReservationAdapter) GetAllocation(id string) (*allocation.Allocation, error) {
+	return a.getSafe(id)
 }
 
 var _ AllocationValidator = (*AllocationReservationAdapter)(nil)

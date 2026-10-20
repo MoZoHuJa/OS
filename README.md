@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.2.11 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.2.12 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.2.11</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.2.12</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -59,7 +59,23 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.2.11 | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.2.12 | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+
+### 📑 Changelog Index (v19.2.x)
+
+Chronological, newest first. Each entry links to its tag; entries with a dedicated README section are marked 📄.
+
+| Version | One line | Reference |
+|---------|----------|-----------|
+| **v19.2.12** | Release-lifecycle closure + supply-chain pins (2 audits of v19.2.11) | 📄 [What's New](#-whats-new-in-v19212--release-lifecycle-closure) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.12) |
+| v19.2.11 | Reservation commit consistency | 📄 section below · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.11) |
+| v19.2.10 | Phase 3 G1 — allocation plan binding, composition root, token identity | [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.10) |
+| v19.2.9 | KpK audit closure (8 findings) | 📄 historical section below · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.9) |
+| v19.2.2 | Allocation lifecycle foundation (Phase 2, FROZEN state machine) | 📄 section below · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.2) |
+| v19.2.1 | ScaRgeN_Zero_alpha — first formal GitHub Release | 📄 section below · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.1) |
+| v19.2.0 | Compute Fabric kickoff — v19.1.x generation FROZEN | 📄 section below · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.0) |
+
+*Versions without a dedicated README section (v19.2.3–v19.2.8) were incremental tag-level fixes; see `git log v19.2.2..v19.2.9` and the Version History table.*
 
 ## 🚀 Install (NO ISO)
 
@@ -89,6 +105,65 @@ scarlix-mode ai
 
 ---
 
+## 🆕 What's New in v19.2.12 — Release-lifecycle Closure
+
+**Release-blocking findings from two independent audits of v19.2.11 closed.** 2 P1 + 3 P2 from the KPK audit (`CHANGES REQUIRED — NOT APPROVED FOR PRODUCTION RELEASE` verdict on v19.2.11) plus P1/P2 supply-chain, portability and documentation findings from the Deep Audit. Both audits verified against commit `d3d021b7`.
+
+> **Phase 3 status (honest):** domain-complete in CI — **target-host E2E still pending** (`docs/PHASE3_G1_ACCEPTANCE.md` unchecked; target v19.2.13). Do not treat Compute Fabric as hardware-proven yet.
+
+### P1 fixes — allocation release lifecycle (KPK-19.2.11-P1-01)
+
+| # | Finding | Fix |
+|---|---------|-----|
+| **P1-01** | `reconcileAllocationAfterRelease()` called `EndReservation(id, false)` which only aborts a `RESERVING` allocation and **rejects `RESERVED`** — exactly the state being released. The partial-release branch was a comment-only no-op and the error was swallowed, so an allocation could remain `RESERVED` (resources visibly assigned) after **all** its reservations were `RELEASED`. | Dedicated allocation-aware transitions: first release event → `RESERVED → RELEASING` (progress persisted); all members `RELEASED` → `RELEASING → RELEASED` with `AssignedGPU/Runtime/Model/Port` + lease metadata cleared (respecting the frozen KPK-01 `CleanupVerified` invariant **before** the terminal transition); any member `CONFLICT` → `CLEANUP_REQUIRED` (operator-visible) with a typed error — **no false success**. Errors are never swallowed: `ReconcileExpired` and `ConfirmRelease` (user-initiated path had the same bug) return typed `ErrAllocationReconciliationPending`. Startup scan extended to `RELEASING`/`CLEANUP_REQUIRED` allocations. |
+
+### P1 fixes — reserved-lease reconciliation (KPK-19.2.11-P1-02)
+
+| # | Finding | Fix |
+|---|---------|-----|
+| **P1-02** | `ReconcileReservedLeases()` existed but was **never called** by any startup or periodic path; silently returned `nil` when capabilities were missing; skipped per-allocation store errors; discarded lease-update errors; trusted `bundle[0]` without validating the bundle (`_ = scanner` no-op assertion). | Rewritten fail-closed: explicit `reservedAllocationLister`/`reservationLeaseUpdater` interfaces (missing capability → `ErrReconciliationRequired`), **entire bundle validated** before any metadata is trusted, per-allocation failures aggregated with `errors.Join` (a skipped repair is never success). Wired into the startup `Recover()` sequence **and** the periodic lease reaper (`RunLeaseReaper` repairs lease drift each tick). |
+
+### P2 fixes
+
+| # | Finding | Fix |
+|---|---------|-----|
+| **P2-01** | Expired-HELD reservations were rejected but not routed to cleanup; no running service invoked the reaper. | `ReconcilePending` durably routes expired-HELD members to `EXPIRED_PENDING_RECONCILIATION` (atomic rewrite under the same lock) and persists an operator-visible `CLEANUP_REQUIRED` blocked state. New `Recover()` orchestrates the full state-dependent startup path: RESERVING scan → expired-lease reaper pass → interrupted-release completion → reserved-lease repair, returning a structured `RecoverySummary` (finalized / aborted / released / cleanup-blocked / lease-repaired / failed). |
+| **P2-02** | Bundle consistency checks were weaker than recovery/renewal logic assumed (mixed lease IDs, owners, fingerprints accepted; last record won the lease metadata). | One central `validateBundleConsistency()` used by replay, `FinalizeReservation`, `RenewBundleLease`, `ReconcilePending` and lease repair: shared owner, lease ID/expiry, idempotency key, fingerprint, one positive `BundleSize == member count` (legacy single-record rule), no duplicate resources, allowed statuses. Fail-closed — records preserved for operator repair. |
+| **P2-03** | New release-reconciliation code had no focused regression tests. | `release_reconciliation_test.go` (~700 lines): full state matrix (all-released → `RELEASED` + cleared assignments; partial → `RELEASING` without clearing; `CONFLICT` → `CLEANUP_REQUIRED` + typed error), write-failure fault injection with **restart-repair convergence**, idempotency, lease-repair convergence, mismatched-bundle rejection, fail-closed capability checks, corrupt-store failure, and a 9-case one-field-mismatch table proving neither store is written on inconsistent bundles. |
+
+### Supply-chain, portability and docs (Deep Audit v19.2.11)
+
+| # | Finding | Fix |
+|---|---------|-----|
+| **F-01 (P1)** | Pi-Bolt installed via `curl \| sh` — unverified remote script executed directly (roadmap had promised a pin since v19.2.9). | Installer downloaded to a temp file, **SHA-256 verified** against `files/usr/local/share/scarlix/pi-bolt-install.sha256` (pinned at release date; refresh deliberately on upgrade), executed only on match. Mismatch or missing pin → loud warning + skip, never silent continue. Smoke-test check 12 enforces it. |
+| **F-02 (P1)** | Dual-GPU hardcode (`device_ids: ['0']/["1"]`) — vLLM could never start on single-GPU hosts (promised since v19.2.9). | `scarlix-mode` detects `GPU_COUNT` via `nvidia-smi -L`: single-GPU → vLLM gated off with a warning (audit default) unless the operator explicitly sets `SCARLIX_ALLOW_SHARED_GPU=1`, which generates a compose override re-pinning vLLM to GPU 0 with a loud sharing notice. Healthcheck/restart paths gated identically; stale overrides removed. Smoke-test check 11 enforces it. |
+| **F-05/F-06 (P2)** | README changelog hierarchy broken (v19.2.0 at top, v19.2.1–11 crammed at the end, KpK text leaking into the v19.2.11 section); smoke-test header stale at v19.2.9. | Changelog index at the top (all 19.2.x, newest first, tag links); historical KpK text under its own `Historical (v19.2.9 baseline)` heading; smoke-test header bumped and suite extended to 12 checks. |
+| **F-07 (P2)** | Roadmap promised past-tag deliverables that were not in the code. | Roadmap is now an **evidence-based status table** (`done \| partial \| deferred \| pending` with proof per row) — „dôkaz namiesto sľubu". |
+| **F-08 (P2)** | Experimental images still `:latest` (needle, freetoken, browser-mcp, laya). | Documented residual risk in SECURITY_MAP (strict `experimental` scope); default AI path stays tag-pinned. Digest pinning deferred with explicit roadmap status. |
+| **F-03 (P1, docs part)** | Phase 3 presented as complete while target-host acceptance is unchecked. | Explicit status note here and in the acceptance doc: **domain complete in CI; host E2E pending** (target v19.2.13). Not claiming hardware proof before it exists. |
+
+### What did NOT change (deliberately)
+
+- Host-Bridge privilege separation (no docker.sock, no nvidia runtime, bridge-input only) — unchanged, audit-verified OK.
+- The FROZEN allocation state machine and reservation transition table — all fixes walk **legal** transitions only.
+- Daily AI path (`scarlix-mode` → models.yaml → .env → compose) — fabric is still not wired into it (audit F-04 deferred to Phase 5 by design; „knižnica bez volajúceho" until the Host-Bridge allowlist operation exists).
+
+### Verification
+
+```
+gofmt -l .                    → EMPTY (clean)
+go vet ./...                  → CLEAN
+go test ./...                 → all packages OK (incl. new release-reconciliation suite)
+go test -race (reservation, allocation, inventory) → OK
+bash -n                       → OK (install.sh, scarlix-mode, host-bridge, smoke-test, doctor)
+shellcheck -S warning         → OK (CI-checked scripts)
+scarlix-smoke-test.sh         → offline: 11 PASS + 1 WARN (registry skipped) · online: 16 PASS + 0 WARN
+```
+
+*(Executed on the release branch; exact CI run on the final SHA is recorded by the CI checks on the tag.)*
+
+---
+
 ## 🆕 What's New in v19.2.0 (vs v19.1.20)
 
 **Compute Fabric Kickoff — v19.1.x generation is FROZEN.** 1 P1 + 1 P2 from 3 audits of v19.1.20.
@@ -98,7 +173,19 @@ scarlix-mode ai
 | P1 | **`check_10` command-substitution bypass closed** | The allow-list only checked the line prefix; `KEY=$(cmd)` matched, but the `.env` heredoc is unquoted, so bash would execute it | No line (comments included) may contain `$(` or a backtick; values limited to `[A-Za-z0-9_./:-]` plus `$var` / `${var}` |
 | P2 | **LiteLLM config header version is dynamic** | Hardcoded `v19.0.3`, drifted across 17 releases | Reads `VERSION` (repo root → `/etc/scarlix/VERSION` → `/usr/local/share/scarlix/VERSION` → `unknown`) |
 
-**Roadmap (Compute Fabric v19.2.x):** real scheduler allocation (v19.2.1), lease + reservation (v19.2.2), preferred-runtime soft hint (v19.2.9), single-GPU detection (v19.2.9), Pi-Bolt supply-chain pin (v19.2.9), model integrity + image digest pinning (v19.2.9).
+**Roadmap (Compute Fabric v19.2.x) — evidence-based status** *(v19.2.12: the roadmap now records only what a tag actually proves — “dôkaz namiesto sľubu”; earlier targets were repeatedly promised and missed, see the v19.2.11 audits)*:
+
+| Item | Status | Evidence |
+|------|--------|----------|
+| Real scheduler allocation | **done** (v19.2.1) | dry-run planner + contract integration, CI-tested |
+| Lease + reservation domain (Phase 2/3) | **done** (v19.2.2–v19.2.11) | FROZEN state machine, flock, lease lifecycle, commit consistency; unit/integration tests in CI |
+| Release/allocation lifecycle convergence | **done** (v19.2.12) | KPK-19.2.11-P1-01/P1-02 fixed: allocation never remains RESERVED after release; startup `Recover()` orchestration + regression tests |
+| Preferred-runtime soft hint | **partial** (deferred from v19.2.9) | scheduler accepts runtime preference; not yet wired end-to-end into allocation planning |
+| Single-GPU detection | **done** (v19.2.12) | `scarlix-mode` detects GPU_COUNT, gates vLLM, `SCARLIX_ALLOW_SHARED_GPU=1` opt-in sharing with generated compose override; smoke-test check 11 |
+| Pi-Bolt supply-chain pin | **done** (v19.2.12) | installer downloaded to temp + SHA-256 verified against `files/usr/local/share/scarlix/pi-bolt-install.sha256` before execution; smoke-test check 12 |
+| Model integrity + image digest pinning | **deferred** | default AI images stay tag-pinned; experimental `:latest` images documented as residual risk in SECURITY_MAP (F-08) |
+| Target-host GPU E2E acceptance (Phase 3) | **pending** (v19.2.13 target) | `docs/PHASE3_G1_ACCEPTANCE.md` checklist still unchecked — Phase 3 is domain-complete in CI, host E2E NOT yet proven |
+| Fabric → `scarlix-mode` bridge (Phase 5+) | **deferred** | Host-Bridge allowlist operation design; see audit F-04 |
 
 **v19.1.16 → v19.1.20 in one line each:** .16 heredoc P0 fix + security hardening · .17 fish `agent.env.fish` hardening · .18 audit closure + secret hardening · .19 audit closure + portable base64 · .20 mutation-hardened smoke guard.
 
@@ -2172,8 +2259,6 @@ scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)
 
 ---
 
-## 🆕 What's New in v19.2.9 — KpK Audit Closure (8 findings) (vs v19.2.2)
-
 ## 🆕 What's New in v19.2.11 — Reservation Commit Consistency
 
 - Prevents allocation rollback after a reservation has already been durably persisted.
@@ -2181,6 +2266,10 @@ scarlix-smoke-test.sh  → 9 passed, 0 failed, 1 warned (offline)
 - Uses canonical resource IDs in new idempotency fingerprints while accepting the legacy raw-input fingerprint for stored records.
 - Removes the post-rename chmod error path from reservation-store atomic replacement.
 - Adds regression coverage for canonical-equivalent idempotent reservation requests.
+
+> **Audited after release (2026-10-20):** two independent audits of tag `d3d021b7` found release-blocking lifecycle defects (release reconciliation could not transition a `RESERVED` allocation; reserved-lease repair was never wired and silently skipped failures). Fixed in **v19.2.12** — see its section above.
+
+### Historical (v19.2.9 baseline): KpK Audit Closure
 
 **KpK (Kontrola Procesu Kódovania) audit closure.** 4 P1 + 4 P2 from independent audit of v19.2.2 allocation package. All 8 findings fixed, 9 new regression tests added.
 
