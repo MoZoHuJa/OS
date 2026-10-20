@@ -824,10 +824,23 @@ check_15_gaming_manifest_and_installer() {
         fail "scarlix-gaming-install fails bash -n"
         return
     fi
-    # Removal commands must not appear in EXECUTED positions. The headless
-    # profile legitimately PRINTS manual-removal guidance (log/echo lines);
-    # those documentation strings are filtered out before the check.
-    if grep -vE '^[[:space:]]*(log|warn|fail|printf|echo)[[:space:]]' "$installer" | grep -qE '(pacman|yay) +-R'; then
+    # Removal commands must not appear in EXECUTED positions. Documentation
+    # strings are filtered out before the check: log/warn/fail/printf/echo
+    # lines (headless guidance) AND comment lines — the installer's own
+    # safety-contract comment documents the ban and mentions "pacman -R",
+    # which is text, not an executed command.
+    # v19.3.2 fix (deterministic): the old form piped grep -v | grep -q.
+    # With `set -o pipefail`, grep -q's early exit can SIGPIPE the first
+    # grep (exit 141) — the pipeline then evaluated non-zero and the check
+    # PASSED or FAILED depending on process scheduling (CI flake on the
+    # v19.3.2 tag: false positive on the safety-contract comment). Now:
+    # comments filtered too, and the match is collected via command
+    # substitution WITHOUT grep -q, so no early exit, no SIGPIPE, no race.
+    local removal_hits
+    removal_hits=$(grep -vE '^[[:space:]]*(#|;)' "$installer" \
+        | grep -vE '^[[:space:]]*(log|warn|fail|printf|echo)([[:space:]]|$)' \
+        | grep -E '(pacman|yay) +-R' || true)
+    if [[ -n "$removal_hits" ]]; then
         fail "scarlix-gaming-install contains package-removal commands (forbidden: never remove user packages)"
         return
     fi
