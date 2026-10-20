@@ -773,7 +773,6 @@ func TestManager_MarkExpiredCandidates_AccurateCount(t *testing.T) {
 	}
 }
 
-
 // legacyAllocationValidator models a custom implementation that satisfies the
 // original reservation contract but lacks the release lifecycle capability.
 type legacyAllocationValidator struct{ inner *stubAllocationValidator }
