@@ -149,6 +149,37 @@ The allocation store is shared with the ScarliHQ compute lifecycle (both
 sides UID 65532, flock-serialized) — one consistent record set, documented in
 the compose opt-in block (`SCARLIHQ_ALLOCATION_STORE=/var/lib/scarlix-reservation/allocations.jsonl`).
 
+## Agent Kernel foundation (v19.4.0, AK-1)
+
+The deterministic core every future agent capability flows through —
+**"LLM navrhuje, politika rozhoduje"** (strategy p. 13). The kernel owns
+identity, capabilities, sessions, permission evaluation and audit events;
+it is deliberately not yet wired to any HTTP/MCP surface (AK-2+):
+
+```
+AgentID (typed "kind.name", no anonymous agents)
+   │        AgentIdentity{ID, Owner, CreatedAt} — owner principal mandatory
+   ▼
+CapabilitySet (closed enumeration: status.read · gaming.read · mode.request
+   │           compute.plan · compute.reserve · compute.release — NO shell.exec)
+   ▼
+Session (CREATED → ACTIVE → SUSPENDED → CLOSED; CLOSED terminal;
+   │      illegal transitions + backwards clocks rejected)
+   ▼
+Policy.Evaluate(agent, session, caps, capability) → Decision{Allow, Reason}
+   │      fixed rule order: session-required → session-owner → session-state
+   │      → capability-unknown → capability-not-granted → capability-disabled
+   ▼
+AuditEvent{Timestamp, AgentID, SessionID, Capability, Decision} (AK-4 persists)
+```
+
+Pure, deterministic evaluation (same input → same decision + reason, no LLM
+in the decision path); every denial names the fired rule, every allow cites
+the grant. Extending the capability set is a deliberate reviewed act
+(`AllCapabilities` + tests change together). Package:
+`scarlihq/internal/agentkernel`. Design + AK-1…AK-5 sub-phase plan:
+`docs/AGENT_KERNEL_AK1_DESIGN.md`.
+
 ## GPU Arbitration (scarlix-mode)
 
 | Mode | GPU 0 | GPU 1 | CPU | Notes |

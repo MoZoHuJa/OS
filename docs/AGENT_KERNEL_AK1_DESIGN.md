@@ -1,8 +1,9 @@
 # ScarLiX OS — Agent Kernel AK-1: Foundation Design (v19.4.x line)
 
-**Branch:** `agent-kernel/ak1-foundation` (WIP — deliberately NOT merged to main yet)
-**Status:** AK-1 code + tests green on the branch; wiring (AK-2+) follows after review
-**Strategy source:** `docs/ScaRgeN_CuLT_Strategy_Obsidian_Lattice_SK_2026-10.pdf` (pages 15–16, 22, 24)
+**Branch:** `agent-kernel/ak1-foundation` → merged to main as **v19.4.0**
+**Status:** AK-1 complete (incl. pre-merge review fix: enforced capability
+grants in `Policy.Evaluate`); wiring (AK-2+) follows
+**Strategy source:** `docs/ScaRgeN_CuLT_Strategy_Obsidian_Lattice_SK_2026-10.pdf` (pages 13, 15–16, 22, 24)
 
 ---
 
@@ -18,7 +19,7 @@ the Compute Fabric tail; phasing follows verifiable behavior, page 20).
 
 | Phase | Content | Status |
 |---|---|---|
-| **AK-1** | Typed foundations: agent identity, closed capability enumeration, session state machine, deterministic permission engine, audit events | **this branch** — code + tests |
+| **AK-1** | Typed foundations: agent identity, closed capability enumeration, session state machine, deterministic permission engine, audit events | **DONE — merged as v19.4.0** (incl. review fix: capability grants enforced) |
 | **AK-2** | Session store + WS/REST surface (sessions created/closed via ScarliHQ API, auth-gated) | planned |
 | **AK-3** | Policy engine v1: capability grants persisted per agent + admin disable switches; tie into the reservation governor's `user_tokens` principal space | planned |
 | **AK-4** | Audit sink: append-only JSONL under `/var/lib/scarlix-agentkernel/` (0600, flock — same store discipline as reservations) | planned |

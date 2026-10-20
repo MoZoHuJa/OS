@@ -249,6 +249,35 @@ surface (merged from the `19.2.14.P6` line):
   template but never enables the service (smoke-test check_17 asserts the
   absence of any `systemctl enable scarlix-reservation`).
 
+## (n) Agent Kernel foundation (v19.4.0, AK-1)
+
+- **Closed capability enumeration — never "exec":** the only grantable
+  capabilities are `status.read`, `gaming.read`, `mode.request`,
+  `compute.plan`, `compute.reserve`, `compute.release` (mirrors of existing
+  allowlisted surfaces). There is no `shell.exec`, no docker passthrough, no
+  arbitrary file access — strategy p. 22 ("Žiadny voľný root shell").
+  Unknown capabilities are rejected at `NewCapabilitySet` construction;
+  extending the enumeration is a deliberate reviewed act.
+- **No AI-decided permissions:** `Policy.Evaluate` is pure deterministic rule
+  evaluation (no LLM in the decision path — the LLM layer proposes, policy
+  decides). Rules in fixed order: session-required → session-owner →
+  session-state → capability-unknown → capability-not-granted →
+  capability-disabled → grant. Every decision carries a reason
+  ("dôvod výberu aj odmietnutia", strategy p. 13).
+- **Grant check is fail-closed:** the agent's `CapabilitySet` is enforced by
+  the engine itself — a nil or empty set denies everything. (The AK-1 branch
+  draft omitted this check — caught in self-review before merge and fixed;
+  recorded in `docs/AGENT_KERNEL_AK1_DESIGN.md`.)
+- **No anonymous agents:** every `AgentIdentity` carries an owner principal
+  (accountability ties into the governor/ScarliHQ principal space); agent IDs
+  are typed and validated (`kind.name`, `[a-z0-9-]`, ≤64 chars).
+- **Bounded sessions:** `CLOSED` is terminal; illegal transitions and
+  backwards timestamps are rejected — the same fail-closed state-machine
+  discipline as allocation/reservation.
+- **Not yet reachable:** the kernel has no HTTP/MCP surface yet (AK-2+), so
+  the current attack surface is exactly zero — by design, the contract is
+  established and tested before any wiring exists.
+
 ## Other security properties
 
 - **REST/MCP/WS auth:** Bearer token only (no `?token=` URL — v18.6 P2 removed the URL fallback that leaked tokens into logs/referrer/proxy). `crypto/subtle.ConstantTimeCompare` (v18.0.0 P1 — was: custom `secureCompare`).

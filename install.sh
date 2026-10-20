@@ -5,21 +5,21 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v19.3.2 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v19.4.0 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
 # EndeavourOS/Arch bootstrap installer — NO ISO, runs on clean EndeavourOS.
 # 5 phases: packages → NVIDIA → Docker → copy files → wizard + ScarliHQ build.
 # Full changelog: see CHANGELOG.md or git log.
 #
-# USAGE (v19.3.2 Compute Fabric closure — host bridge + gaming + reservation governor):
+# USAGE (v19.4.0 Agent Kernel foundation — host bridge + gaming + reservation governor):
 #   git clone --depth 1 --branch main https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
 #   bash install.sh
 # Or run the one-line command documented in README.md.
 # ============================================================================
 
-VERSION="19.3.2"
+VERSION="19.4.0"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
