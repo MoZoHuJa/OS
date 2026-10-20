@@ -700,8 +700,9 @@ type RecoverySummary struct {
 	// Released lists allocations whose interrupted release was completed to
 	// RELEASED.
 	Released []string
-	// CleanupBlocked lists allocations persisted in CLEANUP_REQUIRED — an
-	// operator must inspect these; they are never auto-released.
+	// CleanupBlocked lists allocations whose interrupted release remains unresolved.
+	// This includes CLEANUP_REQUIRED and still-RELEASING records; operators must
+	// inspect these instead of assuming the release completed.
 	CleanupBlocked []string
 	// LeaseRepaired lists RESERVED allocations whose stale lease metadata was
 	// converged with the authoritative reservation bundle.
@@ -1201,6 +1202,13 @@ func (m *Manager) RequestRelease(reservationID, token string) (*Reservation, err
 	if err != nil {
 		return nil, err
 	}
+	// Fail closed BEFORE persisting RELEASING. A legacy/custom validator that
+	// cannot persist allocation-side release intent must not leave a reservation
+	// half-transitioned while this method reports success.
+	releaseReconciler, ok := m.allocVal.(allocationReleaseReconciler)
+	if !ok {
+		return nil, fmt.Errorf("%w: allocation validator does not support release lifecycle reconciliation", ErrReconciliationRequired)
+	}
 	var updated *Reservation
 	err = m.store.update(reservationID, func(r *Reservation) error {
 		if r.Owner != identity.Principal() && !identity.IsReconciler() {
@@ -1228,11 +1236,9 @@ func (m *Manager) RequestRelease(reservationID, token string) (*Reservation, err
 	// member's RELEASING transition (idempotent for RELEASING/RELEASED
 	// allocations, kept for CLEANUP_REQUIRED).
 	if updated != nil && updated.Status == StatusReleasing && updated.AllocationID != "" {
-		if releaser, ok := m.allocVal.(allocationReleaseReconciler); ok {
-			if err := releaser.BeginAllocationRelease(updated.AllocationID); err != nil {
-				return updated, fmt.Errorf("%w: reservation %s is RELEASING but allocation %s release intent could not be persisted: %w",
-					ErrAllocationReconciliationPending, reservationID, updated.AllocationID, err)
-			}
+		if err := releaseReconciler.BeginAllocationRelease(updated.AllocationID); err != nil {
+			return updated, fmt.Errorf("%w: reservation %s is RELEASING but allocation %s release intent could not be persisted: %w",
+				ErrAllocationReconciliationPending, reservationID, updated.AllocationID, err)
 		}
 	}
 	return updated, nil

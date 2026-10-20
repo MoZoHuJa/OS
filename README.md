@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.2.13 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.3.0 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.2.13</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.3.0</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/tree/19.2.10.G1"><img alt="Version" src="https://img.shields.io/badge/version-v19.2.9-B87333?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.3.0-B87333?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-D4A574?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-A8C5D4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-D4A574?style=flat-square" /></a>
@@ -59,15 +59,16 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.2.13 | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.3.0 (hardware validation) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
-### 📑 Changelog Index (v19.2.x)
+### 📑 Changelog Index (v19.3.x / v19.2.x)
 
 Chronological, newest first. Each entry links to its tag; entries with a dedicated README section are marked 📄.
 
 | Version | One line | Reference |
 |---------|----------|-----------|
-| **v19.2.13** | Interrupted-release recovery completion + strict opt-in parsing + Pi-Bolt user-owned execution (KPK audit of v19.2.12) | 📄 [What's New](#-whats-new-in-v19213--interrupted-release-recovery-closure) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.13) |
+| **v19.3.0** | Hardware-validation candidate: fail-closed release capability, deterministic test cleanup, dynamic smoke-test version, clean EndeavourOS one-command install path | 📄 [What's New](#-whats-new-in-v1930--hardware-validation-candidate) · [main](https://github.com/MoZoHuJa/OS/tree/main) |
+| **v19.2.13** | Interrupted-release recovery completion + strict opt-in parsing + Pi-Bolt user-owned execution (KPK audit of v19.2.12) | 📄 [What's New](#-whats-new-in-v19213--interrupted-release-closure) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.13) |
 | v19.2.12 | Release-lifecycle closure + supply-chain pins (2 audits of v19.2.11) | 📄 [What's New](#-whats-new-in-v19212--release-lifecycle-closure) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.12) |
 | v19.2.11 | Reservation commit consistency | 📄 section below · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.11) |
 | v19.2.10 | Phase 3 G1 — allocation plan binding, composition root, token identity | [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.10) |
@@ -80,12 +81,21 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 ## 🚀 Install (NO ISO)
 
-### Primary (safe — review first) ⭐
+### One-command install — v19.3.0 hardware validation
+
+Run this on a **fresh EndeavourOS installation** from your normal user account. It clones the current v19.3.0 mainline and starts the installer; the installer requests sudo itself. Review the script first if you do not want to run the install immediately.
+
 ```bash
-git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
+git clone --depth 1 --branch main https://github.com/MoZoHuJa/OS.git ~/scarlix-os && cd ~/scarlix-os && bash install.sh
+```
+
+This is a hardware-validation candidate, not a claim that target-hardware E2E has already passed. The installer performs system upgrades, changes NVIDIA/Docker configuration and installs packages; use a machine you can recover and keep a backup.
+
+### Manual review before install
+```bash
+git clone --depth 1 --branch main https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 cd ~/scarlix-os
-git checkout 19.2.10.G1   # candidate branch; release tag follows CI/acceptance gates
-nano install.sh         # review
+less install.sh
 bash install.sh
 ```
 
@@ -103,6 +113,30 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.3.0 — Hardware Validation Candidate
+
+**Purpose:** prepare a reproducible mainline build for hands-on validation on a clean EndeavourOS host. This release does not claim the target-host E2E gate has passed; the hardware run is the next required validation step.
+
+- **KpK P2 closure:** `RequestRelease()` now fails closed *before changing reservation state* if the injected allocation validator cannot persist release lifecycle transitions. It cannot silently create a `RELEASING` reservation without the required allocation-side capability.
+- **KpK P3 closure:** lease-reaper regression-test cleanup cancels and joins the goroutine even when an assertion exits early, before temporary-directory cleanup.
+- **KpK P3 closure:** `RecoverySummary.CleanupBlocked` documents both `CLEANUP_REQUIRED` and unresolved `RELEASING` work, matching the actual recovery semantics.
+- **Smoke-test correctness:** the displayed version is read from `VERSION`; it no longer prints a stale hard-coded v19.2.12 banner.
+- **Release/install consistency:** `VERSION`, installer, ScarliHQ Docker default and current README metadata are aligned to `19.3.0`.
+- **Install entry point:** README documents one command for a fresh EndeavourOS host. The installer remains interactive where required and can trigger system upgrades/reboots.
+
+### Required host acceptance before declaring production-ready
+
+1. Fresh EndeavourOS boot, installer completes without critical errors.
+2. Reboot; NVIDIA drivers load and `nvidia-smi` sees each installed GPU.
+3. Docker daemon starts; `docker compose config` and the installed smoke test pass.
+4. ScarliHQ health endpoint and host-bridge status work; no secret/token leaks in logs.
+5. Run a small inference on each intended GPU/runtime; verify GPU assignment, VRAM use, fallback and single-GPU safe mode.
+6. Reboot and rerun smoke/doctor checks; attach logs with secrets redacted.
+
+Until these pass on the actual host, v19.3.0 is a **hardware-validation candidate**, not a certified production release.
 
 ---
 

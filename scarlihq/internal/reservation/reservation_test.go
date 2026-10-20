@@ -772,3 +772,42 @@ func TestManager_MarkExpiredCandidates_AccurateCount(t *testing.T) {
 		t.Errorf("Second: %d, want 0", marked2)
 	}
 }
+
+
+// legacyAllocationValidator models a custom implementation that satisfies the
+// original reservation contract but lacks the release lifecycle capability.
+type legacyAllocationValidator struct{ inner *stubAllocationValidator }
+
+func (s *legacyAllocationValidator) ValidateForReservation(id string) error {
+	return s.inner.ValidateForReservation(id)
+}
+func (s *legacyAllocationValidator) BeginReservation(id string) error {
+	return s.inner.BeginReservation(id)
+}
+func (s *legacyAllocationValidator) EndReservation(id string, success bool) error {
+	return s.inner.EndReservation(id, success)
+}
+
+func TestRequestRelease_FailsClosedWithoutReleaseLifecycleCapability(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+	reserved, err := mgr.Reserve(ReserveRequest{
+		AllocationID: "alloc-1", ResourceID: testGPUUUID0,
+		ResourceType: ResourceTypeGPUDevice, LeaseTTL: 5 * time.Minute,
+	}, "user-token")
+	if err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+	mgr.allocVal = &legacyAllocationValidator{inner: newStubAllocValidator("alloc-1")}
+
+	_, err = mgr.RequestRelease(reserved.ReservationID, "user-token")
+	if !errors.Is(err, ErrReconciliationRequired) {
+		t.Fatalf("RequestRelease error = %v, want ErrReconciliationRequired", err)
+	}
+	got, err := mgr.Get(reserved.ReservationID)
+	if err != nil {
+		t.Fatalf("Get reservation after rejected release: %v", err)
+	}
+	if got.Status != StatusHeld {
+		t.Fatalf("reservation status = %s, want HELD (must not mutate without lifecycle capability)", got.Status)
+	}
+}

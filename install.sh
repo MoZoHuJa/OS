@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v19.2.13 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v19.3.0 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
 # EndeavourOS/Arch bootstrap installer — NO ISO, runs on clean EndeavourOS.
@@ -19,7 +19,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="19.2.13"
+VERSION="19.3.0"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
