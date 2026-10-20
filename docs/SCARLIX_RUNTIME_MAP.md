@@ -1,6 +1,14 @@
 # SCARLIX OS v19.2.9 — Runtime Map
 
 > Purpose: Frozen reference of every inference + gateway runtime in the v19.0.6 tree — image tag, port, GPU binding, config source, healthcheck, and start command. All values cited from the actual `ai/*/docker-compose.yml` files on branch `fix-v19.0.6`.
+>
+> **v19.2.13 note (KpK audit P3-04):** the GPU bindings below are the **base compose** values.
+> They are intentionally NOT edited for portability — single-GPU hosts are adapted through the
+> **override model**: `scarlix-mode` detects `GPU_COUNT` (via `nvidia-smi -L`) and, only when the
+> operator sets the exact opt-in `SCARLIX_ALLOW_SHARED_GPU=1`, generates
+> `ai/vllm/docker-compose.gpu-adapter.yml` (device_ids `["0"]` + `NVIDIA_VISIBLE_DEVICES=0`)
+> which compose merges over the base file. Without the opt-in, vLLM is gated off on
+> single-GPU hosts (audit default). Stale overrides are removed when sharing is inactive.
 
 ## Tier 1 — SGLang (primary, GPU 0)
 

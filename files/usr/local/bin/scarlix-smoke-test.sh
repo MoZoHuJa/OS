@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# SCARLIX OS v19.2.12 — Regression Smoke Test (baseline freeze + P0 checks)
+# SCARLIX OS v19.2.13 — Regression Smoke Test (baseline freeze + P0 checks)
 #
-# Runs 12 integrity checks against the SCARLIX OS repo and prints a
+# Runs 14 integrity checks against the SCARLIX OS repo and prints a
 # PASS/FAIL/WARN line for each. Exits 0 if no check FAILed, 1 otherwise.
 # WARNs (e.g. missing tool, network error) do NOT fail the run.
 #
@@ -38,7 +38,7 @@ WARN_COUNT=0
 # ---------------------------------------------------------------------------
 usage() {
     cat <<'EOF'
-scarlix-smoke-test.sh — SCARLIX OS v19.2.12 regression smoke test
+scarlix-smoke-test.sh — SCARLIX OS v19.2.13 regression smoke test
 
 Usage:
   scarlix-smoke-test.sh [--offline] [--help]
@@ -552,8 +552,17 @@ check_11_single_gpu_adaptation() {
         local gpu_count
         gpu_count=$(nvidia-smi -L 2>/dev/null | wc -l || echo 0)
         if (( gpu_count < 2 )); then
+            # KPK-19.2.13-P2-02: use the strict opt-in parser (exact
+            # SCARLIX_ALLOW_SHARED_GPU=1 only) instead of a prefix grep.
+            local flag_fn=""
+            flag_fn=$(awk '/# --- strict env flag parsing \(KPK-19\.2\.13-P2-02\) begin ---/,/# --- strict env flag parsing \(KPK-19\.2\.13-P2-02\) end ---/' "$mode")
+            local sharing_enabled=0
+            if [ -n "$flag_fn" ]; then
+                sharing_enabled=$(bash -c "${flag_fn}
+scarlix_env_flag_enabled SCARLIX_ALLOW_SHARED_GPU /etc/scarlix/.env >/dev/null 2>&1 && echo 1 || echo 0")
+            fi
             if [[ -f /opt/scarlix/ai/vllm/docker-compose.gpu-adapter.yml ]] \
-               || ! grep -q '^SCARLIX_ALLOW_SHARED_GPU=1' /etc/scarlix/.env 2>/dev/null; then
+               || [ "$sharing_enabled" -eq 0 ]; then
                 pass "single-GPU host (GPU_COUNT=$gpu_count): vLLM adapted or gated off (F-02)"
             else
                 fail "single-GPU host with sharing opt-in but no GPU adapter override generated (F-02)"
@@ -598,6 +607,150 @@ check_12_pibolt_sha256_pin() {
 }
 
 # ===========================================================================
+# Check 13 — v19.2.13 KPK-19.2.12-P2-01: Pi-Bolt verified-installer execution
+# must hand the root-verified installer to a USER-OWNED private copy before
+# `sudo -u $REAL_USER bash` — executing a root-owned 0600 mktemp file as an
+# unprivileged user can never work (unreadable). Also verifies the P3-01
+# cleanup traps for BOTH temp copies on every success/failure/interrupt path.
+# ===========================================================================
+check_13_pibolt_user_owned_execution() {
+    echo "--- [13] Pi-Bolt installer executes a user-owned verified copy (not a root-owned 0600 temp) ---"
+    local installer="$REPO_DIR/install.sh"
+    if [[ ! -f "$installer" ]]; then
+        fail "install.sh not found"
+        return
+    fi
+    # (a) The root-owned temp must never be the file executed as REAL_USER.
+    if grep -q 'sudo -u "\$REAL_USER" bash "\$PI_BOLT_TMP"' "$installer" \
+       || grep -Eq 'sudo -u +"?\$REAL_USER"? +bash +"?\$PI_BOLT_TMP"?' "$installer"; then
+        fail "install.sh executes the root-owned PI_BOLT_TMP as REAL_USER — the unprivileged user cannot read a root-owned 0600 file (P2-01)"
+        return
+    fi
+    # (b) The verified content must be handed to a user-owned private copy:
+    #     mktemp AS the user + install -o/-m 0600 from root.
+    if ! grep -q 'sudo -u "\$REAL_USER" mktemp' "$installer"; then
+        fail "install.sh does not create the user-side temp file as REAL_USER (P2-01)"
+        return
+    fi
+    if ! grep -Eq 'install +-o +"?\$REAL_USER"? +-m 0600' "$installer"; then
+        fail "install.sh does not hand the verified installer to a user-owned copy with install -o -m 0600 (P2-01 — never world-readable)"
+        return
+    fi
+    # (c) The executed script must be the user-owned copy.
+    if ! grep -q 'sudo -u "\$REAL_USER" bash "\$PI_BOLT_USER_TMP"' "$installer"; then
+        fail "install.sh must execute PI_BOLT_USER_TMP (the user-owned verified copy), not the root temp (P2-01)"
+        return
+    fi
+    # (d) P3-01: both temp copies cleaned up on success/failure/interrupt paths.
+    if ! grep -q 'pi_bolt_cleanup' "$installer" \
+       || ! grep -Eq 'trap +pi_bolt_cleanup +EXIT' "$installer" \
+       || ! grep -Eq "trap +'pi_bolt_cleanup; exit 130' +INT" "$installer" \
+       || ! grep -Eq "trap +'pi_bolt_cleanup; exit 143' +TERM" "$installer"; then
+        fail "install.sh must clean up BOTH Pi-Bolt temp copies via EXIT/INT/TERM traps (P3-01)"
+        return
+    fi
+    # (e) Runtime mechanic (runs as the CURRENT unprivileged user, mirroring
+    #     the handoff): private temp A, hash-pinned content, install -m 0600
+    #     copy B, execute B — the verified content is readable and invoked by
+    #     a non-root user; a checksum mismatch still prevents execution.
+    local tmp_a tmp_b
+    tmp_a=$(mktemp /tmp/pibolt-check-a.XXXXXX)
+    tmp_b=$(mktemp /tmp/pibolt-check-b.XXXXXX)
+    printf '#!/usr/bin/env bash\necho verified-installer-ran\n' > "$tmp_a"
+    local pinned actual
+    pinned=$(sha256sum "$tmp_a" | awk '{print $1}')
+    if ! install -m 0600 "$tmp_a" "$tmp_b" 2>/dev/null; then
+        fail "runtime handoff mechanic: install -m 0600 copy failed"
+        rm -f "$tmp_a" "$tmp_b"
+        return
+    fi
+    actual=$(sha256sum "$tmp_b" | awk '{print $1}')
+    if [[ "$actual" != "$pinned" ]]; then
+        fail "runtime handoff mechanic: content hash changed during the copy"
+        rm -f "$tmp_a" "$tmp_b"
+        return
+    fi
+    local out
+    out=$(bash "$tmp_b" 2>/dev/null)
+    if [[ "$out" != "verified-installer-ran" ]]; then
+        fail "runtime handoff mechanic: the verified copy was not readable/executable as the unprivileged user (P2-01)"
+        rm -f "$tmp_a" "$tmp_b"
+        return
+    fi
+    rm -f "$tmp_a" "$tmp_b"
+    pass "verified installer handed to a user-owned 0600 copy before non-root execution; both temps trapped for cleanup (P2-01/P3-01)"
+}
+
+# ===========================================================================
+# Check 14 — v19.2.13 KPK-19.2.12-P2-02: GPU-sharing opt-in must accept ONLY
+# the exact line SCARLIX_ALLOW_SHARED_GPU=1. The v19.2.12 prefix grep also
+# matched =10, =1unexpected, "=1 # comment"… This check extracts the PRODUCTION
+# parser from scarlix-mode and runs the full value matrix.
+# ===========================================================================
+check_14_strict_gpu_optin_parsing() {
+    echo "--- [14] GPU sharing opt-in accepts only exact SCARLIX_ALLOW_SHARED_GPU=1 ---"
+    local mode="$REPO_DIR/files/usr/local/bin/scarlix-mode"
+    if [[ ! -f "$mode" ]]; then
+        fail "scarlix-mode not found"
+        return
+    fi
+    local flag_fn
+    flag_fn=$(awk '/# --- strict env flag parsing \(KPK-19\.2\.13-P2-02\) begin ---/,/# --- strict env flag parsing \(KPK-19\.2\.13-P2-02\) end ---/' "$mode")
+    if [[ -z "$flag_fn" ]]; then
+        fail "scarlix-mode: strict env flag parser (scarlix_env_flag_enabled) missing (P2-02)"
+        return
+    fi
+    if ! grep -q 'grep -c "^\${key}="' <<<"$flag_fn" && ! grep -q 'grep -c "^\${key}="' "$mode"; then
+        fail "scarlix-mode: strict parser must count exact key definitions, not prefix-match them (P2-02)"
+        return
+    fi
+    local td
+    td=$(mktemp -d)
+    local runner
+    runner=$(mktemp)
+    {
+        printf '%s\n' "$flag_fn"
+        cat <<'RUNNER'
+run_case() {
+    local content="$1" expect="$2" name="$3" file="$4"
+    printf '%b' "$content" > "$file"
+    if scarlix_env_flag_enabled SCARLIX_ALLOW_SHARED_GPU "$file" 2>/dev/null; then got=1; else got=0; fi
+    if [ "$got" != "$expect" ]; then
+        echo "FAIL:$name"
+    else
+        echo "OK:$name"
+    fi
+}
+RUNNER
+        cat <<CASES
+run_case 'SCARLIX_ALLOW_SHARED_GPU=1\n' 1 exact-one "$td/a"
+run_case 'SCARLIX_ALLOW_SHARED_GPU=0\n' 0 zero "$td/a"
+run_case 'SCARLIX_ALLOW_SHARED_GPU=10\n' 0 ten "$td/a"
+run_case 'SCARLIX_ALLOW_SHARED_GPU=1unexpected\n' 0 one-unexpected "$td/a"
+run_case 'SCARLIX_ALLOW_SHARED_GPU=true\n' 0 true "$td/a"
+run_case 'SCARLIX_ALLOW_SHARED_GPU=\n' 0 empty "$td/a"
+run_case ' SCARLIX_ALLOW_SHARED_GPU=1\n' 0 leading-whitespace "$td/a"
+run_case 'SCARLIX_ALLOW_SHARED_GPU=1 # comment\n' 0 trailing-comment "$td/a"
+run_case 'SCARLIX_ALLOW_SHARED_GPU=1\nSCARLIX_ALLOW_SHARED_GPU=1\n' 0 duplicate-keys "$td/a"
+run_case '# SCARLIX_ALLOW_SHARED_GPU=1\n' 0 commented-out "$td/a"
+CASES
+    } > "$runner"
+    local results bad
+    results=$(bash "$runner" 2>/dev/null)
+    bad=$(grep -c '^FAIL:' <<<"$results" || true)
+    rm -rf "$td" "$runner"
+    if (( bad > 0 )); then
+        fail "strict opt-in parser rejected valid input or accepted malformed values: $(grep '^FAIL:' <<<"$results" | tr '\n' ' ') (P2-02)"
+        return
+    fi
+    if ! grep -q '^OK:exact-one$' <<<"$results"; then
+        fail "the exact documented opt-in SCARLIX_ALLOW_SHARED_GPU=1 must enable sharing (P2-02)"
+        return
+    fi
+    pass "only the exact SCARLIX_ALLOW_SHARED_GPU=1 line enables GPU sharing; malformed/duplicate values fail closed (P2-02)"
+}
+
+# ===========================================================================
 # Run all checks
 # ===========================================================================
 check_01_bash_syntax
@@ -612,6 +765,8 @@ check_09_docs_v12
 check_10_vllm_trust_p0
 check_11_single_gpu_adaptation
 check_12_pibolt_sha256_pin
+check_13_pibolt_user_owned_execution
+check_14_strict_gpu_optin_parsing
 
 # ===========================================================================
 # Summary

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.2.12 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.2.13 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.2.12</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.2.13</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -59,7 +59,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.2.12 | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.2.13 | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ### 📑 Changelog Index (v19.2.x)
 
@@ -67,7 +67,8 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 | Version | One line | Reference |
 |---------|----------|-----------|
-| **v19.2.12** | Release-lifecycle closure + supply-chain pins (2 audits of v19.2.11) | 📄 [What's New](#-whats-new-in-v19212--release-lifecycle-closure) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.12) |
+| **v19.2.13** | Interrupted-release recovery completion + strict opt-in parsing + Pi-Bolt user-owned execution (KPK audit of v19.2.12) | 📄 [What's New](#-whats-new-in-v19213--interrupted-release-recovery-closure) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.13) |
+| v19.2.12 | Release-lifecycle closure + supply-chain pins (2 audits of v19.2.11) | 📄 [What's New](#-whats-new-in-v19212--release-lifecycle-closure) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.12) |
 | v19.2.11 | Reservation commit consistency | 📄 section below · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.11) |
 | v19.2.10 | Phase 3 G1 — allocation plan binding, composition root, token identity | [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.10) |
 | v19.2.9 | KpK audit closure (8 findings) | 📄 historical section below · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.9) |
@@ -109,7 +110,7 @@ scarlix-mode ai
 
 **Release-blocking findings from two independent audits of v19.2.11 closed.** 2 P1 + 3 P2 from the KPK audit (`CHANGES REQUIRED — NOT APPROVED FOR PRODUCTION RELEASE` verdict on v19.2.11) plus P1/P2 supply-chain, portability and documentation findings from the Deep Audit. Both audits verified against commit `d3d021b7`.
 
-> **Phase 3 status (honest):** domain-complete in CI — **target-host E2E still pending** (`docs/PHASE3_G1_ACCEPTANCE.md` unchecked; target v19.2.13). Do not treat Compute Fabric as hardware-proven yet.
+> **Phase 3 status (honest):** domain-complete in CI — **target-host E2E still pending** (`docs/PHASE3_G1_ACCEPTANCE.md` unchecked; target v19.2.14). Do not treat Compute Fabric as hardware-proven yet.
 
 ### P1 fixes — allocation release lifecycle (KPK-19.2.11-P1-01)
 
@@ -164,6 +165,63 @@ scarlix-smoke-test.sh         → offline: 11 PASS + 1 WARN (registry skipped) �
 
 ---
 
+## 🆕 What's New in v19.2.13 — Interrupted-Release Recovery Closure
+
+**Release-blocking findings from the KpK Deep Audit of v19.2.12 closed.** 2 P1 + 4 P2 verified against commit `76b7d243`. A second audit (KpK — nový koder) approved v19.2.12 for its tag with process/P2/P3 recommendations; all of its actionable items are included here too.
+
+> **Scope statement (KPK-19.2.12-P2-03, honest):** the reservation/allocation recovery machinery (`Recover()`, `RunLeaseReaper`, `ReconcileAllPending`) is a **domain-layer library** wired into tests, smoke checks and CI — no production service composition root invokes it yet. It must not be described as end-to-end operationally wired until the real caller exists (Phase 5, audit F-04). Target-host E2E acceptance stays open (target v19.2.14).
+
+### P1 fixes — crash recovery strands a user-initiated release (KPK-19.2.12-P1-01)
+
+| # | Finding | Fix |
+|---|---------|-----|
+| **P1-01** | A crash between `RequestRelease()` and `ConfirmRelease()` left the reservation `RELEASING` while the allocation stayed `RESERVED` — phase 3 only scanned `RELEASING`/`CLEANUP_REQUIRED` allocations, phase 4's bundle validation rejected the `RELEASING` member (HELD-only allowed), and the expiry reaper only processed `EXPIRED_PENDING_RECONCILIATION`. A committed release could strand **indefinitely**. | (1) `RequestRelease()` persists the allocation release intent (`RESERVED → RELEASING`) with the first member's transition — a failure surfaces a typed `ErrAllocationReconciliationPending`. (2) `recoverReleasingAllocation()` now **actively completes** the release: HELD/EXPIRED members are requested for release, `RELEASING` members confirmed with per-member cleanup verification — under the documented bundle-release contract (releasing any member releases the whole allocation), never waiting for lease expiry. (3) Phase 4 routes a `RELEASING` bundle member under a still-`RESERVED` allocation (incl. pre-v19.2.13 persisted states) to active completion. (4) `ConfirmRelease()` idempotent replay converges the allocation instead of skipping. (5) The interrupted-release scan now also runs on **every lease-reaper tick**. (6) Unresolved release work is reported in `RecoverySummary` (blocked), never silently dropped. |
+
+### P1 fixes — illegal FAILED/CANCELLED → RELEASED transitions (KPK-19.2.12-P1-02)
+
+| # | Finding | Fix |
+|---|---------|-----|
+| **P1-02** | `CompleteAllocationRelease()` grouped `FAILED`/`CANCELLED` as "legal direct paths" into the terminal `RELEASED` — but the **frozen transition table forbids** those jumps (only `FAILED/CANCELLED → RELEASING/CLEANUP_REQUIRED` are legal). A failed/cancelled allocation with a reservation bundle could never converge, and neither scanner enumerated those states. | `FAILED`/`CANCELLED` now **walk through `RELEASING`** before the terminal transition (table-legal for every source state); the release scan (`ListReleasingAllocations`) covers **every legal source state** of the release lifecycle (`RELEASING`, `CLEANUP_REQUIRED`, `FAILED`, `CANCELLED`). Guard: a `FAILED`/`CANCELLED` allocation with a **HELD-only** bundle is not release work — the expiry reaper / user release path owns it; recovery never force-releases it. |
+
+### P2 fixes
+
+| # | Finding | Fix |
+|---|---------|-----|
+| **P2-01** | The Pi-Bolt installer was verified as root in a root-owned `mktemp` file (mode `0600`) and then executed via `sudo -u "$REAL_USER" bash` — the unprivileged user **cannot read** the file, so the pinned install always failed at execution. | The verified content is handed to a **user-owned private copy** before execution: user-side `mktemp` as `$REAL_USER` + `install -o $REAL_USER -m 0600` from root (never world-readable; integrity preserved between verification and execution), then the user-owned copy is executed. Smoke-test check 13 verifies the static pattern **and** the runtime mechanic. |
+| **P2-02** | `grep -q '^SCARLIX_ALLOW_SHARED_GPU=1'` had no end-of-line anchor — `=10`, `=1unexpected`, `=1 # comment` all enabled GPU sharing. | Strict `scarlix_env_flag_enabled` parser: only the **exact** line `SCARLIX_ALLOW_SHARED_GPU=1` enables; **duplicate keys are rejected** (fail closed + warning); every other value (0, 10, true, empty, leading whitespace, trailing comment) leaves the gate closed. Smoke-test check 14 extracts the production parser and runs the full value matrix. |
+| **P2-03** | No production composition-root caller of the recovery sequence existed in the source — the factory only documented it. | Kept as an explicitly-scoped **domain library** with a loud scope statement (top of this section, SECURITY_MAP, PHASE3_G1_ACCEPTANCE) instead of claiming operational wiring; the startup contract is documented on `NewFileBackedManager` and covered by integration tests + CI. Real service wiring remains Phase 5 (audit F-04). |
+| **P2-04** | `validateBundleConsistency()` dereferenced `bundle[0]` **before** the in-loop nil check — a nil first member panicked instead of failing closed. | Every member is nil-checked **before** the first dereference (and `sortReservations` is nil-safe), returning a typed error at every callable boundary — validator, `validateActiveBundle`, `FinalizeReservation`. Never a panic. |
+
+### Process / hygiene (from the approving KpK audit)
+
+- **Pin freshness (P2-01):** scheduled CI workflow `pin-freshness.yml` re-downloads the Pi-Bolt installer weekly and compares the hash with the shipped pin — drift fails the job. README records: **Pi-Bolt pin last verified: 2026-10-20**.
+- **CleanupVerified semantics documented (P2-02):** SECURITY_MAP now states that `allocation RELEASED` implies **reservation-layer** verified cleanup; hardware proof is the verifier implementation's responsibility (production verifier in Phase 5 / host E2E).
+- **Temp cleanup (P3-01):** both Pi-Bolt temp copies (root + user) are removed on every success/failure/interrupt path (`EXIT`/`INT`/`TERM` traps + inline removal).
+- **RUNTIME_MAP (P3-04):** the `device_ids` **override model** is documented (base compose files stay untouched; `scarlix-mode` generates the single-GPU override).
+
+### What did NOT change (deliberately)
+
+- Host-Bridge privilege separation (no docker.sock, no nvidia runtime, bridge-input only) — unchanged, audit-verified OK.
+- The FROZEN allocation state machine and reservation transition table — every fix walks **legal** transitions only (table-driven test covers all source states).
+- Daily AI path (`scarlix-mode` → models.yaml → .env → compose) — fabric still not wired into it (Phase 5, audit F-04).
+- Base compose `device_ids` hardcodes — intentionally adapted **via generated override**, not by editing upstream compose.
+
+### Verification
+
+```
+gofmt -l .                    → EMPTY (clean)
+go vet ./...                  → CLEAN
+go test -count=1 ./...         → all 12 packages OK (incl. new interrupted-release suite)
+go test -race -count=1 (reservation, allocation, inventory) → OK
+bash -n                       → OK (install.sh, scarlix-mode, smoke-test)
+shellcheck -S warning         → OK (CI-checked scripts)
+scarlix-smoke-test.sh         → online: 18 PASS + 0 FAIL + 0 WARN (14 checks)
+```
+
+*(Executed on the release branch; exact CI run on the final SHA is recorded by the CI checks on the tag.)*
+
+---
+
 ## 🆕 What's New in v19.2.0 (vs v19.1.20)
 
 **Compute Fabric Kickoff — v19.1.x generation is FROZEN.** 1 P1 + 1 P2 from 3 audits of v19.1.20.
@@ -179,12 +237,12 @@ scarlix-smoke-test.sh         → offline: 11 PASS + 1 WARN (registry skipped) �
 |------|--------|----------|
 | Real scheduler allocation | **done** (v19.2.1) | dry-run planner + contract integration, CI-tested |
 | Lease + reservation domain (Phase 2/3) | **done** (v19.2.2–v19.2.11) | FROZEN state machine, flock, lease lifecycle, commit consistency; unit/integration tests in CI |
-| Release/allocation lifecycle convergence | **done** (v19.2.12) | KPK-19.2.11-P1-01/P1-02 fixed: allocation never remains RESERVED after release; startup `Recover()` orchestration + regression tests |
+| Release/allocation lifecycle convergence | **done** (v19.2.12–v19.2.13) | KPK-19.2.11-P1-01/P1-02 + KPK-19.2.12-P1-01/P1-02 fixed: allocation never remains RESERVED after release; interrupted releases actively completed (startup **and** every reaper tick); startup `Recover()` orchestration + regression tests |
 | Preferred-runtime soft hint | **partial** (deferred from v19.2.9) | scheduler accepts runtime preference; not yet wired end-to-end into allocation planning |
-| Single-GPU detection | **done** (v19.2.12) | `scarlix-mode` detects GPU_COUNT, gates vLLM, `SCARLIX_ALLOW_SHARED_GPU=1` opt-in sharing with generated compose override; smoke-test check 11 |
-| Pi-Bolt supply-chain pin | **done** (v19.2.12) | installer downloaded to temp + SHA-256 verified against `files/usr/local/share/scarlix/pi-bolt-install.sha256` before execution; smoke-test check 12 |
+| Single-GPU detection | **done** (v19.2.12, strict parsing v19.2.13) | `scarlix-mode` detects GPU_COUNT, gates vLLM, exact `SCARLIX_ALLOW_SHARED_GPU=1` opt-in (duplicates rejected) with generated compose override; smoke-test checks 11+14 |
+| Pi-Bolt supply-chain pin | **done** (v19.2.12, user-owned execution v19.2.13) | installer downloaded to temp + SHA-256 verified against `files/usr/local/share/scarlix/pi-bolt-install.sha256`; **user-owned verified copy** executed as `$REAL_USER`; both temps trapped for cleanup; smoke-test checks 12+13; scheduled pin-freshness CI job |
 | Model integrity + image digest pinning | **deferred** | default AI images stay tag-pinned; experimental `:latest` images documented as residual risk in SECURITY_MAP (F-08) |
-| Target-host GPU E2E acceptance (Phase 3) | **pending** (v19.2.13 target) | `docs/PHASE3_G1_ACCEPTANCE.md` checklist still unchecked — Phase 3 is domain-complete in CI, host E2E NOT yet proven |
+| Target-host GPU E2E acceptance (Phase 3) | **pending** (v19.2.14 target) | `docs/PHASE3_G1_ACCEPTANCE.md` checklist still unchecked — Phase 3 is domain-complete in CI, host E2E NOT yet proven |
 | Fabric → `scarlix-mode` bridge (Phase 5+) | **deferred** | Host-Bridge allowlist operation design; see audit F-04 |
 
 **v19.1.16 → v19.1.20 in one line each:** .16 heredoc P0 fix + security hardening · .17 fish `agent.env.fish` hardening · .18 audit closure + secret hardening · .19 audit closure + portable base64 · .20 mutation-hardened smoke guard.

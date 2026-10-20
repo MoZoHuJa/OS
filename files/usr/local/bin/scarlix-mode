@@ -79,8 +79,39 @@ GPU_COUNT=0
 if command -v nvidia-smi >/dev/null 2>&1; then
   GPU_COUNT="$(nvidia-smi -L 2>/dev/null | wc -l || echo 0)"
 fi
+
+# v19.2.13 KPK-19.2.12-P2-02: strict opt-in parsing. The v19.2.12 version used
+#   grep -q '^SCARLIX_ALLOW_SHARED_GPU=1' — with no end-of-line anchor, values
+#   like SCARLIX_ALLOW_SHARED_GPU=10, =1unexpected or "=1 # comment" ALSO
+#   matched and enabled GPU sharing. Now only the EXACT documented line
+#   `SCARLIX_ALLOW_SHARED_GPU=1` (no trailing content) enables the flag:
+#     - zero definitions  → disabled (gate closed)
+#     - duplicate keys    → REJECTED (fail closed) + warning — the operator
+#                           must fix the ambiguity, not gamble on first match
+#     - any other value   → disabled (0, 10, true, empty, trailing comment,
+#                           leading whitespace — none of these are the
+#                           documented opt-in)
+# scarlix_env_flag_enabled <KEY> <FILE> → exit 0 only on the exact opt-in.
+# --- strict env flag parsing (KPK-19.2.13-P2-02) begin ---
+scarlix_env_flag_enabled() {
+  local key="$1" file="$2" count value
+  [ -f "$file" ] || return 1
+  count="$(grep -c "^${key}=" "$file" 2>/dev/null || true)"
+  count="${count:-0}"
+  if [ "$count" -eq 0 ]; then
+    return 1
+  fi
+  if [ "$count" -gt 1 ]; then
+    echo "scarlix: WARNING: duplicate ${key} definitions in $file — opt-in REJECTED (fail closed, fix the ambiguity)" >&2
+    return 1
+  fi
+  value="$(grep "^${key}=" "$file" | head -n 1 | cut -d= -f2-)"
+  [ "$value" = "1" ]
+}
+# --- strict env flag parsing (KPK-19.2.13-P2-02) end ---
+
 ALLOW_SHARED_GPU=0
-if [ -f /etc/scarlix/.env ] && grep -q '^SCARLIX_ALLOW_SHARED_GPU=1' /etc/scarlix/.env 2>/dev/null; then
+if scarlix_env_flag_enabled SCARLIX_ALLOW_SHARED_GPU /etc/scarlix/.env; then
   ALLOW_SHARED_GPU=1
 fi
 

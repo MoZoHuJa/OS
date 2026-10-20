@@ -42,6 +42,17 @@ func validateBundleConsistency(bundle []*Reservation, expectedAllocationID strin
 		return fmt.Errorf("reservation: bundle validation requires a non-empty allocation id")
 	}
 
+	// KPK-19.2.13-P2-04: every member is checked for nil BEFORE the first
+	// record is dereferenced. The v19.2.12 version read bundle[0].AllocationID
+	// before the in-loop nil check, so a nil FIRST member panicked instead of
+	// failing closed. This is a callable validation boundary: malformed input
+	// must return a typed error, never a panic.
+	for _, member := range bundle {
+		if member == nil {
+			return fmt.Errorf("reservation: bundle contains a nil record")
+		}
+	}
+
 	first := bundle[0]
 	if first.AllocationID != expectedAllocationID {
 		return fmt.Errorf("reservation: bundle member %s belongs to allocation %s, expected %s",
@@ -50,9 +61,6 @@ func validateBundleConsistency(bundle []*Reservation, expectedAllocationID strin
 
 	seenResources := make(map[string]bool, len(bundle))
 	for _, member := range bundle {
-		if member == nil {
-			return fmt.Errorf("reservation: bundle contains a nil record")
-		}
 		if member.AllocationID != expectedAllocationID {
 			return fmt.Errorf("reservation: bundle member %s belongs to allocation %s, expected %s",
 				member.ReservationID, member.AllocationID, expectedAllocationID)
