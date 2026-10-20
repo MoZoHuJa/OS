@@ -965,6 +965,85 @@ check_17_reservation_governor() {
     pass "reservation governor: hardened unit, distinct stores, no listeners, placeholder-only template, never auto-enabled"
 }
 
+# ---------------------------------------------------------------------------
+# [18] Agent Kernel (AK-2): auth-gated session surface, closed enumeration,
+#      bounded store, opt-in enablement
+# ---------------------------------------------------------------------------
+check_18_agent_kernel() {
+    echo "--- [18] Agent Kernel (AK-2): auth-gated surface, closed capabilities, bounded store, opt-in ---"
+    local kernel_pkg="$REPO_DIR/scarlihq/internal/agentkernel"
+    local api_src="$REPO_DIR/scarlihq/internal/api/agentkernel.go"
+    local rest_src="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+
+    if [[ ! -d "$kernel_pkg" ]] || [[ ! -f "$api_src" ]]; then
+        fail "agent kernel package/session surface missing (AK-2)"
+        return
+    fi
+
+    # The enumeration must stay closed: every declared Capability constant is
+    # collected and checked against a forbidden-token list. Static check on
+    # declaration lines only (deterministic — the check_15 lesson: never pipe
+    # grep -v | grep -q under pipefail).
+    local declared
+    declared=$(grep -oE 'Capability[A-Za-z]+ +Capability = "[^"]+"' "$kernel_pkg/kernel.go" | grep -oE '"[^"]+"' | tr -d '"' | sort -u)
+    if [[ -z "$declared" ]]; then
+        fail "no Capability constants found in kernel.go — enumeration shape changed?"
+        return
+    fi
+    local bad_cap
+    bad_cap=$(printf '%s\n' "$declared" | grep -Ei 'exec|shell|docker|file|root|sudo|systemctl|raw' || true)
+    if [[ -n "$bad_cap" ]]; then
+        fail "capability enumeration must never contain exec/shell/docker/file-class tokens (found: $bad_cap)"
+        return
+    fi
+    local cap_count
+    cap_count=$(printf '%s\n' "$declared" | wc -l)
+    if [[ "$cap_count" -lt 1 || "$cap_count" -gt 16 ]]; then
+        fail "capability enumeration size out of sane bounds (1..16): $cap_count — extending the set must be a deliberate reviewed act"
+        return
+    fi
+
+    # Session routes must be behind the auth middleware (like every route).
+    for route in "/api/agent/sessions" "/api/agent/sessions/transition" "/api/agent/sessions/evaluate"; do
+        if ! grep -q "mux.HandleFunc(\"${route}\", h.auth(h.agent" "$rest_src"; then
+            fail "route ${route} must be registered behind h.auth(...)"
+            return
+        fi
+    done
+
+    # The evaluate endpoint must keep the denial-is-200 contract (a denial is
+    # a successful auditable evaluation, not an HTTP error).
+    if ! grep -q "denial is a successful" "$api_src"; then
+        fail "agent kernel evaluate must document + keep the denial-is-200 contract"
+        return
+    fi
+
+    # The store must be bounded and fail-closed on RNG.
+    if ! grep -q "ErrSessionLimit" "$kernel_pkg/store.go" || ! grep -q "ErrRNG" "$kernel_pkg/store.go"; then
+        fail "session store must enforce capacity + fail-closed RNG"
+        return
+    fi
+    if ! grep -qE "DefaultMaxSessions = 128" "$kernel_pkg/store.go"; then
+        fail "DefaultMaxSessions must stay an explicit bounded constant"
+        return
+    fi
+
+    # Opt-in: main.go gates the surface on SCARLIHQ_AGENTKERNEL_ENABLED and
+    # the compose opt-in must stay commented (operator decision).
+    if ! grep -q "SCARLIHQ_AGENTKERNEL_ENABLED" "$main_src"; then
+        fail "main.go must gate the agent kernel surface on SCARLIHQ_AGENTKERNEL_ENABLED"
+        return
+    fi
+    if ! grep -q '#   - SCARLIHQ_AGENTKERNEL_ENABLED=true' "$compose"; then
+        fail "compose agent-kernel opt-in must stay commented out (opt-in contract from v19.4.1)"
+        return
+    fi
+
+    pass "agent kernel: closed enumeration (${cap_count} caps, no exec/shell), auth-gated routes, bounded store, denial-is-200, opt-in enablement"
+}
+
 # ===========================================================================
 # Run all checks
 # ===========================================================================
@@ -985,6 +1064,7 @@ check_14_strict_gpu_optin_parsing
 check_15_gaming_manifest_and_installer
 check_16_gaming_readonly_api
 check_17_reservation_governor
+check_18_agent_kernel
 
 # ===========================================================================
 # Summary

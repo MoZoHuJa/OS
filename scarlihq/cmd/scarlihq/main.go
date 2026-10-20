@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time" // v18.6 P1: explicit server timeouts
 
+	"github.com/MoZoHuJa/OS/scarlihq/internal/agentkernel"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/api"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/compute"
@@ -22,7 +23,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.2.14"
+var Version = "19.4.1"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -82,6 +83,23 @@ func main() {
 		log.Printf("Compute lifecycle API enabled (allocation store: %s); resource release remains reconciliation-gated", allocationPath)
 	} else {
 		log.Printf("Compute lifecycle API disabled; set SCARLIHQ_COMPUTE_ENABLED=true only after host bridge acceptance")
+	}
+
+	// AK-2 (v19.4.1): Agent Kernel session surface — opt-in, like the compute
+	// lifecycle (Controlled Accumulation: small, reversible steps). Sessions
+	// are bounded + in-memory; grants are request-supplied until AK-3
+	// persists them admin-owned. Evaluate is pure — no host effects at all.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("SCARLIHQ_AGENTKERNEL_ENABLED")), "true") {
+		store, err := agentkernel.NewStore(agentkernel.DefaultMaxSessions)
+		if err != nil {
+			log.Fatalf("agent kernel initialization failed: %v", err)
+		}
+		if err := apiHandler.ConfigureAgentKernel(store, agentkernel.Policy{}); err != nil {
+			log.Fatalf("agent kernel configuration failed: %v", err)
+		}
+		log.Printf("Agent Kernel session API enabled (max %d sessions, in-memory grants; AK-3 will persist grants)", agentkernel.DefaultMaxSessions)
+	} else {
+		log.Printf("Agent Kernel session API disabled; set SCARLIHQ_AGENTKERNEL_ENABLED=true to enable")
 	}
 	apiHandler.RegisterRoutes(mux)
 

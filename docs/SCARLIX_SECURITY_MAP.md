@@ -249,7 +249,7 @@ surface (merged from the `19.2.14.P6` line):
   template but never enables the service (smoke-test check_17 asserts the
   absence of any `systemctl enable scarlix-reservation`).
 
-## (n) Agent Kernel foundation (v19.4.0, AK-1)
+## (n) Agent Kernel foundation + sessions (v19.4.x, AK-1 + AK-2)
 
 - **Closed capability enumeration — never "exec":** the only grantable
   capabilities are `status.read`, `gaming.read`, `mode.request`,
@@ -274,9 +274,28 @@ surface (merged from the `19.2.14.P6` line):
 - **Bounded sessions:** `CLOSED` is terminal; illegal transitions and
   backwards timestamps are rejected — the same fail-closed state-machine
   discipline as allocation/reservation.
-- **Not yet reachable:** the kernel has no HTTP/MCP surface yet (AK-2+), so
-  the current attack surface is exactly zero — by design, the contract is
-  established and tested before any wiring exists.
+- **Not reachable by default (AK-2, v19.4.1):** the REST surface
+  (`/api/agent/sessions` create/list/transition/evaluate) is **opt-in**
+  (`SCARLIHQ_AGENTKERNEL_ENABLED=true`, 503 until configured, commented
+  compose block) — same enablement contract as the compute lifecycle. When
+  enabled, every route is behind the standard Bearer auth middleware
+  (constant-time compare, no URL-token fallback); the trust boundary is the
+  authenticated ScarliHQ principal. Grants are request-supplied in AK-2 —
+  AK-3 replaces this with admin-owned persisted grants tied to the
+  governor's `user_tokens` principal space.
+- **Bounded, fail-closed session store:** default 128 records (the cap
+  counts CLOSED records too — honest, leak-free bound); session IDs are
+  `aks-` + 16 crypto-random bytes with RNG failure aborting creation
+  (v18.7.4-P0 precedent); a nil/empty capability set is rejected at
+  creation (nothing granted implicitly); reads return deep copies (no
+  grant mutation through returned records); evaluation runs under the store
+  lock — a decision can never be attributed to a state that no longer
+  exists.
+- **Denial-is-200 evaluate contract:** a denial is a successful, auditable
+  evaluation — the API returns 200 with `{allow:false, reason}` rather
+  than an HTTP error; unknown sessions (404) and unknown capabilities
+  (400) are client errors, not kernel decisions. Every decision carries the
+  fired rule / cited grant.
 
 ## Other security properties
 
