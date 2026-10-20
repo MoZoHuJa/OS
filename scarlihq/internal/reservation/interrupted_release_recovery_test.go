@@ -286,20 +286,38 @@ func TestRunLeaseReaper_CompletesInterruptedRelease(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	reportErrs := make(chan error, 64)
+	// The reaper goroutine MUST be fully stopped before this test returns:
+	// t.TempDir() cleanup RemoveAlls the store directory while the reaper is
+	// still mid-tick otherwise (observed as "unlinkat: directory not empty"
+	// on CI — a goroutine leak racing the cleanup, not a convergence bug).
+	done := make(chan error, 1)
 	go func() {
-		reportErrs <- h.manager.RunLeaseReaper(ctx, "reconciler-token", 10*time.Millisecond, func(err error) {})
+		done <- h.manager.RunLeaseReaper(ctx, "reconciler-token", 10*time.Millisecond, func(err error) {})
 	}()
-	defer func() { cancel() }()
 
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
+	converged := false
 	for time.Now().Before(deadline) {
-		if got := h.allocationState(t, "alloc-1"); got == allocation.StateReleased {
-			return // converged by the periodic scan
+		record, err := h.allocStore.Get("alloc-1")
+		if err != nil {
+			t.Fatalf("poll allocation: %v", err)
+		}
+		if record.State == allocation.StateReleased {
+			converged = true
+			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("lease reaper did not complete the interrupted release within the deadline")
+	// Stop the reaper and wait for the goroutine to exit BEFORE TempDir cleanup.
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("lease reaper did not stop after cancellation")
+	}
+	if !converged {
+		t.Fatal("lease reaper did not complete the interrupted release within the deadline")
+	}
 }
 
 // =============================================================================
