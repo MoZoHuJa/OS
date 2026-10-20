@@ -254,9 +254,11 @@ type Decision struct {
 //
 //  1. the session must exist and be ACTIVE (CREATED/SUSPENDED/CLOSED
 //     sessions cannot act — an agent that is not live cannot do anything)
-//  2. the capability must be part of the closed enumeration
-//  3. the agent's capability set must contain the capability
-//  4. the capability must not be administratively disabled
+//  2. the session must belong to the acting agent
+//  3. the capability must be part of the closed enumeration
+//  4. the agent's capability set must contain the capability (the grant
+//     itself — fail-closed: a nil or empty set grants nothing)
+//  5. the capability must not be administratively disabled
 //
 // Every denial names the rule that fired; every allow names the grant.
 // This is the audit-ready explanation the strategy document demands
@@ -267,10 +269,12 @@ type Policy struct {
 	Disabled map[Capability]bool
 }
 
-// Evaluate decides whether agent/session may use capability at time now.
-// It is pure: same inputs, same decision, same reason — no LLM, no clock
-// dependence beyond audit fields.
-func (p Policy) Evaluate(agent AgentIdentity, session *Session, capability Capability) Decision {
+// Evaluate decides whether agent/session may use capability at time now,
+// given the agent's granted capability set. It is pure: same inputs, same
+// decision, same reason — no LLM, no clock dependence beyond audit fields.
+// The grant check is fail-closed: a nil or empty CapabilitySet denies
+// everything (nothing is granted by default).
+func (p Policy) Evaluate(agent AgentIdentity, session *Session, caps CapabilitySet, capability Capability) Decision {
 	if session == nil {
 		return Decision{Allow: false, Reason: "rule/session-required: no session"}
 	}
@@ -282,6 +286,9 @@ func (p Policy) Evaluate(agent AgentIdentity, session *Session, capability Capab
 	}
 	if !capability.IsValid() {
 		return Decision{Allow: false, Reason: fmt.Sprintf("rule/capability-unknown: %q is not in the closed enumeration", capability)}
+	}
+	if !caps.Has(capability) {
+		return Decision{Allow: false, Reason: fmt.Sprintf("rule/capability-not-granted: agent %s does not hold %q", agent.ID, capability)}
 	}
 	if p.Disabled[capability] {
 		return Decision{Allow: false, Reason: fmt.Sprintf("rule/capability-disabled: %q is administratively disabled", capability)}

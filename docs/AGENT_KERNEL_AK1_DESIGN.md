@@ -47,10 +47,15 @@ is terminal; illegal transitions and backwards timestamps are rejected —
 the same fail-closed state-machine discipline as allocation/reservation.
 
 ### Permission engine — deterministic, no LLM
-`Policy.Evaluate(agent, session, capability) → Decision{Allow, Reason}`.
+`Policy.Evaluate(agent, session, caps, capability) → Decision{Allow, Reason}`.
 Rules in fixed order: session-required → session-owner → session-state
-(must be ACTIVE) → capability-unknown → capability-disabled → grant.
-Every denial names the fired rule; every allow cites the grant —
+(must be ACTIVE) → capability-unknown → **capability-not-granted** →
+capability-disabled → grant. The not-granted rule closes the loop the
+original draft left open: the engine now verifies the agent's granted
+capability set itself (fail-closed — a nil/empty set denies everything);
+before the review fix it only checked the enumeration and the admin switch,
+so any ACTIVE session could use any enumerated capability. Every denial
+names the fired rule; every allow cites the grant —
 *"dôvod výberu aj odmietnutia"* (page 13). The engine is pure: same input,
 same output, 100×-repetition determinism test included.
 
@@ -72,6 +77,7 @@ traceable-lifecycle building block (page 24). AK-4 persists these.
 - `gofmt` clean, `go vet` OK
 - `go test -count=1 ./internal/agentkernel` — identity validation, closed
   enumeration (incl. `shell.exec` rejection), legal/illegal/terminal
-  transitions, backwards-clock rejection, full denial matrix (7 cases),
-  determinism loop, audit validation
+  transitions, backwards-clock rejection, full denial matrix (9 cases,
+  incl. not-granted and nil-set fail-closed), determinism loop, audit
+  validation
 - `go test -race -count=1 ./internal/agentkernel` — OK

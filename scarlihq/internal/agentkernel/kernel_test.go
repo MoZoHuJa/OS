@@ -118,39 +118,46 @@ func activeSession(agent AgentID) *Session {
 
 func TestPolicyEvaluate_Allow(t *testing.T) {
 	agent, _ := NewAgentIdentity("coder.agent-one", "zmor", testNow)
-	caps, _ := NewCapabilitySet(CapabilityStatusRead, CapabilityComputePlan)
+	caps, err := NewCapabilitySet(CapabilityStatusRead, CapabilityComputePlan)
+	if err != nil {
+		t.Fatalf("valid capability set rejected: %v", err)
+	}
 	policy := Policy{}
-	d := policy.Evaluate(agent, activeSession(agent.ID), CapabilityStatusRead)
+	d := policy.Evaluate(agent, activeSession(agent.ID), caps, CapabilityStatusRead)
 	if !d.Allow {
 		t.Fatalf("expected allow, got %+v", d)
 	}
 	if !strings.HasPrefix(d.Reason, "grant:") {
 		t.Fatalf("allow must cite the grant, got %q", d.Reason)
 	}
-	_ = caps
 }
 
 func TestPolicyEvaluate_Denials(t *testing.T) {
 	agent, _ := NewAgentIdentity("coder.agent-one", "zmor", testNow)
 	policy := Policy{Disabled: map[Capability]bool{CapabilityModeRequest: true}}
 	session := activeSession(agent.ID)
+	fullCaps, _ := NewCapabilitySet(CapabilityStatusRead, CapabilityModeRequest, CapabilityComputePlan)
+	readOnlyCaps, _ := NewCapabilitySet(CapabilityStatusRead)
 
 	cases := []struct {
 		name       string
 		session    *Session
+		caps       CapabilitySet
 		capability Capability
 	}{
-		{"no session", nil, CapabilityStatusRead},
-		{"foreign session", activeSession("other.agent"), CapabilityStatusRead},
-		{"created state", &Session{ID: "s", AgentID: agent.ID, State: SessionCreated, CreatedAt: testNow, UpdatedAt: testNow}, CapabilityStatusRead},
-		{"suspended state", &Session{ID: "s", AgentID: agent.ID, State: SessionSuspended, CreatedAt: testNow, UpdatedAt: testNow}, CapabilityStatusRead},
-		{"closed state", &Session{ID: "s", AgentID: agent.ID, State: SessionClosed, CreatedAt: testNow, UpdatedAt: testNow}, CapabilityStatusRead},
-		{"unknown capability", session, Capability("shell.exec")},
-		{"disabled capability", session, CapabilityModeRequest},
+		{"no session", nil, fullCaps, CapabilityStatusRead},
+		{"foreign session", activeSession("other.agent"), fullCaps, CapabilityStatusRead},
+		{"created state", &Session{ID: "s", AgentID: agent.ID, State: SessionCreated, CreatedAt: testNow, UpdatedAt: testNow}, fullCaps, CapabilityStatusRead},
+		{"suspended state", &Session{ID: "s", AgentID: agent.ID, State: SessionSuspended, CreatedAt: testNow, UpdatedAt: testNow}, fullCaps, CapabilityStatusRead},
+		{"closed state", &Session{ID: "s", AgentID: agent.ID, State: SessionClosed, CreatedAt: testNow, UpdatedAt: testNow}, fullCaps, CapabilityStatusRead},
+		{"unknown capability", session, fullCaps, Capability("shell.exec")},
+		{"disabled capability", session, fullCaps, CapabilityModeRequest},
+		{"not granted capability", session, readOnlyCaps, CapabilityComputePlan},
+		{"nil capability set", session, nil, CapabilityStatusRead},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d := policy.Evaluate(agent, tc.session, tc.capability)
+			d := policy.Evaluate(agent, tc.session, tc.caps, tc.capability)
 			if d.Allow {
 				t.Fatalf("expected denial, got %+v", d)
 			}
@@ -161,13 +168,30 @@ func TestPolicyEvaluate_Denials(t *testing.T) {
 	}
 }
 
+func TestPolicyEvaluate_NotGrantedReason(t *testing.T) {
+	agent, _ := NewAgentIdentity("coder.agent-one", "zmor", testNow)
+	policy := Policy{}
+	readOnlyCaps, _ := NewCapabilitySet(CapabilityStatusRead)
+	d := policy.Evaluate(agent, activeSession(agent.ID), readOnlyCaps, CapabilityComputeReserve)
+	if d.Allow {
+		t.Fatal("compute.reserve must be denied to a read-only agent")
+	}
+	if !strings.Contains(d.Reason, "rule/capability-not-granted") {
+		t.Fatalf("denial must cite the not-granted rule, got %q", d.Reason)
+	}
+	if !strings.Contains(d.Reason, "compute.reserve") {
+		t.Fatalf("denial must name the capability, got %q", d.Reason)
+	}
+}
+
 func TestPolicyEvaluate_Deterministic(t *testing.T) {
 	agent, _ := NewAgentIdentity("coder.agent-one", "zmor", testNow)
 	policy := Policy{}
 	session := activeSession(agent.ID)
-	first := policy.Evaluate(agent, session, CapabilityComputePlan)
+	caps, _ := NewCapabilitySet(CapabilityComputePlan)
+	first := policy.Evaluate(agent, session, caps, CapabilityComputePlan)
 	for i := 0; i < 100; i++ {
-		if got := policy.Evaluate(agent, session, CapabilityComputePlan); got != first {
+		if got := policy.Evaluate(agent, session, caps, CapabilityComputePlan); got != first {
 			t.Fatalf("Evaluate is not deterministic: %+v vs %+v", got, first)
 		}
 	}
@@ -179,7 +203,8 @@ func TestAuditEvent(t *testing.T) {
 	agent, _ := NewAgentIdentity("coder.agent-one", "zmor", testNow)
 	policy := Policy{}
 	session := activeSession(agent.ID)
-	decision := policy.Evaluate(agent, session, CapabilityStatusRead)
+	caps, _ := NewCapabilitySet(CapabilityStatusRead)
+	decision := policy.Evaluate(agent, session, caps, CapabilityStatusRead)
 
 	if _, err := NewAuditEvent(time.Time{}, agent, session, CapabilityStatusRead, decision); err == nil {
 		t.Fatal("zero timestamp must be rejected")
