@@ -1,0 +1,113 @@
+{
+  "schema_version": "1.0",
+  "phase": "P4",
+  "baseline": {
+    "repository": "MoZoHuJa/OS",
+    "branch": "19.2.10.G1",
+    "version": "19.2.10",
+    "scope": "software-only contract and integration gate; no target-hardware claims"
+  },
+  "components": [
+    {
+      "id": "scarlixos-os",
+      "name": "ScarLiX OS",
+      "status": "implemented",
+      "responsibility": "Host operating environment, deployment assets, system services, and privileged host boundary.",
+      "owns": ["host lifecycle", "service deployment", "host-level privilege boundary"],
+      "must_not_own": ["agent planning policy", "personal memory semantics"],
+      "depends_on": [],
+      "contracts": ["HOST-001", "SEC-001"]
+    },
+    {
+      "id": "host-agent",
+      "name": "Host Agent / Host Bridge",
+      "status": "partial",
+      "responsibility": "Narrow, auditable bridge from unprivileged control-plane intent to explicitly allowed host operations.",
+      "owns": ["validated host intents", "host operation result reporting"],
+      "must_not_own": ["user-facing orchestration", "model selection policy", "personal memory"],
+      "depends_on": ["scarlixos-os"],
+      "contracts": ["HOST-001", "SEC-001", "OBS-001"]
+    },
+    {
+      "id": "scarlimonitor",
+      "name": "ScarliMonitor",
+      "status": "partial",
+      "responsibility": "Read-oriented observation and health reporting for host and runtime state.",
+      "owns": ["observed health", "telemetry snapshots"],
+      "must_not_own": ["resource reservation writes", "agent execution authority"],
+      "depends_on": ["scarlixos-os"],
+      "contracts": ["OBS-001"]
+    },
+    {
+      "id": "compute-fabric",
+      "name": "Compute Fabric",
+      "status": "partial",
+      "responsibility": "Typed resource contract, inventory, planning, allocation lifecycle, reservations, and leases.",
+      "owns": ["resource identity", "allocation lifecycle", "reservation lease state"],
+      "must_not_own": ["model reasoning", "user interface state", "unverified cleanup claims"],
+      "depends_on": ["scarlixos-os", "scarlimonitor"],
+      "contracts": ["COMPUTE-001", "IDENT-001", "OBS-001"]
+    },
+    {
+      "id": "universal-ai-runtime",
+      "name": "Universal AI Runtime",
+      "status": "planned",
+      "responsibility": "Backend-neutral inference lifecycle and capabilities across supported model runtimes.",
+      "owns": ["runtime capability declarations", "inference lifecycle abstraction"],
+      "must_not_own": ["user identity", "cross-agent workflow policy", "host privilege escalation"],
+      "depends_on": ["scarlixos-os", "compute-fabric"],
+      "contracts": ["RUNTIME-001", "SEC-001", "OBS-001"]
+    },
+    {
+      "id": "scarlihq",
+      "name": "ScarliHQ",
+      "status": "partial",
+      "responsibility": "Control plane and orchestration for agents, workflows, tool calls, and user intent.",
+      "owns": ["workflow orchestration", "agent/tool authorization decisions", "execution audit correlation"],
+      "must_not_own": ["direct host root access", "resource inventory truth", "model backend internals", "personal memory persistence"],
+      "depends_on": ["scarlixos-os", "host-agent", "compute-fabric", "universal-ai-runtime"],
+      "contracts": ["AGENT-001", "SEC-001", "OBS-001", "COMPUTE-001"]
+    },
+    {
+      "id": "scarlibar",
+      "name": "ScarliBar",
+      "status": "planned",
+      "responsibility": "Intent entry point and lightweight user interaction surface.",
+      "owns": ["intent capture", "user-visible command status"],
+      "must_not_own": ["privileged operations", "allocation persistence", "long-term memory storage"],
+      "depends_on": ["scarlihq"],
+      "contracts": ["AGENT-001", "OBS-001"]
+    },
+    {
+      "id": "scarlinote",
+      "name": "ScarliNote",
+      "status": "planned",
+      "responsibility": "Personal intelligence layer for identity-scoped memory, context, and user continuity.",
+      "owns": ["memory policy", "context assembly", "user-scoped personal state"],
+      "must_not_own": ["host privilege", "resource reservation", "runtime process lifecycle"],
+      "depends_on": ["scarlihq", "universal-ai-runtime"],
+      "contracts": ["MEMORY-001", "IDENT-001", "AGENT-001", "SEC-001"]
+    },
+    {
+      "id": "scarlicenter",
+      "name": "ScarliCenter",
+      "status": "planned",
+      "responsibility": "Administrative control and configuration surface for the ecosystem.",
+      "owns": ["configuration presentation", "operator approval UX"],
+      "must_not_own": ["direct persistence mutations bypassing domain APIs", "privileged host execution"],
+      "depends_on": ["scarlihq"],
+      "contracts": ["CONFIG-001", "SEC-001", "OBS-001"]
+    }
+  ],
+  "contract_rules": [
+    {"id": "SEC-001", "rule": "Identity and authorization are verified at the receiving trust boundary; UI-supplied identity is never authoritative."},
+    {"id": "IDENT-001", "rule": "Stable canonical IDs are used for ownership and exclusivity; display names and mutable indices are not authority."},
+    {"id": "COMPUTE-001", "rule": "Planning is side-effect free; reservation is explicit, durable, idempotent, and recoverable; no partial bundle is exposed as committed."},
+    {"id": "RUNTIME-001", "rule": "Runtime lifecycle is behind a backend-neutral interface; callers do not depend on backend-specific process or API details. Runtime IDs accepted by Resource Contract v1 must match the configured inventory runtime IDs."},
+    {"id": "AGENT-001", "rule": "All tool/agent execution has explicit permissions, correlation IDs, bounded inputs, auditable outcomes, and a dry-run path where applicable."},
+    {"id": "MEMORY-001", "rule": "Memory access is user-scoped, purpose-limited, auditable, and independent from inference backend selection."},
+    {"id": "HOST-001", "rule": "Privileged host actions cross one narrow host-agent boundary using allowlisted operations and validated payloads."},
+    {"id": "OBS-001", "rule": "Observed state is distinguishable from desired state; unknown or stale observations fail closed for safety-sensitive decisions."},
+    {"id": "CONFIG-001", "rule": "Configuration changes are schema-validated, versioned, and applied through domain APIs with an explicit result."}
+  ]
+}

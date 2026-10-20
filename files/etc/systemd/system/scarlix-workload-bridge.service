@@ -1,0 +1,47 @@
+[Unit]
+Description=ScarLiX OS Host Workload Bridge (typed allowlisted runtime operations)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=65532
+Group=65532
+SupplementaryGroups=docker
+UMask=0077
+RuntimeDirectory=scarlix-workload-bridge
+RuntimeDirectoryMode=0700
+StateDirectory=scarlix-workload-bridge
+StateDirectoryMode=0700
+ExecStart=/usr/local/bin/scarlix-host-workload-bridge --config /etc/scarlix/workload-bridge.json --socket /run/scarlix-workload-bridge/bridge.sock --ledger /var/lib/scarlix-workload-bridge/ledger.json
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=15s
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/run/scarlix-workload-bridge /var/lib/scarlix-workload-bridge
+# Docker-group access is effectively host-root-equivalent. The bridge is a
+# narrow, reviewed API and MUST NOT expose raw Docker API requests or TCP.
+# Do not add this socket to the ScarliHQ container.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

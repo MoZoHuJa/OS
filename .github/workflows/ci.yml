@@ -2,11 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main, 'v*', '19.2.10.*']
+    branches: [main, 'v*', '19.2.10.*', '19.2.11.*', '19.2.12.*', '19.2.13.*', '19.2.14.*']
     # v18.7.6 P1: trigger on tags (was: branches only → v18.7.6 tag push skipped CI)
     tags: ['v*']
   pull_request:
-    branches: [main]
+    branches: [main, '19.2.10.G1', '19.2.11.P4']
 
 jobs:
   shellcheck:
@@ -293,9 +293,10 @@ jobs:
           else
             echo "(no Go test files yet — OK)"
           fi
-      - name: Phase 3 race tests
+# Exercise concurrency-sensitive allocation and the P5.1 host bridge lifecycle.
+      - name: Lifecycle and host bridge race tests
         working-directory: scarlihq
-        run: go test -race ./internal/allocation ./internal/inventory ./internal/reservation
+        run: go test -race ./internal/allocation ./internal/inventory ./internal/reservation ./internal/workload ./internal/hostbridge ./internal/compute
 
   # v17.9.8 P2: Real ScarliHQ Docker build (catches Dockerfile + go.mod issues)
   # v17.9.9 P2: Added runtime smoke test (container starts + /api/health responds)
