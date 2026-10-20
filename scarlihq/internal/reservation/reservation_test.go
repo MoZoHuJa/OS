@@ -799,7 +799,7 @@ func TestRequestRelease_FailsClosedWithoutReleaseLifecycleCapability(t *testing.
 	}
 	mgr.allocVal = &legacyAllocationValidator{inner: newStubAllocValidator("alloc-1")}
 
-	_, err = mgr.RequestRelease(reserved.ReservationID, "user-token")
+	_, err = mgr.RequestRelease(reserved.Reservation.ReservationID, "user-token")
 	if !errors.Is(err, ErrReconciliationRequired) {
 		t.Fatalf("RequestRelease error = %v, want ErrReconciliationRequired", err)
 	}
