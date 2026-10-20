@@ -146,8 +146,22 @@ func TestStartRejectsExtraJSONValue(t *testing.T) {
 	}
 }
 
+// secureSocketDir returns a t.TempDir() tightened to 0700. ListenUnix rejects
+// group/other-writable socket parents (correctly); an ambient umask of 0002
+// (common in containers) makes t.TempDir() 0775 and would fail these tests
+// spuriously. Tightening the mode keeps the tests umask-independent without
+// weakening the production permission check.
+func secureSocketDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("chmod temp dir %s: %v", dir, err)
+	}
+	return dir
+}
+
 func TestListenUnixUsesOwnerOnlyPermissionsAndRefusesExistingPath(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "bridge.sock")
+	path := filepath.Join(secureSocketDir(t), "bridge.sock")
 	listener, err := ListenUnix(path)
 	if err != nil {
 		t.Fatal(err)

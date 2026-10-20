@@ -18,7 +18,9 @@ func TestClientUsesUnixSocketForStartAndStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	socketPath := filepath.Join(t.TempDir(), "bridge.sock")
+	// Umask-independent parent dir: ListenUnix rejects group-writable parents
+	// (secureSocketDir tightens t.TempDir() from ambient-umask 0775 to 0700).
+	socketPath := filepath.Join(secureSocketDir(t), "bridge.sock")
 	listener, err := ListenUnix(socketPath)
 	if err != nil {
 		t.Fatal(err)
