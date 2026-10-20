@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v19.2.11 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v19.2.12 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
 # EndeavourOS/Arch bootstrap installer — NO ISO, runs on clean EndeavourOS.
@@ -19,7 +19,7 @@ set -euo pipefail
 #   bash install.sh
 # ============================================================================
 
-VERSION="19.2.11"
+VERSION="19.2.12"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -869,6 +869,12 @@ else
     cp "$REPO_DIR/VERSION" /usr/local/share/scarlix/VERSION 2>/dev/null || crit "Cannot copy VERSION file to /usr/local/share/scarlix/"
     [ -s /etc/scarlix/VERSION ] || crit "VERSION file is empty or missing"
     ok "VERSION file installed ($(cat "$REPO_DIR/VERSION"))"
+    # v19.2.12 F-01: install the Pi-Bolt installer SHA-256 pin alongside VERSION
+    #   so operators can verify manual installs against the shipped pin.
+    if [ -f "$REPO_DIR/files/usr/local/share/scarlix/pi-bolt-install.sha256" ]; then
+      cp "$REPO_DIR/files/usr/local/share/scarlix/pi-bolt-install.sha256" /usr/local/share/scarlix/pi-bolt-install.sha256 2>/dev/null \
+        || warn "Cannot copy pi-bolt-install.sha256 to /usr/local/share/scarlix/"
+    fi
   fi
 
   # Pacman hooks
@@ -985,15 +991,51 @@ else
   #   Per migration guide: install as NON-ROOT user via official installer.
   #   Non-critical (warn on failure — Pi-Bolt can be installed manually later).
   #   The installer places Pi-Bolt under ~/.pi-bolt and links ~/.local/bin/pi-bolt.
-  log "Installing Pi-Bolt (coding agent)..."
-  if sudo -u "$REAL_USER" bash -c 'curl -fsSL https://pi-bolt.opensec.in/install.sh | sh' >> "$LOG_FILE" 2>&1; then
-    ok "Pi-Bolt installed (as $REAL_USER)"
-    # Verify the binary is available
-    if sudo -u "$REAL_USER" bash -c 'command -v pi-bolt >/dev/null 2>&1' || [ -f "/home/$REAL_USER/.local/bin/pi-bolt" ]; then
-      ok "pi-bolt binary available"
+  # v19.2.12 F-01 (Deep Audit): Supply-chain pin. Was: `curl | sh` piping an
+  #   unverified remote script straight into a shell — a compromised or
+  #   tampered installer would execute arbitrary code as the user. Now:
+  #   1. download the installer to a temp file,
+  #   2. verify its SHA-256 against the pinned checksum shipped with this
+  #      release (files/usr/local/share/scarlix/pi-bolt-install.sha256),
+  #   3. only then execute it with bash.
+  #   On hash mismatch the install is SKIPPED with a loud warning (never a
+  #   silent continue) — the pinned hash must be refreshed deliberately
+  #   when upgrading to a newer Pi-Bolt installer.
+  #   NOTE: the Pi-Bolt installer itself verifies release checksums from the
+  #   GitHub release, so pinning the installer closes the remaining gap.
+  log "Installing Pi-Bolt (coding agent, SHA-256 pinned)..."
+  PI_BOLT_INSTALLER_URL="https://pi-bolt.opensec.in/install.sh"
+  PI_BOLT_SHA256_FILE="$REPO_DIR/files/usr/local/share/scarlix/pi-bolt-install.sha256"
+  PI_BOLT_TMP="$(mktemp /tmp/pi-bolt-install.XXXXXX.sh)"
+  pi_bolt_verified=0
+  if curl -fsSL "$PI_BOLT_INSTALLER_URL" -o "$PI_BOLT_TMP" >> "$LOG_FILE" 2>&1; then
+    if [ -f "$PI_BOLT_SHA256_FILE" ]; then
+      # Direct hash comparison — the pin file stores "<sha256>  pi-bolt-install.sh".
+      pi_bolt_expected="$(awk 'NR==1 {print $1}' "$PI_BOLT_SHA256_FILE")"
+      pi_bolt_actual="$(sha256sum "$PI_BOLT_TMP" | awk '{print $1}')"
+      if [ -n "$pi_bolt_expected" ] && [ "$pi_bolt_actual" = "$pi_bolt_expected" ]; then
+        pi_bolt_verified=1
+        ok "Pi-Bolt installer checksum verified (SHA-256 pin)"
+      else
+        warn "Pi-Bolt installer SHA-256 MISMATCH — supply-chain pin rejected the download. Skipping Pi-Bolt install (never execute unverified installers)."
+        warn "If Pi-Bolt released a new installer, refresh files/usr/local/share/scarlix/pi-bolt-install.sha256 deliberately and re-run."
+      fi
     else
-      warn "Pi-Bolt installed but binary not on PATH — user may need to restart shell or add ~/.local/bin to PATH"
+      # v19.2.12: missing pin file is itself a supply-chain regression — fail loud.
+      warn "Pi-Bolt SHA-256 pin file missing ($PI_BOLT_SHA256_FILE) — refusing curl|sh. Skipping Pi-Bolt install."
     fi
+  else
+    warn "Pi-Bolt installer download failed — user can install manually after verifying the checksum"
+  fi
+  if [ "$pi_bolt_verified" -eq 1 ]; then
+    if sudo -u "$REAL_USER" bash "$PI_BOLT_TMP" >> "$LOG_FILE" 2>&1; then
+      ok "Pi-Bolt installed (as $REAL_USER)"
+      # Verify the binary is available
+      if sudo -u "$REAL_USER" bash -c 'command -v pi-bolt >/dev/null 2>&1' || [ -f "/home/$REAL_USER/.local/bin/pi-bolt" ]; then
+        ok "pi-bolt binary available"
+      else
+        warn "Pi-Bolt installed but binary not on PATH — user may need to restart shell or add ~/.local/bin to PATH"
+      fi
     # v19.1.11 P1-6 FIX: Pi-Bolt needs LITELLM_MASTER_KEY + SCARLIHQ_TOKEN env vars.
     # /etc/scarlix/.env is root:root 600 — user CANNOT read it.
     # Fix: create a user-readable secrets file (~/.config/scarlix/agent.env, 600, user-owned)
@@ -1084,9 +1126,14 @@ else
         warn "Could not extract LITELLM_MASTER_KEY/SCARLIHQ_TOKEN from /etc/scarlix/.env"
       fi
     fi
-  else
-    warn "Pi-Bolt installer failed — user can install manually: curl -fsSL https://pi-bolt.opensec.in/install.sh | sh"
+    else
+      # v19.2.12 F-01: the pinned installer failed to run — never suggest raw
+      # curl|sh as the manual fallback.
+      warn "Pi-Bolt installer failed — manual install: download https://pi-bolt.opensec.in/install.sh, verify its SHA-256 against files/usr/local/share/scarlix/pi-bolt-install.sha256, then run it"
+    fi
   fi
+  # v19.2.12 F-01: always remove the downloaded installer temp file.
+  rm -f "$PI_BOLT_TMP" 2>/dev/null || true
 
   # Enable model-manager timer (weekly HF auto-pull)
   if [ -f /etc/systemd/system/model-manager.timer ]; then

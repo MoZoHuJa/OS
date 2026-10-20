@@ -37,12 +37,15 @@ func newStubInventory() *stubInventoryProvider {
 
 // stubAllocationValidator implements the extended AllocationValidator.
 // P1-02 (v19.2.9): Includes BeginReservation/EndReservation.
+// KPK-19.2.12-P1-01: Includes the release-reconciliation contract.
 type stubAllocationValidator struct {
-	mu         sync.Mutex
-	valid      map[string]bool
-	claimed    map[string]bool
-	endErr     error
-	beginCalls int
+	mu            sync.Mutex
+	valid         map[string]bool
+	claimed       map[string]bool
+	endErr        error
+	beginCalls    int
+	releaseStates map[string]string
+	leases        map[string]string
 }
 
 func (s *stubAllocationValidator) ValidateForReservation(allocID string) error {
@@ -78,12 +81,46 @@ func (s *stubAllocationValidator) EndReservation(allocID string, success bool) e
 	return nil
 }
 
+// KPK-19.2.12-P1-01: the stub models the allocation release-reconciliation
+// contract so the reaper/release paths exercise the same state decisions as
+// the production adapter. States are tracked per allocation ID.
+func (s *stubAllocationValidator) BeginAllocationRelease(allocID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.releaseStates[allocID] = "RELEASING"
+	return nil
+}
+
+func (s *stubAllocationValidator) CompleteAllocationRelease(allocID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.releaseStates[allocID] = "RELEASED"
+	return nil
+}
+
+func (s *stubAllocationValidator) MarkAllocationCleanupRequired(allocID, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.releaseStates[allocID] = "CLEANUP_REQUIRED"
+	return nil
+}
+
+// UpdateReservationLease models the allocation-side lease mirror.
+// KPK-19.2.12-P1-02: lease renewal fails closed when the capability is
+// absent, so the stub must implement it.
+func (s *stubAllocationValidator) UpdateReservationLease(allocID, leaseID string, expiry time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.leases[allocID] = leaseID
+	return nil
+}
+
 func newStubAllocValidator(validIDs ...string) *stubAllocationValidator {
 	m := make(map[string]bool)
 	for _, id := range validIDs {
 		m[id] = true
 	}
-	return &stubAllocationValidator{valid: m, claimed: make(map[string]bool)}
+	return &stubAllocationValidator{valid: m, claimed: make(map[string]bool), releaseStates: make(map[string]string), leases: make(map[string]string)}
 }
 
 type stubCleanupVerifier struct {

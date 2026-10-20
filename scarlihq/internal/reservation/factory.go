@@ -11,8 +11,20 @@ import (
 // NewFileBackedManager wires the Phase 3 reservation engine to the durable
 // allocation store. Inventory, cleanup verification, and token identity are
 // injected because they must reflect the actual host and deployment secrets.
-// Call ReconcileAllPending with a trusted reconciler token during service
-// startup before accepting new allocations.
+//
+// Startup contract (KPK-19.2.12-P1-02): call Recover (or ReconcileAllPending,
+// its compatibility wrapper) with a trusted reconciler token during service
+// startup BEFORE accepting new allocations. The full sequence repairs:
+//
+//  1. RESERVING allocations (finalize complete HELD bundles, abort orphaned
+//     claims, durably route expired/blocked bundles to cleanup),
+//  2. expired-lease reaping (mark, verify cleanup evidence, release — which
+//     also converges allocation lifecycles),
+//  3. interrupted allocation releases (RELEASING/CLEANUP_REQUIRED),
+//  4. stale lease metadata on RESERVED allocations.
+//
+// For long-running services, RunLeaseReaper provides the controlled periodic
+// repair path (expiry reaping + reserved-lease repair per tick).
 func NewFileBackedManager(
 	reservationPath string,
 	allocationPath string,

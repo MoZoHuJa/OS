@@ -53,6 +53,15 @@ var (
 	// ErrReconciliationRequired means the reservation is in a state that
 	// requires manual or automated reconciliation before it can be used.
 	ErrReconciliationRequired = errors.New("reservation: reconciliation required")
+
+	// ErrAllocationReconciliationPending means the reservation itself was
+	// durably mutated (e.g. released), but the allocation lifecycle record
+	// could not be reconciled in the same operation. The reservation store
+	// remains authoritative; callers must surface this to the operator and
+	// the startup recovery scan (Recover/ReconcileAllPending) must converge
+	// the allocation state. Never swallow this error.
+	// KPK-19.2.12-P1-01.
+	ErrAllocationReconciliationPending = errors.New("reservation: allocation reconciliation pending")
 )
 
 // ReservationError wraps a typed error with additional context.

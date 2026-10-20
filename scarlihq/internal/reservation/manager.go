@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -500,6 +499,41 @@ type pendingAllocationScanner interface {
 	ListPendingReservationAllocations() ([]string, error)
 }
 
+// allocationReleaseReconciler is the allocation-side capability required to
+// converge the allocation lifecycle when reservation bundles are released.
+// KPK-19.2.12-P1-01: replaces the v19.2.11 misuse of EndReservation(false).
+type allocationReleaseReconciler interface {
+	// BeginAllocationRelease persists RESERVED → RELEASING cleanup progress.
+	BeginAllocationRelease(id string) error
+	// CompleteAllocationRelease finishes RELEASING → RELEASED and clears
+	// assignment fields and lease metadata.
+	CompleteAllocationRelease(id string) error
+	// MarkAllocationCleanupRequired persists an operator-visible blocked
+	// state for allocations whose bundle cannot be safely released.
+	MarkAllocationCleanupRequired(id, reason string) error
+}
+
+// releasingAllocationScanner enumerates allocations whose release lifecycle
+// must be completed or kept blocked by the startup recovery scan.
+type releasingAllocationScanner interface {
+	ListReleasingAllocations() ([]string, error)
+}
+
+// reservedAllocationLister enumerates RESERVED allocations and exposes the
+// durable allocation record for lease-repair comparisons.
+// KPK-19.2.12-P1-02: explicit interfaces replace the v19.2.11 concrete-type
+// assertions and silently-skipped no-op scans.
+type reservedAllocationLister interface {
+	ListReservedAllocations() ([]string, error)
+	GetAllocation(id string) (*allocation.Allocation, error)
+}
+
+// reservationLeaseUpdater mirrors durable bundle lease metadata into the
+// allocation record.
+type reservationLeaseUpdater interface {
+	UpdateReservationLease(allocationID, leaseID string, expiry time.Time) error
+}
+
 type reservationAssignmentFinalizer interface {
 	FinalizeReservation(allocationID string, reservations []*Reservation) error
 }
@@ -514,6 +548,15 @@ func (m *Manager) finalizeAllocation(allocationID string, reservations []*Reserv
 // ReconcilePending completes allocation finalization for a reservation bundle
 // that was durably committed before the process failed. It is restricted to
 // trusted reconcilers and only accepts a complete bundle of active HELD leases.
+//
+// KPK-19.2.12-P2-01: expired-HELD and blocked records are no longer merely
+// rejected — they are actively routed to the cleanup workflow. Expired HELD
+// records are durably marked EXPIRED_PENDING_RECONCILIATION (inside the same
+// critical section and atomic rewrite) so the lease reaper can process them,
+// and the allocation is persisted in an operator-visible blocked state
+// (CLEANUP_REQUIRED) instead of being left in RESERVING forever. The caller
+// still receives ErrReconciliationRequired — finalization is refused — but
+// recovery now converges instead of retrying the same rejection forever.
 func (m *Manager) ReconcilePending(allocationID, token string) error {
 	identity, err := m.resolveIdentity(token)
 	if err != nil {
@@ -539,26 +582,29 @@ func (m *Manager) ReconcilePending(allocationID, token string) error {
 		return fmt.Errorf("%w: %d corrupt lines", ErrReservationStoreCorrupt, len(corrupt))
 	}
 	var bundle []*Reservation
+	var expired []*Reservation
+	blocked := ReservationStatus("")
 	for _, record := range records {
 		if record.AllocationID != allocationID {
 			continue
 		}
-		// P1-03 (v19.2.11): Check lease expiry before accepting HELD records.
-		// An expired HELD reservation must not be finalized to RESERVED.
+		// P1-03 (v19.2.11): An expired HELD reservation must not be
+		// finalized to RESERVED.
+		// KPK-19.2.12-P2-01: route it to the lease reaper instead of
+		// only refusing — see the durable marking below.
 		if record.Status == StatusHeld && record.IsExpired(m.clock.Now()) {
-			return fmt.Errorf("%w: allocation %s has expired reservation %s — route to lease reaper instead of finalization", ErrReconciliationRequired, allocationID, record.ReservationID)
+			expired = append(expired, record)
+			continue
 		}
 		if record.Status != StatusHeld {
-			// P1-03 (v19.2.11): If a record is EXPIRED_PENDING_RECONCILIATION,
-			// the allocation cannot be finalized. It must be routed to cleanup.
 			if record.Status == StatusExpiredPendingReconciliation || record.Status == StatusConflict {
-				return fmt.Errorf("%w: allocation %s has reservation %s in status %s — cannot finalize, needs cleanup reconciliation", ErrReconciliationRequired, allocationID, record.ReservationID, record.Status)
+				blocked = record.Status
 			}
-			return fmt.Errorf("%w: allocation %s has reservation %s in status %s", ErrReconciliationRequired, allocationID, record.ReservationID, record.Status)
+			continue
 		}
 		bundle = append(bundle, record)
 	}
-	if len(bundle) == 0 {
+	if len(bundle) == 0 && len(expired) == 0 && blocked == "" {
 		// Crash recovery: if the allocation was claimed but the atomic
 		// reservation-store commit never happened, fail the orphaned claim.
 		if err := m.allocVal.EndReservation(allocationID, false); err != nil {
@@ -566,53 +612,299 @@ func (m *Manager) ReconcilePending(allocationID, token string) error {
 		}
 		return nil
 	}
-	expectedBundleSize := 0
-	for _, record := range bundle {
-		if record.BundleSize > expectedBundleSize {
-			expectedBundleSize = record.BundleSize
-		}
-	}
-	if expectedBundleSize > 0 && len(bundle) != expectedBundleSize {
-		return fmt.Errorf("%w: allocation %s has %d/%d reservation records", ErrReconciliationRequired, allocationID, len(bundle), expectedBundleSize)
-	}
-	if len(bundle) > 1 {
-		for _, record := range bundle {
-			if record.BundleSize == 0 {
-				return fmt.Errorf("%w: allocation %s mixes legacy single-resource and bundle records", ErrReconciliationRequired, allocationID)
+
+	// KPK-19.2.12-P2-01: durably route expired-HELD records to the cleanup
+	// workflow. Marking happens inside the already-held critical section and
+	// is persisted with one atomic rewrite — the lease reaper
+	// (ReapExpiredOnce / ReconcileExpired) will verify cleanup and release.
+	if len(expired) > 0 {
+		for _, record := range expired {
+			if err := record.transition(StatusExpiredPendingReconciliation, m.clock.Now(), "lease expired during pending reconciliation"); err != nil {
+				return fmt.Errorf("%w: cannot route expired reservation %s to cleanup: %w", ErrReconciliationRequired, record.ReservationID, err)
 			}
 		}
+		if err := m.store.rewriteAll(records); err != nil {
+			return fmt.Errorf("%w: cannot persist expiry routing for allocation %s: %w", ErrReconciliationRequired, allocationID, err)
+		}
 	}
+
+	// KPK-19.2.12-P2-01: persist an operator-visible blocked state when the
+	// bundle cannot be finalized. The allocation must not remain RESERVING
+	// retrying the same rejection forever.
+	if blocked != "" || len(expired) > 0 {
+		reason := "reservation bundle blocked"
+		if blocked != "" {
+			reason = fmt.Sprintf("reservation bundle member in %s", blocked)
+		} else {
+			reason = "reservation bundle has expired leases"
+		}
+		if marker, ok := m.allocVal.(allocationReleaseReconciler); ok {
+			if err := marker.MarkAllocationCleanupRequired(allocationID, reason); err != nil {
+				return fmt.Errorf("%w: allocation %s has expired/blocked reservations and could not be marked CLEANUP_REQUIRED: %w", ErrReconciliationRequired, allocationID, err)
+			}
+		}
+		return fmt.Errorf("%w: allocation %s routed to cleanup reconciliation (%d expired, blocked=%q)", ErrReconciliationRequired, allocationID, len(expired), blocked)
+	}
+
+	// KPK-19.2.12-P2-02: strict, central bundle validation replaces the
+	// previous max-BundleSize comparison. All shared invariants (owner,
+	// lease id/expiry, idempotency key, fingerprint, bundle size, duplicate
+	// resources, allowed statuses) must hold before finalization.
 	sortReservations(bundle)
+	if err := validateBundleConsistency(bundle, allocationID, activeBundleStatuses); err != nil {
+		return fmt.Errorf("%w: %w", ErrReconciliationRequired, err)
+	}
 	if err := m.finalizeAllocation(allocationID, bundle); err != nil {
 		return fmt.Errorf("%w: cannot finalize allocation %s: %w", ErrReconciliationRequired, allocationID, err)
 	}
 	return nil
 }
 
+// RecoverySummary is the structured result of the startup recovery pass.
+// KPK-19.2.12-P2-01: operators must see repaired, blocked and failed
+// allocation IDs instead of a single opaque error.
+type RecoverySummary struct {
+	// Finalized lists RESERVING allocations whose durable bundle was completed
+	// to RESERVED.
+	Finalized []string
+	// Aborted lists orphaned RESERVING claims safely aborted to FAILED (no
+	// reservation record was ever committed).
+	Aborted []string
+	// Released lists allocations whose interrupted release was completed to
+	// RELEASED.
+	Released []string
+	// CleanupBlocked lists allocations persisted in CLEANUP_REQUIRED — an
+	// operator must inspect these; they are never auto-released.
+	CleanupBlocked []string
+	// LeaseRepaired lists RESERVED allocations whose stale lease metadata was
+	// converged with the authoritative reservation bundle.
+	LeaseRepaired []string
+	// Failed lists allocation IDs whose recovery attempt returned an error.
+	Failed []string
+}
+
+// Recover is the complete startup recovery sequence for the Compute Fabric
+// reservation/allocation layer. KPK-19.2.12-P1-02/P2-01: the v19.2.11
+// startup contract only ran the RESERVING scan; the lease-repair method
+// existed but was never invoked, and interrupted releases were invisible.
+// Recover orchestrates the full state-dependent path:
+//
+//  1. RESERVING scan — finalize complete HELD bundles, abort orphaned
+//     claims, durably route expired/blocked bundles to cleanup.
+//  2. Expired-lease reaper pass — mark expired HELD reservations, verify
+//     cleanup and release them (which also converges allocations).
+//  3. RELEASING/CLEANUP_REQUIRED scan — complete interrupted allocation
+//     releases; keep CONFLICT-blocked allocations operator-visible.
+//  4. RESERVED lease repair — converge allocation lease metadata with the
+//     authoritative reservation store.
+//
+// Each phase aggregates its errors; a failure in one phase never prevents
+// the remaining phases from running. The returned error joins every failure
+// so nothing is silently skipped.
+func (m *Manager) Recover(token string) (*RecoverySummary, error) {
+	if _, err := m.resolveReconciler(token); err != nil {
+		return nil, err
+	}
+	summary := &RecoverySummary{}
+	var failures []error
+
+	// Phase 1: RESERVING allocations.
+	scanner, ok := m.allocVal.(pendingAllocationScanner)
+	if !ok {
+		failures = append(failures, fmt.Errorf("%w: allocation validator does not support startup scanning", ErrReconciliationRequired))
+	} else {
+		ids, err := scanner.ListPendingReservationAllocations()
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%w: cannot list pending allocations: %w", ErrReconciliationRequired, err))
+		} else {
+			sort.Strings(ids)
+			stateLister, hasLister := m.allocVal.(reservedAllocationLister)
+			for _, id := range ids {
+				if err := m.ReconcilePending(id, token); err != nil {
+					summary.Failed = append(summary.Failed, id)
+					failures = append(failures, fmt.Errorf("pending allocation %s: %w", id, err))
+					continue
+				}
+				// Classify the converged outcome for the operator.
+				if hasLister {
+					if record, err := stateLister.GetAllocation(id); err == nil && record != nil {
+						switch record.State {
+						case allocation.StateFailed:
+							summary.Aborted = append(summary.Aborted, id)
+						default:
+							summary.Finalized = append(summary.Finalized, id)
+						}
+						continue
+					}
+				}
+				summary.Finalized = append(summary.Finalized, id)
+			}
+		}
+	}
+
+	// Phase 2: expired-lease reaper pass. MarkExpiredCandidates routes expired
+	// HELD reservations to cleanup; ReconcileExpired verifies cleanup evidence
+	// and releases. Allocation convergence happens inside ReconcileExpired via
+	// reconcileAllocationAfterRelease.
+	if _, err := m.ReapExpiredOnce(token); err != nil {
+		failures = append(failures, fmt.Errorf("expired-lease reconciliation: %w", err))
+	}
+
+	// Phase 3: interrupted allocation releases.
+	if releaseScanner, ok := m.allocVal.(releasingAllocationScanner); ok {
+		ids, err := releaseScanner.ListReleasingAllocations()
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%w: cannot list releasing allocations: %w", ErrReconciliationRequired, err))
+		} else {
+			sort.Strings(ids)
+			for _, id := range ids {
+				alloc, err := m.recoverReleasingAllocation(id, token)
+				if err != nil {
+					summary.Failed = append(summary.Failed, id)
+					failures = append(failures, fmt.Errorf("releasing allocation %s: %w", id, err))
+					continue
+				}
+				switch alloc {
+				case allocation.StateReleased:
+					summary.Released = append(summary.Released, id)
+				case allocation.StateCleanupRequired:
+					summary.CleanupBlocked = append(summary.CleanupBlocked, id)
+				}
+			}
+		}
+	}
+
+	// Phase 4: reserved-lease metadata repair.
+	if lister, ok := m.allocVal.(reservedAllocationLister); ok {
+		ids, err := lister.ListReservedAllocations()
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%w: cannot list reserved allocations: %w", ErrReconciliationRequired, err))
+		} else {
+			sort.Strings(ids)
+			updater, updaterOK := m.allocVal.(reservationLeaseUpdater)
+			for _, id := range ids {
+				before, beforeErr := lister.GetAllocation(id)
+				if err := m.reconcileAllocationLease(id, lister, updaterOrZero(updater, updaterOK)); err != nil {
+					summary.Failed = append(summary.Failed, id)
+					failures = append(failures, fmt.Errorf("lease repair allocation %s: %w", id, err))
+					continue
+				}
+				if beforeErr != nil {
+					continue
+				}
+				after, afterErr := lister.GetAllocation(id)
+				if afterErr != nil {
+					continue
+				}
+				if before != nil && after != nil && (before.LeaseID != after.LeaseID || !before.LeaseExpiry.Equal(after.LeaseExpiry)) {
+					if after.State == allocation.StateReleased {
+						// The phase-4 routing completed an interrupted
+						// release (write-failure recovery) — classify honestly.
+						summary.Released = append(summary.Released, id)
+					} else {
+						summary.LeaseRepaired = append(summary.LeaseRepaired, id)
+					}
+				}
+			}
+		}
+	}
+
+	return summary, errors.Join(failures...)
+}
+
+// updaterOrZero returns the updater when available, or nil when the adapter
+// does not support lease updates (reconcileAllocationLease will then fail
+// closed through a nil-interface check performed by the caller path).
+func updaterOrZero(updater reservationLeaseUpdater, ok bool) reservationLeaseUpdater {
+	if !ok {
+		return nil
+	}
+	return updater
+}
+
+// recoverReleasingAllocation completes or keeps blocked one allocation found
+// in RELEASING/CLEANUP_REQUIRED. The authoritative reservation bundle
+// decides the outcome; the method is idempotent so repeated startup passes
+// converge.
+func (m *Manager) recoverReleasingAllocation(allocationID, token string) (allocation.State, error) {
+	if _, err := m.resolveReconciler(token); err != nil {
+		return "", err
+	}
+	reservations, err := m.store.ListByAllocation(allocationID)
+	if err != nil {
+		return "", fmt.Errorf("cannot list reservations: %w", err)
+	}
+	lister, ok := m.allocVal.(reservedAllocationLister)
+	if !ok {
+		return "", fmt.Errorf("%w: allocation validator does not support allocation reads", ErrReconciliationRequired)
+	}
+	record, err := lister.GetAllocation(allocationID)
+	if err != nil {
+		return "", fmt.Errorf("%w: cannot load allocation: %w", ErrReconciliationRequired, err)
+	}
+
+	anyConflict := false
+	allReleased := len(reservations) > 0
+	for _, r := range reservations {
+		if r.Status == StatusConflict {
+			anyConflict = true
+		}
+		if r.Status != StatusReleased {
+			allReleased = false
+		}
+	}
+
+	// Blocked bundles stay operator-visible — never auto-release.
+	if anyConflict {
+		if record.State != allocation.StateCleanupRequired {
+			releaser, ok := m.allocVal.(allocationReleaseReconciler)
+			if !ok {
+				return "", fmt.Errorf("%w: allocation validator does not support release reconciliation", ErrReconciliationRequired)
+			}
+			if err := releaser.MarkAllocationCleanupRequired(allocationID, "conflicted bundle member discovered during recovery"); err != nil {
+				return "", fmt.Errorf("cannot mark allocation CLEANUP_REQUIRED: %w", err)
+			}
+			return allocation.StateCleanupRequired, nil
+		}
+		return allocation.StateCleanupRequired, nil
+	}
+
+	// No reservation records for a RELEASING allocation: the bundle store is
+	// authoritative — if it proves no member was ever committed, the release
+	// can be completed (the RESERVING-scan orphan abort owns the no-claim case).
+	if len(reservations) == 0 {
+		allReleased = false
+	}
+
+	if allReleased {
+		if err := m.reconcileAllocationAfterRelease(allocationID); err != nil {
+			return "", err
+		}
+		after, err := lister.GetAllocation(allocationID)
+		if err != nil {
+			return "", fmt.Errorf("%w: cannot reload allocation: %w", ErrReconciliationRequired, err)
+		}
+		return after.State, nil
+	}
+
+	// Partial release or missing records: keep the current blocked/releasing
+	// state — the reaper will release the remaining members and a later pass
+	// will complete the allocation.
+	return record.State, nil
+}
+
 // ReconcileAllPending repairs interrupted Phase 3 claims on startup. The
 // allocation adapter supplies allocation IDs left in RESERVING; each is
 // finalized from its complete durable reservation bundle or safely aborted
 // when no reservation record was committed.
+//
+// KPK-19.2.12-P1-02: this is now a thin compatibility wrapper over the full
+// Recover sequence, so existing startup callers get the complete recovery
+// orchestration (RESERVING scan + expired-lease reaper + interrupted-release
+// completion + reserved-lease repair) instead of only the first phase.
 func (m *Manager) ReconcileAllPending(token string) error {
-	if _, err := m.resolveReconciler(token); err != nil {
-		return err
-	}
-	scanner, ok := m.allocVal.(pendingAllocationScanner)
-	if !ok {
-		return fmt.Errorf("%w: allocation validator does not support startup scanning", ErrReconciliationRequired)
-	}
-	ids, err := scanner.ListPendingReservationAllocations()
-	if err != nil {
-		return fmt.Errorf("%w: cannot list pending allocations: %w", ErrReconciliationRequired, err)
-	}
-	sort.Strings(ids)
-	var failures []error
-	for _, id := range ids {
-		if err := m.ReconcilePending(id, token); err != nil {
-			failures = append(failures, fmt.Errorf("allocation %s: %w", id, err))
-		}
-	}
-	return errors.Join(failures...)
+	_, err := m.Recover(token)
+	return err
 }
 
 // ReapExpiredOnce marks expired leases and asks the trusted cleanup verifier
@@ -675,6 +967,13 @@ func (m *Manager) RunLeaseReaper(ctx context.Context, reconcilerToken string, in
 			if _, err := m.ReapExpiredOnce(reconcilerToken); err != nil {
 				report(err)
 			}
+			// KPK-19.2.12-P1-02: controlled periodic lease-repair path.
+			// A failed allocation-store mirror write during
+			// RenewBundleLease is repaired here within one reaper
+			// interval instead of persisting indefinitely.
+			if err := m.ReconcileReservedLeases(reconcilerToken); err != nil {
+				report(err)
+			}
 		}
 	}
 }
@@ -727,7 +1026,7 @@ func (m *Manager) RenewBundleLease(allocationID, token string, newTTL time.Durat
 			return ErrLeaseNotOwned
 		}
 		if record.Status != StatusHeld {
-			return fmt.Errorf("reservation: cannot renew bundle with reservation %s in status %s", record.ReservationID, record.Status)
+			return fmt.Errorf("%w: cannot renew bundle with reservation %s in status %s", ErrReconciliationRequired, record.ReservationID, record.Status)
 		}
 		if record.IsExpired(m.clock.Now()) {
 			return ErrLeaseExpired
@@ -737,14 +1036,13 @@ func (m *Manager) RenewBundleLease(allocationID, token string, newTTL time.Durat
 	if len(bundle) == 0 {
 		return ErrResourceNotFound
 	}
-	expectedSize := 0
-	for _, record := range bundle {
-		if record.BundleSize > expectedSize {
-			expectedSize = record.BundleSize
-		}
-	}
-	if expectedSize > 0 && len(bundle) != expectedSize {
-		return fmt.Errorf("%w: allocation %s has incomplete reservation bundle", ErrReconciliationRequired, allocationID)
+	// KPK-19.2.12-P2-02: strict, central bundle validation. The previous
+	// max-BundleSize comparison accepted logically inconsistent bundles
+	// (mixed lease IDs, owners, fingerprints) and renewed them as one
+	// atomic lease. Fail closed and preserve the records for repair.
+	sortReservations(bundle)
+	if err := validateBundleConsistency(bundle, allocationID, activeBundleStatuses); err != nil {
+		return fmt.Errorf("%w: %w", ErrReconciliationRequired, err)
 	}
 	now := m.clock.Now().UTC()
 	expiry := now.Add(newTTL)
@@ -757,12 +1055,15 @@ func (m *Manager) RenewBundleLease(allocationID, token string, newTTL time.Durat
 	if err := m.store.rewriteAll(records); err != nil {
 		return fmt.Errorf("%w: cannot persist lease renewal: %w", ErrPersistence, err)
 	}
-	if updater, ok := m.allocVal.(interface {
-		UpdateReservationLease(allocationID, leaseID string, expiry time.Time) error
-	}); ok {
-		if err := updater.UpdateReservationLease(allocationID, bundle[0].LeaseID, expiry); err != nil {
-			return fmt.Errorf("%w: lease renewed in reservation store but allocation metadata is pending repair: %w", ErrReconciliationRequired, err)
-		}
+	// KPK-19.2.12-P1-02: the lease-update capability is now an explicit
+	// interface; a missing capability is a fail-closed reconciliation
+	// error, not a silently skipped mirror write.
+	updater, ok := m.allocVal.(reservationLeaseUpdater)
+	if !ok {
+		return fmt.Errorf("%w: lease renewed in reservation store but allocation validator cannot mirror lease metadata", ErrReconciliationRequired)
+	}
+	if err := updater.UpdateReservationLease(allocationID, bundle[0].LeaseID, expiry); err != nil {
+		return fmt.Errorf("%w: lease renewed in reservation store but allocation metadata is pending repair: %w", ErrReconciliationRequired, err)
 	}
 	return nil
 }
@@ -861,6 +1162,18 @@ func (m *Manager) ConfirmRelease(reservationID, token string) (*Reservation, err
 	if err != nil {
 		return nil, err
 	}
+	// KPK-19.2.12-P1-01: converge the allocation lifecycle after a
+	// user-initiated release too — the invariant "an allocation never
+	// remains RESERVED after all its reservations are RELEASED" must hold
+	// on every release path, not only the expiry-reaper path. The typed
+	// ErrAllocationReconciliationPending outcome is surfaced, never
+	// swallowed.
+	if updated != nil && updated.Status == StatusReleased && updated.AllocationID != "" {
+		if err := m.reconcileAllocationAfterRelease(updated.AllocationID); err != nil {
+			return updated, fmt.Errorf("%w: reservation %s released but allocation %s reconciliation pending: %w",
+				ErrAllocationReconciliationPending, reservationID, updated.AllocationID, err)
+		}
+	}
 	return updated, nil
 }
 
@@ -958,16 +1271,19 @@ func (m *Manager) ReconcileExpired(reservationID, token string) (*Reservation, e
 		return nil, err
 	}
 
-	// P1-02 (v19.2.11): Allocation-aware cleanup after reservation release.
-	// Check if ALL reservations for this allocation are now RELEASED.
-	// If so, transition the allocation to RELEASING → RELEASED and clear assignments.
-	// If not all are released, transition allocation to RELEASING (cleanup in progress).
+	// P1-02 (v19.2.11) → KPK-19.2.12-P1-01: Allocation-aware cleanup after
+	// reservation release. Check if ALL reservations for this allocation are
+	// now RELEASED. If so, transition the allocation to RELEASED and clear
+	// assignments. If not all are released, persist RELEASING cleanup
+	// progress. A CONFLICT member blocks the allocation in
+	// CLEANUP_REQUIRED. The error is NEVER swallowed: the reservation is
+	// durably RELEASED (returned to the caller) but the allocation
+	// reconciliation outcome is surfaced as ErrAllocationReconciliationPending
+	// so operators and the startup recovery scan can converge it.
 	if r.AllocationID != "" {
-		if err := m.reconcileAllocationAfterRelease(r.AllocationID, reconciler); err != nil {
-			// Log the allocation reconciliation error but don't fail the reservation
-			// release — the reservation is durably RELEASED. The allocation will
-			// be repaired by a future ReconcileAllPending scan.
-			fmt.Fprintf(os.Stderr, "reservation: warning: allocation %s reconciliation after release of %s failed: %v\n", r.AllocationID, reservationID, err)
+		if err := m.reconcileAllocationAfterRelease(r.AllocationID); err != nil {
+			return updated, fmt.Errorf("%w: reservation %s released but allocation %s reconciliation pending: %w",
+				ErrAllocationReconciliationPending, reservationID, r.AllocationID, err)
 		}
 	}
 
@@ -982,10 +1298,21 @@ func (m *Manager) ListByAllocation(allocID string) ([]*Reservation, error) {
 	return m.store.ListByAllocation(allocID)
 }
 
-// reconcileAllocationAfterRelease checks if all reservations for an allocation
-// are RELEASED and transitions the allocation accordingly.
-// P1-02 (v19.2.11): Prevents allocation from remaining RESERVED after resources released.
-func (m *Manager) reconcileAllocationAfterRelease(allocationID string, reconciler Identity) error {
+// reconcileAllocationAfterRelease converges the allocation lifecycle with
+// the authoritative reservation bundle after a reservation release event.
+// KPK-19.2.12-P1-01: the v19.2.11 implementation called
+// EndReservation(allocationID, false), which only aborts a RESERVING
+// allocation and rejects RESERVED — exactly the state being released. The
+// partial-release branch was a comment-only no-op. This implementation uses
+// dedicated, allocation-aware transitions:
+//
+//   - any member CONFLICT            → CLEANUP_REQUIRED (operator-visible)
+//   - all members RELEASED            → RELEASED, assignments cleared
+//   - some members still blocking     → RELEASING (cleanup progress persisted)
+//
+// and returns an error whenever the allocation cannot be reconciled, so the
+// caller can surface a typed result instead of reporting false success.
+func (m *Manager) reconcileAllocationAfterRelease(allocationID string) error {
 	reservations, err := m.store.ListByAllocation(allocationID)
 	if err != nil {
 		return fmt.Errorf("cannot list reservations for allocation %s: %w", allocationID, err)
@@ -994,84 +1321,141 @@ func (m *Manager) reconcileAllocationAfterRelease(allocationID string, reconcile
 		return nil // no reservations, nothing to reconcile
 	}
 
+	releaser, ok := m.allocVal.(allocationReleaseReconciler)
+	if !ok {
+		return fmt.Errorf("%w: allocation validator does not support release reconciliation", ErrReconciliationRequired)
+	}
+
 	allReleased := true
-	allBlocking := false
+	anyConflict := false
 	for _, r := range reservations {
-		if r.Status.BlocksResource() {
-			allBlocking = true
+		if r.Status == StatusConflict {
+			anyConflict = true
 		}
 		if r.Status != StatusReleased {
 			allReleased = false
 		}
 	}
 
-	// P1-02: If all reservations are RELEASED, transition allocation to RELEASING → RELEASED.
+	// A conflicted member means cleanup could not be positively verified:
+	// persist an operator-visible blocked state and surface a typed error —
+	// never report the allocation fully released (no false success).
+	if anyConflict {
+		if err := releaser.MarkAllocationCleanupRequired(allocationID, "reservation bundle member in CONFLICT after release"); err != nil {
+			return fmt.Errorf("cannot mark allocation %s CLEANUP_REQUIRED: %w", allocationID, err)
+		}
+		return fmt.Errorf("%w: allocation %s blocked in CLEANUP_REQUIRED: reservation bundle member in CONFLICT", ErrReconciliationRequired, allocationID)
+	}
+
+	// All bundle members are durably RELEASED with verified cleanup
+	// evidence (the reservation transition itself required the cleanup
+	// verifier): complete the allocation release and clear assignments.
 	if allReleased {
-		return m.allocVal.EndReservation(allocationID, false) // fail the allocation
+		if err := releaser.CompleteAllocationRelease(allocationID); err != nil {
+			return fmt.Errorf("cannot complete release of allocation %s: %w", allocationID, err)
+		}
+		return nil
 	}
 
-	// P1-02: If some reservations are still blocking, transition allocation to RELEASING.
-	if allBlocking {
-		// Allocation should be in RELEASING state — cleanup in progress.
-		// Don't transition to FAILED yet — wait for all bundle members.
+	// Partial release: persist cleanup progress so a crash between bundle
+	// member releases is discoverable by the startup recovery scan.
+	if err := releaser.BeginAllocationRelease(allocationID); err != nil {
+		return fmt.Errorf("cannot begin release of allocation %s: %w", allocationID, err)
 	}
-
 	return nil
 }
 
-// ReconcileReservedLeases scans RESERVED allocations and repairs stale lease
-// metadata by comparing with the authoritative reservation bundle.
-// P2-02 (v19.2.11): Repairs allocations where RenewBundleLease updated the
-// reservation store but the allocation metadata write failed.
+// ReconcileReservedLeases repairs stale lease metadata on RESERVED
+// allocations by comparing it with the authoritative reservation bundle.
+// P2-02 (v19.2.11) → KPK-19.2.12-P1-02: the v19.2.11 version was never
+// wired into any startup or periodic path, silently returned nil when
+// capabilities were missing, skipped per-allocation store errors,
+// discarded lease-update errors and trusted bundle[0] without validating
+// the bundle. This version:
+//
+//   - fails closed when the adapter lacks scanning or lease-update capability,
+//   - validates the ENTIRE bundle (shared lease id/expiry, owner, statuses,
+//     bundle size, duplicates) before selecting authoritative metadata,
+//   - aggregates every per-allocation failure with errors.Join — a skipped
+//     repair is never reported as success,
+//   - is invoked by the startup recovery sequence (Recover) and by the
+//     periodic lease reaper (RunLeaseReaper).
 func (m *Manager) ReconcileReservedLeases(token string) error {
-	_, err := m.resolveReconciler(token)
-	if err != nil {
+	if _, err := m.resolveReconciler(token); err != nil {
 		return err
 	}
 
-	scanner, ok := m.allocVal.(pendingAllocationScanner)
+	lister, ok := m.allocVal.(reservedAllocationLister)
 	if !ok {
-		return nil // adapter doesn't support scanning
+		return fmt.Errorf("%w: allocation validator does not support reserved-allocation scanning", ErrReconciliationRequired)
 	}
-
-	// Get all allocations from the store.
-	allocStore, ok := m.allocVal.(*AllocationReservationAdapter)
+	updater, ok := m.allocVal.(reservationLeaseUpdater)
 	if !ok {
+		return fmt.Errorf("%w: allocation validator does not support lease updates", ErrReconciliationRequired)
+	}
+	ids, err := lister.ListReservedAllocations()
+	if err != nil {
+		return fmt.Errorf("%w: cannot list reserved allocations: %w", ErrReconciliationRequired, err)
+	}
+	sort.Strings(ids)
+	var failures []error
+	for _, id := range ids {
+		if err := m.reconcileAllocationLease(id, lister, updater); err != nil {
+			failures = append(failures, fmt.Errorf("allocation %s: %w", id, err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// reconcileAllocationLease converges one allocation's lease metadata with
+// its durable reservation bundle. The bundle is fully validated before any
+// metadata is trusted; a mismatched or inconsistent bundle fails closed and
+// is preserved for operator repair.
+func (m *Manager) reconcileAllocationLease(allocationID string, lister reservedAllocationLister, updater reservationLeaseUpdater) error {
+	bundle, err := m.store.ListByAllocation(allocationID)
+	if err != nil {
+		return fmt.Errorf("%w: cannot load reservation bundle: %w", ErrReconciliationRequired, err)
+	}
+	if len(bundle) == 0 {
+		// No reservation records: the pending/aborted-allocation scans
+		// own this case. Nothing to repair here.
 		return nil
 	}
-	records, corrupt, err := allocStore.store.Load()
+	// KPK-19.2.12-P1-01 (restart repair): a RESERVED allocation whose entire
+	// bundle is RELEASED (or conflicted) is an interrupted release — the
+	// allocation-store writes failed between the reservation release and
+	// the allocation completion. Restart repair must find and converge it,
+	// not fail bundle validation on the released statuses.
+	allReleased := true
+	anyConflict := false
+	for _, r := range bundle {
+		if r.Status == StatusConflict {
+			anyConflict = true
+		}
+		if r.Status != StatusReleased {
+			allReleased = false
+		}
+	}
+	if allReleased || anyConflict {
+		return m.reconcileAllocationAfterRelease(allocationID)
+	}
+	if err := validateActiveBundle(bundle, allocationID); err != nil {
+		return fmt.Errorf("%w: bundle validation failed: %w", ErrReconciliationRequired, err)
+	}
+	record, err := lister.GetAllocation(allocationID)
 	if err != nil {
-		return fmt.Errorf("%w: cannot load allocations: %v", ErrReconciliationRequired, err)
+		return fmt.Errorf("%w: cannot load allocation: %w", ErrReconciliationRequired, err)
 	}
-	if len(corrupt) > 0 {
-		return fmt.Errorf("%w: %d corrupt allocation records", ErrReconciliationRequired, len(corrupt))
+	leaseID := bundle[0].LeaseID
+	expiry := bundle[0].LeaseExpiry
+	if record.LeaseID == leaseID && record.LeaseExpiry.Equal(expiry) {
+		return nil // already converged
 	}
-
-	_ = scanner // suppress unused warning
-	for _, alloc := range records {
-		if alloc.State != allocation.StateReserved {
-			continue
-		}
-		// Get the reservation bundle for this allocation.
-		bundle, err := m.store.ListByAllocation(alloc.AllocationID)
-		if err != nil {
-			continue // skip allocations with store errors
-		}
-		if len(bundle) == 0 {
-			continue
-		}
-		// Compare lease metadata.
-		authoritativeLeaseID := bundle[0].LeaseID
-		authoritativeExpiry := bundle[0].LeaseExpiry
-		if alloc.LeaseID != authoritativeLeaseID || !alloc.LeaseExpiry.Equal(authoritativeExpiry) {
-			// Repair: update allocation lease metadata from reservation store.
-			updater, ok := m.allocVal.(interface {
-				UpdateReservationLease(allocationID, leaseID string, expiry time.Time) error
-			})
-			if ok {
-				_ = updater.UpdateReservationLease(alloc.AllocationID, authoritativeLeaseID, authoritativeExpiry)
-			}
-		}
+	if updater == nil {
+		return fmt.Errorf("%w: allocation validator does not support lease updates", ErrReconciliationRequired)
+	}
+	if err := updater.UpdateReservationLease(allocationID, leaseID, expiry); err != nil {
+		return fmt.Errorf("%w: cannot repair allocation lease metadata: %w", ErrReconciliationRequired, err)
 	}
 	return nil
 }
