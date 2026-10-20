@@ -1,8 +1,8 @@
-# ScarLiX OS — Agent Kernel AK-1: Foundation Design (v19.4.x line)
+# ScarLiX OS — Agent Kernel AK-1/AK-2 Design (v19.4.x line)
 
-**Branch:** `agent-kernel/ak1-foundation` → merged to main as **v19.4.0**
-**Status:** AK-1 complete (incl. pre-merge review fix: enforced capability
-grants in `Policy.Evaluate`); wiring (AK-2+) follows
+**Branch:** `agent-kernel/ak2-sessions` → merged to main as **v19.4.1**
+**Status:** AK-1 + AK-2 complete (AK-1 incl. pre-merge review fix; AK-2 =
+bounded session store + auth-gated REST surface); AK-3+ follows
 **Strategy source:** `docs/ScaRgeN_CuLT_Strategy_Obsidian_Lattice_SK_2026-10.pdf` (pages 13, 15–16, 22, 24)
 
 ---
@@ -20,7 +20,7 @@ the Compute Fabric tail; phasing follows verifiable behavior, page 20).
 | Phase | Content | Status |
 |---|---|---|
 | **AK-1** | Typed foundations: agent identity, closed capability enumeration, session state machine, deterministic permission engine, audit events | **DONE — merged as v19.4.0** (incl. review fix: capability grants enforced) |
-| **AK-2** | Session store + WS/REST surface (sessions created/closed via ScarliHQ API, auth-gated) | planned |
+| **AK-2** | Session store + WS/REST surface (sessions created/closed via ScarliHQ API, auth-gated) | **DONE — merged as v19.4.1** (see §6) |
 | **AK-3** | Policy engine v1: capability grants persisted per agent + admin disable switches; tie into the reservation governor's `user_tokens` principal space | planned |
 | **AK-4** | Audit sink: append-only JSONL under `/var/lib/scarlix-agentkernel/` (0600, flock — same store discipline as reservations) | planned |
 | **AK-5** | Compute intake API meets agent sessions: `compute.reserve`/`release` capabilities flow through the governor stores | planned (jointly with the intake API roadmap row) |
@@ -82,3 +82,74 @@ traceable-lifecycle building block (page 24). AK-4 persists these.
   incl. not-granted and nil-set fail-closed), determinism loop, audit
   validation
 - `go test -race -count=1 ./internal/agentkernel` — OK
+
+---
+
+## 6. AK-2 contract (v19.4.1) — session store + REST surface
+
+### Session store (`internal/agentkernel/store.go`)
+
+- **Bounded by construction:** `NewStore(maxSessions)` rejects ≤0; the cap
+  (default 128) counts all records incl. CLOSED ones — an honest, leak-free
+  bound. At capacity: `ErrSessionLimit` (caller returns 503).
+- **Fail-closed IDs:** session IDs are `aks-` + 16 crypto-random bytes hex;
+  RNG failure aborts creation with `ErrRNG` (v18.7.4-P0 WS-ticket precedent —
+  a predictable ID is never issued; verified by an RNG-injection test).
+- **Explicit grants only:** creating a session with a nil/empty capability
+  set is rejected — nothing is granted implicitly; the caller must be
+  explicit (grants are fixed for the session's lifetime; mutation is not a
+  store operation).
+- **State machine owned by the kernel:** all transitions go through
+  `Session.Transition` under the store lock — illegal moves, terminal
+  violations and backwards clocks rejected.
+- **Copies out:** `Get`/`List` return deep copies (grants cannot be mutated
+  through a returned record — test-asserted); `List` is sorted by
+  `CreatedAt` then ID (deterministic output, no map-order leaks).
+- **Attributable evaluation:** `Evaluate` runs under the store lock — a
+  decision can never be attributed to a state that no longer exists (no
+  TOCTOU between read and evaluate); every decision is stamped with an
+  `AuditEvent`.
+
+### REST surface (`internal/api/agentkernel.go`, opt-in via `SCARLIHQ_AGENTKERNEL_ENABLED=true`)
+
+| Route | Method | Contract |
+|---|---|---|
+| `/api/agent/sessions` | GET | list sessions (deterministic order, capabilities iterated from the closed enumeration) |
+| `/api/agent/sessions` | POST | create: `{agent_id, owner, capabilities[]}` → 201 CREATED (agent + capability set validated by the kernel; unknown fields, duplicate objects, oversized bodies rejected) |
+| `/api/agent/sessions/transition` | POST | `{session_id, to: ACTIVE\|SUSPENDED\|CLOSED}` → 200 (illegal/terminal/backwards → 409; unknown session → 404; other targets → 400) |
+| `/api/agent/sessions/evaluate` | POST | `{session_id, capability}` → **200 with `{allow, reason, …}` for BOTH allow and deny** — a denial is a successful, auditable evaluation; unknown session → 404; unknown capability → 400 |
+
+- Every route is behind the standard Bearer auth middleware (`h.auth`) —
+  same trust boundary as `/api/compute/start|stop` (the bearer-token
+  holder). No `?token=` URL fallback (v18.6 P2 stays closed).
+- The `owner` field in create requests is caller-supplied: the trust
+  boundary is the authenticated ScarliHQ principal. AK-3 replaces this with
+  admin-owned persisted grants tied to the governor's `user_tokens`
+  principal space.
+- **Disabled by default** (503 until configured): opt-in wiring in
+  `main.go`, commented compose block — the same enablement contract as the
+  compute lifecycle (Controlled Accumulation).
+- **No delete, no reset, no grant mutation** on the surface — the surface is
+  deliberately minimal; anything beyond create/transition/evaluate is a
+  separately reviewed act.
+
+### Verification (AK-2)
+
+- `go test ./internal/agentkernel` — store tests: construction validation,
+  create happy path + rejections (nil/empty caps, invalid agent, zero
+  time), RNG fail-closed injection, capacity incl. closed-records counting,
+  copy isolation, list determinism (20× repetition), full transition chain,
+  evaluate allow/deny/disabled/unknown matrix
+- `go test ./internal/api` — HTTP tests: disabled-by-default (503),
+  auth-gating (401 without/wrong token), full lifecycle over HTTP
+  (create → evaluate-on-CREATED denial → activate → evaluate allow →
+  not-granted denial with rule reason → list → close → terminal 409),
+  create validation matrix (shell.exec, made-up capability, empty caps,
+  bad agent id, no owner, unknown field, double object, malformed JSON),
+  evaluate/transition validation (unknown capability 400, unknown session
+  404, illegal target 400, method checks 405)
+- `go test -race` on both packages — OK
+- Smoke check 18 (deterministic, source-level): closed enumeration scanned
+  for forbidden tokens (negative control verified — injected `shell.exec`
+  FAILS the check), auth-gated route registration, denial-is-200 contract
+  marker, bounded store constants, opt-in wiring + commented compose block

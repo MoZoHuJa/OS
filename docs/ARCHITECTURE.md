@@ -149,12 +149,13 @@ The allocation store is shared with the ScarliHQ compute lifecycle (both
 sides UID 65532, flock-serialized) — one consistent record set, documented in
 the compose opt-in block (`SCARLIHQ_ALLOCATION_STORE=/var/lib/scarlix-reservation/allocations.jsonl`).
 
-## Agent Kernel foundation (v19.4.0, AK-1)
+## Agent Kernel foundation + sessions (v19.4.x, AK-1 + AK-2)
 
 The deterministic core every future agent capability flows through —
 **"LLM navrhuje, politika rozhoduje"** (strategy p. 13). The kernel owns
 identity, capabilities, sessions, permission evaluation and audit events;
-it is deliberately not yet wired to any HTTP/MCP surface (AK-2+):
+AK-2 (v19.4.1) makes it reachable through an opt-in, auth-gated REST
+surface:
 
 ```
 AgentID (typed "kind.name", no anonymous agents)
@@ -179,6 +180,17 @@ the grant. Extending the capability set is a deliberate reviewed act
 (`AllCapabilities` + tests change together). Package:
 `scarlihq/internal/agentkernel`. Design + AK-1…AK-5 sub-phase plan:
 `docs/AGENT_KERNEL_AK1_DESIGN.md`.
+
+AK-2 runtime half: a **bounded session store** (default 128 records — the
+cap counts CLOSED too; fail-closed `aks-` crypto-random IDs; explicit
+grants only; deep-copy reads; evaluation under the store lock — no TOCTOU)
+and the REST surface `/api/agent/sessions` (create / list / transition /
+evaluate; denial-is-200) behind the standard Bearer auth middleware.
+**Opt-in** via `SCARLIHQ_AGENTKERNEL_ENABLED=true` (503 until configured;
+commented compose block) — same enablement contract as the compute
+lifecycle. Grants are request-supplied until AK-3 persists them
+admin-owned; AK-4 persists the audit events; AK-5 flows
+`compute.reserve`/`compute.release` through the governor stores.
 
 ## GPU Arbitration (scarlix-mode)
 

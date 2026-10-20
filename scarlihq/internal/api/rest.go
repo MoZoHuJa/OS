@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoZoHuJa/OS/scarlihq/internal/agentkernel"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/gaming"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
@@ -21,7 +22,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.3.2"
+var Version = "19.4.1"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -159,6 +160,10 @@ type Handler struct {
 	version          string // v18.2: passed from main (ldflags-injected)
 	computeManager   *workload.Manager
 	computePrincipal string
+	// AK-2 (v19.4.1): Agent Kernel session surface — nil until
+	// ConfigureAgentKernel is called (opt-in, like the compute lifecycle).
+	agentStore  *agentkernel.Store
+	agentPolicy agentkernel.Policy
 }
 
 // NewHandler creates a new API handler.
@@ -187,6 +192,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/ws-ticket", h.auth(h.issueWSTicket))
 	mux.HandleFunc("/api/compute/start", h.auth(h.computeStart))
 	mux.HandleFunc("/api/compute/stop", h.auth(h.computeStop))
+	// AK-2 (v19.4.1): Agent Kernel session surface — auth-gated like every
+	// other route; responds 503 until ConfigureAgentKernel has been called
+	// (opt-in wiring from main.go, same contract as compute lifecycle).
+	mux.HandleFunc("/api/agent/sessions", h.auth(h.agentSessions))
+	mux.HandleFunc("/api/agent/sessions/transition", h.auth(h.agentSessionTransition))
+	mux.HandleFunc("/api/agent/sessions/evaluate", h.auth(h.agentSessionEvaluate))
 }
 
 // auth middleware: validates Bearer token header only.
