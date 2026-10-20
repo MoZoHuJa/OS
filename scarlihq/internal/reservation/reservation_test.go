@@ -803,7 +803,7 @@ func TestRequestRelease_FailsClosedWithoutReleaseLifecycleCapability(t *testing.
 	if !errors.Is(err, ErrReconciliationRequired) {
 		t.Fatalf("RequestRelease error = %v, want ErrReconciliationRequired", err)
 	}
-	got, err := mgr.Get(reserved.ReservationID)
+	got, err := mgr.Get(reserved.Reservation.ReservationID)
 	if err != nil {
 		t.Fatalf("Get reservation after rejected release: %v", err)
 	}
