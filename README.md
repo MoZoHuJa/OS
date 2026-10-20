@@ -138,6 +138,8 @@ scarlix-mode ai
 
 Until these pass on the actual host, v19.3.0 is a **hardware-validation candidate**, not a certified production release.
 
+Hardware checklist: [`docs/RELEASE_19.3.0_HARDWARE_ACCEPTANCE.md`](docs/RELEASE_19.3.0_HARDWARE_ACCEPTANCE.md).
+
 ---
 
 ## 🆕 What's New in v19.2.12 — Release-lifecycle Closure

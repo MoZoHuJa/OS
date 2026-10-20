@@ -12,11 +12,11 @@ set -euo pipefail
 # 5 phases: packages → NVIDIA → Docker → copy files → wizard + ScarliHQ build.
 # Full changelog: see CHANGELOG.md or git log.
 #
-# USAGE:
-#   git clone https://github.com/MoZoHuJa/OS.git ~/scarlix-os
+# USAGE (v19.3.0 hardware-validation candidate):
+#   git clone --depth 1 --branch main https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
-#   git checkout 19.2.10.G1   # candidate branch; release tag is created only after CI/acceptance gates pass
 #   bash install.sh
+# Or run the one-line command documented in README.md.
 # ============================================================================
 
 VERSION="19.3.0"
