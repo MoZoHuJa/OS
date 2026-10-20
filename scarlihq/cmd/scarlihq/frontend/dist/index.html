@@ -143,6 +143,18 @@
     </table>
   </div>
 
+  <!-- v19.3.1: read-only gaming-stack inventory (Gaming Stack Integration Plan,
+       Phase 4). Data comes from host-status.json → /api/gaming — the dashboard
+       never launches, installs or removes anything. -->
+  <div class="card">
+    <h2>Gaming Stack <span class="pill up" id="gamingcount" style="margin-left:auto">0</span></h2>
+    <table>
+      <thead><tr><th>Component</th><th>Kind</th><th>State</th></tr></thead>
+      <tbody id="gambody"><tr><td colspan="3" class="empty">Waiting for host-status…</td></tr></tbody>
+    </table>
+    <div style="color:var(--muted);font-size:11px;margin-top:8px">Read-only inventory (detected by scarlix-host-bridge). Install profiles: <code>scarlix-gaming-install --profile full</code></div>
+  </div>
+
   <footer>
     SCARLIX OS <span class="ver" id="footer-version">v18.7.5</span> — ScarliHQ dashboard (host-bridge architecture) · Verified AI path: SGLang + vLLM + BeeLlama + Ollama fallback
   </footer>
@@ -295,6 +307,26 @@ function renderStatus(s){
   }else{
     tb.innerHTML = '<tr><td colspan="3" class="empty">No containers (or host-bridge not running)</td></tr>';
     $('#syscont').textContent = '0';
+  }
+  // v19.3.1: Gaming stack inventory (read-only — detection by host bridge).
+  // All dynamic fields escaped (same XSS convention as GPU/container rows).
+  const gb = $('#gambody');
+  if(s.gaming && s.gaming.length){
+    $('#gamingcount').textContent = s.gaming.filter(g=>g.installed).length + '/' + s.gaming.length;
+    gb.innerHTML = s.gaming.map(g=>{
+      let cls = 'other', label = g.health || 'unknown';
+      if(g.health === 'running'){ cls = 'up'; }
+      else if(g.health === 'unhealthy'){ cls = 'down'; }
+      else if(g.health === 'not_installed'){ cls = 'other'; label = 'not installed'; }
+      else if(g.health === 'not_applicable'){ cls = 'up'; label = 'installed'; }
+      else if(g.health === 'stopped'){ cls = 'down'; }
+      const ver = g.version ? ' <span style="color:var(--muted);font-size:11px">'+escapeHTML(g.version)+'</span>' : '';
+      const opt = g.optional ? '' : ' <span style="color:var(--accent2);font-size:10px">base</span>';
+      return `<tr><td>${escapeHTML(g.name||g.id)}${ver}${opt}</td><td style="color:var(--muted);font-size:11px">${escapeHTML(g.kind||'—')} · ${escapeHTML(g.source||'—')}</td><td><span class="pill ${cls}">${escapeHTML(label)}</span></td></tr>`;
+    }).join('');
+  }else{
+    $('#gamingcount').textContent = '0';
+    gb.innerHTML = '<tr><td colspan="3" class="empty">No gaming data (host bridge older than v19.3.1, or manifest missing)</td></tr>';
   }
 }
 

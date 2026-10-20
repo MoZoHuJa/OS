@@ -1,4 +1,4 @@
-# SCARLIX OS v19.2.13 — Security Map
+# SCARLIX OS v19.3.1 — Security Map
 
 > Purpose: Catalog every security boundary in the v19.0.6 tree — the privilege separation model, atomic file operations, the TOCTOU-safe reader, the fail-closed env loader, lock file topology, and the systemd hardening matrix. All values cited from files on branch `fix-v19.0.6`.
 >
@@ -172,6 +172,49 @@ layer (`CleanupVerifier.VerifyCleanup`), and `CompleteAllocationRelease` records
 verifier is a stub; a production `CleanupVerifier` (real `nvidia-smi` / port / container
 state observation) is required before `RELEASED` can be treated as hardware-proven — that
 wiring is part of Phase 5 / target-host E2E acceptance (`docs/PHASE3_G1_ACCEPTANCE.md`).
+
+## (k) Host Bridge workload lifecycle (v19.3.1, P5.1+P6 unified)
+
+The allowlisted privileged-operations path gained a typed workload control
+surface (merged from the `19.2.14.P6` line):
+
+- **Unix-domain socket only.** `hostbridge.ListenUnix` refuses TCP by design;
+  the socket path must be absolute, the parent directory must be a real
+  directory (not a symlink), owned by the service identity, and not writable
+  by group/other; the socket is chmod 0600 and a pre-existing path is never
+  unlinked (an admin must inspect it instead — an attacker-controlled socket
+  cannot be silently replaced).
+- **Two typed endpoints, nothing else.** `/v1/workloads/start` and
+  `/v1/workloads/stop` accept a fixed JSON shape (unknown fields rejected,
+  16 KiB request cap); the executor interface never sees a shell, an
+  arbitrary executable, an image, environment or path input.
+- **Service hardening:** `scarlix-workload-bridge.service` runs as
+  `User=65532` with the docker supplementary group (host-root-equivalent —
+  hence the narrow API), `NoNewPrivileges`, `ProtectSystem=strict`,
+  `PrivateTmp`, `PrivateDevices`, `ProtectHome`, `CapabilityBoundingSet=`
+  (empty), `RestrictAddressFamilies=AF_UNIX AF_INET`, disabled by default
+  with only a template config installed.
+- **Fail-closed lifecycle:** uncertain workload starts persist into
+  `CLEANUP_REQUIRED` / typed `ErrReconciliationRequired` errors — never a
+  silent success; idempotency is ledgered (`hostbridge.Ledger`).
+- **The ScarliHQ container still has no docker.sock.** All Docker access
+  happens host-side inside the bridge binary.
+
+## (l) Gaming stack surface (v19.3.1)
+
+- **Read-only by construction:** `GET /api/gaming` is auth-gated and
+  GET-only; `internal/gaming` is a pure data contract with no exec/docker
+  imports (enforced by smoke-test check_16). ScarliHQ detects nothing itself
+  — the host bridge does the probing and publishes through
+  `host-status.json`.
+- **Installer safety:** `scarlix-gaming-install` never removes packages
+  (smoke-test check_15 rejects removal commands in executed positions),
+  never runs AUR builds as root (fails closed with guidance), reports
+  per-package failures with a non-zero exit when anything failed, and is
+  idempotent (`--needed`).
+- **Honest health reporting:** undetectable states surface as `unknown`,
+  libraries as `not_applicable` — the dashboard never guesses. A launcher
+  being installed never implies any game is installed.
 
 ## Other security properties
 

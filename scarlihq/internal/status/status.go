@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"os"
 	"time"
+
+	"github.com/MoZoHuJa/OS/scarlihq/internal/gaming"
 )
 
 // HostStatus is the JSON shape written by scarlix-host-bridge every 5s.
@@ -23,8 +25,13 @@ type HostStatus struct {
 	GPUs           []GPU          `json:"gpus"`
 	Containers     []Container    `json:"containers"`
 	Disk           Disk           `json:"disk"`
-	Stale          bool           `json:"stale,omitempty"` // v18.3: true if file missing/corrupt/old
-	Error          string         `json:"error,omitempty"` // v18.5 P1: present when status generation failed
+	// v19.3.1: read-only gaming-stack inventory, detected host-side from
+	// the gaming package manifest (pacman DB / systemctl / docker ps /
+	// optional flatpak list). omitempty keeps pre-19.3.1 status files
+	// (no gaming field) parsing cleanly with an empty inventory.
+	Gaming []gaming.Entry `json:"gaming,omitempty"`
+	Stale  bool           `json:"stale,omitempty"` // v18.3: true if file missing/corrupt/old
+	Error  string         `json:"error,omitempty"` // v18.5 P1: present when status generation failed
 }
 
 // ModeTransition holds the state of the most recent mode switch request.

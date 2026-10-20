@@ -1,0 +1,281 @@
+#!/usr/bin/env bash
+# SCARLIX OS v19.3.1 — Gaming stack installer (Gaming Stack Integration Plan, Phase 2)
+#
+# Profile-based, idempotent, per-package error reporting. Reads the shared
+# manifest at /usr/local/share/scarlix/gaming-packages.conf (source of truth
+# for BOTH this script and the host-bridge gaming inventory).
+#
+# Profiles:
+#   minimal  — the base desktop gaming set (steam, lutris, wine stack,
+#              Vulkan loaders). This is what packages.x86_64 installs by
+#              default; re-running this profile only fills gaps (idempotent).
+#   full     — minimal + RetroArch (+ menu assets), Gamescope, MangoHud,
+#              GameMode (64+32-bit), Heroic, itch, Bottles (AUR extras).
+#   headless — REPORT-ONLY: lists installed gaming packages and documents how
+#              to remove them. This script NEVER removes packages itself —
+#              user game data, prefixes and libraries must never be touched
+#              by an automated rollback (plan rule).
+#
+# Safety contract (smoke-test check_15 enforces the no-removal invariant):
+#   - never removes or downgrades packages (no pacman -R/-Rns/-U, no yay -R)
+#   - AUR installs run as the INVOKING user via yay (yay must never run as
+#     root — it refuses to, and this script fails closed with a clear message)
+#   - per-package failures are reported and counted; the script exits 1 if
+#     any package failed, 0 otherwise; a failure never silently succeeds
+#   - --dry-run prints the exact commands without executing anything
+#
+# Usage:
+#   scarlix-gaming-install [--profile minimal|full|headless] [--list]
+#                           [--dry-run] [--manifest PATH] [--help]
+set -uo pipefail
+
+SCRIPT_NAME="scarlix-gaming-install"
+DEFAULT_MANIFEST="/usr/local/share/scarlix/gaming-packages.conf"
+PROFILE=""
+LIST_ONLY=0
+DRY_RUN=0
+MANIFEST="$DEFAULT_MANIFEST"
+FAILED=0
+INSTALLED_OK=0
+SKIPPED=0
+
+usage() {
+    cat <<EOF
+$SCRIPT_NAME — SCARLIX OS gaming stack installer (v19.3.1)
+
+Usage:
+  $SCRIPT_NAME --profile minimal   install/repair the base gaming set (pacman)
+  $SCRIPT_NAME --profile full      minimal + RetroArch/Gamescope/MangoHud/
+                                   GameMode + Heroic/itch/Bottles (AUR via yay)
+  $SCRIPT_NAME --profile headless  report installed gaming packages + removal
+                                   guidance (never removes anything)
+  $SCRIPT_NAME --list              show manifest groups + install state
+  $SCRIPT_NAME --dry-run ...       print commands without executing them
+
+Options:
+  --profile P   minimal | full | headless (default: minimal)
+  --list        list manifest entries with detection state, then exit
+  --dry-run     show what would be done, change nothing
+  --manifest F  use an alternate manifest file (testing)
+  --help        this help
+
+Notes:
+  - AUR packages require yay and a NON-root invoking user (yay refuses root).
+  - This script never removes packages or user data. Headless guidance only.
+  - Idempotent: re-running with --needed never duplicates anything.
+EOF
+}
+
+log()   { printf '%s\n' "$*"; }
+warn()  { printf 'WARN: %s\n' "$*" >&2; }
+fail()  { printf 'FAIL: %s\n' "$*" >&2; FAILED=$((FAILED + 1)); }
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --profile)  [ $# -ge 2 ] || { printf 'ERROR: --profile needs a value\n' >&2; exit 2; }
+                    PROFILE="$2"; shift 2 ;;
+        --profile=*) PROFILE="${1#--profile=}"; shift ;;
+        --list)     LIST_ONLY=1; shift ;;
+        --dry-run)  DRY_RUN=1; shift ;;
+        --manifest) [ $# -ge 2 ] || { printf 'ERROR: --manifest needs a value\n' >&2; exit 2; }
+                    MANIFEST="$2"; shift 2 ;;
+        --manifest=*) MANIFEST="${1#--manifest=}"; shift ;;
+        --help|-h)  usage; exit 0 ;;
+        *)          printf 'ERROR: unknown option: %s (try --help)\n' "$1" >&2; exit 2 ;;
+    esac
+done
+
+case "$PROFILE" in
+    "")         PROFILE="minimal" ;;
+    minimal|full|headless) ;;
+    *)          printf 'ERROR: unknown profile "%s" (valid: minimal, full, headless)\n' "$PROFILE" >&2; exit 2 ;;
+esac
+
+if [ ! -r "$MANIFEST" ]; then
+    printf 'ERROR: gaming manifest not readable: %s\n' "$MANIFEST" >&2
+    exit 2
+fi
+
+# ---------------------------------------------------------------------------
+# Manifest loading + validation (fail closed on malformed rows)
+# ---------------------------------------------------------------------------
+# Emits: profile|channel|package|kind|display-name
+manifest_rows() {
+    grep -vE '^\s*#|^\s*$' "$MANIFEST" | awk -F'|' '
+        NF != 5 { printf "MALFORMED|%d\n", NR > "/dev/stderr"; exit 1 }
+        { gsub(/^ +| +$/, "", $1); gsub(/^ +| +$/, "", $2); gsub(/^ +| +$/, "", $3)
+          gsub(/^ +| +$/, "", $4); gsub(/^ +| +$/, "", $5)
+          printf "%s|%s|%s|%s|%s\n", $1, $2, $3, $4, $5 }'
+}
+
+# full includes everything minimal has (union).
+# want=minimal → only minimal rows; want=full → every non-inventory row.
+rows_for_profile() {
+    manifest_rows | awk -F'|' -v want="$1" '
+        $1 == "inventory" { next }
+        want == "full" || $1 == "minimal" { print }'
+}
+
+# v19.3.1: fail-closed manifest validation BEFORE any use. (A plain
+# `< <(cmd || exit 2)` cannot propagate the failure — exit inside a process
+# substitution only ends the subshell — so malformed rows must be rejected
+# up front, here, where the exit code is actually observable.)
+if ! manifest_rows >/dev/null 2>&1; then
+    printf 'ERROR: malformed row in %s (every row needs exactly 5 pipe-separated fields)\n' "$MANIFEST" >&2
+    exit 2
+fi
+
+# ---------------------------------------------------------------------------
+# Detection helpers (read-only; used by --list and headless reporting)
+# ---------------------------------------------------------------------------
+pkg_installed() {
+    # pacman -Q sees both repo and AUR-installed packages (same local DB).
+    command -v pacman >/dev/null 2>&1 || return 2
+    pacman -Q "$1" >/dev/null 2>&1
+}
+
+pkg_version() {
+    pacman -Q "$1" 2>/dev/null | awk '{print $2}'
+}
+
+# ---------------------------------------------------------------------------
+# --list: manifest + detection state
+# ---------------------------------------------------------------------------
+if [ "$LIST_ONLY" -eq 1 ]; then
+    log "=== SCARLIX OS gaming manifest: $MANIFEST ==="
+    log ""
+    log "profile channel package kind name state"
+    while IFS='|' read -r prof chan pkg kind name; do
+        state="?"
+        if [ "$chan" = "pacman" ] || [ "$chan" = "aur" ]; then
+            if pkg_installed "$pkg"; then
+                state="installed ($(pkg_version "$pkg"))"
+            else
+                state="not installed"
+            fi
+        else
+            state="inventory-only (detected by host bridge)"
+        fi
+        log "$prof $chan $pkg $kind \"$name\" $state"
+    done < <(manifest_rows)
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# headless: report-only (NEVER removes)
+# ---------------------------------------------------------------------------
+if [ "$PROFILE" = "headless" ]; then
+    log "=== gaming-headless report (read-only) ==="
+    log ""
+    log "Installed gaming packages (from the manifest):"
+    found=0
+    while IFS='|' read -r prof chan pkg kind name; do
+        [ "$chan" = "pacman" ] || [ "$chan" = "aur" ] || continue
+        if pkg_installed "$pkg"; then
+            log "  $pkg ($(pkg_version "$pkg")) — $name [$kind, $chan]"
+            found=$((found + 1))
+        fi
+    done < <(manifest_rows)
+    [ "$found" -eq 0 ] && log "  (none)"
+    log ""
+    log "To convert this machine to a gaming-free AI/server host, remove the"
+    log "packages MANUALLY (review each before removing; never remove user"
+    log "game libraries, Wine prefixes or Steam user data):"
+    log "  sudo pacman -Rns steam lutris wine wine-gecko wine-mono"
+    log ""
+    log "This script will not remove anything itself. For future installs,"
+    log "comment out the gaming block in packages.x86_64 before running"
+    log "install.sh (see gaming/README.md, gaming-headless)."
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Disk-space sanity check (additive, warn-only — the plan forbids silent
+# game downloads, but AUR builds + package installs still need headroom)
+# ---------------------------------------------------------------------------
+ROOT_FREE_MB=0
+if command -v df >/dev/null 2>&1; then
+    ROOT_FREE_MB=$(df -m --output=avail / 2>/dev/null | tail -1 | tr -d ' ')
+    [[ "$ROOT_FREE_MB" =~ ^[0-9]+$ ]] || ROOT_FREE_MB=0
+fi
+if [ "$ROOT_FREE_MB" -gt 0 ] && [ "$ROOT_FREE_MB" -lt 3072 ]; then
+    warn "less than 3 GiB free on / (${ROOT_FREE_MB} MiB) — installs may fail"
+fi
+
+# ---------------------------------------------------------------------------
+# Install phase: pacman rows (profile set), then aur rows (profile full)
+# ---------------------------------------------------------------------------
+if [ "$DRY_RUN" -eq 1 ]; then
+    log "=== DRY RUN — nothing will be executed ==="
+fi
+
+install_pkg_pacman() {
+    # $1=package $2=display name
+    if pkg_installed "$1" 2>/dev/null; then
+        SKIPPED=$((SKIPPED + 1))
+        return 0
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        log "DRY: sudo pacman -S --needed --noconfirm $1"
+        return 0
+    fi
+    log "installing (pacman): $1 — $2"
+    if sudo pacman -S --needed --noconfirm "$1" >/dev/null 2>&1; then
+        INSTALLED_OK=$((INSTALLED_OK + 1))
+    else
+        fail "pacman install failed: $1 ($2)"
+    fi
+}
+
+install_pkg_aur() {
+    # $1=package $2=display name
+    if [ "$(id -u)" -eq 0 ]; then
+        # yay must never run as root — fail closed with guidance instead.
+        fail "AUR package $1 skipped: run this script as your normal user (yay refuses root)"
+        return 0
+    fi
+    if ! command -v yay >/dev/null 2>&1; then
+        fail "AUR package $1 skipped: yay not installed (install.sh Phase 3 installs it)"
+        return 0
+    fi
+    if pkg_installed "$1" 2>/dev/null; then
+        SKIPPED=$((SKIPPED + 1))
+        return 0
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        log "DRY: yay -S --needed --noconfirm $1"
+        return 0
+    fi
+    log "installing (AUR, as $(id -un)): $1 — $2"
+    if yay -S --needed --noconfirm "$1" >/dev/null 2>&1; then
+        INSTALLED_OK=$((INSTALLED_OK + 1))
+    else
+        fail "AUR install failed: $1 ($2) — see yay output; upstream alternative channels are documented in gaming/README.md"
+    fi
+}
+
+log "=== $SCRIPT_NAME — profile: $PROFILE$( [ "$DRY_RUN" -eq 1 ] && printf ' (dry run)' ) ==="
+
+# pacman channel first (base before extras)
+while IFS='|' read -r prof chan pkg kind name; do
+    [ "$chan" = "pacman" ] || continue
+    install_pkg_pacman "$pkg" "$name"
+done < <(rows_for_profile "$PROFILE")
+
+# aur channel (only meaningful for full; minimal has no aur rows)
+while IFS='|' read -r prof chan pkg kind name; do
+    [ "$chan" = "aur" ] || continue
+    install_pkg_aur "$pkg" "$name"
+done < <(rows_for_profile "$PROFILE")
+
+log ""
+log "Summary: installed=$INSTALLED_OK skipped(already present)=$SKIPPED failed=$FAILED"
+if [ "$FAILED" -gt 0 ]; then
+    log "One or more packages failed. Fix the reported cause and re-run — the script is idempotent."
+    exit 1
+fi
+log "Done. The dashboard gaming inventory (/api/gaming) refreshes with the next host-bridge tick."
+exit 0

@@ -334,6 +334,136 @@ print(json.dumps(containers))
 ' 2>/dev/null || echo "[]")
 fi
 
+# v19.3.1: Gaming-stack inventory detection (Gaming Stack Integration Plan,
+#   Phase 4). Read-only: one batched pacman -Q over the manifest packages
+#   (works for repo AND AUR packages — same local DB), one systemctl probe per
+#   systemd row, compose rows reuse the docker ps output above, flatpak rows
+#   probe flatpak only when installed. Native Sunshine is user-managed (the
+#   repo never installs it) — detected via unit-file existence, reported
+#   honestly as not_installed when absent. All probes are timeout-wrapped so
+#   the 5s timer can never hang here.
+gaming_data="[]"
+GAMING_MANIFEST="/usr/local/share/scarlix/gaming-packages.conf"
+if [ -f "$GAMING_MANIFEST" ] && command -v python3 >/dev/null 2>&1; then
+    # Batched query: "name version" lines for the manifest packages that are
+    # installed; missing packages only affect the exit code (ignored here).
+    gaming_pacman_q=""
+    if command -v pacman >/dev/null 2>&1; then
+        gaming_pkgs=$(grep -vE '^\s*#|^\s*$' "$GAMING_MANIFEST" | awk -F'|' '$2 == "pacman" || $2 == "aur" {print $3}' | sort -u | tr '\n' ' ')
+        if [ -n "$gaming_pkgs" ]; then
+            gaming_pacman_q=$(timeout 10s pacman -Q $gaming_pkgs 2>/dev/null || true)
+        fi
+    fi
+    gaming_sunshine_active=""
+    gaming_sunshine_exists=""
+    if command -v systemctl >/dev/null 2>&1; then
+        gaming_sunshine_active=$(timeout 5s systemctl is-active sunshine 2>/dev/null || true)
+        gaming_sunshine_exists=$(timeout 5s systemctl list-unit-files --type=service --no-legend sunshine.service 2>/dev/null | awk '{print $1}' || true)
+    fi
+    gaming_flatpak_apps=""
+    if command -v flatpak >/dev/null 2>&1; then
+        gaming_flatpak_apps=$(timeout 10s flatpak list --app --columns=application 2>/dev/null || true)
+    fi
+    gaming_data=$(GAMING_MANIFEST="$GAMING_MANIFEST" \
+    GAMING_PACMAN_Q="$gaming_pacman_q" \
+    GAMING_SUNSHINE_ACTIVE="$gaming_sunshine_active" \
+    GAMING_SUNSHINE_EXISTS="$gaming_sunshine_exists" \
+    GAMING_FLATPAK_APPS="$gaming_flatpak_apps" \
+    GAMING_CONTAINERS="$container_data" \
+    GAMING_TIMESTAMP="$(date -Iseconds 2>/dev/null || date)" \
+    python3 -c '
+import json, os
+
+pacman_q = {}
+for line in os.environ.get("GAMING_PACMAN_Q", "").splitlines():
+    parts = line.split()
+    if len(parts) >= 2:
+        pacman_q[parts[0]] = parts[1]
+
+sunshine_active = (os.environ.get("GAMING_SUNSHINE_ACTIVE", "") or "").strip()
+sunshine_exists = bool((os.environ.get("GAMING_SUNSHINE_EXISTS", "") or "").strip())
+flatpak_apps = set((os.environ.get("GAMING_FLATPAK_APPS", "") or "").split())
+try:
+    containers = {c.get("name", ""): (c.get("status") or "") for c in json.loads(os.environ.get("GAMING_CONTAINERS") or "[]")}
+except Exception:
+    containers = {}
+ts = os.environ["GAMING_TIMESTAMP"]
+
+entries = []
+seen = set()
+try:
+    manifest = open(os.environ["GAMING_MANIFEST"]).read().splitlines()
+except OSError:
+    manifest = []
+for raw in manifest:
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        continue
+    fields = [p.strip() for p in line.split("|")]
+    if len(fields) != 5:
+        continue  # malformed rows are never reported as installed
+    profile, channel, pkg, kind, name = fields
+    key = (channel, pkg)
+    if key in seen:
+        continue
+    seen.add(key)
+    e = {
+        "id": pkg,
+        "name": name,
+        "kind": kind,
+        "source": channel,
+        "installed": False,
+        "running": False,
+        "health": "unknown",
+        "optional": profile != "minimal",
+        "last_checked": ts,
+    }
+    if channel in ("pacman", "aur"):
+        if pkg in pacman_q:
+            e["installed"] = True
+            e["version"] = pacman_q[pkg]
+            e["health"] = "not_applicable"  # libraries/launchers have no service to probe
+        else:
+            e["health"] = "not_installed"
+    elif channel == "flatpak":
+        if pkg in flatpak_apps:
+            e["installed"] = True
+            e["health"] = "unknown"  # flatpak runtime state is not probed
+        else:
+            e["health"] = "not_installed"
+    elif channel == "systemd":
+        if sunshine_exists:
+            e["installed"] = True
+            e["running"] = sunshine_active == "active"
+            if sunshine_active == "active":
+                e["health"] = "running"
+            elif sunshine_active == "failed":
+                e["health"] = "unhealthy"
+            else:
+                e["health"] = "stopped"
+        else:
+            e["health"] = "not_installed"  # user-managed service, absent
+    elif channel == "compose":
+        status = containers.get(pkg, "")
+        if status:
+            e["installed"] = True
+            low = status.lower()
+            up = low.startswith("up")
+            unhealthy = "unhealthy" in low
+            e["running"] = up and not unhealthy
+            if unhealthy:
+                e["health"] = "unhealthy"
+            elif up:
+                e["health"] = "running"
+            else:
+                e["health"] = "stopped"
+        else:
+            e["health"] = "not_installed"
+    entries.append(e)
+print(json.dumps(entries))
+' 2>/dev/null || echo "[]")
+fi
+
 # v18.3 P1: locale-independent df (was: `df -m` without --output — breaks on LANG=sk_SK)
 # --output=source,size,used,avail,target gives deterministic columns regardless of locale
 models_disk_free_mb=0
@@ -375,6 +505,7 @@ STATUS_LAST_ERROR="$last_error" \
 STATUS_LAST_TIMESTAMP="$last_timestamp" \
 STATUS_GPUS="$gpu_data" \
 STATUS_CONTAINERS="$container_data" \
+STATUS_GAMING="$gaming_data" \
 STATUS_DISK_FREE="$models_disk_free_mb" \
 STATUS_DISK_TOTAL="$models_disk_total_mb" \
 python3 -c '
@@ -394,6 +525,7 @@ data = {
     },
     "gpus": json.loads(os.environ["STATUS_GPUS"] or "[]"),
     "containers": json.loads(os.environ["STATUS_CONTAINERS"] or "[]"),
+    "gaming": json.loads(os.environ["STATUS_GAMING"] or "[]"),
     "disk": {
         "models_free_mb": int(os.environ["STATUS_DISK_FREE"] or 0),
         "models_total_mb": int(os.environ["STATUS_DISK_TOTAL"] or 0),
@@ -402,7 +534,8 @@ data = {
 print(json.dumps(data))
 ' > "$STATUS_TMP" 2>/dev/null || {
     # v18.5 P1: Include stale:true + empty arrays so Go HostStatus parses correctly (was: missing fields → valid-looking status)
-    printf '{"timestamp":"%s","version":"%s","mode":"%s","error":"python3 unavailable","stale":true,"gpus":[],"containers":[]}' \
+    # v19.3.1: gaming array included so the /api/gaming shape is stable even in the fallback path.
+    printf '{"timestamp":"%s","version":"%s","mode":"%s","error":"python3 unavailable","stale":true,"gpus":[],"containers":[],"gaming":[]}' \
         "$(date -Iseconds 2>/dev/null || date)" "$scarlix_version" "$current_mode" > "$STATUS_TMP"
 }
 # v18.7.2 P1: Fail-closed on status write (was: || true → systemd saw SUCCESS on failure)

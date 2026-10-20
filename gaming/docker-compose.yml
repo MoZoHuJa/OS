@@ -1,6 +1,11 @@
 services:
-  # NOTE: Steam, Wine, Proton, Lutris, RetroArch are NATIVE (pacman/AUR)
-  # Sunshine is NATIVE for game mode (systemd service)
+  # NOTE (v19.3.1): Steam, Wine, Proton, Lutris are NATIVE host packages
+  # (packages.x86_64 gaming block). RetroArch (+ assets), Heroic, itch and
+  # Bottles are native too but OPTIONAL — installed only via
+  # `scarlix-gaming-install --profile full` (files/usr/local/share/scarlix/
+  # gaming-packages.conf). Jellyfin and Minecraft below are SERVERS, not
+  # desktop game launchers.
+  # Sunshine is NATIVE for game mode (user-managed systemd service)
   # Sunshine Docker container is for TV mode only
   
   sunshine-tv:

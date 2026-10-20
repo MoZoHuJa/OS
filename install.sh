@@ -5,21 +5,21 @@
 set -euo pipefail
 
 # ============================================================================
-# SCARLIX OS v19.3.0 — Bootstrap Installer (Secure Host-Bridge)
+# SCARLIX OS v19.3.1 — Bootstrap Installer (Secure Host-Bridge)
 # ============================================================================
 #
 # EndeavourOS/Arch bootstrap installer — NO ISO, runs on clean EndeavourOS.
 # 5 phases: packages → NVIDIA → Docker → copy files → wizard + ScarliHQ build.
 # Full changelog: see CHANGELOG.md or git log.
 #
-# USAGE (v19.3.0 hardware-validation candidate):
+# USAGE (v19.3.1 unified candidate — host bridge + gaming stack):
 #   git clone --depth 1 --branch main https://github.com/MoZoHuJa/OS.git ~/scarlix-os
 #   cd ~/scarlix-os
 #   bash install.sh
 # Or run the one-line command documented in README.md.
 # ============================================================================
 
-VERSION="19.3.0"
+VERSION="19.3.1"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -846,7 +846,7 @@ else
   #   elif branch means the build was skipped/aborted — crit here too for safety.
   log "Installing SCARLIX scripts (CRITICAL)..."
   # v18.8.3 P1 (A-a): Added generate-litellm-config.sh (dynamic LiteLLM config from models.yaml)
-  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge generate-sha256sums.sh generate-litellm-config.sh scarlix-bridge-reader scarlix-gpu scarlix-inventory scarlix-contract scarlix-monitor scarlix-scheduler scarlix-host-workload-bridge scarlix scarlix-smoke-test.sh; do
+  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge generate-sha256sums.sh generate-litellm-config.sh scarlix-bridge-reader scarlix-gpu scarlix-inventory scarlix-contract scarlix-monitor scarlix-scheduler scarlix-host-workload-bridge scarlix scarlix-smoke-test.sh scarlix-gaming-install; do
     src="$REPO_DIR/files/usr/local/bin/$binfile"
     if [ -f "$src" ]; then
       # v19.1.13 P1: Fix copy loop regression. Was: `cp && chmod && ok || warn && continue`
@@ -856,7 +856,7 @@ else
         ok "/usr/local/bin/$binfile"
       else
         case "$binfile" in
-          scarlix-gpu|scarlix-inventory|scarlix-contract|scarlix-monitor|scarlix-scheduler|scarlix-host-workload-bridge)
+          scarlix-gpu|scarlix-inventory|scarlix-contract|scarlix-monitor|scarlix-scheduler|scarlix-host-workload-bridge|scarlix-gaming-install)
             warn "$binfile copy failed (non-critical)"
             ;;
           *)
@@ -910,6 +910,14 @@ else
     if [ -f "$REPO_DIR/files/usr/local/share/scarlix/pi-bolt-install.sha256" ]; then
       cp "$REPO_DIR/files/usr/local/share/scarlix/pi-bolt-install.sha256" /usr/local/share/scarlix/pi-bolt-install.sha256 2>/dev/null \
         || warn "Cannot copy pi-bolt-install.sha256 to /usr/local/share/scarlix/"
+    fi
+    # v19.3.1: install the gaming package manifest (single source of truth for
+    #   scarlix-gaming-install AND the host-bridge gaming inventory detection).
+    #   warn-only: gaming is optional by design — an AI/server-only host must
+    #   still install cleanly without the optional gaming stack.
+    if [ -f "$REPO_DIR/files/usr/local/share/scarlix/gaming-packages.conf" ]; then
+      cp "$REPO_DIR/files/usr/local/share/scarlix/gaming-packages.conf" /usr/local/share/scarlix/gaming-packages.conf 2>/dev/null \
+        || warn "Cannot copy gaming-packages.conf to /usr/local/share/scarlix/ (optional gaming stack)"
     fi
   fi
 

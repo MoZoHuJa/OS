@@ -1,5 +1,5 @@
 # ============================================================================
-# SCARLIX OS v19.2.9 — EndeavourOS Edition
+# SCARLIX OS v19.3.1 — EndeavourOS Edition
 # Package list for bootstrap installer (install.sh)
 #
 # v17.9.7: multilib auto-enabled by install.sh (before steam/wine/lib32-*)
@@ -66,6 +66,12 @@ unzip
 zip
 
 # === Gaming (native — optional, can remove if AI-only server) ===
+# This block IS the gaming-minimal profile. Opt-in extras (RetroArch,
+# Gamescope, MangoHud, GameMode, Heroic, itch, Bottles) live in
+# files/usr/local/share/scarlix/gaming-packages.conf and are installed ONLY
+# via `scarlix-gaming-install --profile full` (never by install.sh).
+# AI/server-only host: comment this block out before running install.sh
+# (gaming-headless, see gaming/README.md).
 steam
 wine
 wine-gecko
