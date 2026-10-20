@@ -316,6 +316,27 @@ func (s *Scheduler) scoreRuntime(gpu inventory.GPU, c *contract.ResourceContract
 		preferred[p] = true
 	}
 
+	bestID, bestScore, bestBreakdown := s.scanRuntimes(gpu, preferred, "runtime %s compatible")
+	// v19.3.2 (Zmor-7 closure): soft-hint fallback — preferred runtimes were
+	// requested but none is eligible (down, unhealthy, or absent). Retry
+	// without the preferred filter so a stranded preference does not strand
+	// an otherwise schedulable request. Hard eligibility (health, GPU
+	// assignment, CPU/GPU split) still applies — only the preference is
+	// relaxed, and the plan explains the fallback.
+	if bestID == "" && len(preferred) > 0 {
+		if fallbackID, fallbackScore, fallbackBreakdown := s.scanRuntimes(gpu, nil, "runtime %s compatible (preferred runtime unavailable — soft-hint fallback)"); fallbackID != "" {
+			return fallbackID, fallbackScore, fallbackBreakdown
+		}
+	}
+	return bestID, bestScore, bestBreakdown
+}
+
+// scanRuntimes scores the runtimes eligible for the given GPU. preferred is
+// a hard membership filter when non-empty (the SOFT part of the hint is the
+// fallback retry in scoreRuntime/scoreRuntimeForCPU, not a score bonus —
+// equal scores would make preference order unstable). detailTemplate must
+// contain exactly one %s for the runtime ID.
+func (s *Scheduler) scanRuntimes(gpu inventory.GPU, preferred map[string]bool, detailTemplate string) (string, int, ScoreBreakdown) {
 	bestID := ""
 	bestScore := -1
 	var bestBreakdown ScoreBreakdown
@@ -349,19 +370,16 @@ func (s *Scheduler) scoreRuntime(gpu inventory.GPU, c *contract.ResourceContract
 			}
 		}
 
-		// If contract has preferences, check them
-		// v19.1.18 P2 (Zmor-7): KNOWN CONSTRAINT — if the preferred runtime is
-		// down/unhealthy, it is hard-rejected above AND non-preferred runtimes
-		// are filtered here. Result: no runtime is selected (fail-closed).
-		// This is INTENTIONAL for v19.1.x (dry-run scheduler). v19.2.0 Compute
-		// Fabric will add a fallback pass: if bestID == "" after the preferred
-		// loop, retry without the preferred filter (preferred = soft hint).
+		// If contract has preferences, check them.
+		// v19.3.2 (Zmor-7 closure): this is now the FIRST pass only — when no
+		// preferred runtime is eligible, the caller retries without this
+		// filter (preferred = soft hint, documented since v19.1.18).
 		if len(preferred) > 0 && !preferred[rt.ID] {
 			continue
 		}
 
 		score := 20 // runtime_fit base score
-		detail := fmt.Sprintf("runtime %s compatible", rt.ID)
+		detail := fmt.Sprintf(detailTemplate, rt.ID)
 
 		// Bonus if runtime is running
 		if rt.Running {
@@ -394,6 +412,22 @@ func (s *Scheduler) scoreRuntimeForCPU(c *contract.ResourceContract) (string, in
 		preferred[p] = true
 	}
 
+	bestID, bestScore, bestBreakdown := s.scanCPURuntimes(preferred, "CPU runtime %s compatible")
+	// v19.3.2 (Zmor-7 closure): soft-hint fallback, same contract as the GPU
+	// path — relax ONLY the preference when no preferred CPU runtime is
+	// eligible; health hard-filters still apply.
+	if bestID == "" && len(preferred) > 0 {
+		if fallbackID, fallbackScore, fallbackBreakdown := s.scanCPURuntimes(nil, "CPU runtime %s compatible (preferred runtime unavailable — soft-hint fallback)"); fallbackID != "" {
+			return fallbackID, fallbackScore, fallbackBreakdown
+		}
+	}
+	return bestID, bestScore, bestBreakdown
+}
+
+// scanCPURuntimes scores the CPU-only runtimes. preferred is a hard
+// membership filter when non-empty; the soft-hint fallback retry lives in
+// scoreRuntimeForCPU. detailTemplate must contain exactly one %s.
+func (s *Scheduler) scanCPURuntimes(preferred map[string]bool, detailTemplate string) (string, int, ScoreBreakdown) {
 	bestID := ""
 	bestScore := -1
 	var bestBreakdown ScoreBreakdown
@@ -412,19 +446,15 @@ func (s *Scheduler) scoreRuntimeForCPU(c *contract.ResourceContract) (string, in
 			}
 		}
 
-		// If contract has preferences, check them
-		// v19.1.18 P2 (Zmor-7): KNOWN CONSTRAINT — if the preferred runtime is
-		// down/unhealthy, it is hard-rejected above AND non-preferred runtimes
-		// are filtered here. Result: no runtime is selected (fail-closed).
-		// This is INTENTIONAL for v19.1.x (dry-run scheduler). v19.2.0 Compute
-		// Fabric will add a fallback pass: if bestID == "" after the preferred
-		// loop, retry without the preferred filter (preferred = soft hint).
+		// If contract has preferences, check them.
+		// v19.3.2 (Zmor-7 closure): first pass only — the caller retries
+		// without this filter when no preferred runtime is eligible.
 		if len(preferred) > 0 && !preferred[rt.ID] {
 			continue
 		}
 
 		score := 20
-		detail := fmt.Sprintf("CPU runtime %s compatible", rt.ID)
+		detail := fmt.Sprintf(detailTemplate, rt.ID)
 		if rt.Running {
 			score += 5
 			detail += " (running)"

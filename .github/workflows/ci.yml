@@ -284,6 +284,10 @@ jobs:
           echo "scarlix-monitor binary built successfully"
           CGO_ENABLED=0 go build -o /tmp/scarlix-scheduler ./cmd/scarlix-scheduler
           echo "scarlix-scheduler binary built successfully"
+          # v19.3.2 (F-04): the reservation governor is a release binary —
+          # build it here so compile breaks fail fast (not only at install time).
+          CGO_ENABLED=0 go build -o /tmp/scarlix-reservation ./cmd/scarlix-reservation
+          echo "scarlix-reservation binary built successfully"
       - name: go test
         working-directory: scarlihq
         # v18.3 P1: removed `|| echo "(no tests yet)"` mask (was: hid test failures)

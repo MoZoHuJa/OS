@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.3.1 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.3.2 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.3.1</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.3.2</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.3.1-B87333?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.3.2-B87333?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-D4A574?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-A8C5D4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-D4A574?style=flat-square" /></a>
@@ -59,7 +59,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.3.1 (unified: host bridge + gaming) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.3.2 (Compute Fabric closure) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ### 📑 Changelog Index (v19.3.x / v19.2.x)
 
@@ -67,6 +67,7 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 | Version | One line | Reference |
 |---------|----------|-----------|
+| **v19.3.2** | Compute Fabric Closure: reservation governor (F-04 composition root), preferred-runtime soft hint (Zmor-7), owner-attested hardware acceptance, evidence taxonomy + strategy archive | 📄 [What's New](#-whats-new-in-v1932--compute-fabric-closure) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.3.2) |
 | **v19.3.1** | Unified release: Host Bridge workload lifecycle (P5.1+P6) merged into mainline + Gaming Stack (profiles, read-only inventory, unified docs) | 📄 [What's New](#-whats-new-in-v1931--host-bridge--gaming-stack-unification) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.3.1) |
 | **v19.3.0** | Hardware-validation candidate: fail-closed release capability, deterministic test cleanup, dynamic smoke-test version, clean EndeavourOS one-command install path | 📄 [What's New](#-whats-new-in-v1930--hardware-validation-candidate) · [main](https://github.com/MoZoHuJa/OS/tree/main) |
 | **v19.2.13** | Interrupted-release recovery completion + strict opt-in parsing + Pi-Bolt user-owned execution (KPK audit of v19.2.12) | 📄 [What's New](#-whats-new-in-v19213--interrupted-release-closure) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.2.13) |
@@ -82,15 +83,15 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 ## 🚀 Install (NO ISO)
 
-### One-command install — v19.3.1 unified candidate
+### One-command install — v19.3.2 Compute Fabric closure
 
-Run this on a **fresh EndeavourOS installation** from your normal user account. It clones the current v19.3.1 mainline and starts the installer; the installer requests sudo itself. Review the script first if you do not want to run the install immediately.
+Run this on a **fresh EndeavourOS installation** from your normal user account. It clones the current v19.3.2 mainline and starts the installer; the installer requests sudo itself. Review the script first if you do not want to run the install immediately.
 
 ```bash
 git clone --depth 1 --branch main https://github.com/MoZoHuJa/OS.git ~/scarlix-os && cd ~/scarlix-os && bash install.sh
 ```
 
-This is a unified release candidate (host bridge + gaming stack); the hardware-acceptance gate is still pending on the target machine. The installer performs system upgrades, changes NVIDIA/Docker configuration and installs packages; use a machine you can recover and keep a backup.
+The v19.3.1 scope of the hardware-acceptance gate is **owner-attested as passed** (2026-10-20 — see `docs/RELEASE_19.3.0_HARDWARE_ACCEPTANCE.md`); the v19.3.2 additions (reservation governor host checks + upgrade/rollback) are the open remainder. The installer performs system upgrades, changes NVIDIA/Docker configuration and installs packages; use a machine you can recover and keep a backup.
 
 ### Manual review before install
 ```bash
@@ -114,6 +115,80 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.3.2 — Compute Fabric Closure
+
+**Purpose:** close the last documented Compute Fabric gap (audit **F-04** —
+the production reservation composition root) and close the last partial
+planner row (**Zmor-7** — preferred runtime as a true soft hint), then
+re-base the roadmap on the strategy document's evidence taxonomy. With this
+release the Compute Fabric theme (19.2.x → 19.3.x) is **software-complete
+and deployed as infrastructure**; the next theme is the Agent Kernel.
+
+- **Reservation governor (`scarlix-reservation`, F-04).** The file-backed
+  reservation engine (`NewFileBackedManager` + `Recover()` + lease reaper)
+  finally has a **real production service owner** — it was test-only through
+  v19.3.1 (KPK-P2-03). New `cmd/scarlix-reservation` binary +
+  `internal/reservationops` package (trusted token identities from an
+  admin-owned 0640 root:65532 config, live inventory provider composing the
+  read-only collectors, docker-backed `CleanupVerifier` over the
+  `scarlix.managed` labels) + hardened
+  `scarlix-reservation.service` (User=65532, docker group as a **read-only**
+  consumer, `ProtectSystem=strict`, bounded restarts). Ships **disabled by
+  default** with a fail-closed `CHANGE_ME` template — exactly the
+  workload-bridge pattern. Full runbook:
+  `docs/SCARLIX_COMPUTE_FABRIC_RESERVATION_GOVERNOR.md`.
+- **Preferred runtime is now a soft hint (Zmor-7 closure).** When the
+  contract's `Runtime.Preferred` names only runtimes that are down/absent,
+  the planner retries without the preference filter and explains the
+  fallback in the plan breakdown ("preferred runtime unavailable —
+  soft-hint fallback"). Hard eligibility (health, GPU assignment,
+  CPU/GPU split) is unchanged; with no eligible runtime at all the planner
+  still fails closed. Regression tests cover: fallback fires, healthy
+  preference is honored, no-runtime still fails closed (GPU + CPU paths).
+- **Hardware acceptance: owner attestation recorded.** The v19.3.1 scope of
+  `docs/RELEASE_19.3.0_HARDWARE_ACCEPTANCE.md` is attested as **passed by
+  the project owner (2026-10-20)** — recorded with author/date/scope per the
+  evidence policy, explicitly distinct from a CI-reproducible proof. The
+  v19.3.2 additions (governor host checks, recovery idempotence, reaper
+  convergence, upgrade/rollback) remain open checkboxes in the same doc.
+- **Evidence taxonomy migration.** The roadmap table below now uses the
+  strategy document's statuses — **IMPLEMENTED / TESTED /
+  HARDWARE-VERIFIED (owner-attested) / PLANNED** — instead of
+  done/partial/deferred/pending. Same evidence, stricter language.
+- **Strategy document archived in-repo**:
+  `docs/ScaRgeN_CuLT_Strategy_Obsidian_Lattice_SK_2026-10.pdf` (26 pages,
+  October 2026) — brand architecture, principles, Compute Fabric lifecycle,
+  Agent Kernel guardrails and the 19.2 → 19.8 platform roadmap. The repo is
+  now self-contained as a strategic reference.
+- **Compose compute opt-in documented** (still off by default): the
+  commented block in `scarlihq/docker-compose.yml` shows the exact mounts +
+  env for `/api/compute/start|stop`, including the shared allocation store
+  path and the stale-socket caveat. P6 doc socket-name mismatch fixed
+  (`workload.sock` → `bridge.sock`).
+- **Smoke check 17:** reservation governor contract — hardened unit
+  directives, distinct store paths, no listeners (off the HTTP plane),
+  placeholder-only template, never auto-enabled, compose opt-in stays
+  commented. Suite now **21 PASS / 0 FAIL / 0 WARN**.
+- **Versioning note (recorded, not hidden):** the strategy document reserved
+  "19.3" for the Agent Kernel, but 19.3.0–19.3.2 were consumed by the
+  Compute Fabric tail (HW candidate → unification → closure). Phasing
+  follows verifiable behavior, not version numbers (strategy doc p. 20) —
+  the Agent Kernel therefore starts the **v19.4.x** line.
+
+### Still honestly pending (not claimed by this release)
+
+- **v19.3.2 host checks** — governor enablement probes, recovery
+  idempotence, reaper convergence and upgrade/rollback on the target
+  machine (open checkboxes in the acceptance gate doc).
+- **Compute intake API** — `Reserve`/`Release` over the governor's stores
+  (trusted principal mapping + allocation intake; P5.1 "Required next work"
+  #1). The `user_tokens` config field is validated and waiting.
+- **Store growth policy** — `Store.pruneReleased` exists but stays
+  unwired by deliberate choice (audit trail retention); revisit when
+  long-running hosts show store growth.
 
 ---
 
@@ -327,21 +402,25 @@ scarlix-smoke-test.sh         → online: 18 PASS + 0 FAIL + 0 WARN (14 checks)
 | P1 | **`check_10` command-substitution bypass closed** | The allow-list only checked the line prefix; `KEY=$(cmd)` matched, but the `.env` heredoc is unquoted, so bash would execute it | No line (comments included) may contain `$(` or a backtick; values limited to `[A-Za-z0-9_./:-]` plus `$var` / `${var}` |
 | P2 | **LiteLLM config header version is dynamic** | Hardcoded `v19.0.3`, drifted across 17 releases | Reads `VERSION` (repo root → `/etc/scarlix/VERSION` → `/usr/local/share/scarlix/VERSION` → `unknown`) |
 
-**Roadmap (Compute Fabric v19.2.x) — evidence-based status** *(v19.2.12: the roadmap now records only what a tag actually proves — “dôkaz namiesto sľubu”; earlier targets were repeatedly promised and missed, see the v19.2.11 audits)*:
+**Roadmap (Compute Fabric v19.2.x → v19.3.x) — evidence-based status** *(v19.3.2: statuses follow the strategy-document taxonomy — **IMPLEMENTED** = code exists · **TESTED** = automated tests pass in CI · **HARDWARE-VERIFIED (owner-attested)** = passed on the target host per the recorded owner attestation, distinct from CI-reproducible proof · **PLANNED** = not yet built. “Dôkaz namiesto sľubu.”)*:
 
 | Item | Status | Evidence |
 |------|--------|----------|
-| Real scheduler allocation | **done** (v19.2.1) | dry-run planner + contract integration, CI-tested |
-| Lease + reservation domain (Phase 2/3) | **done** (v19.2.2–v19.2.11) | FROZEN state machine, flock, lease lifecycle, commit consistency; unit/integration tests in CI |
-| Release/allocation lifecycle convergence | **done** (v19.2.12–v19.2.13) | KPK-19.2.11-P1-01/P1-02 + KPK-19.2.12-P1-01/P1-02 fixed: allocation never remains RESERVED after release; interrupted releases actively completed (startup **and** every reaper tick); startup `Recover()` orchestration + regression tests |
-| Preferred-runtime soft hint | **partial** (deferred from v19.2.9) | scheduler accepts runtime preference; not yet wired end-to-end into allocation planning |
-| Single-GPU detection | **done** (v19.2.12, strict parsing v19.2.13) | `scarlix-mode` detects GPU_COUNT, gates vLLM, exact `SCARLIX_ALLOW_SHARED_GPU=1` opt-in (duplicates rejected) with generated compose override; smoke-test checks 11+14 |
-| Pi-Bolt supply-chain pin | **done** (v19.2.12, user-owned execution v19.2.13) | installer downloaded to temp + SHA-256 verified against `files/usr/local/share/scarlix/pi-bolt-install.sha256`; **user-owned verified copy** executed as `$REAL_USER`; both temps trapped for cleanup; smoke-test checks 12+13; scheduled pin-freshness CI job |
-| Model integrity + image digest pinning | **deferred** | default AI images stay tag-pinned; experimental `:latest` images documented as residual risk in SECURITY_MAP (F-08) |
-| Target-host GPU E2E acceptance (Phase 3) | **pending** (re-targeted to the v19.3.1 hardware run) | `docs/PHASE3_G1_ACCEPTANCE.md` checklist still unchecked — Phase 3 is domain-complete in CI, host E2E NOT yet proven |
-| Host Bridge workload lifecycle (P5.1+P6) | **done** (v19.3.1) | typed start/stop contract, Unix-socket bridge (0600, admin-owned parent), docker executor + idempotency ledger, hardened `scarlix-workload-bridge.service` (disabled by default), `/api/compute/start\|stop`; merged from CI-green `19.2.14.P6`; `docs/SCARLIX_COMPUTE_FABRIC_P6_SCARLIHQ_INTEGRATION.md` |
-| Fabric → `scarlix-mode` bridge (audit F-04) | **partial** (v19.3.1) | Host-Bridge allowlisted workload path now exists (above); the production reservation composition root (`NewFileBackedManager` + `Recover()` + reaper ownership in a real service) is still the next documented step |
-| Gaming stack integration | **done** (v19.3.1) | profile-based `scarlix-gaming-install` (never removes), one shared manifest, read-only `/api/gaming` + dashboard card, smoke checks 15/16; `gaming/README.md` |
+| Real scheduler allocation | **TESTED** (v19.2.1) | dry-run planner + contract integration, CI-tested |
+| Lease + reservation domain (Phase 2/3) | **TESTED** (v19.2.2–v19.2.11) | FROZEN state machine, flock, lease lifecycle, commit consistency; unit/integration tests in CI |
+| Release/allocation lifecycle convergence | **TESTED** (v19.2.12–v19.2.13) | KPK-19.2.11-P1-01/P1-02 + KPK-19.2.12-P1-01/P1-02 fixed: allocation never remains RESERVED after release; interrupted releases actively completed (startup **and** every reaper tick); startup `Recover()` orchestration + regression tests |
+| Preferred-runtime soft hint | **TESTED** (v19.3.2 — Zmor-7 closure) | fallback pass + regression tests (fallback fires, healthy preference honored, no-runtime fails closed, GPU + CPU paths); wired into allocation planning via the compute intake API = **PLANNED** (next) |
+| Single-GPU detection | **TESTED** (v19.2.12, strict parsing v19.2.13) | `scarlix-mode` detects GPU_COUNT, gates vLLM, exact `SCARLIX_ALLOW_SHARED_GPU=1` opt-in (duplicates rejected) with generated compose override; smoke-test checks 11+14 |
+| Pi-Bolt supply-chain pin | **TESTED** (v19.2.12, user-owned execution v19.2.13) | installer downloaded to temp + SHA-256 verified against `files/usr/local/share/scarlix/pi-bolt-install.sha256`; **user-owned verified copy** executed as `$REAL_USER`; both temps trapped for cleanup; smoke-test checks 12+13; scheduled pin-freshness CI job |
+| Model integrity + image digest pinning | **PLANNED** | default AI images stay tag-pinned; experimental `:latest` images documented as residual risk in SECURITY_MAP (F-08) |
+| Target-host GPU E2E acceptance (Phase 3) | **HARDWARE-VERIFIED (owner-attested, 2026-10-20)** | v19.3.1 scope of `docs/RELEASE_19.3.0_HARDWARE_ACCEPTANCE.md` attested passed by the project owner (recorded in the gate doc); v19.3.2 additions remain open there |
+| Host Bridge workload lifecycle (P5.1+P6) | **TESTED** (v19.3.1) + owner-attested host run | typed start/stop contract, Unix-socket bridge (0600, admin-owned parent), docker executor + idempotency ledger, hardened `scarlix-workload-bridge.service` (disabled by default), `/api/compute/start\|stop`; merged from CI-green `19.2.14.P6`; `docs/SCARLIX_COMPUTE_FABRIC_P6_SCARLIHQ_INTEGRATION.md` |
+| Fabric → `scarlix-mode` bridge (audit F-04) | **TESTED** (v19.3.2) | reservation governor shipped: `NewFileBackedManager` + `Recover()` + reaper ownership in a real service (`scarlix-reservation.service`, disabled by default, fail-closed config) — `docs/SCARLIX_COMPUTE_FABRIC_RESERVATION_GOVERNOR.md`; host enablement checks = open items in the acceptance gate |
+| Reservation governor host enablement | **PLANNED** (open checkboxes) | acceptance gate § v19.3.2 additions: service start, fail-closed probes, recovery idempotence, reaper convergence, upgrade/rollback |
+| Compute intake API (Reserve/Release) | **PLANNED** (next theme input) | P5.1 "Required next work" #1 — trusted principal mapping + allocation intake over the governor's stores; `user_tokens` config field validated and waiting |
+| Gaming stack integration | **TESTED** (v19.3.1) + owner-attested host run | profile-based `scarlix-gaming-install` (never removes), one shared manifest, read-only `/api/gaming` + dashboard card, smoke checks 15/16; `gaming/README.md` |
+
+**Theme status:** Compute Fabric is **software-complete** (Phases 2–7 TESTED; Phase 8–9 regression automation green: smoke 21 PASS / 0 FAIL / 0 WARN, race tests, 18 Go packages). Next theme per the strategy document: **Agent Kernel (v19.4.x)** — identity, sessions, capabilities, deterministic permission engine, audit; “LLM navrhuje, politika rozhoduje.”
 
 **v19.1.16 → v19.1.20 in one line each:** .16 heredoc P0 fix + security hardening · .17 fish `agent.env.fish` hardening · .18 audit closure + secret hardening · .19 audit closure + portable base64 · .20 mutation-hardened smoke guard.
 

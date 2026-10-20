@@ -116,6 +116,39 @@ never receives the Docker socket — the docker-group bridge binary runs on
 the host and exposes only the two typed operations. Integration contract:
 `scarlihq/internal/integrationcontract/integration-contract.v1.json`.
 
+## Reservation governor (v19.3.2, F-04 — Compute Fabric closure)
+
+The reservation engine's production composition root — the service that owns
+`NewFileBackedManager`, runs `Recover()` at startup and the lease reaper in
+steady state (test-only through v19.3.1):
+
+```
+startup:  /etc/scarlix/reservation.json (0640 root:65532, tokens inside)
+   │       → TokenIdentityProvider (reconciler + optional user principals)
+   │       → HostInventoryProvider (read-only collectors + managed ports)
+   │       → DockerCleanupVerifier (docker ps, scarlix.managed labels)
+   ▼
+reservation.NewFileBackedManager(reservations.jsonl, allocations.jsonl, …)
+   ▼
+Recover(reconciler token)   [finalize RESERVING · reap expired · complete
+   │                         interrupted releases · repair RESERVED leases]
+   ▼
+RunLeaseReaper(ctx, 30s)    [same convergence, periodically, until SIGTERM]
+```
+
+Deployment: `scarlix-reservation.service` (User=65532, docker group as a
+**read-only** consumer, `ProtectSystem=strict`, `StateDirectory=scarlix-reservation`),
+**disabled by default** — enablement is an operator runbook with a fail-closed
+`CHANGE_ME` template. The governor is deliberately **off the HTTP plane**
+(no socket, no API): it reconciles; workload start/stop stays on the workload
+bridge above, and future Reserve/Release intake reuses the same stores under
+the same flock. Full design + runbook:
+`docs/SCARLIX_COMPUTE_FABRIC_RESERVATION_GOVERNOR.md`.
+
+The allocation store is shared with the ScarliHQ compute lifecycle (both
+sides UID 65532, flock-serialized) — one consistent record set, documented in
+the compose opt-in block (`SCARLIHQ_ALLOCATION_STORE=/var/lib/scarlix-reservation/allocations.jsonl`).
+
 ## GPU Arbitration (scarlix-mode)
 
 | Mode | GPU 0 | GPU 1 | CPU | Notes |

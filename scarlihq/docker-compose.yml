@@ -41,6 +41,23 @@ services:
       - SCARLIHQ_PORT=8090
       - SCARLIHQ_TOKEN=${SCARLIHQ_TOKEN}
       - TZ=Europe/Bratislava
+      # v19.3.2 — OPT-IN compute lifecycle (F-04 closure). Uncomment BOTH the
+      # two volumes below AND these env vars to enable /api/compute/start|stop.
+      # Prerequisites (in order):
+      #   1. scarlix-workload-bridge.service enabled + configured
+      #      (docs/SCARLIX_COMPUTE_FABRIC_P6_SCARLIHQ_INTEGRATION.md)
+      #   2. scarlix-reservation.service enabled + /etc/scarlix/reservation.json
+      #      installed (docs/SCARLIX_COMPUTE_FABRIC_RESERVATION_GOVERNOR.md)
+      #   3. host acceptance signed off for this release.
+      # Caveat: the bridge socket is bind-mounted as a file — if the bridge
+      # service restarts, restart this container too (stale socket mount).
+      #   - SCARLIHQ_COMPUTE_ENABLED=true
+      #   - SCARLIHQ_COMPUTE_SOCKET=/run/scarlix-workload-bridge/bridge.sock
+      #   - SCARLIHQ_ALLOCATION_STORE=/var/lib/scarlix-reservation/allocations.jsonl
+      #   - SCARLIHQ_COMPUTE_PRINCIPAL=scarlihq.compute
+    # v19.3.2 — OPT-IN compute lifecycle mounts (see env notes above).
+    #   - /var/lib/scarlix-reservation:/var/lib/scarlix-reservation:rw
+    #   - /run/scarlix-workload-bridge/bridge.sock:/run/scarlix-workload-bridge/bridge.sock
     networks: [scarlix-net]
 networks:
   scarlix-net: { external: true }

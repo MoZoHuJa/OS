@@ -1,12 +1,51 @@
-# ScarLiXoS Hardware Acceptance Gate (v19.3.0 candidate → applies to v19.3.1)
+# ScarLiXoS Hardware Acceptance Gate (v19.3.0 candidate → applies to v19.3.1/v19.3.2)
 
-Status: **PENDING — must be run on the target EndeavourOS machine**. CI success is not a substitute for host acceptance.
+Status: **ATTESTED AS PASSED by the project owner (2026-10-20) for the v19.3.1 scope; v19.3.2 additions below remain OPEN until re-run.**
+
+> **Evidence policy (dôkaz namiesto sľubu):** the attestation below is an
+> owner-provided statement, not an automated or third-party verification. It
+> is recorded with author, date and scope so the evidence chain stays
+> truthful; per the taxonomy in `docs/ScaRgeN_CuLT_Strategy_Obsidian_Lattice_SK_2026-10.pdf`
+> (page 21), rows fed by this attestation are marked
+> *HARDWARE-VERIFIED (owner-attested)* — distinct from a CI-reproducible proof.
+> The owner attests based on access to the reference machine (RTX 5060 Ti +
+> RTX 4060 Ti, Ryzen 5, 64 GB RAM per the strategy document, page 14).
 
 > **v19.3.1 note:** the v19.3.0 hardware-validation candidate was superseded by
 > the v19.3.1 unified release (Host Bridge workload lifecycle + Gaming Stack +
 > all v19.3.0 KpK closures). This gate applies to **v19.3.1** as the current
 > install candidate. The additional gaming-stack checks below are part of the
 > same single acceptance run.
+
+## ATTESTATION — 2026-10-20 (owner)
+
+Attested by the project owner (repository `MoZoHuJa/OS`) for the **v19.3.1**
+scope: the checklist sections *Before installation*, *Install*, *Hardware and
+runtime* (including the gaming-stack and workload-bridge items) and *Release
+decision* were run on the target host and **passed**; no unresolved critical
+failure remained. The v19.3.1 prerelease is therefore treated as
+hardware-accepted for its scope.
+
+**Still OPEN — v19.3.2 additions** (not covered by the attestation above;
+run on the next host session and record results here):
+
+- [ ] `scarlix-reservation.service` (reservation governor, F-04): binary
+      built by the installer, unit copied, service still disabled by default.
+- [ ] Install `/etc/scarlix/reservation.json` from the template (0640
+      root:65532, real tokens); `systemctl start scarlix-reservation` logs
+      the startup `Recover` summary and "lease reaper engaged".
+- [ ] Fail-closed probes: copied-but-unedited template (`CHANGE_ME`) is
+      rejected; world-readable config is rejected; removing the config makes
+      the unit fail (not silently skip).
+- [ ] Recovery idempotence: `kill -9` the governor mid-reap, restart — the
+      `Recover` summary converges with no duplicate effects.
+- [ ] Reaper convergence on the real host: create a HELD reservation whose
+      lease expires (or wait for one), confirm the governor verifies cleanup
+      via docker and converges the record (RELEASED or CONFLICT — never a
+      silent release).
+- [ ] Upgrade/rollback: `git pull` to v19.3.2 + rerun installer → governor
+      rebuilt, unit re-copied, still disabled until re-enabled; rollback =
+      `systemctl disable --now scarlix-reservation` with stores intact.
 
 ## Before installation
 

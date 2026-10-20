@@ -1,0 +1,5 @@
+{
+  "reconciler_token": "CHANGE_ME",
+  "user_tokens": {},
+  "managed_ports": [30000, 8089, 11434, 11438, 4001]
+}

@@ -7,8 +7,8 @@ This candidate wires the existing workload lifecycle manager into authenticated 
 Compute lifecycle remains disabled by default. For a **single-principal deployment only**, set:
 
 - `SCARLIHQ_COMPUTE_ENABLED=true`
-- `SCARLIHQ_COMPUTE_SOCKET=/run/scarlix-workload-bridge/workload.sock` (must match the host bridge configuration)
-- `SCARLIHQ_ALLOCATION_STORE=/var/lib/scarlix/allocations.jsonl`
+- `SCARLIHQ_COMPUTE_SOCKET=/run/scarlix-workload-bridge/bridge.sock` (must match the host bridge configuration; v19.3.2 doc fix: was previously documented as `workload.sock`, but the flag default and the unit ExecStart both use `bridge.sock`)
+- `SCARLIHQ_ALLOCATION_STORE=/var/lib/scarlix-reservation/allocations.jsonl` (v19.3.2: canonical shared store next to the governor's reservations store — both sides run as UID 65532 under the same flock; the v19.3.2 compose opt-in block documents this path)
 - `SCARLIHQ_COMPUTE_PRINCIPAL=<trusted owner identifier already stored on allocations>`
 
 The current ScarliHQ API uses one shared bearer token, so this principal mapping must not be treated as per-user authentication. Do not enable these routes in a multi-user deployment until authenticated caller identities are mapped to allocation owners.
