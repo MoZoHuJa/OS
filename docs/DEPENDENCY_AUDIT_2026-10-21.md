@@ -306,9 +306,13 @@ v compose komentároch. **Nextcloud/coolify/headscale ostávajú na rung
 prístupe** (NC +1 doctrine / docker.sock privilégium / breaking v 0.26 samotnom).
 
 **CI hardening (§6.1 čiastočne implementované):** 7 nových pinov pridaných do
-smoke check_07 (existencia tagov cez registry API, fail-closed v CI) — budúci
-pruning tagu = červené CI namiesto pokazeného čistého deployu. buzz/minio
-pridaný nie je (tag 404 by CI trvale failoval — je to zámerne P0-OPEN).
+smoke check_07 (existencia tagov cez registry API). **Mechanizmus:** smoke-test
+job v `ci.yml` od v19.4.2 beží ONLINE (dovtedy `--offline` — registrové
+kontroly sa v CI preskakovali); helpery sú navrhnuté pre CI bezpečne: sieťová
+chyba/timeout/rate-limit = WARN (nemôže červeno zlomiť CI sporadicky), len
+definitívny HTTP 404 = FAIL. Budúci pruning tagu = červené CI namiesto
+pokazeného čistého deployu. buzz/minio pridaný nie je (tag 404 by CI trvale
+failoval — je to zámerne P0-OPEN).
 
 **P2/P3 zámerne nezmenené (dôvody v §5):** sglang (CUDA variant rozhodnutie na
 hostovi), vllm (Tier-2), grafana (Angular inventár najprv), victoria-metrics,

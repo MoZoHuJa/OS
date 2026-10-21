@@ -141,9 +141,11 @@ to versions 10 weeks to **4 years** old (crowdsec v1.4.0 = 2022).
 | headscale | 0.25.0 → **0.26.0**@digest | P1 — rung 1/4; 0.26 breaking changes (policy v2 `@` usernames, routes→memory re-approval) documented in the compose comment |
 | buzz/minio | unchanged — **P0-OPEN** | upstream discontinued ALL artifact channels (Docker Hub repo 404, quay tags empty, dl.min.io 410); [buzz] is opt-in experimental — host decision documented in audit §9 |
 
-**CI hardening:** the 7 new pins are existence-checked in smoke check 07 —
-future upstream tag pruning turns CI red instead of breaking a clean deploy
-(the audit §6.1 P0 detector, now partially implemented).
+**CI hardening:** the 7 new pins are existence-checked in smoke check 07, and
+the smoke-test CI job now runs **online** (was `--offline`) so those checks
+actually execute in CI — a definitive registry 404 fails the build before a
+clean deploy breaks (audit §6.1 P0 detector). Network errors and rate limits
+stay WARNs, so registry flakiness cannot break CI spuriously.
 
 **Honest caveats:** verified via registry API (tags + digests, 2026-10-21) +
 upstream changelog audit + CI (compose/YAML/shell checks). The dev sandbox

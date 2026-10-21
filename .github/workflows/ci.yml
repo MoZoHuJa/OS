@@ -37,15 +37,20 @@ jobs:
   smoke-test:
     # v19.2.1 P1 (F-02): Was — CI ran shellcheck ON the smoke test but never
     # EXECUTED it. A regression in check_10 (or any other check) could land
-    # on main without detection. Now: run the full 10-check suite in --offline
-    # mode on every push/PR. WARN (registry image tag checks) is tolerated;
-    # FAIL is not.
+    # on main without detection. Now: run the full suite on every push/PR.
+    # WARN is tolerated; FAIL is not.
+    # v19.4.2: ONLINE mode (was --offline). check_07 now existence-checks the
+    #   12 pinned image tags against the registry APIs (audit §6.1 P0
+    #   detector): a definitive HTTP 404 FAILs CI before a clean deploy breaks.
+    #   The helpers were built for this: network errors/timeouts/rate limits
+    #   are WARNs, only a definitive 404 is a FAIL — registry flakiness
+    #   cannot break CI spuriously.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run scarlix-smoke-test.sh --offline
+      - name: Run scarlix-smoke-test.sh (online — registry pin checks enabled)
         run: |
-          SCARLIX_REPO="$GITHUB_WORKSPACE" bash files/usr/local/bin/scarlix-smoke-test.sh --offline
+          SCARLIX_REPO="$GITHUB_WORKSPACE" bash files/usr/local/bin/scarlix-smoke-test.sh
 
   bash-syntax:
     runs-on: ubuntu-latest
