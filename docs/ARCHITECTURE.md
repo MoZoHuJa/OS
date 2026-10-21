@@ -32,7 +32,18 @@
 - **CrowdSec** (WAF): Intrusion prevention
 
 ### Layer 3: Agents
-- **Hermes** (CEO): Multi-platform agent gateway
+- **Hermes** (CEO): Multi-platform agent gateway — image `nousresearch/hermes-agent:v0.22.2`
+  (digest-pinned; was v2026.9.24/v0.21.5). Runs as a supervised s6 gateway
+  (`command: gateway run`); user data at `./config` → `/opt/data`; readiness via
+  `GET /health` on container-loopback **8642** (API server, no host port published;
+  the old 7999 publish is gone — nothing consumed it). Telegram auth = bot token +
+  `TELEGRAM_ALLOWED_USERS` (user IDs, fail-closed). LiteLLM contract unchanged
+  (`http://litellm:4000/v1` over `scarlix-net`, model `qwen3.6:14b` via top-level
+  `base_url`/`api_key` config keys). ScarliHQ MCP = `mcp_servers.scarlihq` with a
+  **read-only tool allowlist** (`scarlix_mode_set` deliberately excluded — mode
+  switches stay behind Host-Bridge authorization). Migration/rollback:
+  `agents/hermes/migrate-to-v0.22.2.sh`, full analysis in
+  `agents/hermes/UPGRADE_REPORT.md`.
 - **OpenCode** (Coding Manager): Build/plan agents
 - **gstack**: Senior manager tools (Designer, Eng Manager, CFO, Security, etc.)
 

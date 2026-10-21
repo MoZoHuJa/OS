@@ -1,31 +1,67 @@
+# Hermes Agent configuration — v0.22.2 schema (Task 12 migration).
+# Full v0.21.5 → v0.22.2 key-migration table and verification results:
+#   agents/hermes/UPGRADE_REPORT.md
+# Upstream reference for this schema:
+#   https://github.com/NousResearch/hermes-agent/blob/v0.22.2/website/docs/user-guide/configuration.md
+
+# ── Model: custom OpenAI-compatible endpoint (LiteLLM on scarlix-net) ──
+# v0.22.2 removed the top-level `custom_provider:` block. The universal pattern
+# is now top-level `base_url` + `api_key` alongside `provider`/`model`; with
+# `base_url` set, Hermes calls that endpoint directly. `${OPENAI_API_KEY}`
+# interpolates from the container environment (docker-compose.yml sets it to
+# the LiteLLM master key) — env expansion of `${VAR}` in config.yaml is
+# supported upstream (hermes_cli.config._expand_env_vars).
 provider: custom
 model: qwen3.6:14b
-custom_provider:
-  base_url: http://litellm:4000/v1
-  api_key: ${LITELLM_MASTER_KEY}
+base_url: http://litellm:4000/v1
+api_key: ${OPENAI_API_KEY}
 
+# ── Memory ──
+# v0.22.2 renames `memory.enabled` → `memory.memory_enabled` (the old key is
+# silently ignored). `nudge_interval` is unchanged (upstream default 10).
 memory:
-  enabled: true
+  memory_enabled: true
   nudge_interval: 300
 
-skills:
-  enabled: true
-  auto_create: true
+# ── Skills ──
+# v0.22.2 has no `skills.enabled` / `skills.auto_create` keys — skills are
+# always available and are managed via `skills.disabled` allow/deny lists
+# (see UPGRADE_REPORT.md §7). Nothing to configure here by default.
 
-cron:
-  enabled: true
+# ── Cron ──
+# v0.22.2 has no `cron.enabled` key — the built-in cron scheduler runs with
+# the gateway. Jobs are managed via /cron in chat or `hermes cron`.
 
-gateway:
-  telegram:
-    enabled: true
-    bot_token: ${TELEGRAM_BOT_TOKEN}
-    allowed_users:
-      - ${TELEGRAM_ZMOR_CHAT_ID}
-  discord:
-    enabled: false
+# ── Telegram / Discord gateways ──
+# v0.22.2 removed the `gateway.telegram.*` config keys. Platform enablement
+# is env-driven: TELEGRAM_BOT_TOKEN enables the Telegram gateway;
+# TELEGRAM_ALLOWED_USERS (user IDs) is the allowlist; Discord stays off
+# unless DISCORD_BOT_TOKEN is set. Both env vars are wired in
+# docker-compose.yml from the deployment .env file.
 
-mcp:
-  servers:
-    scarlihq:
-      url: http://scarlihq:8091/mcp
-      transport: http
+# ── Approvals (security) ──
+# `smart` is the upstream default: dangerous shell commands require an
+# in-chat approval from the allowlisted Telegram admin. The hardline
+# blocklist (unrecoverable commands) is always on and cannot be bypassed,
+# not even by YOLO mode. Unattended cron/gateway tool-loop hard stops are
+# enabled by default in v0.22.2 (tool_loop_guardrails.non_interactive_hard_stop_enabled).
+approvals:
+  mode: smart
+
+# ── ScarliHQ MCP (scarlix-net) ──
+# v0.22.2 replaced `mcp.servers` with the top-level `mcp_servers` map, and
+# `transport: http` is now implied by `url` (stdio servers use command/args).
+# Minimal read-only tool allowlist per the migration guide: the mutating
+# `scarlix_mode_set` tool is deliberately NOT registered — OS mode switches
+# stay behind ScarLiXOS / Host-Bridge authorization. To enable it later, add
+# `scarlix_mode_set` to the include list after a security review.
+mcp_servers:
+  scarlihq:
+    url: http://scarlihq:8091/mcp
+    tools:
+      include:
+        - scarlix_mode_get
+        - scarlix_gpu_status
+        - scarlix_container_list
+        - scarlix_profile_list
+        - scarlix_full_status

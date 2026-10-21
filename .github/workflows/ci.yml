@@ -31,6 +31,8 @@ jobs:
           shellcheck -S warning files/usr/local/bin/scarlix-gaming-install
           shellcheck -S warning files/etc/pacman.d/hooks/scarlix-docker-backup.sh
           shellcheck -S warning files/etc/systemd/system/generate-env.sh
+          # Task 12 (Hermes v0.22.2 migration): protect the migration script
+          shellcheck -S warning agents/hermes/migrate-to-v0.22.2.sh
 
   smoke-test:
     # v19.2.1 P1 (F-02): Was — CI ran shellcheck ON the smoke test but never
