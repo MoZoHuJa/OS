@@ -25,7 +25,7 @@ func testTimeAK() time.Time {
 
 func newAgentKernelTestServer(t *testing.T, store *agentkernel.Store, policy agentkernel.Policy) *http.ServeMux {
 	t.Helper()
-	h := NewHandler(guard.New(), scarlix_mode.New(), profiles.New(t.TempDir()), "secret", "19.4.1")
+	h := NewHandler(guard.New(), scarlix_mode.New(), profiles.New(t.TempDir()), "secret", "19.4.2")
 	if store != nil {
 		if err := h.ConfigureAgentKernel(store, policy); err != nil {
 			t.Fatal(err)

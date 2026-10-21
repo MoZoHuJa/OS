@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.4.1 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.4.2 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.4.1</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.4.2</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.4.1-B87333?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.4.2-B87333?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-D4A574?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-A8C5D4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-D4A574?style=flat-square" /></a>
@@ -59,7 +59,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.4.1 (Agent Kernel sessions) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.4.2 (dependency pin hygiene) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ### 📑 Changelog Index (v19.4.x / v19.3.x / v19.2.x)
 
@@ -67,6 +67,7 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 | Version | One line | Reference |
 |---------|----------|-----------|
+| **v19.4.2** | Dependency pin hygiene (P0+P1): 7 image pins fixed per the 2026-10-21 audit (coolify + sunshine broken tags; crowdsec + ollama + gitea + nextcloud + headscale stale) + tag-existence CI checks; buzz/minio documented-open | 📄 [What's New](#-whats-new-in-v1942--dependency-pin-hygiene-p0--p1) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.2) |
 | **v19.4.1** | Agent Kernel sessions (AK-2): bounded session store (fail-closed IDs, explicit grants) + auth-gated REST surface `/api/agent/sessions` (create/list/transition/evaluate, denial-is-200) — opt-in via `SCARLIHQ_AGENTKERNEL_ENABLED` | 📄 [What's New](#-whats-new-in-v1941--agent-kernel-sessions-ak-2) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.1) |
 | **v19.4.0** | Agent Kernel foundation (AK-1): typed agent identity, closed capability enumeration (no shell/exec ever), bounded session state machine, deterministic permission engine with enforced capability grants, audit events | 📄 [What's New](#-whats-new-in-v1940--agent-kernel-foundation-ak-1) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.0) |
 | **v19.3.2** | Compute Fabric Closure: reservation governor (F-04 composition root), preferred-runtime soft hint (Zmor-7), owner-attested hardware acceptance, evidence taxonomy + strategy archive | 📄 [What's New](#-whats-new-in-v1932--compute-fabric-closure) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.3.2) |
@@ -85,9 +86,9 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 ## 🚀 Install (NO ISO)
 
-### One-command install — v19.4.1 Agent Kernel sessions
+### One-command install — v19.4.2 dependency pin hygiene
 
-Run this on a **fresh EndeavourOS installation** from your normal user account. It clones the current v19.4.1 mainline and starts the installer; the installer requests sudo itself. Review the script first if you do not want to run the install immediately.
+Run this on a **fresh EndeavourOS installation** from your normal user account. It clones the current v19.4.2 mainline and starts the installer; the installer requests sudo itself. Review the script first if you do not want to run the install immediately.
 
 ```bash
 git clone --depth 1 --branch main https://github.com/MoZoHuJa/OS.git ~/scarlix-os && cd ~/scarlix-os && bash install.sh
@@ -117,6 +118,44 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.4.2 — Dependency Pin Hygiene (P0 + P1)
+
+**The problem** (`docs/DEPENDENCY_AUDIT_2026-10-21.md`): the same pattern that
+hit Hermes — upstream moved, our pins stayed. Three pins no longer existed
+upstream (**clean-deploy pull failure**), five default-on services were pinned
+to versions 10 weeks to **4 years** old (crowdsec v1.4.0 = 2022).
+
+**7 pins fixed, 1 documented-open:**
+
+| Service | Old → New | Why / how |
+|---|---|---|
+| coolify | 4.0.30 → **4.3.1**@digest | P0 — old tag pruned upstream; rung 1/2 of the audit ladder (docker.sock privilege caution); next rung 4.4.0 |
+| sunshine-tv | v2026.929 → **v2026.1020.123939**@digest | P0 — old tag pruned; nightly tags get pruned, hence digest |
+| crowdsec | v1.4.0 → **v1.8.1**@digest | P1 security — 4-year CVE gap closed; changelog audit 1.5→1.8 clean for our pattern; SQLite auto-migrates |
+| ollama | 0.5.4 → **0.40.7**@digest | P1 — ~2-year gap; stateless (models volume untouched) |
+| gitea | 1.23 → **28.2** | P1 — 28.x is the successor line of 1.27; changelog audit 1.24→28.2 clean; upstream supports direct upgrades (chained migrations); `gitea dump` + pg_dump before upgrade |
+| nextcloud | 29 → **30** | P1 — rung 1/6 of the mandatory +1-major ladder (`occ upgrade` per step; direct 29→35 unsupported) |
+| headscale | 0.25.0 → **0.26.0**@digest | P1 — rung 1/4; 0.26 breaking changes (policy v2 `@` usernames, routes→memory re-approval) documented in the compose comment |
+| buzz/minio | unchanged — **P0-OPEN** | upstream discontinued ALL artifact channels (Docker Hub repo 404, quay tags empty, dl.min.io 410); [buzz] is opt-in experimental — host decision documented in audit §9 |
+
+**CI hardening:** the 7 new pins are existence-checked in smoke check 07 —
+future upstream tag pruning turns CI red instead of breaking a clean deploy
+(the audit §6.1 P0 detector, now partially implemented).
+
+**Honest caveats:** verified via registry API (tags + digests, 2026-10-21) +
+upstream changelog audit + CI (compose/YAML/shell checks). The dev sandbox
+has no Docker — runtime behaviour is verified on the host via the runbook in
+each compose comment: **backup → pull → up -d → verify → rollback**.
+Stateful services (gitea, crowdsec, headscale, nextcloud, coolify): back up
+first.
+
+**Deliberately NOT touched** (P2/P3, rationale in audit §5/§9): sglang (CUDA
+variant decision), vllm (Tier-2), grafana (Angular inventory first),
+victoria-metrics, n8n, jellyfin, photoprism, otel, piper, wakeword, openlit,
+llama.cpp/pumpkin (digest re-pull), P3 build bases, postgres/redis majors.
 
 ---
 
@@ -530,7 +569,7 @@ scarlix-smoke-test.sh         → online: 18 PASS + 0 FAIL + 0 WARN (14 checks)
 | Preferred-runtime soft hint | **TESTED** (v19.3.2 — Zmor-7 closure) | fallback pass + regression tests (fallback fires, healthy preference honored, no-runtime fails closed, GPU + CPU paths); wired into allocation planning via the compute intake API = **PLANNED** (next) |
 | Single-GPU detection | **TESTED** (v19.2.12, strict parsing v19.2.13) | `scarlix-mode` detects GPU_COUNT, gates vLLM, exact `SCARLIX_ALLOW_SHARED_GPU=1` opt-in (duplicates rejected) with generated compose override; smoke-test checks 11+14 |
 | Pi-Bolt supply-chain pin | **TESTED** (v19.2.12, user-owned execution v19.2.13) | installer downloaded to temp + SHA-256 verified against `files/usr/local/share/scarlix/pi-bolt-install.sha256`; **user-owned verified copy** executed as `$REAL_USER`; both temps trapped for cleanup; smoke-test checks 12+13; scheduled pin-freshness CI job |
-| Model integrity + image digest pinning | **PLANNED** | default AI images stay tag-pinned; experimental `:latest` images documented as residual risk in SECURITY_MAP (F-08) |
+| Model integrity + image digest pinning | **PARTIAL** (v19.4.2) | P0/P1 pins re-pinned with digests (coolify, crowdsec, ollama, headscale, sunshine) + smoke check 07 tag-existence CI for all fixed pins; floating tags (gitea 28.2, nextcloud 30, postgres/redis) deliberately tag-only so patches flow; experimental `:latest` images remain documented residual risk in SECURITY_MAP (F-08) |
 | Target-host GPU E2E acceptance (Phase 3) | **HARDWARE-VERIFIED (owner-attested, 2026-10-20)** | v19.3.1 scope of `docs/RELEASE_19.3.0_HARDWARE_ACCEPTANCE.md` attested passed by the project owner (recorded in the gate doc); v19.3.2 additions remain open there |
 | Host Bridge workload lifecycle (P5.1+P6) | **TESTED** (v19.3.1) + owner-attested host run | typed start/stop contract, Unix-socket bridge (0600, admin-owned parent), docker executor + idempotency ledger, hardened `scarlix-workload-bridge.service` (disabled by default), `/api/compute/start\|stop`; merged from CI-green `19.2.14.P6`; `docs/SCARLIX_COMPUTE_FABRIC_P6_SCARLIHQ_INTEGRATION.md` |
 | Fabric → `scarlix-mode` bridge (audit F-04) | **TESTED** (v19.3.2) | reservation governor shipped: `NewFileBackedManager` + `Recover()` + reaper ownership in a real service (`scarlix-reservation.service`, disabled by default, fail-closed config) — `docs/SCARLIX_COMPUTE_FABRIC_RESERVATION_GOVERNOR.md`; host enablement checks = open items in the acceptance gate |
@@ -541,7 +580,7 @@ scarlix-smoke-test.sh         → online: 18 PASS + 0 FAIL + 0 WARN (14 checks)
 | Agent Kernel wiring (AK-3 … AK-5) | **PLANNED** | AK-3 persisted grants + admin switches · AK-4 append-only audit sink · AK-5 compute-intake capability flow |
 | Gaming stack integration | **TESTED** (v19.3.1) + owner-attested host run | profile-based `scarlix-gaming-install` (never removes), one shared manifest, read-only `/api/gaming` + dashboard card, smoke checks 15/16; `gaming/README.md` |
 
-**Theme status:** Compute Fabric is **software-complete** (Phases 2–7 TESTED; Phase 8–9 regression automation green, race tests, 19 Go packages). The **Agent Kernel theme (v19.4.x) is OPEN**: AK-1 foundation **TESTED** (v19.4.0), AK-2 sessions + REST surface **TESTED** (v19.4.1 — opt-in, auth-gated, denial-is-200); AK-3…AK-5 are PLANNED. “LLM navrhuje, politika rozhoduje.”
+**Theme status:** Compute Fabric is **software-complete** (Phases 2–7 TESTED; Phase 8–9 regression automation green, race tests, 19 Go packages). The **Agent Kernel theme (v19.4.x) is OPEN**: AK-1 foundation **TESTED** (v19.4.0), AK-2 sessions + REST surface **TESTED** (v19.4.1 — opt-in, auth-gated, denial-is-200); AK-3…AK-5 are PLANNED. v19.4.2 is a dependency-pin-hygiene release (no feature changes — P0+P1 pin fixes + CI existence checks per the 2026-10-21 audit). “LLM navrhuje, politika rozhoduje.”
 
 **v19.1.16 → v19.1.20 in one line each:** .16 heredoc P0 fix + security hardening · .17 fish `agent.env.fish` hardening · .18 audit closure + secret hardening · .19 audit closure + portable base64 · .20 mutation-hardened smoke guard.
 
