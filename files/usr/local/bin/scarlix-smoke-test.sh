@@ -402,7 +402,7 @@ check_image_ghcr() {
 check_07_registry() {
     echo "--- [07] Image tag existence via registry API ---"
     if [[ $OFFLINE -eq 1 ]]; then
-        warn "--offline set — skipping 5 registry image-tag checks"
+        warn "--offline set — skipping 12 registry image-tag checks"
         return
     fi
     if ! has_tool curl || ! has_tool python3; then
@@ -412,6 +412,16 @@ check_07_registry() {
     # Docker Hub images
     check_image_dockerhub "lmsysorg/sglang" "v0.4.9.post6-cu128-b200"
     check_image_dockerhub "fedirz/faster-whisper-server" "sha-307e23f-cuda"
+    # v19.4.2: pins fixed in the dependency-pin-hygiene release get existence
+    # checks (audit §6.1 — P0 detector: upstream tag pruning fails CI here
+    # instead of failing a clean deploy months later).
+    check_image_dockerhub "coollabsio/coolify" "4.3.1"
+    check_image_dockerhub "lizardbyte/sunshine" "v2026.1020.123939-ubuntu-24.04"
+    check_image_dockerhub "crowdsecurity/crowdsec" "v1.8.1"
+    check_image_dockerhub "ollama/ollama" "0.40.7"
+    check_image_dockerhub "headscale/headscale" "0.26.0"
+    check_image_dockerhub "gitea/gitea" "28.2"
+    check_image_dockerhub "library/nextcloud" "30"
     # ghcr.io images
     check_image_ghcr "block/buzz" "latest"
     check_image_ghcr "berriai/litellm" "main-v1.23.9"

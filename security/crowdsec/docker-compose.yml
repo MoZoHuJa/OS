@@ -1,6 +1,14 @@
 services:
   crowdsec:
-    image: crowdsecurity/crowdsec:v1.4.0
+    # v19.4.2 P1 (security): v1.4.0 (2022-07) → v1.8.1 (2026-09) — closes a
+    #   ~4-year CVE gap on a default-on security service. Changelog audit
+    #   1.5→1.8 (2026-10-21): no breaking changes for this deployment pattern
+    #   (agent + LAPI + COLLECTIONS env); `cscli dashboard` was removed in 1.7 —
+    #   unused here. SQLite (./data) migrates automatically on start.
+    #   Before upgrading: back up ./config + ./data. After start: check logs,
+    #   `docker exec crowdsec cscli collections list` + `cscli alerts list`.
+    #   Rollback = re-pin v1.4.0 (image in local cache) + restore ./data.
+    image: crowdsecurity/crowdsec:v1.8.1@sha256:0f2523fa61ef507f15d953045cface490cc880670c62f2755ced17524107f71a
     container_name: crowdsec
     restart: unless-stopped
     volumes:

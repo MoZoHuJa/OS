@@ -22,7 +22,16 @@ services:
     networks: [scarlix-net]
 
   gitea:
-    image: gitea/gitea:1.23
+    # v19.4.2 P1: 1.23 → 28.2 (upstream dropped the "1." prefix after 1.27 —
+    #   28.x is the direct successor line). Direct upgrade is supported by
+    #   upstream (chained, transactional DB migrations run on container start);
+    #   changelog audit 1.24→28.2 (2026-10-21) found no breaking changes that
+    #   affect this compose (GITEA__database__* env, USER_UID/GID, /data volume).
+    #   Before upgrading on the host: `docker exec gitea gitea dump` + pg_dump;
+    #   verify web UI + git push/pull after start. Rollback = restore dump +
+    #   re-pin 1.23 (image stays in local cache). Cautious alternative (audit §4):
+    #   walk 1.24→…→28.2 locally first. Floating minor tag (28.2.x patches flow).
+    image: gitea/gitea:28.2
     container_name: gitea
     restart: unless-stopped
     ports:
@@ -42,7 +51,14 @@ services:
     networks: [scarlix-net]
 
   coolify:
-    image: coollabsio/coolify:4.0.30
+    # v19.4.2 P0: 4.0.30 tag was pruned upstream (registry 404 → pull fail on
+    #   clean deploy). Rung 1/2 of the audit ladder (§3): 4.0.30 → 4.3.1 → 4.4.0.
+    #   4.3.1 is a bugfix-only release (changelog verified 2026-10-21). Docker
+    #   Hub prunes old coolify tags aggressively — digest pinned for immutability.
+    #   Privileged context (docker.sock:ro): back up ./coolify/data + pg_dump
+    #   before `docker compose pull`; verify UI + managed apps after upgrade;
+    #   rollback = restore backup + re-pin (old image in local cache).
+    image: coollabsio/coolify:4.3.1@sha256:c054910edd0b4f56de17bacfbe2a501e06ccdfdb4df2e284ca09d49916c7cf32
     container_name: coolify
     restart: unless-stopped
     ports:
@@ -66,7 +82,14 @@ services:
     networks: [scarlix-net]
 
   nextcloud:
-    image: nextcloud:29
+    # v19.4.2 P1: 29 → 30 — rung 1/6 of the mandatory Nextcloud ladder (audit
+    #   §4: +1 major per step, `occ upgrade` at each step; a direct 29→35 jump
+    #   is NOT supported). Remaining rungs: 30→31→…→35, one per ScarLiX
+    #   release. Floating major tag on purpose (30.0.x security patches flow).
+    #   Full backup (data + config + pg_dump) before upgrade; after start watch
+    #   `docker compose logs -f nextcloud` for the 29→30 migration, then
+    #   `occ app:update --all`. Rollback = restore backup + re-pin 29 (cached).
+    image: nextcloud:30
     container_name: nextcloud
     restart: unless-stopped
     ports:

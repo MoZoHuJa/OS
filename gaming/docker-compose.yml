@@ -16,7 +16,13 @@ services:
     #   stable semver tags — only nightly date-based tags). Update this tag
     #   deliberately when upgrading, don't let it float.
     #   Verified via hub.docker.com/v2/repositories/lizardbyte/sunshine/tags
-    image: lizardbyte/sunshine:v2026.929.125923-ubuntu-24.04
+    # v19.4.2 P0: previous tag v2026.929.125923 was pruned upstream (registry
+    #   404 → pull fail on clean deploy). Re-pinned to the newest verified
+    #   nightly (2026-10-20) WITH digest — Sunshine publishes only date-based
+    #   nightly tags and prunes them; the digest protects against tag re-points,
+    #   but the tag will 404 eventually: re-verify against the tags API before
+    #   the next upgrade. tv-profile only (opt-in).
+    image: lizardbyte/sunshine:v2026.1020.123939-ubuntu-24.04@sha256:5c790c79df9b680a1c57e3454ed829c09f405eafbafe205675d832e4420aba7b
     container_name: sunshine-tv
     restart: unless-stopped
     network_mode: host

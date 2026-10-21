@@ -5,6 +5,8 @@
 > **v19.2.12 update:** added section (h) — experimental image supply-chain residual risk (Deep Audit F-08) and section (i) — Pi-Bolt installer SHA-256 pin (Deep Audit F-01).
 >
 > **v19.2.13 update:** section (i) extended with the user-owned verified-copy execution handoff (KPK-19.2.12-P2-01) and the scheduled pin-freshness CI job; new section (j) — reservation-layer CleanupVerified semantics (KpK audit P2-02).
+>
+> **v19.4.2 update:** dependency pin hygiene per `docs/DEPENDENCY_AUDIT_2026-10-21.md` — P0 (pruned upstream tags: coolify, sunshine, buzz/minio) and P1 (stale security pins: crowdsec, ollama, gitea, nextcloud, headscale) fixed; 5 pins now digest-pinned; smoke check 07 existence-checks all fixed pins in CI (section h extended).
 
 ## (a) Host-Bridge privilege separation
 
@@ -136,7 +138,7 @@ Note: `ProtectSystem=strict` and `ReadOnlyPaths=/etc` are NOT used because `scar
 
 ## (h) Experimental image supply chain — documented residual risk (v19.2.12, Deep Audit F-08)
 
-The **default AI path is tag-pinned** (`sglang`, `vllm`, `ollama`, `llamacpp` compose files reference immutable `:tag` images, not `:latest`). The following **experimental-only** services still reference `:latest` and are accepted as a **documented residual risk**:
+The **default AI path is tag-pinned** (`sglang`, `vllm`, `ollama`, `llamacpp` compose files reference immutable `:tag` images, not `:latest`; since v19.4.2 `ollama` is additionally **digest-pinned** and all pins fixed in v19.4.2 — coolify, crowdsec, ollama, headscale, sunshine — carry digests, per `docs/DEPENDENCY_AUDIT_2026-10-21.md` §9). The following **experimental-only** services still reference `:latest` and are accepted as a **documented residual risk**:
 
 | Service | Image | Scope | Risk accepted because |
 |---|---|---|---|
@@ -145,7 +147,7 @@ The **default AI path is tag-pinned** (`sglang`, `vllm`, `ollama`, `llamacpp` co
 | browser-mcp | `mcp/playwright-server:latest` | experimental profile | same |
 | laya | `laya/decision-engine:latest` | experimental profile + single-GPU gate applies (device_ids 1) | same |
 
-**Rule (enforced by review, not yet by CI):** any NEW service added to the DEFAULT path must be tag- or digest-pinned — `:latest` is permitted only under `profiles: [experimental]`. Digest pinning for the four services above is **deferred** (see README roadmap status table) until their registries can be reached from the release pipeline to record immutable digests.
+**Rule (enforced by review, not yet by CI):** any NEW service added to the DEFAULT path must be tag- or digest-pinned — `:latest` is permitted only under `profiles: [experimental]`. Digest pinning for the four services above is **deferred** (see README roadmap status table) until their registries can be reached from the release pipeline to record immutable digests. **v19.4.2:** tag EXISTENCE for the pins fixed in v19.4.2 is now CI-enforced (smoke check 07 fails on registry 404 — the audit §6.1 P0 detector); the experimental `:latest` set above is unchanged (unverifiable registries).
 
 **Mitigation for operators:** do not enable `.experimental` / experimental profiles on hosts that cannot tolerate an unpinned image pull; Pi-Bolt-style SHA-256 verification does not apply to Docker image tags — only digest pinning does.
 

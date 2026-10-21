@@ -1,6 +1,17 @@
 services:
   headscale:
-    image: headscale/headscale:0.25.0
+    # v19.4.2 P1: 0.25.0 → 0.26.0 — rung 1/4 of the audit ladder (§4: →0.27→
+    #   0.28→0.29, one minor per step; headscale ships breaking changes inside
+    #   minors). 0.26.0 BREAKING (changelog verified 2026-10-21):
+    #   (a) policy v2 — policy is validated at load time; usernames in the
+    #       policy must end with `@` (append it to bare usernames);
+    #   (b) routes moved from DB to memory — approved exit-node/subnet routes
+    #       must be RE-APPROVED after upgrade: `headscale nodes list-routes`,
+    #       `headscale nodes approve-routes --identifier N --routes 0.0.0.0/0,::/0`;
+    #   (c) server_url must differ from base_domain.
+    #   Back up ./config + ./data (SQLite) before upgrade; verify node
+    #   connectivity after. Rollback = re-pin 0.25.0 (cached) + restore ./data.
+    image: headscale/headscale:0.26.0@sha256:7e6439473c299cde05ff9215fe4e2ae9d83361504876fac0eb8e10f55128838d
     container_name: headscale
     restart: unless-stopped
     ports:

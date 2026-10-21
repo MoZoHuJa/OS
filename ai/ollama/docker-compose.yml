@@ -2,7 +2,13 @@
 # v17.7: mem_limit 6g (was unlimited — OOM risk), CPU only, root:root volume
 services:
   ollama-agent:
-    image: ollama/ollama:0.5.4
+    # v19.4.2 P1: 0.5.4 (2024-12) → 0.40.7 (2026-10-21, latest) — ~2-year gap
+    #   on a default-on CPU inference fallback. No state migrations: models live
+    #   in /var/lib/scarlix/ollama (volume, untouched); REST API is backward
+    #   compatible. Digest pinned for immutability. After upgrade: healthcheck
+    #   (`ollama list`) + one CPU inference test; watch RSS — newer releases
+    #   may need more than the 6g mem_limit. Rollback = re-pin 0.5.4 (cached).
+    image: ollama/ollama:0.40.7@sha256:2e6cc92ffa43b4b1a2e70e315407e00ac97ec125afc71277d73c7efe01c4f31b
     container_name: ollama-agent
     restart: unless-stopped
     ports:

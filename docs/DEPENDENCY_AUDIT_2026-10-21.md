@@ -266,15 +266,63 @@ git log --format="%ad %h" --date=short -1 -S "image:tag" -- path/to/compose.yml
 
 ## 8. Čo bolo zámerne NEMENENÉ (a prečo)
 
-- **Žiadny image pin nebol zmenený.** Pravidlo repa (Hermes guide §13.1 +
-  „Zakázané skratky"): „Nepoužiť neoverený image". Sandbox nemá Docker — beh
-  nových verzií nemožno overiť; existencia tagu cez API nie je dôkaz
-  kompatibility. Každá zmena verzie preto čaká na overenie na hostovi (§3–§5).
+- **Žiadny image pin nebol zmenený** — *stav z času auditu (Task 13, fáza
+  „audit + plán"). Odsúhlasené opravy nasledovali v v19.4.2 — pozri §9.*
 - **CI workflow pin-freshness nebol rozšírený** — návrh v §6, implementácia
   ako samostatný krok po odsúhlasení.
 - **Verzia systému nebola bumpnutá, tag nebol vytvorený** — konzistentne so
   zadanim Task 12 (in-place zmeny v aktuálnej verzii, žiadna nová git verzia).
 
+---
+
+## 9. Fix status — v19.4.2 (2026-10-21, po odsúhlasení užívateľom)
+
+Užívateľ odsúhlasil: „vykonaj tie opravy ako ďalší commit s tagom 19.4.2".
+Zmenené piny — dôkazy: registry API (tagy + digesty, 2026-10-21) + changelog
+audit upstream releasov (GitHub API, 2026-10-21):
+
+| Program | Bol | Je (v19.4.2) | Cesta upgrade | Zvyšný rebrík |
+|---|---|---|---|---|
+| coolify | 4.0.30 (tag 404) | 4.3.1@sha256:c054910e… | P0 rung 1/2 (§3); 4.3.1 = bugfix-only (changelog) | 4.4.0 (next rung) |
+| sunshine-tv | v2026.929… (tag 404) | v2026.1020.123939-ubuntu-24.04@sha256:5c790c79… | P0 (§3) + digest | — |
+| crowdsec | v1.4.0 (2022) | v1.8.1@sha256:0f2523fa… | P1; changelog 1.5→1.8 vyčistený; SQLite auto-migrácie | — |
+| ollama | 0.5.4 (2024-12) | 0.40.7@sha256:2e6cc92f… | P1; bezstavové (modely vo volumu) | — |
+| gitea | 1.23 | 28.2 | P1; changelog 1.24→28.2 vyčistený pre náš env-pattern; upstream podporuje priame upgrady (chained migrácie) | — (voliteľný stepwise) |
+| nextcloud | 29 | 30 | P1 rung 1/6 — NC doctrine: +1 major, `occ upgrade` na každý | 31→…→35 |
+| headscale | 0.25.0 | 0.26.0@sha256:7e643947… | P1 rung 1/4; 0.26 má BREAKING (policy v2, routes→memory) — runbook v compose komentári | 0.27→0.28→0.29 |
+| buzz/minio | RELEASE.2024-10-13… (404) | **NEZMENENÉ — P0-OPEN** | upstream ukončil VŠETKY kanály: hub repo 404, quay tags prázdne, dl.min.io 410 Gone | host-side rozhodnutie |
+
+**Odchýlky od §3/§4 doctrine (čestne):** audit predpisoval „max jedna
+minor/major na krok". **crowdsec a gitea** boli preskočené na cieľ PRIAMO, lebo:
+(a) changelog audit VŠETKÝCH medziverzií (2026-10-21) nenašiel breaking changes
+týkajúce sa nášho deployment patternu (crowdsec: agent+LAPI+COLLECTIONS —
+`cscli dashboard` odstránený v 1.7, nepoužívame; gitea: GITEA__database__*
+env + USER_UID/GID + /data — BREAKING položky 1.24–28.2 sú API/actions/git-proxy,
+netýkajú sa nás), (b) upstream explicitne podporuje priame upgrady (crowdsec:
+pull+restart s auto-migráciami; gitea: chained transactional DB migrácie pri
+štarte), (c) rollback plán existuje (záloha + re-pin + starý image v lokálnej
+cache). Pre opatrnejších operátorov zostáva stepwise alternatíva dokumentovaná
+v compose komentároch. **Nextcloud/coolify/headscale ostávajú na rung
+prístupe** (NC +1 doctrine / docker.sock privilégium / breaking v 0.26 samotnom).
+
+**CI hardening (§6.1 čiastočne implementované):** 7 nových pinov pridaných do
+smoke check_07 (existencia tagov cez registry API, fail-closed v CI) — budúci
+pruning tagu = červené CI namiesto pokazeného čistého deployu. buzz/minio
+pridaný nie je (tag 404 by CI trvale failoval — je to zámerne P0-OPEN).
+
+**P2/P3 zámerne nezmenené (dôvody v §5):** sglang (CUDA variant rozhodnutie na
+hostovi), vllm (Tier-2), grafana (Angular inventár najprv), victoria-metrics,
+n8n (N8N_BASIC_AUTH deprecation), jellyfin, photoprism, otel, piper, wakeword,
+openlit, llama.cpp (digest re-pull + komentár), pumpkin (digest re-pull), P3
+base images (samostatný release). postgres/redis major upgrade = samostatný
+projekt (pg_upgrade). Pin-freshness workflow rozšírenie (§6.2–6.3) stále
+čaká na implementáciu.
+
+**Nasadenie na hostovi:** pre každý zmenený pin platí postup z pôvodných
+sekcií (§3/§4) + komentáre v compose súboroch (záloha → `docker compose pull`
+→ `up -d` → verify → rollback). Pre stateful služby (gitea, crowdsec,
+headscale, nextcloud, coolify) zálohuj PRVÝM krokom.
+
 *Audit vyhotovil: Z.ai Code (Zmor), Task 13, 2026-10-21. Všetky dátumy a
 existencie tagov overené priamo proti registry API v deň auditu; git dátumy
-pinnutia z histórie repa (main 908b6ca).*
+pinnutia z histórie repa (main 908b6ca). Fix status v19.4.2: Task 15.*
