@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+# agents/hermes/migrate-to-v0.22.2.sh — Hermes Agent v2026.9.24 (v0.21.5) → v0.22.2
+# migration for ScarLiXOS (Task 12). Idempotent; DRY-RUN by default.
+#
+# Usage (from the agents/hermes directory on the ScarLiXOS host):
+#   ./migrate-to-v0.22.2.sh            # dry-run: show what would happen
+#   ./migrate-to-v0.22.2.sh --apply    # backup → env fixup → pull → up → wait-for-health
+#   ./migrate-to-v0.22.2.sh --verify   # health + log checks (no changes)
+#   ./migrate-to-v0.22.2.sh --rollback # stop new container, restore data from backup
+#
+# Design rules (from the migration guide):
+#   - never two agent processes over the same Hermes home/DB (stop before change)
+#   - SQLite WAL/SHM: the agent is STOPPED during backup, so copying state.db
+#     together with its -wal/-shm sidecars is consistent (no live-writer copy)
+#   - the original ./config tree is never modified by the backup step itself;
+#     --rollback restores it verbatim from the backup archive
+#   - original data is NOT deleted (kept for the rollback window)
+#   - readiness is polled via the Docker healthcheck, never via bare `sleep`
+set -euo pipefail
+
+IMAGE_NEW="nousresearch/hermes-agent:v0.22.2@sha256:36099926da316742423544e055d4734777105ffe6341873af5459b957d0c2919"
+IMAGE_OLD_TAG="nousresearch/hermes-agent:v2026.9.24"
+HEALTH_TIMEOUT_S=300
+BACKUP_DIR="./migration-backups"
+STAMP=""
+MODE="dryrun"
+
+log()  { printf '[hermes-migrate] %s\n' "$*"; }
+err()  { printf '[hermes-migrate] ERROR: %s\n' "$*" >&2; }
+die()  { err "$*"; exit 1; }
+
+usage() {
+  sed -n '2,12p' "$0"
+  exit 0
+}
+
+# ---------------------------------------------------------------------------
+# Preflight (shared by all modes)
+# ---------------------------------------------------------------------------
+preflight() {
+  command -v docker >/dev/null 2>&1 || die "docker not found in PATH"
+  docker info >/dev/null 2>&1 || die "docker daemon unreachable"
+  [ -f docker-compose.yml ] || die "docker-compose.yml not found — run this script from agents/hermes"
+  # The compose file must already be the NEW one (git pull brings it in).
+  grep -q "v0.22.2@" docker-compose.yml || die "docker-compose.yml does not pin v0.22.2 — pull the repo first"
+  [ -f .env ] || die ".env not found — copy .env.example to .env and fill the required values"
+  # Required secrets must be non-empty.
+  local v
+  for v in TELEGRAM_BOT_TOKEN TELEGRAM_ZMOR_CHAT_ID LITELLM_MASTER_KEY; do
+    grep -qE "^${v}=.+" .env || die "required variable ${v} is missing/empty in .env"
+  done
+}
+
+# ---------------------------------------------------------------------------
+# Backup: config/ + workspace/ + .env → tar.gz with SHA-256 manifest
+# ---------------------------------------------------------------------------
+make_backup() {
+  STAMP="$(date +%Y%m%d-%H%M%S)"
+  local dest="${BACKUP_DIR}/hermes-pre-v0.22.2-${STAMP}.tar.gz"
+  mkdir -p "$BACKUP_DIR"
+
+  # Stop first: exactly one writer, and the SQLite state.db is closed
+  # (its -wal/-shm sidecars are copied alongside → consistent snapshot).
+  if docker ps --format '{{.Names}}' | grep -qx hermes; then
+    log "stopping container 'hermes' for a consistent backup ..."
+    docker stop hermes >/dev/null
+  else
+    log "container 'hermes' is not running — proceeding"
+  fi
+
+  log "backing up ./config ./workspace .env → ${dest}"
+  tar -czf "$dest" config workspace .env
+
+  # Manifest: size, mtime, SHA-256 of the archive (and of the DB sidecars).
+  {
+    printf 'archive: %s\n' "$dest"
+    printf 'created: %s\n' "$(date -Is)"
+    printf 'archive_size_bytes: %s\n' "$(stat -c%s "$dest")"
+    printf 'archive_sha256: %s\n' "$(sha256sum "$dest" | awk '{print $1}')"
+    if [ -f config/state.db ]; then
+      printf 'state_db_sha256: %s\n' "$(sha256sum config/state.db | awk '{print $1}')"
+      [ -f config/state.db-wal ] && printf 'state_db_wal_sha256: %s\n' "$(sha256sum config/state.db-wal | awk '{print $1}')"
+      [ -f config/state.db-shm ] && printf 'state_db_shm_sha256: %s\n' "$(sha256sum config/state.db-shm | awk '{print $1}')"
+    fi
+  } > "${dest}.manifest"
+  log "manifest: ${dest}.manifest"
+
+  # Verify the archive is readable (guide §4: verify the backup can be restored).
+  tar -tzf "$dest" >/dev/null || die "backup archive failed verification (tar -t)"
+  log "backup verified (tar -t OK)"
+}
+
+# ---------------------------------------------------------------------------
+# Env fixup: ensure HERMES_API_SERVER_KEY exists (new in v0.22.2, required)
+# ---------------------------------------------------------------------------
+ensure_api_key() {
+  if grep -qE '^HERMES_API_SERVER_KEY=.{8,}$' .env; then
+    log "HERMES_API_SERVER_KEY already present"
+    return 0
+  fi
+  local key
+  key="$(openssl rand -hex 32)"
+  # Idempotent: replace an empty/stub line if present, else append.
+  if grep -q '^HERMES_API_SERVER_KEY=' .env; then
+    sed -i "s|^HERMES_API_SERVER_KEY=.*$|HERMES_API_SERVER_KEY=${key}|" .env
+  else
+    printf '\n# v0.22.2 API server key (auto-generated by migrate-to-v0.22.2.sh)\nHERMES_API_SERVER_KEY=%s\n' "$key" >> .env
+  fi
+  chmod 600 .env
+  log "generated HERMES_API_SERVER_KEY (openssl rand -hex 32) into .env"
+}
+
+# ---------------------------------------------------------------------------
+# Wait for readiness via the Docker healthcheck (no bare sleep)
+# ---------------------------------------------------------------------------
+wait_for_health() {
+  log "waiting for container health (timeout ${HEALTH_TIMEOUT_S}s) ..."
+  local waited=0 status=""
+  while [ "$waited" -lt "$HEALTH_TIMEOUT_S" ]; do
+    status="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' hermes 2>/dev/null || echo missing)"
+    case "$status" in
+      healthy)
+        log "container is HEALTHY ✓"
+        return 0
+        ;;
+      unhealthy)
+        err "container reports UNHEALTHY — inspect logs:"
+        docker logs --tail 50 hermes || true
+        return 1
+        ;;
+      *)
+        sleep 5
+        waited=$((waited + 5))
+        ;;
+    esac
+  done
+  err "health timeout after ${HEALTH_TIMEOUT_S}s (last status: ${status})"
+  docker logs --tail 50 hermes || true
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Modes
+# ---------------------------------------------------------------------------
+do_apply() {
+  preflight
+  make_backup
+  ensure_api_key
+  log "pulling pinned image (tag+digest) ..."
+  docker compose --env-file .env pull hermes
+  log "starting hermes (v0.22.2, gateway run, supervised by s6) ..."
+  docker compose --env-file .env up -d hermes
+  if wait_for_health; then
+    log "APPLY OK — Hermes v0.22.2 is up and healthy"
+    log "keep ${BACKUP_DIR}/ for the rollback window; run --verify for full checks"
+  else
+    err "APPLY did not reach healthy state — run --rollback or inspect logs"
+    exit 1
+  fi
+}
+
+do_verify() {
+  preflight
+  local rc=0
+  # 1) running image matches the pin
+  local running
+  running="$(docker inspect --format='{{.Config.Image}}' hermes 2>/dev/null || echo missing)"
+  log "running image: ${running}"
+  [ "$running" = "nousresearch/hermes-agent:v0.22.2" ] || { err "image mismatch (expected v0.22.2)"; rc=1; }
+  # 2) health
+  wait_for_health || rc=1
+  # 3) gateway errors / secret leakage scan (tail of logs)
+  log "scanning recent logs for errors / secret leakage ..."
+  if docker logs --tail 200 hermes 2>&1 | grep -iE 'traceback|critical|unauthorized|refused to start'; then
+    err "suspicious lines found above — review docker logs hermes"
+    rc=1
+  else
+    log "no error patterns in the last 200 log lines"
+  fi
+  if docker logs --tail 200 hermes 2>&1 | grep -E "${LITELLM_MASTER_KEY}|${HERMES_API_SERVER_KEY:-none}|${TELEGRAM_BOT_TOKEN}"; then
+    err "SECRET LEAK in logs — rotate keys immediately"
+    rc=1
+  else
+    log "no secrets found in the last 200 log lines"
+  fi
+  # 4) read-only boundary: /opt/scarlix must be ro in the mount spec
+  if docker inspect --format='{{range .Mounts}}{{.Source}}:{{.RW}} {{end}}' hermes | grep -q '/opt/scarlix:true'; then
+    err "/opt/scarlix is mounted READ-WRITE — security boundary broken"
+    rc=1
+  else
+    log "/opt/scarlix is read-only ✓"
+  fi
+  [ "$rc" -eq 0 ] && log "VERIFY OK" || err "VERIFY found issues (see above)"
+  exit "$rc"
+}
+
+do_rollback() {
+  [ -d "$BACKUP_DIR" ] || die "no ${BACKUP_DIR}/ — nothing to roll back from"
+  local manifest archive
+  manifest="$(ls -1 "${BACKUP_DIR}"/hermes-pre-v0.22.2-*.manifest 2>/dev/null | sort | tail -1)"
+  [ -n "$manifest" ] || die "no backup manifest found in ${BACKUP_DIR}/"
+  archive="${manifest%.manifest}"
+  log "rolling back from: ${archive}"
+
+  # Stop the NEW container first — never two agents over the same data.
+  if docker ps -a --format '{{.Names}}' | grep -qx hermes; then
+    docker rm -f hermes >/dev/null
+    log "removed the v0.22.2 container"
+  fi
+
+  # Restore ./config ./workspace .env from the verified archive.
+  log "restoring config/ workspace/ .env from backup ..."
+  rm -rf config.new
+  mkdir config.new
+  tar -xzf "$archive" -C config.new
+  rm -rf config workspace
+  mv config.new/config config
+  mv config.new/workspace workspace
+  mv config.new/.env .env
+  rmdir config.new
+  chmod 600 .env
+  log "data restored"
+
+  # Compose file: prefer git if available (checkout the pre-migration version).
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    log "restoring agents/hermes compose+config from git (v19.4.1) ..."
+    git checkout v19.4.1 -- docker-compose.yml config.yaml 2>/dev/null \
+      || git checkout HEAD~1 -- docker-compose.yml config.yaml 2>/dev/null \
+      || err "could not restore old compose from git — restore manually from ${archive}"
+  else
+    err "not a git checkout — restore docker-compose.yml/config.yaml from the repo at v19.4.1"
+  fi
+
+  log "starting the OLD image (${IMAGE_OLD_TAG}) ..."
+  docker compose --env-file .env up -d hermes
+  log "ROLLBACK COMPLETE — verify Telegram/LiteLLM/MCP manually"
+  log "(the old compose had no start_period; wait ~30s, then check the bot)"
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --apply)    MODE="apply" ;;
+    --verify)   MODE="verify" ;;
+    --rollback) MODE="rollback" ;;
+    -h|--help)  usage ;;
+    *)          die "unknown argument: ${arg} (use --apply / --verify / --rollback)" ;;
+  esac
+done
+
+case "$MODE" in
+  dryrun)
+    log "DRY-RUN (no changes will be made)"
+    preflight
+    log "steps that --apply would perform:"
+    log "  1. docker stop hermes (single-writer, consistent SQLite copy)"
+    log "  2. tar ./config ./workspace .env → ${BACKUP_DIR}/hermes-pre-v0.22.2-<ts>.tar.gz (+manifest)"
+    log "  3. generate HERMES_API_SERVER_KEY into .env if missing"
+    log "  4. docker compose pull hermes (pinned ${IMAGE_NEW})"
+    log "  5. docker compose up -d hermes (command: gateway run)"
+    log "  6. wait for Docker healthcheck (GET /health on 8642, container-loopback)"
+    log "preflight OK — run again with --apply to proceed"
+    ;;
+  apply)    do_apply ;;
+  verify)   do_verify ;;
+  rollback) do_rollback ;;
+esac
