@@ -253,7 +253,7 @@ surface (merged from the `19.2.14.P6` line):
   template but never enables the service (smoke-test check_17 asserts the
   absence of any `systemctl enable scarlix-reservation`).
 
-## (n) Agent Kernel foundation + sessions + grants + audit (v19.4.x, AK-1…AK-4)
+## (n) Agent Kernel — COMPLETE (v19.4.x, AK-1…AK-5)
 
 - **Closed capability enumeration — never "exec":** the only grantable
   capabilities are `status.read`, `gaming.read`, `mode.request`,
@@ -340,6 +340,19 @@ surface (merged from the `19.2.14.P6` line):
   reported in the API response (`audit_read_errors`), never silently
   skipped. Read surface `/api/agent/audit` is read-only behind Bearer auth;
   opt-in via `SCARLIHQ_AGENT_AUDIT_FILE`.
+- **Agent-gated compute intake (AK-5, v19.4.6):** `POST /api/agent/sessions/
+  compute` chains three independent gates — kernel evaluation (denial-is-200;
+  registry kill-switch applies on the next call), principal mapping (the
+  agent's registry-declared owner — the registry is REQUIRED for intake: a
+  legacy-mode caller-supplied owner would make the mapping spoofable, so
+  intake returns 400 without it, never a silent fallback), and workload-
+  bridge ownership enforcement (Start/Stop with the agent owner as
+  principal; unowned allocations → 403 ErrOwnerMismatch). Every attempt is
+  audited with the allocation id and outcome (`compute.reserve` /
+  `compute.release` lines, detail = executed / rejected:<kind>); audit
+  write failures are surfaced, never silent. Bounded request discipline
+  (4KB, one object, unknown fields rejected) + 45s bridge timeout parity
+  with the direct lifecycle surface.
 
 ## Other security properties
 

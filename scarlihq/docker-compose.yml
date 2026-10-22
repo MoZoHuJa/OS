@@ -72,6 +72,11 @@ services:
       # enable) as append-only JSONL. Shares the mount below (0600 file,
       # 0700 dir — construction fail-closes on looser modes).
       #   - SCARLIHQ_AGENT_AUDIT_FILE=/var/lib/scarlix-agentkernel/audit.jsonl
+      # v19.4.6 — Agent Kernel compute intake (AK-5) needs BOTH the kernel
+      # env above AND the compute lifecycle env below (SCARLIHQ_COMPUTE_*)
+      # plus the grant registry — the agent's registry-declared owner becomes
+      # the acting principal; the workload bridge enforces allocation
+      # ownership. No extra env of its own: it is the composition, not a flag.
     # v19.3.2 — OPT-IN compute lifecycle mounts (see env notes above).
     #   - /var/lib/scarlix-reservation:/var/lib/scarlix-reservation:rw
     #   - /run/scarlix-workload-bridge/bridge.sock:/run/scarlix-workload-bridge/bridge.sock

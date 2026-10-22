@@ -160,7 +160,7 @@ The allocation store is shared with the ScarliHQ compute lifecycle (both
 sides UID 65532, flock-serialized) — one consistent record set, documented in
 the compose opt-in block (`SCARLIHQ_ALLOCATION_STORE=/var/lib/scarlix-reservation/allocations.jsonl`).
 
-## Agent Kernel foundation + sessions + grants + audit (v19.4.x, AK-1…AK-4)
+## Agent Kernel — COMPLETE (v19.4.x, AK-1…AK-5)
 
 The deterministic core every future agent capability flows through —
 **"LLM navrhuje, politika rozhoduje"** (strategy p. 13). The kernel owns
@@ -217,8 +217,15 @@ flush+fsync per line) — evaluations are persisted BEFORE the decision is
 served (fail-closed: an unauditable decision is never returned; admin acts
 are appended after their persist with failures reported). Read surface
 `GET /api/agent/audit` (last N lines newest-first, malformed lines reported
-not hidden). Opt-in via `SCARLIHQ_AGENT_AUDIT_FILE`. AK-5 flows
-`compute.reserve`/`compute.release` through the governor stores.
+not hidden). Opt-in via `SCARLIHQ_AGENT_AUDIT_FILE`. AK-5 (v19.4.6) closes
+the line: **agent-gated compute intake** — `POST /api/agent/sessions/
+compute` chains three independent gates (kernel evaluation with
+denial-is-200 → registry-declared owner principal, registry REQUIRED
+because a caller-supplied owner would be spoofable → workload-bridge
+ownership enforcement, ErrOwnerMismatch → 403), audits every attempt with
+the allocation id + outcome (`compute.reserve`/`compute.release` lines).
+Enablement is the composition (kernel + registry + compute lifecycle), no
+env of its own. **The v19.4.x line is COMPLETE — Phase A delivered.**
 
 ## GPU Arbitration (scarlix-mode)
 
