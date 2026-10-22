@@ -253,7 +253,7 @@ surface (merged from the `19.2.14.P6` line):
   template but never enables the service (smoke-test check_17 asserts the
   absence of any `systemctl enable scarlix-reservation`).
 
-## (n) Agent Kernel foundation + sessions (v19.4.x, AK-1 + AK-2)
+## (n) Agent Kernel foundation + sessions + grants (v19.4.x, AK-1 + AK-2 + AK-3)
 
 - **Closed capability enumeration — never "exec":** the only grantable
   capabilities are `status.read`, `gaming.read`, `mode.request`,
@@ -300,6 +300,31 @@ surface (merged from the `19.2.14.P6` line):
   than an HTTP error; unknown sessions (404) and unknown capabilities
   (400) are client errors, not kernel decisions. Every decision carries the
   fired rule / cited grant.
+- **Admin-owned persisted grants (AK-3, v19.4.4):** in registry mode every
+  grant is a separate persisted admin act — `/var/lib/scarlix-agentkernel/
+  grants.json` (0600 file / 0700 dir, atomic temp+rename writes, tombstone
+  revocations; the file is the reviewable history and re-granting appends,
+  never overwrites). Grants name their admin (`granted_by` mandatory — no
+  anonymous grants); one agent has exactly one owner principal, enforced
+  across all records; owner principals must be part of the declared
+  `SCARLIHQ_AGENT_PRINCIPALS` space (copied from the governor `user_tokens`
+  values — fail-closed on unknown principals at grant AND load time).
+  **Fail-closed load:** any malformed record, unknown capability, owner
+  mismatch, anonymous revocation, duplicate active grant, schema drift, or
+  loose file/dir permissions aborts startup — a tampered registry never
+  degrades into "some grants work". Unlike the allocation store, loose
+  permissions are NOT auto-fixed (tamper discipline). The registry is
+  bounded (256 records incl. tombstones, 64 agents) and request-supplied
+  `capabilities` are rejected in registry mode (grants are never
+  client-supplied there).
+- **Admin kill-switch (AK-3):** `Disable`/`Enable` per capability (each act
+  names its admin); a disabled capability is denied citing
+  `rule/capability-disabled` and the toggle takes effect on the NEXT
+  evaluation (no restart — evaluate consults the live registry policy).
+  The grant surface (`/api/agent/grants`, `/api/agent/grants/revoke`,
+  `/api/agent/capabilities/disable|enable`) is behind the standard Bearer
+  auth and 503 until the registry is opted in (`SCARLIHQ_AGENT_GRANTS_FILE`
+  + `SCARLIHQ_AGENT_PRINCIPALS`, commented compose block).
 
 ## Other security properties
 
