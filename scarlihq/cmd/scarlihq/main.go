@@ -23,7 +23,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.4.4"
+var Version = "19.4.5"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -134,6 +134,26 @@ func main() {
 				log.Fatalf("agent kernel configuration failed: %v", err)
 			}
 			log.Printf("Agent Kernel session API enabled (max %d sessions, legacy request-supplied grants; set SCARLIHQ_AGENT_GRANTS_FILE + SCARLIHQ_AGENT_PRINCIPALS for admin-owned grants)", agentkernel.DefaultMaxSessions)
+		}
+
+		// AK-4 (v19.4.5): append-only audit sink — separate opt-in
+		// (SCARLIHQ_AGENT_AUDIT_FILE). When set, every evaluation is
+		// persisted BEFORE its decision is served (fail-closed) and every
+		// admin act is appended after its successful persist. Construction
+		// is fail-closed (0600/0700 discipline — loose permissions abort
+		// startup, tamper discipline like the grant registry).
+		auditFile := strings.TrimSpace(os.Getenv("SCARLIHQ_AGENT_AUDIT_FILE"))
+		if auditFile != "" {
+			sink, err := agentkernel.NewAuditSink(auditFile)
+			if err != nil {
+				log.Fatalf("agent kernel audit sink initialization failed: %v (fix the file/dir permissions or path — never run with a tampered audit trail)", err)
+			}
+			if err := apiHandler.ConfigureAgentAudit(sink); err != nil {
+				log.Fatalf("agent kernel audit sink configuration failed: %v", err)
+			}
+			log.Printf("Agent Kernel audit sink enabled (%s; append-only JSONL, evaluations fail-closed on audit write)", auditFile)
+		} else {
+			log.Println("Agent Kernel audit sink disabled; set SCARLIHQ_AGENT_AUDIT_FILE to persist every decision and admin act")
 		}
 	} else {
 		log.Printf("Agent Kernel session API disabled; set SCARLIHQ_AGENTKERNEL_ENABLED=true to enable")

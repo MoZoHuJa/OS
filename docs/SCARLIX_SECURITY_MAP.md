@@ -253,7 +253,7 @@ surface (merged from the `19.2.14.P6` line):
   template but never enables the service (smoke-test check_17 asserts the
   absence of any `systemctl enable scarlix-reservation`).
 
-## (n) Agent Kernel foundation + sessions + grants (v19.4.x, AK-1 + AK-2 + AK-3)
+## (n) Agent Kernel foundation + sessions + grants + audit (v19.4.x, AK-1…AK-4)
 
 - **Closed capability enumeration — never "exec":** the only grantable
   capabilities are `status.read`, `gaming.read`, `mode.request`,
@@ -325,6 +325,21 @@ surface (merged from the `19.2.14.P6` line):
   `/api/agent/capabilities/disable|enable`) is behind the standard Bearer
   auth and 503 until the registry is opted in (`SCARLIHQ_AGENT_GRANTS_FILE`
   + `SCARLIHQ_AGENT_PRINCIPALS`, commented compose block).
+- **Append-only audit sink (AK-4, v19.4.5):** every kernel decision (allow
+  AND deny) and every admin act (grant/revoke/disable/enable) is persisted
+  to `/var/lib/scarlix-agentkernel/audit.jsonl` — append-only JSONL, 0600
+  file / 0700 dir (construction fail-closes on looser modes, umask-proof
+  re-stat), flock-serialized multi-process writes (reservation-store
+  discipline), flush + fsync per line (a crash can lose at most the line
+  being written, never a torn line). **Evaluations are persisted BEFORE the
+  decision is served** — an audit write failure returns 500 and no decision
+  (an unauditable allow/deny is never served). Admin acts append after
+  their persist; write failures are reported (honest ordering — the registry
+  state stands). Lines validate before write (type-specific mandatory
+  fields); reads are bounded (last 200 by default) and malformed lines are
+  reported in the API response (`audit_read_errors`), never silently
+  skipped. Read surface `/api/agent/audit` is read-only behind Bearer auth;
+  opt-in via `SCARLIHQ_AGENT_AUDIT_FILE`.
 
 ## Other security properties
 

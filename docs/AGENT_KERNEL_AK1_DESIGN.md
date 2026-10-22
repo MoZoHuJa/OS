@@ -1,9 +1,8 @@
-# ScarLiX OS — Agent Kernel AK-1/AK-2/AK-3 Design (v19.4.x line)
+# ScarLiX OS — Agent Kernel AK-1…AK-4 Design (v19.4.x line)
 
-**Branch:** `agent-kernel/ak3-grants` → merged to main as **v19.4.4**
-**Status:** AK-1 + AK-2 + AK-3 complete (AK-1 incl. pre-merge review fix; AK-2 =
-bounded session store + auth-gated REST surface; AK-3 = persisted admin-owned
-grant registry + disable switches); AK-4/AK-5 follow
+**Branch:** `agent-kernel/ak4-audit` → merged to main as **v19.4.5**
+**Status:** AK-1 + AK-2 + AK-3 + AK-4 complete (AK-4 = append-only audit
+sink); AK-5 follows (compute intake)
 **Strategy source:** `docs/ScaRgeN_CuLT_Strategy_Obsidian_Lattice_SK_2026-10.pdf` (pages 13, 15–16, 22, 24)
 
 ---
@@ -23,7 +22,7 @@ the Compute Fabric tail; phasing follows verifiable behavior, page 20).
 | **AK-1** | Typed foundations: agent identity, closed capability enumeration, session state machine, deterministic permission engine, audit events | **DONE — merged as v19.4.0** (incl. review fix: capability grants enforced) |
 | **AK-2** | Session store + WS/REST surface (sessions created/closed via ScarliHQ API, auth-gated) | **DONE — merged as v19.4.1** (see §6) |
 | **AK-3** | Policy engine v1: capability grants persisted per agent + admin disable switches; tie into the reservation governor's `user_tokens` principal space | **DONE — merged as v19.4.4** (see §7) |
-| **AK-4** | Audit sink: append-only JSONL under `/var/lib/scarlix-agentkernel/` (0600, flock — same store discipline as reservations) | planned |
+| **AK-4** | Audit sink: append-only JSONL under `/var/lib/scarlix-agentkernel/` (0600, flock — same store discipline as reservations) | **DONE — merged as v19.4.5** (see §8) |
 | **AK-5** | Compute intake API meets agent sessions: `compute.reserve`/`release` capabilities flow through the governor stores | planned (jointly with the intake API roadmap row) |
 
 ## 3. AK-1 contract (as implemented in `internal/agentkernel`)
@@ -245,3 +244,78 @@ force when no registry is configured — backward compatible, same binary.
   owned grants, tombstones, auth-gated route registration, registry-mode
   grant rejection marker, opt-in wiring + commented compose (negative
   control verified — breaking the compose opt-in line FAILS the check)
+
+---
+
+## 8. AK-4 contract (v19.4.5) — append-only audit sink
+
+### Audit sink (`internal/agentkernel/audit.go`)
+
+Every kernel decision and every admin act lands in an **append-only JSONL
+file** at `/var/lib/scarlix-agentkernel/audit.jsonl`:
+
+- **Line types:** `evaluate` (one line per permission evaluation — allow
+  AND deny, the denial-is-200 persistence twin: session, agent, capability,
+  decision, reason), `grant` / `revoke` (admin acts with owner + admin),
+  `disable` / `enable` (kill-switch acts with reason). One struct with
+  omitempty keeps lines small; `schema:1` envelope version per line.
+- **Fail-closed construction:** the sink refuses to start on loose
+  permissions (0600 file / 0700 dir, verified after create — umask-proof
+  re-stat; `ErrAuditFilePermissions`). Same tamper discipline as the grant
+  registry: no auto-fix.
+- **Append discipline:** writes are flock-serialized across processes
+  (sidecar `.lock` file, LOCK_EX — the reservation-store discipline) and
+  mutex-serialized in-process; every line is flushed AND fsynced before
+  Append returns — a crash can lose at most the line being written, never
+  a torn line. The file is never rewritten or truncated — the history is
+  the artifact.
+- **Decision-persisted-before-serve (evaluate):** the API handler appends
+  the audit line BEFORE returning the decision — if the write fails, the
+  caller gets a 500 and no decision. An unauditable allow/deny is never
+  served.
+- **Honest ordering (admin acts):** grant/revoke/disable/enable append
+  their audit line AFTER the successful registry persist — the state
+  change stands (the registry file is the source of truth); a write
+  failure is REPORTED (500 with the underlying error) so the operator
+  knows the trail missed an act. No rollback theater.
+- **Line validation:** every line validates before append (type-specific
+  mandatory fields — evaluate lines need session/agent/capability/decision/
+  reason; admin lines need their admin; zero timestamps rejected). Invalid
+  lines are never written.
+- **Bounded reads:** `ReadLast(n)` returns the last n lines newest-first,
+  clamped to `DefaultMaxAuditRead = 200`; the audit FILE is unbounded in
+  time (it IS the history) — only the READ surface is bounded. Malformed
+  lines found during a read are reported as errors (visible to the
+  operator, never silently skipped) and valid lines are still returned.
+
+### REST surface (opt-in via `SCARLIHQ_AGENT_AUDIT_FILE`)
+
+| Route | Method | Contract |
+|---|---|---|
+| `/api/agent/audit` | GET | last N audit lines (newest first; `?limit=1..200`, default 200) + count + sink path; `audit_read_errors` in the response when malformed lines were found — honest, not hidden. Read-only (POST → 405). |
+
+Behind the standard Bearer auth, 503 until the sink is configured. The
+sink works with OR without the grant registry (audit of legacy-mode
+evaluations is legitimate — the sink is a separate opt-in).
+
+### Verification (AK-4)
+
+- `go test ./internal/agentkernel` — sink tests: construction fail-closed
+  (loose dir/file), append+read round-trips for all 5 line types, append-
+  only semantics (bytes never rewritten, history survives across sinks),
+  line validation matrix (14 invalid shapes), read bounds + clamping,
+  malformed lines reported-not-hidden, count, close discipline
+  (idempotent; append/read after close → ErrAuditSinkClosed),
+  event→line conversion + JSON round-trip
+- `go test ./internal/api` — HTTP tests: auth-gating (401), 503 default,
+  evaluations persisted before serving (allow + deny lines, session +
+  reason asserted), admin acts appended in newest-first order with admins
+  named, read endpoint (empty sink, limit validation, method discipline,
+  tampered file → audit_read_errors + valid lines still returned)
+- `go test -race` on both packages — OK
+- Smoke check 21 (deterministic, source-level): fail-closed construction
+  sentinels, decision-not-served marker, line validation, flock+fsync
+  append discipline, bounded reads, admin-act lines, auth-gated read-only
+  route, malformed-reported marker, opt-in wiring + commented compose
+  (negative control verified — breaking the compose opt-in line FAILS the
+  check)

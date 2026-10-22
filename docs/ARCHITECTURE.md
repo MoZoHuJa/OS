@@ -160,7 +160,7 @@ The allocation store is shared with the ScarliHQ compute lifecycle (both
 sides UID 65532, flock-serialized) — one consistent record set, documented in
 the compose opt-in block (`SCARLIHQ_ALLOCATION_STORE=/var/lib/scarlix-reservation/allocations.jsonl`).
 
-## Agent Kernel foundation + sessions + grants (v19.4.x, AK-1 + AK-2 + AK-3)
+## Agent Kernel foundation + sessions + grants + audit (v19.4.x, AK-1…AK-4)
 
 The deterministic core every future agent capability flows through —
 **"LLM navrhuje, politika rozhoduje"** (strategy p. 13). The kernel owns
@@ -210,9 +210,15 @@ request-supplied `capabilities`; the legacy AK-2 contract stays in force
 without a registry. Fail-closed load: a malformed/tampered/loose-permission
 registry aborts startup. REST: `/api/agent/grants` (GET/POST),
 `/api/agent/grants/revoke`, `/api/agent/capabilities/disable|enable` —
-all behind Bearer auth, 503 until opted in. AK-4 persists the audit
-events; AK-5 flows `compute.reserve`/`compute.release` through the
-governor stores.
+all behind Bearer auth, 503 until opted in. AK-4 (v19.4.5) persists every
+decision and admin act: an **append-only JSONL audit sink** at
+`/var/lib/scarlix-agentkernel/audit.jsonl` (0600/0700, flock-serialized,
+flush+fsync per line) — evaluations are persisted BEFORE the decision is
+served (fail-closed: an unauditable decision is never returned; admin acts
+are appended after their persist with failures reported). Read surface
+`GET /api/agent/audit` (last N lines newest-first, malformed lines reported
+not hidden). Opt-in via `SCARLIHQ_AGENT_AUDIT_FILE`. AK-5 flows
+`compute.reserve`/`compute.release` through the governor stores.
 
 ## GPU Arbitration (scarlix-mode)
 

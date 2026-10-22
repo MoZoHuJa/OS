@@ -3,8 +3,10 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +46,20 @@ func (h *Handler) ConfigureAgentGrants(registry *agentkernel.GrantRegistry) erro
 		return errors.New("api: agent kernel grant registry is required")
 	}
 	h.agentGrants = registry
+	return nil
+}
+
+// ConfigureAgentAudit attaches the AK-4 append-only audit sink. When set,
+// every evaluation is persisted BEFORE its decision is served (fail-closed:
+// an unauditable decision is never returned) and every admin act is appended
+// after its successful persist (a write failure is reported — the registry
+// state stands, honest ordering). Without a sink the AK-2/AK-3 in-memory
+// behavior applies.
+func (h *Handler) ConfigureAgentAudit(sink *agentkernel.AuditSink) error {
+	if sink == nil {
+		return errors.New("api: agent kernel audit sink is required")
+	}
+	h.agentAudit = sink
 	return nil
 }
 
@@ -299,6 +315,18 @@ func (h *Handler) agentSessionEvaluate(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "evaluation failed")
 		return
 	}
+
+	// AK-4: persist the decision BEFORE it is served — fail-closed. An
+	// unauditable allow/deny is never returned; the caller sees a 500 and
+	// can retry. (Without a sink configured the in-memory behavior of
+	// AK-2/AK-3 applies unchanged.)
+	if h.agentAudit != nil {
+		if err := h.agentAudit.Append(agentkernel.NewAuditLineFromEvent(event)); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "audit write failed — decision not served (fail-closed)")
+			return
+		}
+	}
+
 	writeJSON(w, map[string]interface{}{
 		"session_id": event.SessionID,
 		"agent_id":   string(event.AgentID),
@@ -466,6 +494,24 @@ func (h *Handler) agentGrantCreate(w http.ResponseWriter, r *http.Request) {
 		h.agentRegistryError(w, err)
 		return
 	}
+	// AK-4: append the admin act to the audit sink AFTER the successful
+	// persist — the registry state stands; a write failure is REPORTED
+	// (500) so the operator knows the audit trail missed an act. No
+	// rollback theater: the state change is the source of truth.
+	if h.agentAudit != nil {
+		if aerr := h.agentAudit.Append(agentkernel.AuditLine{
+			Schema:     1,
+			Type:       agentkernel.AuditTypeGrant,
+			Timestamp:  rec.GrantedAt,
+			AgentID:    rec.AgentID,
+			Capability: rec.Capability,
+			Owner:      rec.Owner,
+			Admin:      rec.GrantedBy,
+		}); aerr != nil {
+			writeJSONError(w, http.StatusInternalServerError, "grant persisted but audit write failed: "+aerr.Error())
+			return
+		}
+	}
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, viewFromGrant(rec))
 }
@@ -493,6 +539,22 @@ func (h *Handler) agentGrantRevoke(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.agentRegistryError(w, err)
 		return
+	}
+	// AK-4: append the admin act (see agentGrantCreate for the ordering
+	// contract — state stands, audit failure is reported).
+	if h.agentAudit != nil {
+		if aerr := h.agentAudit.Append(agentkernel.AuditLine{
+			Schema:     1,
+			Type:       agentkernel.AuditTypeRevoke,
+			Timestamp:  rec.GrantedAt,
+			AgentID:    rec.AgentID,
+			Capability: rec.Capability,
+			Owner:      rec.Owner,
+			Admin:      rec.RevokedBy,
+		}); aerr != nil {
+			writeJSONError(w, http.StatusInternalServerError, "revocation persisted but audit write failed: "+aerr.Error())
+			return
+		}
 	}
 	writeJSON(w, viewFromGrant(rec))
 }
@@ -527,6 +589,20 @@ func (h *Handler) agentCapabilityDisable(w http.ResponseWriter, r *http.Request)
 		"disabled_at": rec.DisabledAt.Format(time.RFC3339),
 		"reason":      rec.Reason,
 	})
+	// AK-4: append the admin act (ordering contract as above).
+	if h.agentAudit != nil {
+		if aerr := h.agentAudit.Append(agentkernel.AuditLine{
+			Schema:     1,
+			Type:       agentkernel.AuditTypeDisable,
+			Timestamp:  rec.DisabledAt,
+			Capability: rec.Capability,
+			Admin:      rec.DisabledBy,
+			Detail:     rec.Reason,
+		}); aerr != nil {
+			writeJSONError(w, http.StatusInternalServerError, "disable persisted but audit write failed: "+aerr.Error())
+			return
+		}
+	}
 }
 
 func (h *Handler) agentCapabilityEnable(w http.ResponseWriter, r *http.Request) {
@@ -555,6 +631,20 @@ func (h *Handler) agentCapabilityEnable(w http.ResponseWriter, r *http.Request) 
 		"capability": strings.TrimSpace(req.Capability),
 		"enabled":    true,
 	})
+	// AK-4: append the admin act (ordering contract as above — the
+	// enable timestamp is the act time; the registry state stands).
+	if h.agentAudit != nil {
+		if aerr := h.agentAudit.Append(agentkernel.AuditLine{
+			Schema:     1,
+			Type:       agentkernel.AuditTypeEnable,
+			Timestamp:  time.Now().UTC(),
+			Capability: agentkernel.Capability(strings.TrimSpace(req.Capability)),
+			Admin:      strings.TrimSpace(req.EnabledBy),
+		}); aerr != nil {
+			writeJSONError(w, http.StatusInternalServerError, "enable persisted but audit write failed: "+aerr.Error())
+			return
+		}
+	}
 }
 
 // agentRegistryError maps grant-registry errors to HTTP statuses. Registry
@@ -566,4 +656,81 @@ func (h *Handler) agentRegistryError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeJSONError(w, http.StatusBadRequest, err.Error())
+}
+
+// ---------------------------------------------------------------------------
+// AK-4 (v19.4.5): audit read surface
+// ---------------------------------------------------------------------------
+
+// agentAuditView is the JSON representation of one audit line.
+type agentAuditView struct {
+	Type       string `json:"type"`
+	Timestamp  string `json:"timestamp"`
+	SessionID  string `json:"session_id,omitempty"`
+	AgentID    string `json:"agent_id,omitempty"`
+	Capability string `json:"capability,omitempty"`
+	Allow      *bool  `json:"allow,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	Owner      string `json:"owner,omitempty"`
+	Admin      string `json:"admin,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+}
+
+// agentAuditRoute serves GET /api/agent/audit (named *Route to avoid the field-vs-method collision with Handler.agentAudit) — the last N audit lines (newest
+// first, N clamped to the kernel's DefaultMaxAuditRead). Malformed lines
+// found during the read are REPORTED in the response (audit_read_errors),
+// never silently skipped: an audit file with a bad line must be visible to
+// the operator. 503 until the sink is configured (own opt-in).
+func (h *Handler) agentAuditRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "audit is read-only (GET)")
+		return
+	}
+	if h.agentAudit == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "agent kernel audit sink is disabled")
+		return
+	}
+	n := agentkernel.DefaultMaxAuditRead
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 || parsed > agentkernel.DefaultMaxAuditRead {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("limit must be an integer in 1..%d", agentkernel.DefaultMaxAuditRead))
+			return
+		}
+		n = parsed
+	}
+	lines, readErrs, err := h.agentAudit.ReadLast(n)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "audit read failed")
+		return
+	}
+	views := make([]agentAuditView, 0, len(lines))
+	for _, l := range lines {
+		views = append(views, agentAuditView{
+			Type:       string(l.Type),
+			Timestamp:  l.Timestamp.Format(time.RFC3339),
+			SessionID:  l.SessionID,
+			AgentID:    string(l.AgentID),
+			Capability: string(l.Capability),
+			Allow:      l.Allow,
+			Reason:     l.Reason,
+			Owner:      l.Owner,
+			Admin:      l.Admin,
+			Detail:     l.Detail,
+		})
+	}
+	resp := map[string]interface{}{
+		"audit":     views,
+		"count":     len(views),
+		"limit":     n,
+		"sink_path": h.agentAudit.Path(),
+	}
+	if len(readErrs) > 0 {
+		msgs := make([]string, 0, len(readErrs))
+		for _, e := range readErrs {
+			msgs = append(msgs, e.Error())
+		}
+		resp["audit_read_errors"] = msgs // honest: malformed lines are visible, not hidden
+	}
+	writeJSON(w, resp)
 }

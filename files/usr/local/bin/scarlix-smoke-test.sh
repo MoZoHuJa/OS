@@ -1292,6 +1292,100 @@ check_20_agent_kernel_grants() {
 }
 
 # ===========================================================================
+# Check 21 — Agent Kernel audit sink (AK-4, v19.4.5)
+# ===========================================================================
+# AK-4 persists every kernel decision (allow AND deny) and every admin act
+# (grant/revoke/disable/enable) as append-only JSONL under
+# /var/lib/scarlix-agentkernel/audit.jsonl (0600/0700, flock-serialized).
+# This check guards the static contract: fail-closed construction, the
+# append-before-serve ordering marker, line validation, bounded reads, and
+# the opt-in wiring in main.go + compose.
+check_21_agent_kernel_audit() {
+    echo "--- [21] Agent Kernel audit sink (AK-4): append-only JSONL, fail-closed, bounded reads, opt-in ---"
+    local kernel_pkg="$REPO_DIR/scarlihq/internal/agentkernel"
+    local audit_src="$kernel_pkg/audit.go"
+    local api_src="$REPO_DIR/scarlihq/internal/api/agentkernel.go"
+    local rest_src="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+
+    if [[ ! -f "$audit_src" ]]; then
+        fail "agent kernel audit sink missing (AK-4, v19.4.5)"
+        return
+    fi
+
+    # Fail-closed construction: loose file/dir permissions are construction
+    # errors (tamper discipline — no auto-fix, like the grant registry).
+    if ! grep -q "ErrAuditFilePermissions" "$audit_src"; then
+        fail "audit sink must fail-closed on loose permissions (ErrAuditFilePermissions)"
+        return
+    fi
+    # Append-before-serve: the evaluate handler persists the decision BEFORE
+    # returning it — an unauditable decision is never served.
+    if ! grep -q "decision not served" "$api_src"; then
+        fail "evaluate must persist the audit line BEFORE serving the decision (fail-closed marker)"
+        return
+    fi
+    # Denials are persisted too (the denial-is-200 persistence twin).
+    if ! grep -q "AuditTypeEvaluate" "$audit_src"; then
+        fail "audit sink must carry evaluate lines (allow AND deny)"
+        return
+    fi
+    # Line validation: every line names its type and validates before write.
+    if ! grep -q "ErrAuditEvent" "$audit_src" || ! grep -q "func (l AuditLine) validate()" "$audit_src"; then
+        fail "audit lines must be validated before append (ErrAuditEvent + validate)"
+        return
+    fi
+    # Append-only: JSONL appends under flock, flush + fsync before return.
+    if ! grep -q "syscall.Flock" "$audit_src" || ! grep -q "O_APPEND" "$audit_src" || ! grep -q "file.Sync()" "$audit_src"; then
+        fail "audit sink must append under flock with flush+fsync (reservation-store discipline)"
+        return
+    fi
+    # Bounded reads: the read surface is capped.
+    if ! grep -qE "DefaultMaxAuditRead = 200" "$audit_src"; then
+        fail "audit read surface must stay bounded (DefaultMaxAuditRead explicit constant)"
+        return
+    fi
+    # Admin acts are audited after their persist (honest ordering, reported).
+    if ! grep -q "AuditTypeGrant" "$audit_src" || ! grep -q "AuditTypeDisable" "$audit_src"; then
+        fail "audit sink must carry admin act lines (grant/revoke/disable/enable)"
+        return
+    fi
+    # Audit route behind the auth middleware, read-only.
+    if ! grep -q 'mux.HandleFunc("/api/agent/audit", h.auth(h.agentAuditRoute))' "$rest_src"; then
+        fail "route /api/agent/audit must be registered behind h.auth(...)"
+        return
+    fi
+    if ! grep -q "audit is read-only" "$api_src"; then
+        fail "audit endpoint must stay read-only (GET)"
+        return
+    fi
+    # Malformed lines are reported, not hidden.
+    if ! grep -q "audit_read_errors" "$api_src"; then
+        fail "malformed audit lines must be REPORTED in the read response (audit_read_errors)"
+        return
+    fi
+
+    # Opt-in wiring: audit file env + fail-closed init in main.
+    if ! grep -q "SCARLIHQ_AGENT_AUDIT_FILE" "$main_src"; then
+        fail "main.go must wire the audit sink on SCARLIHQ_AGENT_AUDIT_FILE"
+        return
+    fi
+    if ! grep -q "audit sink initialization failed" "$main_src"; then
+        fail "main.go must log.Fatalf on audit sink construction errors (fail-closed startup)"
+        return
+    fi
+
+    # Compose opt-in must stay commented (operator decision, like AK-3).
+    if ! grep -q '#   - SCARLIHQ_AGENT_AUDIT_FILE=' "$compose"; then
+        fail "compose audit-sink opt-in must stay commented out (operator decision)"
+        return
+    fi
+
+    pass "agent kernel audit: append-only JSONL (flock+fsync), fail-closed construction, decision-persisted-before-serve, validated lines, bounded reads, auth-gated read-only surface, opt-in enablement"
+}
+
+# ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
@@ -1318,6 +1412,7 @@ SMOKE_CHECKS=(
     check_18_agent_kernel
     check_19_buzz_profile_disabled
     check_20_agent_kernel_grants
+    check_21_agent_kernel_audit
 )
 
 run_check() {

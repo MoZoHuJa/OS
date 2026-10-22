@@ -22,7 +22,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.4.4"
+var Version = "19.4.5"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -167,6 +167,9 @@ type Handler struct {
 	// ConfigureAgentGrants is called (separate opt-in; 503 without it).
 	agentPolicy agentkernel.Policy
 	agentGrants *agentkernel.GrantRegistry
+	// AK-4 (v19.4.5): append-only audit sink — nil until
+	// ConfigureAgentAudit is called (separate opt-in; 503 without it).
+	agentAudit *agentkernel.AuditSink
 }
 
 // NewHandler creates a new API handler.
@@ -209,6 +212,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent/grants/revoke", h.auth(h.agentGrantRevoke))
 	mux.HandleFunc("/api/agent/capabilities/disable", h.auth(h.agentCapabilityDisable))
 	mux.HandleFunc("/api/agent/capabilities/enable", h.auth(h.agentCapabilityEnable))
+	// AK-4 (v19.4.5): append-only audit sink read surface — bounded
+	// (last N lines, newest first), read-only, 503 until the sink is
+	// configured (own opt-in: SCARLIHQ_AGENT_AUDIT_FILE).
+	mux.HandleFunc("/api/agent/audit", h.auth(h.agentAuditRoute))
 }
 
 // auth middleware: validates Bearer token header only.
