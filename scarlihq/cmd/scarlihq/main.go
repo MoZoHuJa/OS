@@ -23,7 +23,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.4.2"
+var Version = "19.4.4"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -94,10 +94,47 @@ func main() {
 		if err != nil {
 			log.Fatalf("agent kernel initialization failed: %v", err)
 		}
-		if err := apiHandler.ConfigureAgentKernel(store, agentkernel.Policy{}); err != nil {
-			log.Fatalf("agent kernel configuration failed: %v", err)
+		// AK-3 (v19.4.4): persisted, admin-owned grant registry — separate
+		// opt-in (SCARLIHQ_AGENT_GRANTS_FILE + SCARLIHQ_AGENT_PRINCIPALS).
+		// When configured, grants become admin-owned registry acts bound to
+		// the reservation governor's user_tokens principal space; when not,
+		// the AK-2 legacy contract (request-supplied grants) stays in force.
+		// Load is fail-closed: a corrupt/tampered grants file aborts startup.
+		grantsFile := strings.TrimSpace(os.Getenv("SCARLIHQ_AGENT_GRANTS_FILE"))
+		if grantsFile != "" {
+			principalsRaw := strings.TrimSpace(os.Getenv("SCARLIHQ_AGENT_PRINCIPALS"))
+			if principalsRaw == "" {
+				log.Fatal("agent kernel grant registry enabled but SCARLIHQ_AGENT_PRINCIPALS is missing (comma-separated principal names copied from the governor user_tokens config)")
+			}
+			var principals []string
+			for _, p := range strings.Split(principalsRaw, ",") {
+				if p = strings.TrimSpace(p); p != "" {
+					principals = append(principals, p)
+				}
+			}
+			registry, err := agentkernel.NewGrantRegistry(grantsFile, principals, agentkernel.DefaultMaxGrants, agentkernel.DefaultMaxAgents)
+			if err != nil {
+				log.Fatalf("agent kernel grant registry construction failed: %v", err)
+			}
+			if err := registry.Load(); err != nil {
+				log.Fatalf("agent kernel grant registry load failed: %v (fix the file or remove it deliberately — never run on a tampered registry)", err)
+			}
+			if err := apiHandler.ConfigureAgentGrants(registry); err != nil {
+				log.Fatalf("agent kernel grant registry configuration failed: %v", err)
+			}
+			log.Printf("Agent Kernel grant registry enabled (%s; principals: %s; bounds: %d grants/%d agents)", grantsFile, principalsRaw, agentkernel.DefaultMaxGrants, agentkernel.DefaultMaxAgents)
+			if err := apiHandler.ConfigureAgentKernel(store, registry.Policy()); err != nil {
+				log.Fatalf("agent kernel configuration failed: %v", err)
+			}
+		} else {
+			if strings.TrimSpace(os.Getenv("SCARLIHQ_AGENT_PRINCIPALS")) != "" {
+				log.Println("WARNING: SCARLIHQ_AGENT_PRINCIPALS is set but SCARLIHQ_AGENT_GRANTS_FILE is not — the grant registry stays disabled")
+			}
+			if err := apiHandler.ConfigureAgentKernel(store, agentkernel.Policy{}); err != nil {
+				log.Fatalf("agent kernel configuration failed: %v", err)
+			}
+			log.Printf("Agent Kernel session API enabled (max %d sessions, legacy request-supplied grants; set SCARLIHQ_AGENT_GRANTS_FILE + SCARLIHQ_AGENT_PRINCIPALS for admin-owned grants)", agentkernel.DefaultMaxSessions)
 		}
-		log.Printf("Agent Kernel session API enabled (max %d sessions, in-memory grants; AK-3 will persist grants)", agentkernel.DefaultMaxSessions)
 	} else {
 		log.Printf("Agent Kernel session API disabled; set SCARLIHQ_AGENTKERNEL_ENABLED=true to enable")
 	}

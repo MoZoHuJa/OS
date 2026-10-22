@@ -1200,6 +1200,98 @@ check_19_buzz_profile_disabled() {
 }
 
 # ===========================================================================
+# Check 20 — Agent Kernel grant registry (AK-3, v19.4.4)
+# ===========================================================================
+# AK-3 makes every capability grant a persisted, admin-owned act: a JSON
+# registry (0600 file / 0700 dir, atomic temp+rename writes) with tombstone
+# revocations, admin disable switches, and owner principals tied to the
+# reservation governor's user_tokens space. This check guards the static
+# contract: registry surface behind auth, fail-closed load, bounded registry,
+# atomic persistence, and the opt-in wiring in main.go + compose.
+check_20_agent_kernel_grants() {
+    echo "--- [20] Agent Kernel grant registry (AK-3): admin-owned grants, fail-closed load, bounded, opt-in ---"
+    local kernel_pkg="$REPO_DIR/scarlihq/internal/agentkernel"
+    local grants_src="$kernel_pkg/grants.go"
+    local api_src="$REPO_DIR/scarlihq/internal/api/agentkernel.go"
+    local rest_src="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+
+    if [[ ! -f "$grants_src" ]]; then
+        fail "agent kernel grant registry missing (AK-3, v19.4.4)"
+        return
+    fi
+
+    # Fail-closed load discipline: the sentinel error for loose permissions
+    # must exist and the loader must NEVER auto-fix (tamper discipline).
+    if ! grep -q "ErrGrantFilePermissions" "$grants_src"; then
+        fail "grant registry must fail-closed on loose file/dir permissions (ErrGrantFilePermissions)"
+        return
+    fi
+    if grep -qE "Chmod\(.*(grants|0666|0644)" "$grants_src" && ! grep -q "tmp.Chmod(0600)"; then
+        fail "grant registry must never silently widen existing file permissions (only the temp write is 0600-by-construction)"
+        return
+    fi
+    if ! grep -q "os.Rename" "$grants_src"; then
+        fail "grant registry must persist atomically (temp file + rename — no half-written registry)"
+        return
+    fi
+
+    # Bounded registry: explicit constants, same reasoning as the session cap.
+    if ! grep -qE "DefaultMaxGrants = 256" "$grants_src" || ! grep -qE "DefaultMaxAgents = 64" "$grants_src"; then
+        fail "grant registry bounds must stay explicit constants (DefaultMaxGrants/DefaultMaxAgents)"
+        return
+    fi
+
+    # Grants are admin-owned acts: every record names its admin.
+    if ! grep -q "granted_by is required" "$grants_src" && ! grep -q "granted_by.*required" "$grants_src"; then
+        fail "grant records must require granted_by (admin-owned acts — no anonymous grants)"
+        return
+    fi
+    # Tombstones: revocation is the only way a grant stops being in force.
+    if ! grep -q "RevokedAt" "$grants_src" || ! grep -q "ErrGrantInactive" "$grants_src"; then
+        fail "grant registry must keep tombstones + double-revoke detection"
+        return
+    fi
+
+    # Grant routes behind the auth middleware (like every route).
+    for route in "/api/agent/grants" "/api/agent/grants/revoke" "/api/agent/capabilities/disable" "/api/agent/capabilities/enable"; do
+        if ! grep -q "mux.HandleFunc(\"${route}\", h.auth(h.agent" "$rest_src"; then
+            fail "route ${route} must be registered behind h.auth(...)"
+            return
+        fi
+    done
+
+    # Registry-mode session creation must reject request-supplied grants.
+    if ! grep -q "capabilities are admin-owned" "$api_src"; then
+        fail "registry-mode session create must reject the capabilities field (grants are admin-owned)"
+        return
+    fi
+
+    # Opt-in wiring: grants file + principals env, fail-closed load in main.
+    if ! grep -q "SCARLIHQ_AGENT_GRANTS_FILE" "$main_src"; then
+        fail "main.go must wire the grant registry on SCARLIHQ_AGENT_GRANTS_FILE"
+        return
+    fi
+    if ! grep -q "SCARLIHQ_AGENT_PRINCIPALS" "$main_src"; then
+        fail "main.go must require SCARLIHQ_AGENT_PRINCIPALS (user_tokens principal space)"
+        return
+    fi
+    if ! grep -q "registry load failed" "$main_src"; then
+        fail "main.go must log.Fatalf on registry load errors (fail-closed startup, never run on a tampered registry)"
+        return
+    fi
+
+    # Compose opt-in must stay commented (operator decision, like AK-2).
+    if ! grep -q '#   - SCARLIHQ_AGENT_GRANTS_FILE=' "$compose"; then
+        fail "compose grant-registry opt-in must stay commented out (operator decision)"
+        return
+    fi
+
+    pass "agent kernel grants: admin-owned records, fail-closed load, atomic persistence, bounded registry, auth-gated routes, opt-in enablement"
+}
+
+# ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
@@ -1225,6 +1317,7 @@ SMOKE_CHECKS=(
     check_17_reservation_governor
     check_18_agent_kernel
     check_19_buzz_profile_disabled
+    check_20_agent_kernel_grants
 )
 
 run_check() {

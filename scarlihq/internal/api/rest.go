@@ -22,7 +22,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.4.2"
+var Version = "19.4.4"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -162,8 +162,11 @@ type Handler struct {
 	computePrincipal string
 	// AK-2 (v19.4.1): Agent Kernel session surface — nil until
 	// ConfigureAgentKernel is called (opt-in, like the compute lifecycle).
-	agentStore  *agentkernel.Store
+	agentStore *agentkernel.Store
+	// AK-3 (v19.4.4): persisted admin-owned grant registry — nil until
+	// ConfigureAgentGrants is called (separate opt-in; 503 without it).
 	agentPolicy agentkernel.Policy
+	agentGrants *agentkernel.GrantRegistry
 }
 
 // NewHandler creates a new API handler.
@@ -198,6 +201,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent/sessions", h.auth(h.agentSessions))
 	mux.HandleFunc("/api/agent/sessions/transition", h.auth(h.agentSessionTransition))
 	mux.HandleFunc("/api/agent/sessions/evaluate", h.auth(h.agentSessionEvaluate))
+	// AK-3 (v19.4.4): persisted, admin-owned grant registry — grant /
+	// revoke / disable / enable are separate reviewed admin acts, gated
+	// behind the same Bearer auth as everything else and 503 until
+	// ConfigureAgentGrants has been called (own opt-in).
+	mux.HandleFunc("/api/agent/grants", h.auth(h.agentGrantsRoute))
+	mux.HandleFunc("/api/agent/grants/revoke", h.auth(h.agentGrantRevoke))
+	mux.HandleFunc("/api/agent/capabilities/disable", h.auth(h.agentCapabilityDisable))
+	mux.HandleFunc("/api/agent/capabilities/enable", h.auth(h.agentCapabilityEnable))
 }
 
 // auth middleware: validates Bearer token header only.

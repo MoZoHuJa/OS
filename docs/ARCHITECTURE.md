@@ -160,7 +160,7 @@ The allocation store is shared with the ScarliHQ compute lifecycle (both
 sides UID 65532, flock-serialized) — one consistent record set, documented in
 the compose opt-in block (`SCARLIHQ_ALLOCATION_STORE=/var/lib/scarlix-reservation/allocations.jsonl`).
 
-## Agent Kernel foundation + sessions (v19.4.x, AK-1 + AK-2)
+## Agent Kernel foundation + sessions + grants (v19.4.x, AK-1 + AK-2 + AK-3)
 
 The deterministic core every future agent capability flows through —
 **"LLM navrhuje, politika rozhoduje"** (strategy p. 13). The kernel owns
@@ -199,9 +199,20 @@ and the REST surface `/api/agent/sessions` (create / list / transition /
 evaluate; denial-is-200) behind the standard Bearer auth middleware.
 **Opt-in** via `SCARLIHQ_AGENTKERNEL_ENABLED=true` (503 until configured;
 commented compose block) — same enablement contract as the compute
-lifecycle. Grants are request-supplied until AK-3 persists them
-admin-owned; AK-4 persists the audit events; AK-5 flows
-`compute.reserve`/`compute.release` through the governor stores.
+lifecycle. AK-3 (v19.4.4) makes grants **persisted, admin-owned acts**: a
+JSON grant registry at `/var/lib/scarlix-agentkernel/grants.json` (0600/
+0700, atomic temp+rename writes, tombstone revocations — the file is the
+reviewable history) with owner principals tied to the governor's
+`user_tokens` space (`SCARLIHQ_AGENT_PRINCIPALS`), plus admin disable
+switches that take effect on the next evaluation. In registry mode,
+session creation derives grants + owner from the registry and rejects
+request-supplied `capabilities`; the legacy AK-2 contract stays in force
+without a registry. Fail-closed load: a malformed/tampered/loose-permission
+registry aborts startup. REST: `/api/agent/grants` (GET/POST),
+`/api/agent/grants/revoke`, `/api/agent/capabilities/disable|enable` —
+all behind Bearer auth, 503 until opted in. AK-4 persists the audit
+events; AK-5 flows `compute.reserve`/`compute.release` through the
+governor stores.
 
 ## GPU Arbitration (scarlix-mode)
 

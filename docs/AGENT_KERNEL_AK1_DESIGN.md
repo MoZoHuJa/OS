@@ -1,8 +1,9 @@
-# ScarLiX OS — Agent Kernel AK-1/AK-2 Design (v19.4.x line)
+# ScarLiX OS — Agent Kernel AK-1/AK-2/AK-3 Design (v19.4.x line)
 
-**Branch:** `agent-kernel/ak2-sessions` → merged to main as **v19.4.1**
-**Status:** AK-1 + AK-2 complete (AK-1 incl. pre-merge review fix; AK-2 =
-bounded session store + auth-gated REST surface); AK-3+ follows
+**Branch:** `agent-kernel/ak3-grants` → merged to main as **v19.4.4**
+**Status:** AK-1 + AK-2 + AK-3 complete (AK-1 incl. pre-merge review fix; AK-2 =
+bounded session store + auth-gated REST surface; AK-3 = persisted admin-owned
+grant registry + disable switches); AK-4/AK-5 follow
 **Strategy source:** `docs/ScaRgeN_CuLT_Strategy_Obsidian_Lattice_SK_2026-10.pdf` (pages 13, 15–16, 22, 24)
 
 ---
@@ -21,7 +22,7 @@ the Compute Fabric tail; phasing follows verifiable behavior, page 20).
 |---|---|---|
 | **AK-1** | Typed foundations: agent identity, closed capability enumeration, session state machine, deterministic permission engine, audit events | **DONE — merged as v19.4.0** (incl. review fix: capability grants enforced) |
 | **AK-2** | Session store + WS/REST surface (sessions created/closed via ScarliHQ API, auth-gated) | **DONE — merged as v19.4.1** (see §6) |
-| **AK-3** | Policy engine v1: capability grants persisted per agent + admin disable switches; tie into the reservation governor's `user_tokens` principal space | planned |
+| **AK-3** | Policy engine v1: capability grants persisted per agent + admin disable switches; tie into the reservation governor's `user_tokens` principal space | **DONE — merged as v19.4.4** (see §7) |
 | **AK-4** | Audit sink: append-only JSONL under `/var/lib/scarlix-agentkernel/` (0600, flock — same store discipline as reservations) | planned |
 | **AK-5** | Compute intake API meets agent sessions: `compute.reserve`/`release` capabilities flow through the governor stores | planned (jointly with the intake API roadmap row) |
 
@@ -153,3 +154,94 @@ traceable-lifecycle building block (page 24). AK-4 persists these.
   for forbidden tokens (negative control verified — injected `shell.exec`
   FAILS the check), auth-gated route registration, denial-is-200 contract
   marker, bounded store constants, opt-in wiring + commented compose block
+
+---
+
+## 7. AK-3 contract (v19.4.4) — persisted admin-owned grant registry
+
+### Grant registry (`internal/agentkernel/grants.go`)
+
+Every capability grant is a separate, **persisted, admin-owned act**:
+
+- **File format:** JSON at `/var/lib/scarlix-agentkernel/grants.json`
+  (schema `version:1`); one `GrantRecord` per (agent, capability) grant with
+  `granted_by`, `owner`, `granted_at` and — after revocation — `revoked_at`/
+  `revoked_by` (a tombstone). Records are never deleted: the file itself is
+  the reviewable history of who granted what, and re-granting a revoked
+  capability appends a NEW record (the tombstones stay).
+- **Fail-closed load:** ANY malformed record, unknown capability, owner
+  outside the declared principal space, owner mismatch within one agent,
+  revoked-without-revoker tombstone, duplicate active grant, bad schema
+  version, or looser-than-0600/0700 file/dir permissions **aborts startup**
+  (`log.Fatalf` in main.go). A tampered registry must never degrade into
+  "some grants work". Unlike the allocation store, loose permissions are NOT
+  auto-fixed — a widened mode is treated as tampering until an operator
+  fixes it deliberately.
+- **Atomic persistence:** writes go to a temp file in the same directory
+  (0600 by construction, fsync) followed by rename — atomic on POSIX; a
+  crash mid-write can leave a temp file but never a half-written registry.
+  Failed persists roll back the in-memory state (state and file stay in sync).
+- **Bounded:** `DefaultMaxGrants = 256` records (tombstones count — the
+  history is real state) and `DefaultMaxAgents = 64` distinct agent IDs.
+  Grants are a reviewed admin act, not a bulk import.
+- **One agent, one owner:** the owner principal is declared by the first
+  grant and enforced across ALL records (active + revoked) — an agent
+  cannot act for two principals.
+- **user_tokens tie-in:** the operator declares the allowed principal names
+  (`SCARLIHQ_AGENT_PRINCIPALS`, comma-separated, copied from the governor
+  config's `user_tokens` values); every grant owner and session owner must
+  be part of that set (fail-closed: unknown principal = rejection at grant
+  time AND at load time).
+
+### Disable switches (admin kill-switch)
+
+`DisableRecord{capability, disabled_by, disabled_at, reason}` — while a
+switch exists, `Policy` denies the capability citing
+`rule/capability-disabled`. `Enable` removes the switch; both acts name
+their admin. The toggle takes effect on the **NEXT evaluation** (no
+restart): evaluate consults `registry.Policy()` when a registry is
+configured.
+
+### REST surface (opt-in via `SCARLIHQ_AGENT_GRANTS_FILE` + `SCARLIHQ_AGENT_PRINCIPALS`)
+
+| Route | Method | Contract |
+|---|---|---|
+| `/api/agent/grants` | GET | list grants (incl. tombstones — the history) + disable switches + counts; deterministic order |
+| `/api/agent/grants` | POST | grant: `{agent_id, capability, owner, granted_by}` → 201 (validation: closed enumeration, principal space, owner-consistency, admin named; bound errors → 503) |
+| `/api/agent/grants/revoke` | POST | revoke: `{agent_id, capability, revoked_by}` → 200 tombstone (unknown pair → 400; double revoke → 400) |
+| `/api/agent/capabilities/disable` | POST | `{capability, disabled_by, reason}` → 200 (unknown capability → 400; duplicate → 400) |
+| `/api/agent/capabilities/enable` | POST | `{capability, enabled_by}` → 200 (not disabled → 400) |
+
+### Registry-mode session creation (breaking vs. legacy, by design)
+
+When the registry is configured, `POST /api/agent/sessions` **rejects the
+`capabilities` field** (400) — grants are admin-owned, not request-supplied.
+The capability set and the owner are derived from the registry; an agent
+with no active grants cannot start a session (400 — nothing is granted
+implicitly). The AK-2 legacy contract (request-supplied grants) stays in
+force when no registry is configured — backward compatible, same binary.
+
+### Verification (AK-3)
+
+- `go test ./internal/agentkernel` — registry tests: construction
+  fail-closed, load initializes empty 0600 file, full grant/revoke/re-grant
+  lifecycle with persistence round-trips, grant validation matrix
+  (unknown capability/principal, empty admin, zero time, owner mismatch,
+  duplicate), revoke validation, disable/enable + policy round-trip, load
+  fail-closed on 12 malformed shapes + 4 loose file modes + loose dir,
+  bounds (agents/grants, tombstones count, load-side), list determinism
+  (20×), returned records are copies, runtime disable takes effect on the
+  next evaluation
+- `go test ./internal/api` — HTTP tests: grant routes auth-gated (401),
+  disabled by default (503), full lifecycle over HTTP (grant → list counts →
+  validation matrix → revoke → tombstone view → double revoke → disable →
+  list → enable → method discipline), registry-mode session create
+  (no-capabilities enforcement, owner derivation, grantless agent rejection,
+  full kernel flow: activate → allow → not-granted deny → runtime disable →
+  deny citing rule/capability-disabled), legacy-mode unchanged
+- `go test -race` on both packages — OK
+- Smoke check 20 (deterministic, source-level): fail-closed load sentinels,
+  no auto-widen of permissions, atomic persistence, explicit bounds, admin-
+  owned grants, tombstones, auth-gated route registration, registry-mode
+  grant rejection marker, opt-in wiring + commented compose (negative
+  control verified — breaking the compose opt-in line FAILS the check)
