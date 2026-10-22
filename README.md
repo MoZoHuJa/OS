@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.4.4 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.4.5 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.4.4</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.4.5</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.4.4-B87333?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.4.5-B87333?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-D4A574?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-A8C5D4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-D4A574?style=flat-square" /></a>
@@ -59,7 +59,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.4.4 (Agent Kernel AK-3 — grant registry) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.4.5 (Agent Kernel AK-4 — audit sink) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ### 📑 Changelog Index (v19.4.x / v19.3.x / v19.2.x)
 
@@ -67,6 +67,7 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 | Version | One line | Reference |
 |---------|----------|-----------|
+| **v19.4.5** | Agent Kernel AK-4: append-only audit sink (JSONL, 0600/0700, flock+fsync per line), evaluations persisted BEFORE the decision is served (fail-closed), admin acts audited after persist (honest ordering), bounded read surface `GET /api/agent/audit` with malformed lines reported not hidden | 📄 [What's New](#-whats-new-in-v1945--agent-kernel-ak-4-audit-sink) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.5) |
 | **v19.4.4** | Agent Kernel AK-3: persisted admin-owned grant registry (tombstone revocations, atomic writes, fail-closed load, 0600/0700 tamper discipline, bounded 256/64), admin disable/enable kill-switches effective on the next evaluation, user_tokens principal-space tie-in, registry-mode sessions reject request-supplied grants; legacy AK-2 mode unchanged | 📄 [What's New](#-whats-new-in-v1944--agent-kernel-ak-3-grant-registry) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.4) |
 | **v19.4.3** | KpK review remediation (8 findings): explicit registry classification VERIFIED_EXISTS/MISSING/UNVERIFIED + deterministic mock tests (68), digest-aware probes (live catch: sunshine tag pruned 2 days after v19.4.2), buzz/minio profile formally disabled (P0), dynamic check inventory + guard, Go suite reproduced at the reviewed commit (19/19 + race), hardware acceptance protocol + regression matrix + release-gate evidence classes | 📄 [What's New](#-whats-new-in-v1943--kpk-review-remediation) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.3) |
 | **v19.4.2** | Dependency pin hygiene (P0+P1): 7 image pins fixed per the 2026-10-21 audit (coolify + sunshine broken tags; crowdsec + ollama + gitea + nextcloud + headscale stale) + tag-existence CI checks; buzz/minio documented-open | 📄 [What's New](#-whats-new-in-v1942--dependency-pin-hygiene-p0--p1) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.2) |
@@ -88,9 +89,9 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 ## 🚀 Install (NO ISO)
 
-### One-command install — v19.4.4 Agent Kernel AK-3
+### One-command install — v19.4.5 Agent Kernel AK-4
 
-Run this on a **fresh EndeavourOS installation** from your normal user account. It clones the current v19.4.4 mainline and starts the installer; the installer requests sudo itself. Review the script first if you do not want to run the install immediately.
+Run this on a **fresh EndeavourOS installation** from your normal user account. It clones the current v19.4.5 mainline and starts the installer; the installer requests sudo itself. Review the script first if you do not want to run the install immediately.
 
 ```bash
 git clone --depth 1 --branch main https://github.com/MoZoHuJa/OS.git ~/scarlix-os && cd ~/scarlix-os && bash install.sh
@@ -120,6 +121,26 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.4.5 — Agent Kernel AK-4 (Audit Sink)
+
+**Fáza A krok 2:** perzistentný audit trail — strategické pravidlo „každá
+akcia má identifikátor, stav, dôvod a audit eventy" (p. 24) je odteraz
+**na disku**, nie len v pamäti.
+
+| Area | Change |
+|---|---|
+| Audit sink (`internal/agentkernel/audit.go`) | Append-only JSONL `/var/lib/scarlix-agentkernel/audit.jsonl`: `evaluate` riadky (allow AJ deny — persistence dvojička denial-is-200 kontraktu), `grant`/`revoke`/`disable`/`enable` admin akty. 0600 súbor / 0700 adresár, flock multi-process serializácia (rezervačná disciplína), flush + fsync na každý riadok — crash stratí nanajvýš riadok čo sa práve zapisoval, nikdy nie torn riadok. |
+| Decision-persisted-before-serve | Evaluate handler zapíše audit riadok **PRED** tým ako vráti rozhodnutie — zlyhanie zápisu = 500 a žiadne rozhodnutie. Unauditable allow/deny nie je nikdy vynesené. |
+| Honest ordering (admin akty) | Grant/revoke/disable/enable appendujú audit riadok PO úspešnej persistencii — stav platí (registry je zdroj pravdy), zlyhanie auditu sa REPORTUJE (500 s dôvodom). Žiadny rollback theater. |
+| Read surface | `GET /api/agent/audit` — posledných N riadkov (nové first, `?limit=1..200`), read-only, auth-gated, 503 bez sinku. Malformed riadky sa hlásia v `audit_read_errors` (viditeľné pre operátora, nikdy nie ticho preskočené). |
+| Smoke check 21 | Deterministický guard: fail-closed construction, decision-not-served marker, flock+fsync disciplína, bounded reads, admin-act riadky, auth-gated read-only route, opt-in wiring + compose. Negatívna kontrola overená (rozbitie compose opt-in → FAIL). |
+
+**Opt-in:** `SCARLIHQ_AGENT_AUDIT_FILE` (funguje s AJ bez grant registry —
+audit legacy-mode evaluácií je legitímny). Bez premennej platí presne v19.4.4
+správanie.
 
 ---
 
@@ -650,10 +671,11 @@ scarlix-smoke-test.sh         → online: 18 PASS + 0 FAIL + 0 WARN (14 checks)
 | Agent Kernel foundation (AK-1) | **TESTED** (v19.4.0) | `internal/agentkernel`: typed identity w/ owner principal, closed capability enumeration (6, `shell.exec` rejected), session state machine (CLOSED terminal), deterministic `Policy.Evaluate` incl. enforced capability grants (review fix), audit events; unit tests + race + determinism loop; design doc `docs/AGENT_KERNEL_AK1_DESIGN.md` |
 | Agent Kernel sessions (AK-2) | **TESTED** (v19.4.1) | bounded session store (fail-closed `aks-` IDs w/ RNG-injection test, explicit-grants-only, deep-copy reads, lock-held evaluation — no TOCTOU) + auth-gated `/api/agent/sessions` create/list/transition/evaluate (denial-is-200, 4KB bodies, unknown-field rejection); opt-in `SCARLIHQ_AGENTKERNEL_ENABLED`; HTTP lifecycle + validation matrix tests; smoke check 18 w/ verified negative control |
 | Agent Kernel grant registry (AK-3) | **TESTED** (v19.4.4) | persisted admin-owned grants (`grants.json`, 0600/0700, atomic temp+rename, tombstones — the file is the history), bounded 256/64, fail-closed load (malformed/tampered/loose perms abort startup), user_tokens principal-space tie-in, admin disable/enable kill-switches effective on the next evaluation, registry-mode sessions reject request-supplied grants; opt-in `SCARLIHQ_AGENT_GRANTS_FILE` + `SCARLIHQ_AGENT_PRINCIPALS`; smoke check 20 w/ verified negative control |
-| Agent Kernel wiring (AK-4 … AK-5) | **PLANNED** | AK-4 append-only audit sink · AK-5 compute-intake capability flow |
+| Agent Kernel audit sink (AK-4) | **TESTED** (v19.4.5) | append-only JSONL (0600/0700 fail-closed construction, flock+fsync per line, validated lines, append-only bytes — history survives restarts), evaluations persisted before serving (fail-closed), admin acts audited after persist (honest ordering), bounded read surface w/ malformed lines reported; opt-in `SCARLIHQ_AGENT_AUDIT_FILE`; smoke check 21 w/ verified negative control |
+| Agent Kernel wiring (AK-5) | **PLANNED** | AK-5 compute-intake capability flow |
 | Gaming stack integration | **TESTED** (v19.3.1) + owner-attested host run | profile-based `scarlix-gaming-install` (never removes), one shared manifest, read-only `/api/gaming` + dashboard card, smoke checks 15/16; `gaming/README.md` |
 
-**Theme status:** Compute Fabric is **software-complete** (Phases 2–7 TESTED; Phase 8–9 regression automation green, race tests, 19 Go packages). The **Agent Kernel theme (v19.4.x) is OPEN**: AK-1 foundation **TESTED** (v19.4.0), AK-2 sessions + REST surface **TESTED** (v19.4.1 — opt-in, auth-gated, denial-is-200), AK-3 grant registry **TESTED** (v19.4.4 — persisted admin-owned grants, disable switches, fail-closed load); AK-4 (audit sink JSONL) + AK-5 (compute intake) are PLANNED. v19.4.2 was a dependency-pin-hygiene release; v19.4.3 is the KpK review remediation (registry classification + digest-aware probes + buzz disablement + evidence artifacts; **no Go feature changes**). Target-host hardware acceptance per `docs/HARDWARE_ACCEPTANCE_PROTOCOL.md` is **OPEN** (KPK-06) — CI green ≠ hardware verified. “LLM navrhuje, politika rozhoduje.”
+**Theme status:** Compute Fabric is **software-complete** (Phases 2–7 TESTED; Phase 8–9 regression automation green, race tests, 19 Go packages). The **Agent Kernel theme (v19.4.x) is OPEN**: AK-1 foundation **TESTED** (v19.4.0), AK-2 sessions + REST surface **TESTED** (v19.4.1 — opt-in, auth-gated, denial-is-200), AK-3 grant registry **TESTED** (v19.4.4 — persisted admin-owned grants, disable switches, fail-closed load), AK-4 audit sink **TESTED** (v19.4.5 — append-only JSONL, decision-persisted-before-serve); AK-5 (compute intake) is PLANNED. v19.4.2 was a dependency-pin-hygiene release; v19.4.3 is the KpK review remediation (registry classification + digest-aware probes + buzz disablement + evidence artifacts; **no Go feature changes**). Target-host hardware acceptance per `docs/HARDWARE_ACCEPTANCE_PROTOCOL.md` is **OPEN** (KPK-06) — CI green ≠ hardware verified. “LLM navrhuje, politika rozhoduje.”
 
 **v19.1.16 → v19.1.20 in one line each:** .16 heredoc P0 fix + security hardening · .17 fish `agent.env.fish` hardening · .18 audit closure + secret hardening · .19 audit closure + portable base64 · .20 mutation-hardened smoke guard.
 
