@@ -7,6 +7,8 @@
 > **v19.2.13 update:** section (i) extended with the user-owned verified-copy execution handoff (KPK-19.2.12-P2-01) and the scheduled pin-freshness CI job; new section (j) — reservation-layer CleanupVerified semantics (KpK audit P2-02).
 >
 > **v19.4.2 update:** dependency pin hygiene per `docs/DEPENDENCY_AUDIT_2026-10-21.md` — P0 (pruned upstream tags: coolify, sunshine, buzz/minio) and P1 (stale security pins: crowdsec, ollama, gitea, nextcloud, headscale) fixed; 5 pins now digest-pinned; smoke check 07 existence-checks all fixed pins in CI (section h extended).
+>
+> **v19.4.3 update (KpK review 2026-10-22 remediation):** check_07 now uses the explicit classification VERIFIED_EXISTS / MISSING / UNVERIFIED (transport errors, 401/403/429/5xx and malformed auth never count as existing; only a definitive 404 fails CI) with a deterministic mock-tested suite (`tests/test_registry_classification.sh`, in CI); probes are digest-aware and cover every digest pin in active compose files (14 probes). The buzz workspace is **formally disabled** (KPK-03: minio/minio dead upstream — all channels, source archived; profile renamed `.disabled`, quarantined pin out of every deploy path, guarded by smoke check_19). Registry evidence classes are separated in `docs/RELEASE_GATE_v19.4.3.md` — CI green is never claimed as hardware acceptance (KPK-06 protocol: `docs/HARDWARE_ACCEPTANCE_PROTOCOL.md`).
 
 ## (a) Host-Bridge privilege separation
 

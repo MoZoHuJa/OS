@@ -39,18 +39,28 @@ jobs:
     # EXECUTED it. A regression in check_10 (or any other check) could land
     # on main without detection. Now: run the full suite on every push/PR.
     # WARN is tolerated; FAIL is not.
-    # v19.4.2: ONLINE mode (was --offline). check_07 now existence-checks the
-    #   12 pinned image tags against the registry APIs (audit §6.1 P0
-    #   detector): a definitive HTTP 404 FAILs CI before a clean deploy breaks.
-    #   The helpers were built for this: network errors/timeouts/rate limits
-    #   are WARNs, only a definitive 404 is a FAIL — registry flakiness
-    #   cannot break CI spuriously.
+    # v19.4.2: ONLINE mode (was --offline). check_07 existence-checks the
+    #   pinned images against the registry APIs (audit §6.1 P0 detector):
+    #   a definitive HTTP 404 FAILs CI before a clean deploy breaks.
+    # v19.4.3 (KPK-02): probes are digest-aware and explicitly classified —
+    #   VERIFIED_EXISTS (manifest 200) / MISSING (manifest 404, FAILs) /
+    #   UNVERIFIED (transport errors, 401/403/429/5xx, malformed auth JSON
+    #   — WARN, never silently reported as existing). Catches pruned tags
+    #   with live digests correctly (deploy still works -> VERIFIED_EXISTS).
+    #   Proven live: caught the sunshine nightly tag pruned 2 days after
+    #   v19.4.2 while its pinned digest stayed alive.
+    # v19.4.3 (KPK-01/KPK-02): the deterministic classification suite runs
+    #   right after — mocked registry responses, no network, proves the
+    #   classification table and the check-inventory guard (KPK-04).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run scarlix-smoke-test.sh (online — registry pin checks enabled)
         run: |
           SCARLIX_REPO="$GITHUB_WORKSPACE" bash files/usr/local/bin/scarlix-smoke-test.sh
+      - name: Deterministic registry-classification + inventory tests (KPK-02/KPK-04)
+        run: |
+          bash tests/test_registry_classification.sh
 
   bash-syntax:
     runs-on: ubuntu-latest

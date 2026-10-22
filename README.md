@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.4.2 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.4.3 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.4.2</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.4.3</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.4.2-B87333?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.4.3-B87333?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-D4A574?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-A8C5D4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-D4A574?style=flat-square" /></a>
@@ -59,7 +59,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.4.2 (dependency pin hygiene) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.4.3 (KpK review remediation) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ### 📑 Changelog Index (v19.4.x / v19.3.x / v19.2.x)
 
@@ -67,6 +67,7 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 | Version | One line | Reference |
 |---------|----------|-----------|
+| **v19.4.3** | KpK review remediation (8 findings): explicit registry classification VERIFIED_EXISTS/MISSING/UNVERIFIED + deterministic mock tests (68), digest-aware probes (live catch: sunshine tag pruned 2 days after v19.4.2), buzz/minio profile formally disabled (P0), dynamic check inventory + guard, Go suite reproduced at the reviewed commit (19/19 + race), hardware acceptance protocol + regression matrix + release-gate evidence classes | 📄 [What's New](#-whats-new-in-v1943--kpk-review-remediation) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.3) |
 | **v19.4.2** | Dependency pin hygiene (P0+P1): 7 image pins fixed per the 2026-10-21 audit (coolify + sunshine broken tags; crowdsec + ollama + gitea + nextcloud + headscale stale) + tag-existence CI checks; buzz/minio documented-open | 📄 [What's New](#-whats-new-in-v1942--dependency-pin-hygiene-p0--p1) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.2) |
 | **v19.4.1** | Agent Kernel sessions (AK-2): bounded session store (fail-closed IDs, explicit grants) + auth-gated REST surface `/api/agent/sessions` (create/list/transition/evaluate, denial-is-200) — opt-in via `SCARLIHQ_AGENTKERNEL_ENABLED` | 📄 [What's New](#-whats-new-in-v1941--agent-kernel-sessions-ak-2) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.1) |
 | **v19.4.0** | Agent Kernel foundation (AK-1): typed agent identity, closed capability enumeration (no shell/exec ever), bounded session state machine, deterministic permission engine with enforced capability grants, audit events | 📄 [What's New](#-whats-new-in-v1940--agent-kernel-foundation-ak-1) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.0) |
@@ -86,9 +87,9 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 ## 🚀 Install (NO ISO)
 
-### One-command install — v19.4.2 dependency pin hygiene
+### One-command install — v19.4.3 KpK review remediation
 
-Run this on a **fresh EndeavourOS installation** from your normal user account. It clones the current v19.4.2 mainline and starts the installer; the installer requests sudo itself. Review the script first if you do not want to run the install immediately.
+Run this on a **fresh EndeavourOS installation** from your normal user account. It clones the current v19.4.3 mainline and starts the installer; the installer requests sudo itself. Review the script first if you do not want to run the install immediately.
 
 ```bash
 git clone --depth 1 --branch main https://github.com/MoZoHuJa/OS.git ~/scarlix-os && cd ~/scarlix-os && bash install.sh
@@ -118,6 +119,50 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.4.3 — KpK Review Remediation
+
+**Input:** the 2026-10-22 KpK review of v19.4.2 (8 findings — full mapping with
+evidence in `docs/KPK_2026-10-22_REMEDIATION.md`). Every finding was
+re-verified against the repository and live registries BEFORE fixing; nothing
+was assumed. Evidence classes (`IMPLEMENTED` / `TESTED_IN_CI` /
+`HARDWARE_VERIFIED` / `PLANNED`) are separated in every claim — a green CI run
+is never presented as hardware acceptance.
+
+### Code changes
+
+| Area | Change |
+|---|---|
+| Registry classification (KPK-02, P1) | check_07 now resolves every probe to exactly one verdict — `VERIFIED_EXISTS` (manifest HTTP 200, authoritative) / `MISSING` (404 — FAILs CI) / `UNVERIFIED` (transport errors, 401/403/429/5xx, malformed auth JSON — WARN, never reported as existing). The transport exit code wins: a timeout can never confirm NOR deny. |
+| Deterministic tests (KPK-01+02) | `tests/test_registry_classification.sh` — 68 assertions with mocked registry responses (404/401/403/429/5xx/000, timeout curl 28, DNS curl 6, malformed JSON, empty token, digest scenarios, inventory-guard negative controls). No network needed; runs in CI right after the online smoke suite. |
+| Digest-aware probes (live catch) | Pins written `tag@sha256` are pulled BY DIGEST — probes now target the digest endpoint. This caught a real event during remediation: the sunshine nightly tag pinned in v19.4.2 was **pruned upstream 2 days later** while the pinned digest stayed alive (rolling `master-ubuntu-24.04` references it). Compose re-pinned to the rolling tag + the same digest (byte-identical image). The guard list now covers **every digest-pinned image in active compose files** — 14 probes, all VERIFIED_EXISTS on 2026-10-22. |
+| Buzz/MinIO formally disabled (KPK-03, P0) | Fresh probes confirmed ALL upstream channels dead (Docker Hub repo 404 / registry 401 with valid token, quay 401, dl.min.io 410, GitHub source **archived 2026-04-24**; methodology control: library/redis → 200). The `[buzz]` profile is formally disabled: compose file renamed `.disabled` (out of every deploy path), dead pin quarantined with probe evidence + re-enable runbook, new smoke check_19 guards the quarantine — silent re-enable fails CI. No guessed versions, no third-party mirrors. |
+| Dynamic check inventory (KPK-04, P2) | The header no longer hardcodes a count (was "16" vs 18 actual); `verify_check_inventory()` proves schedule == defined functions on every run (drift = FAIL), the summary reports executed checks vs events explicitly ("19 checks executed — 32 passed, 0 failed, 0 warned (events)"). |
+| CI | The deterministic suite is a new step in the smoke-test job (runs on every push/PR). |
+
+### Verification & evidence artifacts (no feature changes to ScarliHQ Go code)
+
+| Artifact | Content |
+|---|---|
+| `docs/RELEASE_GATE_v19.4.3.md` | Exact commit SHA, environment, every gate command with exit status and output (KPK-05 archive: `go vet` 0, `go test -count=1 ./...` 19/19 ok, `go test -race -count=1 ./...` 19/19 ok — reproduced at the exact reviewed commit 3d79d53 before any changes) + evidence-class table (KPK-08) |
+| `docs/HARDWARE_ACCEPTANCE_PROTOCOL.md` | KPK-06: dated target-host acceptance record template — GPU discovery (incl. single-GPU + unknown-state), real inference request, gateway + fallback, mode transitions, restart recovery, disabled-by-default checks; separates TESTED_IN_CI / OWNER_ATTESTED / HARDWARE_VERIFIED. **Status: OPEN — requires the target host; not claimed as done.** |
+| `docs/REGRESSION_MATRIX.md` | KPK-07: finding → reproducer → fix → regression test → command chains for all historical findings cited in the baseline; gaps honestly marked OPEN (pre-v19.2.11 parser findings, backup/restore drill) |
+| `docs/DEPENDENCY_AUDIT_2026-10-21.md` | Updated with the v19.4.3 resolutions (buzz/minio P0-RESOLVED-BY-DISABLEMENT, sunshine live catch, classification hardening) |
+
+### Honest status of the 8 findings
+
+KPK-01 ✅ verified + tests · KPK-02 ✅ implemented + tested · KPK-03 ✅ resolved
+by formal disablement (guarded) · KPK-04 ✅ implemented + guarded · KPK-05 ✅
+reproduced + archived (19/19 + race, not a code defect) · KPK-06 ⏳ protocol
+delivered, execution requires the target host (PLANNED — not claimed) ·
+KPK-07 ✅ matrix delivered, per-finding gaps marked OPEN · KPK-08 ✅ evidence
+classes in every v19.4.3 claim.
+
+**No ScarliHQ Go code changed in v19.4.3** — the Go suite at the new commit is
+bit-identical to the reviewed v19.4.2 baseline (re-run as part of the release
+gate; see RELEASE_GATE_v19.4.3.md).
 
 ---
 
@@ -571,7 +616,7 @@ scarlix-smoke-test.sh         → online: 18 PASS + 0 FAIL + 0 WARN (14 checks)
 | Preferred-runtime soft hint | **TESTED** (v19.3.2 — Zmor-7 closure) | fallback pass + regression tests (fallback fires, healthy preference honored, no-runtime fails closed, GPU + CPU paths); wired into allocation planning via the compute intake API = **PLANNED** (next) |
 | Single-GPU detection | **TESTED** (v19.2.12, strict parsing v19.2.13) | `scarlix-mode` detects GPU_COUNT, gates vLLM, exact `SCARLIX_ALLOW_SHARED_GPU=1` opt-in (duplicates rejected) with generated compose override; smoke-test checks 11+14 |
 | Pi-Bolt supply-chain pin | **TESTED** (v19.2.12, user-owned execution v19.2.13) | installer downloaded to temp + SHA-256 verified against `files/usr/local/share/scarlix/pi-bolt-install.sha256`; **user-owned verified copy** executed as `$REAL_USER`; both temps trapped for cleanup; smoke-test checks 12+13; scheduled pin-freshness CI job |
-| Model integrity + image digest pinning | **PARTIAL** (v19.4.2) | P0/P1 pins re-pinned with digests (coolify, crowdsec, ollama, headscale, sunshine) + smoke check 07 tag-existence CI for all fixed pins; floating tags (gitea 28.2, nextcloud 30, postgres/redis) deliberately tag-only so patches flow; experimental `:latest` images remain documented residual risk in SECURITY_MAP (F-08) |
+| Model integrity + image digest pinning | **PARTIAL** (v19.4.3) | P0/P1 pins re-pinned with digests (coolify, crowdsec, ollama, headscale, sunshine, hermes-agent, llama.cpp, pumpkin) + smoke check 07 **digest-aware** existence CI for every digest pin + the audit tag pins (14 probes; VERIFIED_EXISTS/MISSING/UNVERIFIED classification, KPK-02); floating tags (gitea 28.2, nextcloud 30, postgres/redis) deliberately tag-only so patches flow; experimental `:latest` images remain documented residual risk in SECURITY_MAP (F-08); buzz profile disabled entirely (KPK-03) |
 | Target-host GPU E2E acceptance (Phase 3) | **HARDWARE-VERIFIED (owner-attested, 2026-10-20)** | v19.3.1 scope of `docs/RELEASE_19.3.0_HARDWARE_ACCEPTANCE.md` attested passed by the project owner (recorded in the gate doc); v19.3.2 additions remain open there |
 | Host Bridge workload lifecycle (P5.1+P6) | **TESTED** (v19.3.1) + owner-attested host run | typed start/stop contract, Unix-socket bridge (0600, admin-owned parent), docker executor + idempotency ledger, hardened `scarlix-workload-bridge.service` (disabled by default), `/api/compute/start\|stop`; merged from CI-green `19.2.14.P6`; `docs/SCARLIX_COMPUTE_FABRIC_P6_SCARLIHQ_INTEGRATION.md` |
 | Fabric → `scarlix-mode` bridge (audit F-04) | **TESTED** (v19.3.2) | reservation governor shipped: `NewFileBackedManager` + `Recover()` + reaper ownership in a real service (`scarlix-reservation.service`, disabled by default, fail-closed config) — `docs/SCARLIX_COMPUTE_FABRIC_RESERVATION_GOVERNOR.md`; host enablement checks = open items in the acceptance gate |
@@ -582,7 +627,7 @@ scarlix-smoke-test.sh         → online: 18 PASS + 0 FAIL + 0 WARN (14 checks)
 | Agent Kernel wiring (AK-3 … AK-5) | **PLANNED** | AK-3 persisted grants + admin switches · AK-4 append-only audit sink · AK-5 compute-intake capability flow |
 | Gaming stack integration | **TESTED** (v19.3.1) + owner-attested host run | profile-based `scarlix-gaming-install` (never removes), one shared manifest, read-only `/api/gaming` + dashboard card, smoke checks 15/16; `gaming/README.md` |
 
-**Theme status:** Compute Fabric is **software-complete** (Phases 2–7 TESTED; Phase 8–9 regression automation green, race tests, 19 Go packages). The **Agent Kernel theme (v19.4.x) is OPEN**: AK-1 foundation **TESTED** (v19.4.0), AK-2 sessions + REST surface **TESTED** (v19.4.1 — opt-in, auth-gated, denial-is-200); AK-3…AK-5 are PLANNED. v19.4.2 is a dependency-pin-hygiene release (no feature changes — P0+P1 pin fixes + CI existence checks per the 2026-10-21 audit). “LLM navrhuje, politika rozhoduje.”
+**Theme status:** Compute Fabric is **software-complete** (Phases 2–7 TESTED; Phase 8–9 regression automation green, race tests, 19 Go packages). The **Agent Kernel theme (v19.4.x) is OPEN**: AK-1 foundation **TESTED** (v19.4.0), AK-2 sessions + REST surface **TESTED** (v19.4.1 — opt-in, auth-gated, denial-is-200); AK-3…AK-5 are PLANNED. v19.4.2 was a dependency-pin-hygiene release; v19.4.3 is the KpK review remediation (registry classification + digest-aware probes + buzz disablement + evidence artifacts; **no Go feature changes**). Target-host hardware acceptance per `docs/HARDWARE_ACCEPTANCE_PROTOCOL.md` is **OPEN** (KPK-06) — CI green ≠ hardware verified. “LLM navrhuje, politika rozhoduje.”
 
 **v19.1.16 → v19.1.20 in one line each:** .16 heredoc P0 fix + security hardening · .17 fish `agent.env.fish` hardening · .18 audit closure + secret hardening · .19 audit closure + portable base64 · .20 mutation-hardened smoke guard.
 
