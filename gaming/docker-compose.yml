@@ -22,7 +22,15 @@ services:
     #   nightly tags and prunes them; the digest protects against tag re-points,
     #   but the tag will 404 eventually: re-verify against the tags API before
     #   the next upgrade. tv-profile only (opt-in).
-    image: lizardbyte/sunshine:v2026.1020.123939-ubuntu-24.04@sha256:5c790c79df9b680a1c57e3454ed829c09f405eafbafe205675d832e4420aba7b
+    # v19.4.3 (live catch, 2026-10-22): exactly that happened — v2026.1020.123939
+    #   was pruned TWO DAYS after v19.4.2. The pinned DIGEST is still alive;
+    #   upstream now maintains rolling master-*/latest-* tags (verified:
+    #   master-ubuntu-24.04 and latest-ubuntu-24.04 both reference this exact
+    #   digest as of 2026-10-22). Re-pinned the tag-name portion to the rolling
+    #   tag + the SAME digest — content is byte-identical, zero functional
+    #   change. Docker pulls tag@digest BY DIGEST, so deploys never depended
+    #   on the pruned tag name; smoke check_07 now probes digests directly.
+    image: lizardbyte/sunshine:master-ubuntu-24.04@sha256:5c790c79df9b680a1c57e3454ed829c09f405eafbafe205675d832e4420aba7b
     container_name: sunshine-tv
     restart: unless-stopped
     network_mode: host

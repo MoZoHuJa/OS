@@ -48,6 +48,13 @@ curl http://localhost:11435/api/tags   # Ollama
 
 ### Buzz Relay Crash
 
+**Status (v19.4.3, KPK-03):** the `[buzz]` workspace is **formally disabled** —
+`workspace/buzz/docker-compose.yml` was renamed to `docker-compose.yml.disabled`
+because the pinned `minio/minio` image is dead upstream (all official channels
+discontinued; source archived 2026-04-24 — evidence + re-enable runbook in the
+file header and `docs/KPK_2026-10-22_REMEDIATION.md`). The steps below apply
+ONLY after a deliberate re-enable per that runbook.
+
 **Problem:** Buzz relay won't start
 ```bash
 # Check dependencies
@@ -55,7 +62,7 @@ docker logs buzz-postgres
 docker logs buzz-redis
 docker logs buzz-minio
 
-# Restart all
+# Restart all (only after re-enabling the profile per the runbook)
 cd /opt/scarlix/workspace/buzz
 docker compose down
 docker compose up -d

@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # SCARLIX OS regression smoke test (version read from VERSION)
 #
-# Runs 16 integrity checks against the SCARLIX OS repo and prints a
-# PASS/FAIL/WARN line for each. Exits 0 if no check FAILed, 1 otherwise.
-# WARNs (e.g. missing tool, network error) do NOT fail the run.
+# Runs the integrity check inventory (check_01..check_NN). v19.4.3 (KPK-04):
+# the schedule is verified against the defined check_* functions before
+# execution and the summary reports the number of checks actually executed —
+# no hardcoded check count. Prints a PASS/FAIL/WARN event line per result;
+# one check may emit several events (check_07 probes every pinned image tag).
+# Exits 0 if no check FAILed, 1 otherwise. WARNs (missing tool, network
+# error, UNVERIFIED registry responses) do NOT fail the run.
 #
 # Usage:
 #   scarlix-smoke-test.sh [--offline] [--help]
@@ -32,6 +36,18 @@ NC='\033[0m'
 PASS_COUNT=0
 FAIL_COUNT=0
 WARN_COUNT=0
+CHECKS_EXECUTED=0
+
+# ---------------------------------------------------------------------------
+# v19.4.3 (KPK-02/KPK-04): sourcing seam — tests/test_registry_classification.sh
+# sources this file to unit-test the registry classification table and the
+# check-inventory guard WITHOUT executing the suite. Everything with a side
+# effect (argument parsing, preamble, check execution, summary) is guarded.
+# ---------------------------------------------------------------------------
+SCARLIX_SMOKE_SOURCED=0
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    SCARLIX_SMOKE_SOURCED=1
+fi
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -53,8 +69,12 @@ Environment:
 
 Exit status:
   0   All checks PASSed (WARNs are tolerated).
-  1   At least one check FAILed.
+  1   At least one check FAILed (or the check inventory is inconsistent).
   2   Invalid CLI usage.
+
+The check inventory (SMOKE_CHECKS) is verified against the defined check_*
+functions before execution; the summary reports the executed count. Do not
+hardcode the count in documentation — read it from the summary output.
 EOF
 }
 
@@ -81,43 +101,50 @@ has_tool() {
 }
 
 # ---------------------------------------------------------------------------
-# Argument parsing
+# Argument parsing (skipped when sourced by the test suite)
 # ---------------------------------------------------------------------------
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --offline)
-            OFFLINE=1
-            shift
-            ;;
-        --help|-h)
-            usage
-            exit 0
-            ;;
-        *)
-            echo "scarlix-smoke-test: unknown option: $1" >&2
-            usage >&2
-            exit 2
-            ;;
-    esac
-done
-
-# ---------------------------------------------------------------------------
-# Preamble
-# ---------------------------------------------------------------------------
-SMOKE_VERSION="$(cat "$REPO_DIR/VERSION" 2>/dev/null || printf 'unknown')"
-printf "${BOLD}=== SCARLIX OS v%s regression smoke test ===${NC}\n" "$SMOKE_VERSION"
-printf "Repo:   %s\n" "$REPO_DIR"
-printf "Offline: %s\n" "$([[ $OFFLINE -eq 1 ]] && echo yes || echo no)"
-echo
-
-if [[ ! -d "$REPO_DIR" ]]; then
-    echo "scarlix-smoke-test: REPO_DIR does not exist: $REPO_DIR" >&2
-    exit 2
+if [[ $SCARLIX_SMOKE_SOURCED -eq 0 ]]; then
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --offline)
+                OFFLINE=1
+                shift
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            *)
+                echo "scarlix-smoke-test: unknown option: $1" >&2
+                usage >&2
+                exit 2
+                ;;
+        esac
+    done
 fi
-if [[ ! -f "$REPO_DIR/VERSION" ]] || [[ ! -f "$REPO_DIR/install.sh" ]]; then
-    echo "scarlix-smoke-test: $REPO_DIR does not look like the SCARLIX OS repo" >&2
-    echo "  (expected: VERSION + install.sh at repo root)" >&2
-    exit 2
+
+# ---------------------------------------------------------------------------
+# Preamble (skipped when sourced by the test suite)
+# ---------------------------------------------------------------------------
+if [[ $SCARLIX_SMOKE_SOURCED -eq 0 ]]; then
+    SMOKE_VERSION="$(cat "$REPO_DIR/VERSION" 2>/dev/null || printf 'unknown')"
+    # shellcheck disable=SC2059
+    printf "${BOLD}=== SCARLIX OS v%s regression smoke test ===${NC}\n" "$SMOKE_VERSION"
+    printf "Repo:   %s\n" "$REPO_DIR"
+    printf "Offline: %s\n" "$([[ $OFFLINE -eq 1 ]] && echo yes || echo no)"
+    echo
+fi
+
+if [[ $SCARLIX_SMOKE_SOURCED -eq 0 ]]; then
+    if [[ ! -d "$REPO_DIR" ]]; then
+        echo "scarlix-smoke-test: REPO_DIR does not exist: $REPO_DIR" >&2
+        exit 2
+    fi
+    if [[ ! -f "$REPO_DIR/VERSION" ]] || [[ ! -f "$REPO_DIR/install.sh" ]]; then
+        echo "scarlix-smoke-test: $REPO_DIR does not look like the SCARLIX OS repo" >&2
+        echo "  (expected: VERSION + install.sh at repo root)" >&2
+        exit 2
+    fi
 fi
 
 # ===========================================================================
@@ -337,95 +364,184 @@ check_06_go_module() {
 # ===========================================================================
 # Check 7 — Image tag existence via registry API (Docker Hub + ghcr.io)
 # ===========================================================================
-check_image_dockerhub() {
-    local repo="$1" tag="$2"
-    local token_json token status
-    # 1. Get auth token from Docker Hub
-    if ! token_json=$(curl -sSL --max-time 15 \
-        "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull" 2>/dev/null); then
-        warn "Docker Hub $repo:$tag — network error fetching auth token"
-        return
+# v19.4.3 (KPK-02): every probe resolves to exactly one verdict —
+#   VERIFIED_EXISTS  HTTP 200 from the manifest endpoint (authoritative answer)
+#   MISSING          HTTP 404 — the pin is dead; a clean deploy would fail
+#   UNVERIFIED       everything else: transport errors (timeout/DNS/TLS),
+#                    HTTP 401/403/429/5xx, malformed or empty auth JSON,
+#                    unknown statuses — NEVER reported as existing.
+# Only MISSING fails CI (definitive answer); UNVERIFIED is a non-blocking
+# WARN so registry flakiness cannot break CI spuriously (KPK-01 acceptance:
+# transient failures non-blocking; auth/rate-limit failures never silently
+# represented as a verified existing tag).
+# v19.4.3 (live finding, sunshine): pins written as tag@sha256 digest are
+# pulled BY DIGEST — the tag name is cosmetic for the deploy. Probes are
+# digest-aware: a pruned tag with a live digest is VERIFIED_EXISTS (the
+# deploy works); a dead digest is MISSING (the real deploy breaker).
+# registry_token / registry_manifest_status are the transport seam — the
+# deterministic suite (tests/test_registry_classification.sh) overrides them
+# with mocked responses; no network needed there.
+
+registry_token() {
+    # Fetch an anonymous pull token. Prints the token on stdout (exit 0), or
+    # "ERROR:<reason>" (exit 1) — the reason becomes part of the WARN trail.
+    local url="$1" out status body token
+    if ! out=$(curl -sSL --max-time 15 -w $'\n%{http_code}' "$url" 2>/dev/null); then
+        printf 'ERROR:auth-transport-failure'
+        return 1
     fi
-    if ! token=$(printf '%s' "$token_json" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("token",""))' 2>/dev/null); then
-        warn "Docker Hub $repo:$tag — could not parse auth token JSON"
-        return
+    status="${out##*$'\n'}"
+    body="${out%$'\n'*}"
+    if [[ "$status" != "200" ]]; then
+        printf 'ERROR:auth-endpoint-HTTP-%s' "$status"
+        return 1
+    fi
+    if ! token=$(printf '%s' "$body" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("token",""))' 2>/dev/null); then
+        printf 'ERROR:malformed-auth-json'
+        return 1
     fi
     if [[ -z "$token" ]]; then
-        warn "Docker Hub $repo:$tag — empty auth token"
-        return
+        printf 'ERROR:empty-token'
+        return 1
     fi
-    # 2. HEAD the manifest endpoint (use GET with -I for portability)
-    if ! status=$(curl -sSL -o /dev/null -w "%{http_code}" --max-time 20 \
-        -H "Authorization: Bearer $token" \
+    printf '%s' "$token"
+}
+
+registry_manifest_status() {
+    # Manifest probe. Prints the HTTP status ("000" when no HTTP response
+    # arrived). Exit code = curl transport exit (0 = authoritative answer).
+    local url="$1" auth="$2" status rc
+    rc=0
+    status=$(curl -sSL -o /dev/null --max-time 20 -w "%{http_code}" \
+        -H "Authorization: Bearer $auth" \
         -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json" \
-        "https://registry-1.docker.io/v2/${repo}/manifests/${tag}" 2>/dev/null); then
-        warn "Docker Hub $repo:$tag — network error fetching manifest"
+        "$url" 2>/dev/null) || rc=$?
+    : "${status:=000}"
+    printf '%s' "$status"
+    return "$rc"
+}
+
+registry_classify() {
+    # $1 = transport exit code, $2 = HTTP status. The exit code wins: a
+    # timeout/DNS failure can never confirm NOR deny existence (fail-closed
+    # against both false VERIFIED_EXISTS and false MISSING).
+    local exit_code="$1" status
+    status="${2:-000}"
+    : "${status:=000}"
+    if [[ "$exit_code" != "0" ]]; then
+        printf 'UNVERIFIED'
         return
     fi
     case "$status" in
-        200) pass "Docker Hub $repo:$tag exists (HTTP 200)" ;;
-        404) fail "Docker Hub $repo:$tag NOT FOUND (HTTP 404)" ;;
-        *)   warn "Docker Hub $repo:$tag — unexpected HTTP $status" ;;
+        200) printf 'VERIFIED_EXISTS' ;;
+        404) printf 'MISSING' ;;
+        *)   printf 'UNVERIFIED' ;;
     esac
 }
 
-check_image_ghcr() {
-    local repo="$1" tag="$2"
-    local token_json token status
-    if ! token_json=$(curl -sSL --max-time 15 \
-        "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull" 2>/dev/null); then
-        warn "ghcr.io $repo:$tag — network error fetching auth token"
+probe_image_registry() {
+    # $1 = label, $2 = auth url, $3 = manifest base url (no ref),
+    # $4 = reference (repo:tag or repo@digest), $5 = ref to append
+    local label="$1" auth_url="$2" manifest_base="$3" ref="$4" manifest_ref="$5"
+    local token status rc verdict
+    token=$(registry_token "$auth_url") || {
+        warn "$label $ref -> UNVERIFIED (auth: $token)"
         return
-    fi
-    if ! token=$(printf '%s' "$token_json" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("token",""))' 2>/dev/null); then
-        warn "ghcr.io $repo:$tag — could not parse auth token JSON"
-        return
-    fi
-    if [[ -z "$token" ]]; then
-        warn "ghcr.io $repo:$tag — empty auth token"
-        return
-    fi
-    if ! status=$(curl -sSL -o /dev/null -w "%{http_code}" --max-time 20 \
-        -H "Authorization: Bearer $token" \
-        -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json" \
-        "https://ghcr.io/v2/${repo}/manifests/${tag}" 2>/dev/null); then
-        warn "ghcr.io $repo:$tag — network error fetching manifest"
-        return
-    fi
-    case "$status" in
-        200) pass "ghcr.io $repo:$tag exists (HTTP 200)" ;;
-        404) fail "ghcr.io $repo:$tag NOT FOUND (HTTP 404)" ;;
-        *)   warn "ghcr.io $repo:$tag — unexpected HTTP $status" ;;
+    }
+    rc=0
+    status=$(registry_manifest_status "${manifest_base}${manifest_ref}" "$token") || rc=$?
+    verdict=$(registry_classify "$rc" "$status")
+    case "$verdict" in
+        VERIFIED_EXISTS)
+            pass "$label $ref -> VERIFIED_EXISTS (manifest HTTP $status)"
+            ;;
+        MISSING)
+            fail "$label $ref -> MISSING (manifest HTTP $status — dead pin; a clean deploy would fail)"
+            ;;
+        *)
+            warn "$label $ref -> UNVERIFIED (manifest HTTP $status — neither confirmed nor missing)"
+            ;;
     esac
+}
+
+check_image_dockerhub() {
+    # $1 = repo, $2 = tag (may be empty for digest-only pins), $3 = digest (optional)
+    local repo="$1" tag="${2:-}" digest="${3:-}" ref manifest_ref
+    if [[ -n "$digest" ]]; then
+        ref="${repo}@${digest}"
+        manifest_ref="${digest}"
+    else
+        ref="${repo}:${tag}"
+        manifest_ref="${tag}"
+    fi
+    probe_image_registry "Docker Hub" \
+        "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull" \
+        "https://registry-1.docker.io/v2/${repo}/manifests/" \
+        "$ref" "$manifest_ref"
+}
+
+check_image_ghcr() {
+    # $1 = repo, $2 = tag (may be empty for digest-only pins), $3 = digest (optional)
+    local repo="$1" tag="${2:-}" digest="${3:-}" ref manifest_ref
+    if [[ -n "$digest" ]]; then
+        ref="${repo}@${digest}"
+        manifest_ref="${digest}"
+    else
+        ref="${repo}:${tag}"
+        manifest_ref="${tag}"
+    fi
+    probe_image_registry "ghcr.io" \
+        "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull" \
+        "https://ghcr.io/v2/${repo}/manifests/" \
+        "$ref" "$manifest_ref"
 }
 
 check_07_registry() {
     echo "--- [07] Image tag existence via registry API ---"
     if [[ $OFFLINE -eq 1 ]]; then
-        warn "--offline set — skipping 12 registry image-tag checks"
+        warn "--offline set — skipping registry image-tag checks"
         return
     fi
     if ! has_tool curl || ! has_tool python3; then
         warn "curl and/or python3 unavailable — skipping registry image-tag checks"
         return
     fi
-    # Docker Hub images
-    check_image_dockerhub "lmsysorg/sglang" "v0.4.9.post6-cu128-b200"
-    check_image_dockerhub "fedirz/faster-whisper-server" "sha-307e23f-cuda"
-    # v19.4.2: pins fixed in the dependency-pin-hygiene release get existence
-    # checks (audit §6.1 — P0 detector: upstream tag pruning fails CI here
-    # instead of failing a clean deploy months later).
-    check_image_dockerhub "coollabsio/coolify" "4.3.1"
-    check_image_dockerhub "lizardbyte/sunshine" "v2026.1020.123939-ubuntu-24.04"
-    check_image_dockerhub "crowdsecurity/crowdsec" "v1.8.1"
-    check_image_dockerhub "ollama/ollama" "0.40.7"
-    check_image_dockerhub "headscale/headscale" "0.26.0"
-    check_image_dockerhub "gitea/gitea" "28.2"
-    check_image_dockerhub "library/nextcloud" "30"
-    # ghcr.io images
-    check_image_ghcr "block/buzz" "latest"
-    check_image_ghcr "berriai/litellm" "main-v1.23.9"
-    check_image_ghcr "openlit/openlit" "1.5.0"
+    # P0 detector (audit §6.1, v19.4.2; digest-aware v19.4.3).
+    # Format: registry|repo|tag|digest — digest pins are probed BY DIGEST
+    # (what a clean deploy actually pulls); tag-only pins by tag.
+    # v19.4.3 (KPK-03): ghcr.io block/buzz REMOVED — the [buzz] profile is
+    #   formally disabled (check_19); its dead minio/minio pin is quarantined
+    #   in workspace/buzz/docker-compose.yml.disabled and is NOT deployable.
+    # v19.4.3 (live catch): sunshine v2026.1020.123939 tag was pruned upstream
+    #   within 2 days of v19.4.2; the pinned DIGEST is alive under the rolling
+    #   master-ubuntu-24.04 tag — compose re-pinned to the rolling tag name +
+    #   same digest (identical content), and the guard list below now covers
+    #   EVERY digest-pinned image in active compose files.
+    local -a pins=(
+        "dockerhub|lmsysorg/sglang|v0.4.9.post6-cu128-b200|"
+        "dockerhub|fedirz/faster-whisper-server|sha-307e23f-cuda|"
+        "dockerhub|coollabsio/coolify|4.3.1|sha256:c054910edd0b4f56de17bacfbe2a501e06ccdfdb4df2e284ca09d49916c7cf32"
+        "dockerhub|lizardbyte/sunshine|master-ubuntu-24.04|sha256:5c790c79df9b680a1c57e3454ed829c09f405eafbafe205675d832e4420aba7b"
+        "dockerhub|crowdsecurity/crowdsec|v1.8.1|sha256:0f2523fa61ef507f15d953045cface490cc880670c62f2755ced17524107f71a"
+        "dockerhub|ollama/ollama|0.40.7|sha256:2e6cc92ffa43b4b1a2e70e315407e00ac97ec125afc71277d73c7efe01c4f31b"
+        "dockerhub|headscale/headscale|0.26.0|sha256:7e6439473c299cde05ff9215fe4e2ae9d83361504876fac0eb8e10f55128838d"
+        "dockerhub|gitea/gitea|28.2|"
+        "dockerhub|library/nextcloud|30|"
+        "dockerhub|nousresearch/hermes-agent|v0.22.2|sha256:36099926da316742423544e055d4734777105ffe6341873af5459b957d0c2919"
+        "ghcr|berriai/litellm|main-v1.23.9|"
+        "ghcr|openlit/openlit|1.5.0|"
+        "ghcr|ggml-org/llama.cpp||sha256:6d607629e3dd5e85f45c43d1494648126cb3f93f2122c9cd53f43242c94cde14"
+        "ghcr|pumpkin-mc/pumpkin||sha256:61fd9494f96d58b46b14edd8336c1e5d9aa41f40e973ab3b61474e05e7feef39"
+    )
+    local p reg repo tag digest
+    for p in "${pins[@]}"; do
+        IFS='|' read -r reg repo tag digest <<<"$p"
+        if [[ "$reg" == "dockerhub" ]]; then
+            check_image_dockerhub "$repo" "$tag" "$digest"
+        else
+            check_image_ghcr "$repo" "$tag" "$digest"
+        fi
+    done
 }
 
 # ===========================================================================
@@ -1055,35 +1171,116 @@ check_18_agent_kernel() {
 }
 
 # ===========================================================================
-# Run all checks
+# Check 19 — Buzz profile formally disabled (dead MinIO pin quarantined)
 # ===========================================================================
-check_01_bash_syntax
-check_02_shellcheck
-check_03_yaml
-check_04_systemd
-check_05_version
-check_06_go_module
-check_07_registry
-check_08_ollama_main
-check_09_docs_v12
-check_10_vllm_trust_p0
-check_11_single_gpu_adaptation
-check_12_pibolt_sha256_pin
-check_13_pibolt_user_owned_execution
-check_14_strict_gpu_optin_parsing
-check_15_gaming_manifest_and_installer
-check_16_gaming_readonly_api
-check_17_reservation_governor
-check_18_agent_kernel
+# v19.4.3 (KPK-03, P0): upstream MinIO discontinued ALL official artifact
+# channels (independently re-verified 2026-10-22 — see the header of
+# workspace/buzz/docker-compose.yml.disabled). A clean `docker compose
+# --profile buzz up` would FAIL at image pull. Remediation chosen per the
+# KpK review decision tree: the profile is FORMALLY DISABLED (renamed file,
+# not picked up by any compose tooling) instead of switching to an
+# unverified third-party mirror or a guessed version.
+check_19_buzz_profile_disabled() {
+    echo "--- [19] Buzz profile formally disabled (dead MinIO pin quarantined) ---"
+    local active="$REPO_DIR/workspace/buzz/docker-compose.yml"
+    local disabled="$REPO_DIR/workspace/buzz/docker-compose.yml.disabled"
+    if [[ -f "$active" ]]; then
+        fail "workspace/buzz/docker-compose.yml is ACTIVE — the minio/minio pin is dead upstream (KPK-03); the profile must stay disabled"
+        return
+    fi
+    if [[ ! -f "$disabled" ]]; then
+        fail "workspace/buzz/docker-compose.yml.disabled not found — buzz workspace files missing"
+        return
+    fi
+    if grep -q 'image: minio/minio' "$disabled"; then
+        pass "buzz profile disabled (docker-compose.yml.disabled) — dead minio/minio pin quarantined, not deployable by any compose tooling"
+    else
+        fail "disabled buzz compose no longer references minio/minio — update check_19 to match the quarantine contract"
+    fi
+}
 
 # ===========================================================================
-# Summary
+# Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
-echo
-printf "${BOLD}=== Smoke test: %d passed, %d failed, %d warned ===${NC}\n" \
-    "$PASS_COUNT" "$FAIL_COUNT" "$WARN_COUNT"
+# Explicit schedule, verified against the defined check_* functions before
+# execution — the summary reports the number of checks actually executed.
+# Do NOT hardcode the check count in documentation; read it from the output.
+SMOKE_CHECKS=(
+    check_01_bash_syntax
+    check_02_shellcheck
+    check_03_yaml
+    check_04_systemd
+    check_05_version
+    check_06_go_module
+    check_07_registry
+    check_08_ollama_main
+    check_09_docs_v12
+    check_10_vllm_trust_p0
+    check_11_single_gpu_adaptation
+    check_12_pibolt_sha256_pin
+    check_13_pibolt_user_owned_execution
+    check_14_strict_gpu_optin_parsing
+    check_15_gaming_manifest_and_installer
+    check_16_gaming_readonly_api
+    check_17_reservation_governor
+    check_18_agent_kernel
+    check_19_buzz_profile_disabled
+)
 
-if [[ $FAIL_COUNT -gt 0 ]]; then
-    exit 1
+run_check() {
+    CHECKS_EXECUTED=$((CHECKS_EXECUTED + 1))
+    "$@"
+}
+
+verify_check_inventory() {
+    # KPK-04 acceptance: scheduled inventory == defined functions == what
+    # the summary will report. Any drift emits a FAIL event and returns 1.
+    local -A defined=() scheduled=()
+    local fn c drift=0
+    while IFS= read -r fn; do
+        defined["$fn"]=1
+    done < <(compgen -A function | grep -E '^check_[0-9]+_' || true)
+    for c in "${SMOKE_CHECKS[@]}"; do
+        if [[ -z "${defined[$c]:-}" ]]; then
+            fail "check inventory drift: scheduled $c is not defined"
+            drift=1
+            continue
+        fi
+        scheduled["$c"]=1
+    done
+    for fn in "${!defined[@]}"; do
+        if [[ -z "${scheduled[$fn]:-}" ]]; then
+            fail "check inventory drift: defined $fn is not scheduled in SMOKE_CHECKS"
+            drift=1
+        fi
+    done
+    if [[ $drift -eq 0 ]]; then
+        echo "Check inventory: ${#SMOKE_CHECKS[@]} checks scheduled and defined (consistent)"
+        return 0
+    fi
+    return 1
+}
+
+# ===========================================================================
+# Run all checks (guarded — the test suite sources this file without executing)
+# ===========================================================================
+if [[ $SCARLIX_SMOKE_SOURCED -eq 0 ]]; then
+    verify_check_inventory
+    for check_fn in "${SMOKE_CHECKS[@]}"; do
+        run_check "$check_fn"
+    done
+
+    # =======================================================================
+    # Summary
+    # =======================================================================
+    echo
+    # shellcheck disable=SC2059
+    printf "${BOLD}=== Smoke test: %d checks executed — %d passed, %d failed, %d warned (events) ===${NC}\n" \
+        "$CHECKS_EXECUTED" "$PASS_COUNT" "$FAIL_COUNT" "$WARN_COUNT"
+    printf "Checks are inventory functions; events are individual PASS/FAIL/WARN results (one check may emit several).\n"
+
+    if [[ $FAIL_COUNT -gt 0 ]]; then
+        exit 1
+    fi
+    exit 0
 fi
-exit 0

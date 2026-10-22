@@ -88,7 +88,7 @@ publikoval tag · `latest` = najnovší stable tag upstream (overený 2026-10-21
 | comfyui | v2-cuda-12.1.1-base-22.04-v0.2.7 | 2026-09-30 | v0.2.7 (posledný v sérii) | 0 | [creative] | ✅ v sérii |
 | musicgen / video | lokálny build (python:3.11-slim, WAN2GP_COMMIT pripnutý) | — | python 3.11-slim fresh (2026-10-21) | 0 | [creative] | ✅ |
 | buzz-relay | ghcr.io/block/buzz:latest | — | iba `sha-*` a `latest` tagy (bez semver) | floating | [buzz] | ⚫ známe |
-| buzz/minio | RELEASE.2024-10-13T13-34-50Z | 2026-10-07 | ? (repo API 404) | 2 roky | [buzz] | 🔴 **repo 404** |
+| buzz/minio | RELEASE.2024-10-13T13-34-50Z | 2026-10-07 | ? (repo API 404) | 2 roky | [buzz] | 🔴 **repo 404** (v19.4.3: profil formálne disabled — KPK-03) |
 | browser-mcp | mcp/playwright-server:latest | — | repo API 404 | — | [experimental] | ⚫ známe (v18.8.2) |
 | freetoken | freetoken/serving:latest | — | repo API 404 | — | [moe] | ⚫ známe (v18.8) |
 | laya | laya/decision-engine:latest | — | repo API 404 | — | [experimental] | ⚫ známe (v18.8) |
@@ -292,6 +292,23 @@ audit upstream releasov (GitHub API, 2026-10-21):
 | headscale | 0.25.0 | 0.26.0@sha256:7e643947… | P1 rung 1/4; 0.26 má BREAKING (policy v2, routes→memory) — runbook v compose komentári | 0.27→0.28→0.29 |
 | buzz/minio | RELEASE.2024-10-13… (404) | **NEZMENENÉ — P0-OPEN** | upstream ukončil VŠETKY kanály: hub repo 404, quay tags prázdne, dl.min.io 410 Gone | host-side rozhodnutie |
 
+**v19.4.3 update (2026-10-22, KPK-03):** buzz/minio riešenie — **P0-RESOLVED-BY-DISABLEMENT**.
+Nezávislý re-probe (KPK remediácia): hub repo API 404 + registry 401 s platným
+anon tokenom (repo zmazané; kontrola: library/redis → 200 tou istou metódou),
+quay 401 (žiadne verejné tagy), dl.min.io 410, **github.com/minio/minio
+ARCHIVED 2026-04-24** (posledný zdrojový tag RELEASE.2025-10-15T17-29-55Z).
+Celý [buzz] profil formálne disabled (premenované na
+docker-compose.yml.disabled + smoke check_19 guard) — žiadne compose tooling
+ho ne vie nasadiť; re-enable runbook v hlavičke súboru. Detaily:
+docs/KPK_2026-10-22_REMEDIATION.md (KPK-03).
+
+**v19.4.3 update (2026-10-22, live catch):** sunshine-tv — nightly tag
+v2026.1020.123939-ubuntu-24.04 bol prunovaný upstreamom **2 dni po v19.4.2**;
+pripnutý DIGEST sha256:5c790c79… žije pod rolling tagmi master-ubuntu-24.04 /
+latest-ubuntu-24.04 (rovnaký obsah). Compose re-pripnutý na rolling tag +
+rovnaký digest (identický obsah); check_07 je digest-aware a guarduje
+VŠETKY digest piny v aktívnych compose súboroch (14 probí).
+
 **Odchýlky od §3/§4 doctrine (čestne):** audit predpisoval „max jedna
 minor/major na krok". **crowdsec a gitea** boli preskočené na cieľ PRIAMO, lebo:
 (a) changelog audit VŠETKÝCH medziverzií (2026-10-21) nenašiel breaking changes
@@ -313,6 +330,13 @@ chyba/timeout/rate-limit = WARN (nemôže červeno zlomiť CI sporadicky), len
 definitívny HTTP 404 = FAIL. Budúci pruning tagu = červené CI namiesto
 pokazeného čistého deployu. buzz/minio pridaný nie je (tag 404 by CI trvale
 failoval — je to zámerne P0-OPEN).
+
+**v19.4.3 update:** klasifikácia je teraz explicitná (VERIFIED_EXISTS /
+MISSING / UNVERIFIED — KPK-02), probí sú digest-aware (živý digest s
+prunovaným tagom = VERIFIED_EXISTS, mŕtvy digest = MISSING) a existuje
+deterministická testovacia suita s mockmi (tests/test_registry_classification.sh,
+68 asercí, beží v CI). Počet registrových probí: 14 (všetky digest piny +
+wartované tag-only piny).
 
 **P2/P3 zámerne nezmenené (dôvody v §5):** sglang (CUDA variant rozhodnutie na
 hostovi), vllm (Tier-2), grafana (Angular inventár najprv), victoria-metrics,
