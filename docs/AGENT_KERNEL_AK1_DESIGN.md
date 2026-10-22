@@ -1,8 +1,9 @@
-# ScarLiX OS — Agent Kernel AK-1…AK-4 Design (v19.4.x line)
+# ScarLiX OS — Agent Kernel AK-1…AK-5 Design (v19.4.x line — COMPLETE)
 
-**Branch:** `agent-kernel/ak4-audit` → merged to main as **v19.4.5**
-**Status:** AK-1 + AK-2 + AK-3 + AK-4 complete (AK-4 = append-only audit
-sink); AK-5 follows (compute intake)
+**Branch:** `agent-kernel/ak5-compute` → merged to main as **v19.4.6**
+**Status:** AK-1 through AK-5 complete — the v19.4.x line is CLOSED (Phase A
+of the post-v19.4.3 plan delivered: AK-3 grants, AK-4 audit, AK-5 compute
+intake)
 **Strategy source:** `docs/ScaRgeN_CuLT_Strategy_Obsidian_Lattice_SK_2026-10.pdf` (pages 13, 15–16, 22, 24)
 
 ---
@@ -23,7 +24,7 @@ the Compute Fabric tail; phasing follows verifiable behavior, page 20).
 | **AK-2** | Session store + WS/REST surface (sessions created/closed via ScarliHQ API, auth-gated) | **DONE — merged as v19.4.1** (see §6) |
 | **AK-3** | Policy engine v1: capability grants persisted per agent + admin disable switches; tie into the reservation governor's `user_tokens` principal space | **DONE — merged as v19.4.4** (see §7) |
 | **AK-4** | Audit sink: append-only JSONL under `/var/lib/scarlix-agentkernel/` (0600, flock — same store discipline as reservations) | **DONE — merged as v19.4.5** (see §8) |
-| **AK-5** | Compute intake API meets agent sessions: `compute.reserve`/`release` capabilities flow through the governor stores | planned (jointly with the intake API roadmap row) |
+| **AK-5** | Compute intake API meets agent sessions: `compute.reserve`/`release` capabilities flow through the governor stores | **DONE — merged as v19.4.6** (see §9) |
 
 ## 3. AK-1 contract (as implemented in `internal/agentkernel`)
 
@@ -319,3 +320,78 @@ evaluations is legitimate — the sink is a separate opt-in).
   route, malformed-reported marker, opt-in wiring + commented compose
   (negative control verified — breaking the compose opt-in line FAILS the
   check)
+
+---
+
+## 9. AK-5 contract (v19.4.6) — agent-gated compute intake
+
+`POST /api/agent/sessions/compute` — the closing step of the v19.4.x line:
+agent sessions reserve/release compute allocations with the kernel
+deciding and the workload bridge enforcing.
+
+### Decision chain (three independent gates)
+
+1. **Kernel evaluation** (deterministic, no LLM): the session must be
+   ACTIVE and hold `compute.reserve` / `compute.release`. Denials are
+   200 responses with `allow=false` + the fired rule (the denial-is-200
+   contract — an auditable decision, not an error). Registry policy
+   applies, so the runtime kill-switch takes effect on the next intake
+   call (no restart).
+2. **Principal mapping (registry REQUIRED):** the agent acts as its
+   registry-declared owner principal — admin-verified. In legacy mode
+   (no registry) the owner is caller-supplied, which would make the
+   mapping spoofable — compute intake therefore REFUSES to run without
+   the registry (400 with a clear message, never a silent fallback).
+3. **Ownership enforcement (workload bridge):** Start/Stop run with the
+   agent owner as principal — the bridge rejects operations on
+   allocations that principal does not own (`ErrOwnerMismatch` → 403),
+   the same single-principal discipline as `/api/compute/start|stop`,
+   now per-agent-owner instead of per-server-config.
+
+### Request / response
+
+`{session_id, action: "reserve"|"release", allocation_id}` — one JSON
+object, unknown fields rejected, 4KB body cap, 45s bridge timeout
+(lifecycle parity). Allowed intake returns the workload result
+(allocation state, workload ref, owned) + the kernel reason; `release`
+keeps the honest `cleanup_verified_reservation_pending` status (the
+reservation bundle stays RELEASING until trusted reconciliation — same
+contract as the direct stop surface).
+
+### Audit (AK-4 integration)
+
+Every attempt is audited with the **allocation id and outcome**:
+`compute.reserve` / `compute.release` lines carry session, agent,
+allocation, decision (allow AND deny) and `detail` = `executed` or
+`rejected:<kind>` (owner-mismatch / invalid-state / invalid-allocation /
+reconciliation-required / rejected). Audit write failure is never
+silent: denials are not served without their audit line (fail-closed),
+executed acts report the failure.
+
+### Enablement
+
+No env of its own — it is the composition: `SCARLIHQ_AGENTKERNEL_ENABLED`
++ the grant registry + `SCARLIHQ_COMPUTE_ENABLED` (the bridge). 503 when
+either surface is missing; 400 when the registry is missing (the
+principal must be admin-verified).
+
+### Verification (AK-5)
+
+- `go test ./internal/api` — 6 test functions: auth-gating (401),
+  disabled surfaces (503 kernel-missing, 503 compute-missing),
+  registry-required (400 legacy mode), validation matrix (bad action,
+  missing allocation, unknown session, forged field, malformed JSON,
+  405), denial-is-200 with audited denial (allocation id + rule),
+  allowed-then-bridge-rejected (409 + audited outcome) + runtime
+  kill-switch flip (200 denial on the next call), release-vs-reserve
+  capability separation
+- The full happy path (a real bridge executing) is integration-level —
+  honestly out of unit scope; the bridge error mapping is asserted
+  identical to the direct lifecycle surface
+- `go test -race` on both packages — OK
+- Smoke check 22 (deterministic, source-level): registry-required
+  marker, denial-is-200 marker, AgentOwner principal mapping, bridge
+  error mapping, compute audit lines with allocation ids, audit-failure
+  surfacing, auth-gated route registration, bounded decode discipline,
+  45s timeout parity, compose composition note (negative control
+  verified — changing the timeout FAILS the check)

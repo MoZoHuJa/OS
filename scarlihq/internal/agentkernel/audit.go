@@ -62,11 +62,13 @@ const auditFileSchemaVersion = 1
 type AuditLineType string
 
 const (
-	AuditTypeEvaluate AuditLineType = "evaluate"
-	AuditTypeGrant    AuditLineType = "grant"
-	AuditTypeRevoke   AuditLineType = "revoke"
-	AuditTypeDisable  AuditLineType = "disable"
-	AuditTypeEnable   AuditLineType = "enable"
+	AuditTypeEvaluate       AuditLineType = "evaluate"
+	AuditTypeGrant          AuditLineType = "grant"
+	AuditTypeRevoke         AuditLineType = "revoke"
+	AuditTypeDisable        AuditLineType = "disable"
+	AuditTypeEnable         AuditLineType = "enable"
+	AuditTypeComputeReserve AuditLineType = "compute.reserve"
+	AuditTypeComputeRelease AuditLineType = "compute.release"
 )
 
 // AuditLine is one append-only JSONL record. One struct for all event
@@ -83,9 +85,12 @@ type AuditLine struct {
 	Allow  *bool  `json:"allow,omitempty"`
 	Reason string `json:"reason,omitempty"`
 	// Admin acts (grant/revoke/disable/enable lines).
-	Owner  string `json:"owner,omitempty"`
-	Admin  string `json:"admin,omitempty"`
-	Detail string `json:"detail,omitempty"`
+	Owner string `json:"owner,omitempty"`
+	Admin string `json:"admin,omitempty"`
+	// Compute intake (AK-5, v19.4.6): which allocation, and what the
+	// workload bridge did with it ("executed" or "rejected:<kind>").
+	AllocationID string `json:"allocation_id,omitempty"`
+	Detail       string `json:"detail,omitempty"`
 }
 
 // AuditSink is the append-only JSONL audit store. Safe for concurrent use;
@@ -224,6 +229,19 @@ func (l AuditLine) validate() error {
 		}
 		if l.Admin == "" {
 			return fmt.Errorf("%w: %s line without admin", ErrAuditEvent, l.Type)
+		}
+	case AuditTypeComputeReserve, AuditTypeComputeRelease:
+		if l.SessionID == "" {
+			return fmt.Errorf("%w: %s line without session id", ErrAuditEvent, l.Type)
+		}
+		if l.AgentID == "" {
+			return fmt.Errorf("%w: %s line without agent id", ErrAuditEvent, l.Type)
+		}
+		if l.AllocationID == "" {
+			return fmt.Errorf("%w: %s line without allocation id", ErrAuditEvent, l.Type)
+		}
+		if l.Allow == nil {
+			return fmt.Errorf("%w: %s line without decision", ErrAuditEvent, l.Type)
 		}
 	default:
 		return fmt.Errorf("%w: unknown line type %q", ErrAuditEvent, l.Type)

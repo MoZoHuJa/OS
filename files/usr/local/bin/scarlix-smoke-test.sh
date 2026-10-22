@@ -1386,6 +1386,82 @@ check_21_agent_kernel_audit() {
 }
 
 # ===========================================================================
+# Check 22 — Agent Kernel compute intake (AK-5, v19.4.6)
+# ===========================================================================
+# AK-5 closes the v19.4.x line: agent sessions reserve/release compute
+# allocations through the kernel decision + the workload bridge, with the
+# agent's registry-declared owner as the acting principal. This check guards
+# the static contract: the registry is REQUIRED for intake (spoofable
+# caller-supplied owners are exactly what AK-5 prevents), the route is
+# auth-gated, denials stay 200, and every attempt is audited.
+check_22_agent_kernel_compute() {
+    echo "--- [22] Agent Kernel compute intake (AK-5): kernel decides, bridge enforces, registry required ---"
+    local api_src="$REPO_DIR/scarlihq/internal/api/agentcompute.go"
+    local audit_src="$REPO_DIR/scarlihq/internal/agentkernel/audit.go"
+    local rest_src="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+
+    if [[ ! -f "$api_src" ]]; then
+        fail "agent kernel compute intake missing (AK-5, v19.4.6)"
+        return
+    fi
+
+    # The registry is REQUIRED: legacy-mode owner would be spoofable.
+    if ! grep -q "compute intake requires the grant registry" "$api_src"; then
+        fail "compute intake must require the grant registry (admin-verified principal)"
+        return
+    fi
+    # The kernel decides (deterministic evaluation), denial-is-200.
+    if ! grep -q "Denial-is-200" "$api_src" && ! grep -q "denial-is-200" "$api_src"; then
+        fail "compute intake must keep the denial-is-200 contract"
+        return
+    fi
+    # The agent acts as its registry-declared owner (principal mapping).
+    if ! grep -q "AgentOwner" "$api_src"; then
+        fail "compute intake must map the acting principal to the agent registry owner"
+        return
+    fi
+    # The workload bridge enforces ownership (same error mapping as direct).
+    if ! grep -q "ErrOwnerMismatch" "$api_src" || ! grep -q "workload.ErrInvalidState" "$api_src"; then
+        fail "compute intake must surface bridge ownership/state errors (same mapping as the direct lifecycle)"
+        return
+    fi
+    # Every attempt is audited with the allocation id + outcome.
+    if ! grep -q "AuditTypeComputeReserve" "$audit_src" || ! grep -q "AllocationID" "$audit_src"; then
+        fail "audit sink must carry compute intake lines with allocation ids"
+        return
+    fi
+    # Audit failure is never silent (fail-closed for denials; reported for executed acts).
+    if ! grep -q "decision not served" "$api_src" && ! grep -q "audit write failed" "$api_src"; then
+        fail "compute intake audit failures must be surfaced, never silent"
+        return
+    fi
+    # Route behind the auth middleware.
+    if ! grep -q 'mux.HandleFunc("/api/agent/sessions/compute", h.auth(h.agentCompute))' "$rest_src"; then
+        fail "route /api/agent/sessions/compute must be registered behind h.auth(...)"
+        return
+    fi
+    # Bounded request discipline (the compute-lifecycle contract).
+    if ! grep -q "MaxBytesReader" "$api_src" && ! grep -q "decodeOneJSON" "$api_src"; then
+        fail "compute intake must use the bounded one-object decode discipline"
+        return
+    fi
+    # 45s bridge timeout parity with the direct lifecycle surface.
+    if ! grep -q "45\*time.Second" "$api_src" && ! grep -q "45 \\* time.Second" "$api_src"; then
+        fail "compute intake must keep the 45s bridge timeout (lifecycle parity)"
+        return
+    fi
+    # Honest compose note: intake needs BOTH the kernel AND the compute lifecycle.
+    if ! grep -q "SCARLIHQ_COMPUTE_ENABLED" "$compose"; then
+        fail "compose must keep the compute lifecycle opt-in block (AK-5 depends on it)"
+        return
+    fi
+
+    pass "agent kernel compute: kernel-gated intake (denial-is-200), registry-required principal mapping, bridge ownership enforcement, audited attempts (allocation+outcome), auth-gated route"
+}
+
+# ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
@@ -1413,6 +1489,7 @@ SMOKE_CHECKS=(
     check_19_buzz_profile_disabled
     check_20_agent_kernel_grants
     check_21_agent_kernel_audit
+    check_22_agent_kernel_compute
 )
 
 run_check() {
