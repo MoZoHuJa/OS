@@ -1461,6 +1461,92 @@ check_22_agent_kernel_compute() {
     pass "agent kernel compute: kernel-gated intake (denial-is-200), registry-required principal mapping, bridge ownership enforcement, audited attempts (allocation+outcome), auth-gated route"
 }
 
+check_23_agent_fabric_commands() {
+    echo "--- [23] Agent Fabric command surface (BF-1): intent capture, kernel-decided status, persisted history ---"
+    local fabric_store="$REPO_DIR/scarlihq/internal/agentfabric/store.go"
+    local fabric_cmd="$REPO_DIR/scarlihq/internal/agentfabric/command.go"
+    local api_src="$REPO_DIR/scarlihq/internal/api/agentfabric.go"
+    local rest_src="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+
+    if [[ ! -f "$fabric_store" ]]; then
+        fail "agent fabric command store missing (BF-1, v19.5.0)"
+        return
+    fi
+
+    # Fail-closed load: schema version + permissions discipline (grants.json precedent).
+    if ! grep -q "commandsFileVersion" "$fabric_store" || ! grep -q "explicit migration required" "$fabric_store"; then
+        fail "command store must version its schema and reject unknown versions (fail-closed load)"
+        return
+    fi
+    if ! grep -q "ErrCommandFilePermissions" "$fabric_store"; then
+        fail "command store must fail-closed on loose file/dir permissions (tamper discipline)"
+        return
+    fi
+    # Atomic persistence: temp file in the same directory + rename (POSIX atomic).
+    if ! grep -q "CreateTemp" "$fabric_store" || ! grep -q "os.Rename" "$fabric_store"; then
+        fail "command store must persist atomically (temp + rename, the grants.json discipline)"
+        return
+    fi
+    # Bounded history — no unbounded growth.
+    if ! grep -q "DefaultMaxCommands" "$fabric_store" || ! grep -q "ErrCommandLimit" "$fabric_store"; then
+        fail "command store must be bounded (DefaultMaxCommands + ErrCommandLimit)"
+        return
+    fi
+    # Intent bounds: single-line, rune-bounded, control chars rejected.
+    if ! grep -q "MaxIntentRunes" "$fabric_cmd" || ! grep -q "control character" "$fabric_cmd"; then
+        fail "intent validation must bound the text and reject control characters"
+        return
+    fi
+    # The bar NEVER executes: the kernel decides — the decision (allow AND deny)
+    # is recorded on the command. Route/cancel/routeAndDecide must go through
+    # the kernel evaluation, not a shortcut.
+    if ! grep -q "h.agentStore.Evaluate" "$api_src"; then
+        fail "fabric route+decide must evaluate through the Agent Kernel (no standalone mode)"
+        return
+    fi
+    # Denial-is-a-decision: a denied intent is DECIDED, not an HTTP error.
+    if ! grep -q "denial-is-200" "$api_src" && ! grep -q "Denial-is" "$api_src"; then
+        fail "fabric surface must keep the denial-is-a-decision contract (kernel denial-is-200)"
+        return
+    fi
+    # Decision-persisted-before-serve (AK-4 discipline extended): the audit line
+    # is appended BEFORE the command transitions to DECIDED.
+    if ! grep -q "decision not served" "$api_src" && ! grep -q "audit write failed" "$api_src"; then
+        fail "fabric decisions must be audited before they are served (fail-closed)"
+        return
+    fi
+    # An intent is never lost: submission persists BEFORE routing.
+    if ! grep -q "never lost" "$api_src" && ! grep -q "never lost" "$fabric_store"; then
+        fail "intent capture must persist the command even when nothing is routable (never lost)"
+        return
+    fi
+    # Routes behind the auth middleware.
+    if ! grep -q 'mux.HandleFunc("/api/bar/commands", h.auth(h.barCommands))' "$rest_src" \
+       || ! grep -q 'mux.HandleFunc("/api/bar/commands/route", h.auth(h.barCommandRoute))' "$rest_src" \
+       || ! grep -q 'mux.HandleFunc("/api/bar/commands/cancel", h.auth(h.barCommandCancel))' "$rest_src"; then
+        fail "routes /api/bar/commands{,/route,/cancel} must be registered behind h.auth(...)"
+        return
+    fi
+    # main.go opt-in: fabric requires the kernel + its own commands file.
+    if ! grep -q "SCARLIHQ_AGENTFABRIC_ENABLED" "$main_src" || ! grep -q "SCARLIHQ_AGENTFABRIC_COMMANDS_FILE" "$main_src"; then
+        fail "main.go must wire the fabric opt-in (SCARLIHQ_AGENTFABRIC_ENABLED + SCARLIHQ_AGENTFABRIC_COMMANDS_FILE)"
+        return
+    fi
+    if ! grep -q "agent fabric requires SCARLIHQ_AGENTKERNEL_ENABLED=true" "$main_src"; then
+        fail "main.go must fail-closed when the fabric is enabled without the kernel"
+        return
+    fi
+    # Honest compose note: the fabric opt-in block exists (commented).
+    if ! grep -q "SCARLIHQ_AGENTFABRIC_ENABLED" "$compose" || ! grep -q "SCARLIHQ_AGENTFABRIC_COMMANDS_FILE" "$compose"; then
+        fail "compose must keep the Agent Fabric opt-in block (env + mount)"
+        return
+    fi
+
+    pass "agent fabric commands: intent capture (never lost), kernel-decided status (denial-is-a-decision), audit-before-serve, persisted bounded history (fail-closed load), auth-gated routes, opt-in wiring"
+}
+
 # ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
@@ -1490,6 +1576,7 @@ SMOKE_CHECKS=(
     check_20_agent_kernel_grants
     check_21_agent_kernel_audit
     check_22_agent_kernel_compute
+    check_23_agent_fabric_commands
 )
 
 run_check() {

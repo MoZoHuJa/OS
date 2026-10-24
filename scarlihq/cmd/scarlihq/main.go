@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time" // v18.6 P1: explicit server timeouts
 
+	"github.com/MoZoHuJa/OS/scarlihq/internal/agentfabric"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/agentkernel"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/api"
@@ -23,7 +24,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.4.6"
+var Version = "19.5.0"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -89,11 +90,15 @@ func main() {
 	// lifecycle (Controlled Accumulation: small, reversible steps). Sessions
 	// are bounded + in-memory; grants are request-supplied until AK-3
 	// persists them admin-owned. Evaluate is pure — no host effects at all.
+	// v19.5.0: kernelStore is hoisted so the Agent Fabric block below can
+	// require it (the fabric routes intents through kernel sessions).
+	var kernelStore *agentkernel.Store
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("SCARLIHQ_AGENTKERNEL_ENABLED")), "true") {
 		store, err := agentkernel.NewStore(agentkernel.DefaultMaxSessions)
 		if err != nil {
 			log.Fatalf("agent kernel initialization failed: %v", err)
 		}
+		kernelStore = store
 		// AK-3 (v19.4.4): persisted, admin-owned grant registry — separate
 		// opt-in (SCARLIHQ_AGENT_GRANTS_FILE + SCARLIHQ_AGENT_PRINCIPALS).
 		// When configured, grants become admin-owned registry acts bound to
@@ -157,6 +162,37 @@ func main() {
 		}
 	} else {
 		log.Printf("Agent Kernel session API disabled; set SCARLIHQ_AGENTKERNEL_ENABLED=true to enable")
+	}
+
+	// BF-1 (v19.5.0): Agent Fabric command surface (the ScarliBar backend) —
+	// opt-in, like the kernel. The fabric REQUIRES the kernel (intents route
+	// through kernel sessions — it has no standalone mode) and a persisted
+	// commands file (the durable command history, grants.json discipline:
+	// schema version, 0600/0700 fail-closed load, atomic tmp+rename persist,
+	// bounded history). Enablement: SCARLIHQ_AGENTFABRIC_ENABLED=true +
+	// SCARLIHQ_AGENTFABRIC_COMMANDS_FILE=/var/lib/scarlix-agentfabric/
+	// commands.json.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("SCARLIHQ_AGENTFABRIC_ENABLED")), "true") {
+		if kernelStore == nil {
+			log.Fatal("agent fabric enabled but the agent kernel is not (agent fabric requires SCARLIHQ_AGENTKERNEL_ENABLED=true — intents route through kernel sessions)")
+		}
+		commandsFile := strings.TrimSpace(os.Getenv("SCARLIHQ_AGENTFABRIC_COMMANDS_FILE"))
+		if commandsFile == "" {
+			log.Fatal("agent fabric enabled but SCARLIHQ_AGENTFABRIC_COMMANDS_FILE is missing (the command history is persisted — grants.json discipline)")
+		}
+		fabricStore, err := agentfabric.NewCommandStore(commandsFile, agentfabric.DefaultMaxCommands)
+		if err != nil {
+			log.Fatalf("agent fabric command store construction failed: %v", err)
+		}
+		if err := fabricStore.Load(); err != nil {
+			log.Fatalf("agent fabric command store load failed: %v (fix the file or archive it deliberately — never run on a tampered command history)", err)
+		}
+		if err := apiHandler.ConfigureAgentFabric(fabricStore); err != nil {
+			log.Fatalf("agent fabric configuration failed: %v", err)
+		}
+		log.Printf("Agent Fabric command API enabled (ScarliBar backend; commands file: %s; bound %d records — the file is the history, rotate deliberately)", commandsFile, agentfabric.DefaultMaxCommands)
+	} else {
+		log.Printf("Agent Fabric command API disabled; set SCARLIHQ_AGENTFABRIC_ENABLED=true (requires the agent kernel + SCARLIHQ_AGENTFABRIC_COMMANDS_FILE)")
 	}
 	apiHandler.RegisterRoutes(mux)
 
