@@ -77,6 +77,15 @@ services:
       # plus the grant registry — the agent's registry-declared owner becomes
       # the acting principal; the workload bridge enforces allocation
       # ownership. No extra env of its own: it is the composition, not a flag.
+      # v19.5.0 — OPT-IN Agent Fabric command surface (BF-1, the ScarliBar
+      # backend: intent capture + user-visible command status via
+      # /api/bar/commands). Requires the kernel env above AND its own
+      # persisted commands file — the durable command history, grants.json
+      # discipline (schema version, 0600/0700 fail-closed load, atomic
+      # tmp+rename persist, bounded history: 512 records, rotate
+      # deliberately). Shares the agentkernel mount below.
+      #   - SCARLIHQ_AGENTFABRIC_ENABLED=true
+      #   - SCARLIHQ_AGENTFABRIC_COMMANDS_FILE=/var/lib/scarlix-agentfabric/commands.json
     # v19.3.2 — OPT-IN compute lifecycle mounts (see env notes above).
     #   - /var/lib/scarlix-reservation:/var/lib/scarlix-reservation:rw
     #   - /run/scarlix-workload-bridge/bridge.sock:/run/scarlix-workload-bridge/bridge.sock
@@ -85,6 +94,11 @@ services:
     # with mode 0700 (the registry fail-closes on looser permissions —
     # tamper discipline, not a convenience default).
     #   - /var/lib/scarlix-agentkernel:/var/lib/scarlix-agentkernel:rw
+    # v19.5.0 — OPT-IN Agent Fabric commands mount (BF-1; pair with
+    # SCARLIHQ_AGENTFABRIC_COMMANDS_FILE above). Same discipline: directory
+    # must exist host-side with mode 0700 (the command store fail-closes on
+    # looser permissions — tamper discipline).
+    #   - /var/lib/scarlix-agentfabric:/var/lib/scarlix-agentfabric:rw
     networks: [scarlix-net]
 networks:
   scarlix-net: { external: true }

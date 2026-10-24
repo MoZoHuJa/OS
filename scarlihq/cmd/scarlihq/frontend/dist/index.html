@@ -74,6 +74,24 @@
   .auth-box button{width:100%;padding:11px;border:none;border-radius:8px;background:linear-gradient(135deg,var(--accent),#0c8a5e);color:#0b0e14;font-weight:700;cursor:pointer;font-size:14px}
   .auth-box button:hover{filter:brightness(1.1)}
   .auth-err{color:var(--red);font-size:12px;margin-top:8px;min-height:16px}
+  /* v19.5.0 — ScarliBar (Agent Fabric BF-1): intent capture + command status */
+  .bar-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .bar-row input,.bar-row select{padding:12px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:ui-monospace,monospace}
+  .bar-row input:focus,.bar-row select:focus{outline:none;border-color:var(--accent)}
+  .bar-intent{flex:1;min-width:220px}
+  .bar-agent{width:170px}
+  .bar-cap{width:150px}
+  .bar-send{padding:12px 18px;min-height:44px;border:none;border-radius:8px;background:linear-gradient(135deg,var(--accent),#0c8a5e);color:#0b0e14;font-weight:700;cursor:pointer;font-size:13px}
+  .bar-send:hover{filter:brightness(1.1)}
+  .bar-send:disabled{opacity:.6;cursor:default}
+  .bar-act{padding:10px 12px;min-height:44px;border-radius:7px;border:1px solid var(--border);background:var(--panel2);color:var(--muted);font-size:11px;font-weight:600;cursor:pointer;transition:.15s}
+  .bar-act:hover{border-color:var(--accent2);color:var(--text)}
+  .bar-act.danger:hover{border-color:var(--red);color:var(--red)}
+  .pill.sub{background:rgba(139,92,246,.15);color:var(--violet)}
+  .pill.rou{background:rgba(6,182,212,.15);color:var(--cyan)}
+  .bar-note{color:var(--muted);font-size:11px;margin-top:8px}
+  .bar-reason{color:var(--muted);font-size:11px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  @media(max-width:640px){.bar-agent{width:100%}.bar-cap{width:100%}.bar-intent{min-width:100%}}
   @media(max-width:640px){header{flex-direction:column;align-items:flex-start}}
 </style>
 </head>
@@ -153,6 +171,35 @@
       <tbody id="gambody"><tr><td colspan="3" class="empty">Waiting for host-status…</td></tr></tbody>
     </table>
     <div style="color:var(--muted);font-size:11px;margin-top:8px">Read-only inventory (detected by scarlix-host-bridge). Install profiles: <code>scarlix-gaming-install --profile full</code></div>
+  </div>
+
+  <!-- v19.5.0: ScarliBar — Agent Fabric BF-1. Intent capture + user-visible
+       command status (P4 ownership). The bar NEVER executes anything: the
+       capability question goes to the Agent Kernel; the decision (allow AND
+       deny) is the command status. Data from /api/bar/commands (5s polling
+       fallback pattern — WS push for fabric events lands with the agent
+       runtime). All dynamic fields escaped (XSS convention). -->
+  <div class="card" id="barcard">
+    <h2>ScarliBar <span class="pill other" id="barcounts" style="margin-left:auto">…</span></h2>
+    <div class="bar-row">
+      <input class="bar-intent" id="barIntent" maxlength="512" placeholder="Intent — tell an agent what to do…">
+      <input class="bar-agent" id="barAgent" list="barAgents" placeholder="agent (kind.name)">
+      <datalist id="barAgents"></datalist>
+      <select class="bar-cap" id="barCap">
+        <option value="status.read">status.read</option>
+        <option value="gaming.read">gaming.read</option>
+        <option value="mode.request">mode.request</option>
+        <option value="compute.plan">compute.plan</option>
+        <option value="compute.reserve">compute.reserve</option>
+        <option value="compute.release">compute.release</option>
+      </select>
+      <button class="bar-send" id="barSend">Send</button>
+    </div>
+    <table>
+      <thead><tr><th>Intent</th><th>Agent · Capability</th><th>State</th><th>Decision</th><th></th></tr></thead>
+      <tbody id="barbody"><tr><td colspan="5" class="empty">Waiting for fabric…</td></tr></tbody>
+    </table>
+    <div class="bar-note" id="barnote">Commands are captured intents routed through the Agent Kernel — decisions are auditable, not executed (BF-1).</div>
   </div>
 
   <footer>
@@ -446,6 +493,145 @@ async function pollStatus(){
   if(s) renderStatus(s);
 }
 
+// =========================================================================
+// v19.5.0 — ScarliBar (Agent Fabric BF-1): intent capture + command status.
+// The bar NEVER executes anything: POST /api/bar/commands captures the
+// intent; the Agent Kernel decides (allow AND deny are both decisions);
+// GET /api/bar/commands is the user-visible status (5s polling — the same
+// fallback pattern as pollStatus; WS push for fabric events lands with the
+// agent runtime). All dynamic fields escaped (XSS convention).
+// =========================================================================
+function barStatePill(state, allow){
+  if(state === 'DECIDED'){
+    return allow ? '<span class="pill up">✓ allowed</span>' : '<span class="pill down">✗ denied</span>';
+  }
+  if(state === 'SUBMITTED') return '<span class="pill sub">SUBMITTED</span>';
+  if(state === 'ROUTED')    return '<span class="pill rou">ROUTED</span>';
+  if(state === 'CANCELLED') return '<span class="pill down">CANCELLED</span>';
+  return '<span class="pill other">' + escapeHTML(state) + '</span>';
+}
+
+function renderBar(data){
+  if(!data) return;
+  const tb = $('#barbody');
+  const cmds = data.commands || [];
+  const counts = data.counts || {};
+  $('#barcounts').textContent = (data.total ?? cmds.length);
+  $('#barcounts').title = 'SUBMITTED: ' + (counts.SUBMITTED||0) + ' · ROUTED: ' + (counts.ROUTED||0)
+    + ' · DECIDED: ' + (counts.DECIDED||0) + ' · CANCELLED: ' + (counts.CANCELLED||0);
+  if(!cmds.length){
+    tb.innerHTML = '<tr><td colspan="5" class="empty">No commands yet — capture an intent above</td></tr>';
+    return;
+  }
+  tb.innerHTML = cmds.map(c=>{
+    const intent = escapeHTML((c.intent||'').length > 60 ? (c.intent).slice(0,60)+'…' : c.intent);
+    const decision = c.state === 'DECIDED'
+      ? barStatePill(c.state, c.allow) + '<div class="bar-reason" title="' + escapeHTML(c.reason||'') + '">' + escapeHTML(c.reason||'') + '</div>'
+      : barStatePill(c.state, c.allow);
+    // Route/cancel actions only for live commands (44px-touch rows: the
+    // action cell keeps two compact buttons; SUBMITTED/ROUTED only).
+    let actions = '';
+    if(c.state === 'SUBMITTED' || c.state === 'ROUTED'){
+      actions = '<button class="bar-act" data-barroute="' + escapeHTML(c.id) + '">route</button> '
+              + '<button class="bar-act danger" data-barcancel="' + escapeHTML(c.id) + '">cancel</button>';
+    }
+    const ts = (c.updated_at||'').replace('T',' ').replace(/Z$/,'');
+    return '<tr><td title="' + escapeHTML(c.intent||'') + '">' + intent + '</td>'
+      + '<td style="color:var(--muted);font-size:11px">' + escapeHTML(c.agent_id||'—') + '<br>' + escapeHTML(c.capability||'—') + '</td>'
+      + '<td>' + decision + '</td>'
+      + '<td style="color:var(--muted);font-size:11px">' + escapeHTML(ts) + '</td>'
+      + '<td style="white-space:nowrap">' + actions + '</td></tr>';
+  }).join('');
+}
+
+async function barPoll(){
+  if(!TOKEN) return;
+  const r = await fetch('/api/bar/commands?limit=50', {headers:{'Authorization':'Bearer '+TOKEN}});
+  if(r.status === 503){
+    $('#barbody').innerHTML = '<tr><td colspan="5" class="empty">Agent Fabric disabled — opt-in via SCARLIHQ_AGENTFABRIC_ENABLED=true + SCARLIHQ_AGENTFABRIC_COMMANDS_FILE</td></tr>';
+    $('#barcounts').textContent = 'off';
+    return;
+  }
+  if(r.status === 401){ return; } // global auth gate handles re-login
+  if(!r.ok) return;
+  const data = await r.json();
+  renderBar(data);
+  // Datalist: agents with ACTIVE sessions (picker convenience).
+  const s = await fetch('/api/agent/sessions', {headers:{'Authorization':'Bearer '+TOKEN}});
+  if(s.ok){
+    const sd = await s.json();
+    const agents = [...new Set((sd.sessions||[]).filter(x=>x.state==='ACTIVE').map(x=>x.agent_id))];
+    $('#barAgents').innerHTML = agents.map(a=>'<option value="'+escapeHTML(a)+'">').join('');
+  }
+}
+
+async function barSubmit(){
+  const intent = $('#barIntent').value.trim();
+  const agent = $('#barAgent').value.trim();
+  const capability = $('#barCap').value;
+  if(!intent){ toast('Intent cannot be empty', true); return; }
+  if(!agent){ toast('Agent cannot be empty (kind.name)', true); return; }
+  const btn = $('#barSend');
+  btn.disabled = true;
+  try{
+    const r = await fetch('/api/bar/commands', {
+      method:'POST',
+      headers:{'Authorization':'Bearer '+TOKEN, 'Content-Type':'application/json'},
+      body: JSON.stringify({intent, agent_id: agent, capability})
+    });
+    if(r.status === 401){ showAuth('Token rejected — re-enter SCARLIHQ_TOKEN'); return; }
+    const body = await r.json().catch(()=>({}));
+    if(!r.ok){
+      toast('Bar: ' + (body.error||('HTTP '+r.status)), true);
+      return;
+    }
+    if(body.state === 'DECIDED'){
+      toast(body.allow ? 'Command '+body.id.slice(0,12)+'… ALLOWED — ' + body.reason : 'Command '+body.id.slice(0,12)+'… DENIED — ' + body.reason, !body.allow);
+    }else{
+      toast('Intent captured as '+body.id.slice(0,12)+'… (SUBMITTED — no ACTIVE session; route when live)');
+    }
+    $('#barIntent').value = '';
+    barPoll();
+  }catch(e){
+    toast('Bar: request failed', true);
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+async function barAction(id, kind){
+  try{
+    const r = await fetch('/api/bar/commands/'+kind, {
+      method:'POST',
+      headers:{'Authorization':'Bearer '+TOKEN, 'Content-Type':'application/json'},
+      body: JSON.stringify({command_id: id})
+    });
+    if(r.status === 401){ showAuth('Token rejected — re-enter SCARLIHQ_TOKEN'); return; }
+    const body = await r.json().catch(()=>({}));
+    if(!r.ok){
+      toast('Bar '+kind+': ' + (body.error||('HTTP '+r.status)), true);
+      return;
+    }
+    toast(kind === 'route'
+      ? (body.state === 'DECIDED' ? (body.allow ? 'Routed — ALLOWED: '+body.reason : 'Routed — DENIED: '+body.reason) : 'Routed — '+body.state)
+      : 'Command cancelled');
+    barPoll();
+  }catch(e){
+    toast('Bar '+kind+': request failed', true);
+  }
+}
+
+$('#barSend').addEventListener('click', barSubmit);
+$('#barIntent').addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); barSubmit(); } });
+$('#barAgent').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); barSubmit(); } });
+// Delegated actions (route/cancel buttons live inside re-rendered rows).
+$('#barbody').addEventListener('click', e=>{
+  const route = e.target.closest('[data-barroute]');
+  const cancel = e.target.closest('[data-barcancel]');
+  if(route){ barAction(route.getAttribute('data-barroute'), 'route'); }
+  else if(cancel){ barAction(cancel.getAttribute('data-barcancel'), 'cancel'); }
+});
+
 // v18.7.5 P1: Dynamic version from /api/health (was: hardcoded v17.9.9 in HTML).
 // The backend's /api/health returns {"version":"v18.7.x"} with the version
 // injected via -ldflags -X main.Version from the VERSION file (single source
@@ -473,6 +659,8 @@ function initApp(){
     connectWS();
     pollStatus();
     setInterval(pollStatus, 5000);
+    barPoll();            // v19.5.0: ScarliBar command status (5s polling)
+    setInterval(barPoll, 5000);
   }).catch(()=>{
     // Backend down — show dashboard anyway (will show stale/empty data)
     hideAuth();

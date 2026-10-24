@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoZoHuJa/OS/scarlihq/internal/agentfabric"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/agentkernel"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/gaming"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
@@ -22,7 +23,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.4.6"
+var Version = "19.5.0"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -170,6 +171,9 @@ type Handler struct {
 	// AK-4 (v19.4.5): append-only audit sink — nil until
 	// ConfigureAgentAudit is called (separate opt-in; 503 without it).
 	agentAudit *agentkernel.AuditSink
+	// BF-1 (v19.5.0): Agent Fabric command store (ScarliBar backend) —
+	// nil until ConfigureAgentFabric is called (opt-in; 503 without it).
+	agentFabric *agentfabric.CommandStore
 }
 
 // NewHandler creates a new API handler.
@@ -220,6 +224,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// (last N lines, newest first), read-only, 503 until the sink is
 	// configured (own opt-in: SCARLIHQ_AGENT_AUDIT_FILE).
 	mux.HandleFunc("/api/agent/audit", h.auth(h.agentAuditRoute))
+
+	// BF-1 (v19.5.0): Agent Fabric / ScarliBar command surface — intent
+	// capture + user-visible command status (P4 ownership). All behind
+	// the standard Bearer auth; 503 until the fabric is configured.
+	mux.HandleFunc("/api/bar/commands", h.auth(h.barCommands))
+	mux.HandleFunc("/api/bar/commands/route", h.auth(h.barCommandRoute))
+	mux.HandleFunc("/api/bar/commands/cancel", h.auth(h.barCommandCancel))
 }
 
 // auth middleware: validates Bearer token header only.

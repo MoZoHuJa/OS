@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.4.6 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.5.0 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.4.6</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.5.0</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.4.6-B87333?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.5.0-B87333?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-D4A574?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-A8C5D4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-D4A574?style=flat-square" /></a>
@@ -59,14 +59,15 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.4.6 (Agent Kernel AK-5 — compute intake; v19.4.x line COMPLETE) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.5.0 (Agent Fabric BF-1 — ScarliBar command lifecycle; Phase B OPEN) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
-### 📑 Changelog Index (v19.4.x / v19.3.x / v19.2.x)
+### 📑 Changelog Index (v19.5.x / v19.4.x / v19.3.x / v19.2.x)
 
 Chronological, newest first. Each entry links to its tag; entries with a dedicated README section are marked 📄.
 
 | Version | One line | Reference |
 |---------|----------|-----------|
+| **v19.5.0** | Agent Fabric BF-1 (Phase B opens): ScarliBar command lifecycle — intent capture persisted FIRST (an intent is never lost, even with no live agent session), deterministic routing (named or newest ACTIVE session), kernel-decided status (allow AND deny are both DECIDED with the fired rule — denial-is-200 carried into user-visible status), audit-before-serve (fail-closed), persisted bounded history (commands.json, 0600/0700, atomic writes, 512 bound), ScarliBar dashboard panel + `/api/bar/commands` surface | 📄 [What's New](#-whats-new-in-v1950--agent-fabric-bf-1-scarlibar-command-lifecycle) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.5.0) |
 | **v19.4.6** | Agent Kernel AK-5 (line COMPLETE): agent-gated compute intake — `POST /api/agent/sessions/compute` chains kernel evaluation (denial-is-200, kill-switch on next call) → registry-declared owner principal (registry REQUIRED — spoofable caller-supplied owners rejected) → workload-bridge ownership enforcement (403 on mismatch); every attempt audited with allocation id + outcome | 📄 [What's New](#-whats-new-in-v1946--agent-kernel-ak-5-compute-intake--line-complete) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.6) |
 | **v19.4.5** | Agent Kernel AK-4: append-only audit sink (JSONL, 0600/0700, flock+fsync per line), evaluations persisted BEFORE the decision is served (fail-closed), admin acts audited after persist (honest ordering), bounded read surface `GET /api/agent/audit` with malformed lines reported not hidden | 📄 [What's New](#-whats-new-in-v1945--agent-kernel-ak-4-audit-sink) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.5) |
 | **v19.4.4** | Agent Kernel AK-3: persisted admin-owned grant registry (tombstone revocations, atomic writes, fail-closed load, 0600/0700 tamper discipline, bounded 256/64), admin disable/enable kill-switches effective on the next evaluation, user_tokens principal-space tie-in, registry-mode sessions reject request-supplied grants; legacy AK-2 mode unchanged | 📄 [What's New](#-whats-new-in-v1944--agent-kernel-ak-3-grant-registry) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.4.4) |
@@ -122,6 +123,36 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.5.0 — Agent Fabric BF-1 (ScarliBar Command Lifecycle)
+
+**Fáza B sa otvára nad uzavretou Agent Kernel linkou (v19.4.6).** ScarliBar
+je vstupný bod zámerov („povedz agentovi, ČO chceš“) a Agent Fabric je
+stroj, ktorý zachytený zámer premení na nasmérovaný, kernelom rozhodnutý,
+používateľovi viditeľný príkaz. P4 kontrakt: ScarliBar vlastní intent
+capture + command status — NEVLASTNÍ privilégia ani exekúciu. V BF-1 nie
+je nikde žiadne LLM — deterministické jadro prvé („LLM navrhuje, politika
+rozhoduje“ — LLM vrstva príde s Fázou C a bude tomuto fabricu len
+navrhovať).
+
+| Koncept | Zmluva |
+|---|---|
+| **Intent sa nikdy nestratí** | POST `/api/bar/commands` perzistuje príkaz ešte PRED akýmkoľvek routingom — aj bez ACTIVE session je zámer zachytený (SUBMITTED, „awaiting routing") |
+| Command lifecycle | `SUBMITTED → ROUTED → DECIDED` (+ `CANCELLED` z SUBMITTED/ROUTED; `ROUTED→ROUTED` re-bind; DECIDED/CANCELLED terminálne; backwards clock odmietnutý) |
+| Deterministický routing | pomenovaná session (musí patriť agentovi a byť ACTIVE) alebo najnovšia ACTIVE session agenta — žiadne skryté voľby |
+| **Denial-is-a-decision** | allow AJ deny sú DECIDED príkazy s vypáleným pravidlom kernelu — denial-is-200 prenesený do používateľovi viditeľného statusu |
+| Audit-before-serve | evaluate riadok do audit sinku PRED prechodom na DECIDED (fail-closed 500 → príkaz zostáva ROUTED, re-route); cross-file atomicita sa NEtvrdí (P4 inv. 4) — korelácia = session id |
+| Perzistencia | `commands.json` (schema v1, 0600/0700 fail-closed load, atomic tmp+rename s rollbackom, bound 512 — rotácia je operátorský akt; príkazy sa nikdy nemažú — súbor JE história) |
+| ScarliBar panel | karta v existujúcom dashboarde (rovnaký token gate): intent input + agent datalist z ACTIVE sessioní + closed-enumeration capability select + Send; tabuľka newest-first s kernel reason; route/cancel akcie (44px touch); 5s REST polling; všetko escapované |
+
+Opt-in: `SCARLIHQ_AGENTFABRIC_ENABLED=true` +
+`SCARLIHQ_AGENTFABRIC_COMMANDS_FILE` (+ kernel povinný — Fatal bez neho;
+fabric nemá samostatný režim). 23. smoke check s overenou negatívnou
+kontrolou. Čestné non-goals v `docs/AGENT_FABRIC_BF1_DESIGN.md`: ALLOWED
+príkaz je rozhodnutie, nie exekúcia (exekúcia príde s agent runtime
+BF-3+); bez submitter identity (single-principal deploymenty).
 
 ---
 
@@ -694,10 +725,11 @@ scarlix-smoke-test.sh         → online: 18 PASS + 0 FAIL + 0 WARN (14 checks)
 | Agent Kernel grant registry (AK-3) | **TESTED** (v19.4.4) | persisted admin-owned grants (`grants.json`, 0600/0700, atomic temp+rename, tombstones — the file is the history), bounded 256/64, fail-closed load (malformed/tampered/loose perms abort startup), user_tokens principal-space tie-in, admin disable/enable kill-switches effective on the next evaluation, registry-mode sessions reject request-supplied grants; opt-in `SCARLIHQ_AGENT_GRANTS_FILE` + `SCARLIHQ_AGENT_PRINCIPALS`; smoke check 20 w/ verified negative control |
 | Agent Kernel audit sink (AK-4) | **TESTED** (v19.4.5) | append-only JSONL (0600/0700 fail-closed construction, flock+fsync per line, validated lines, append-only bytes — history survives restarts), evaluations persisted before serving (fail-closed), admin acts audited after persist (honest ordering), bounded read surface w/ malformed lines reported; opt-in `SCARLIHQ_AGENT_AUDIT_FILE`; smoke check 21 w/ verified negative control |
 | Agent Kernel compute intake (AK-5) | **TESTED** (v19.4.6) | `POST /api/agent/sessions/compute`: kernel-gated (denial-is-200, kill-switch next-call), registry-required principal mapping (spoofable legacy owners rejected), bridge ownership enforcement (403/409 mapping parity), audited attempts w/ allocation+outcome; smoke check 22 w/ verified negative control |
+| Agent Fabric commands (BF-1) | **TESTED** (v19.5.0) | `internal/agentfabric` + `/api/bar/commands` (submit/list/route/cancel, auth-gated, 503 bez kernelu): intent capture persisted first (never lost), deterministic routing (named/newest ACTIVE), kernel-decided status (denial-is-a-decision), audit-before-serve fail-closed, persisted bounded history (commands.json 0600/0700, atomic, 512); ScarliBar dashboard panel; opt-in `SCARLIHQ_AGENTFABRIC_ENABLED` + `_COMMANDS_FILE`; smoke check 23 w/ verified negative control |
 | Agent Kernel line | **COMPLETE** (v19.4.0–v19.4.6) | AK-1…AK-5 all merged, tagged, released — the deterministic core (identity, capabilities, sessions, grants, audit, compute intake) |
 | Gaming stack integration | **TESTED** (v19.3.1) + owner-attested host run | profile-based `scarlix-gaming-install` (never removes), one shared manifest, read-only `/api/gaming` + dashboard card, smoke checks 15/16; `gaming/README.md` |
 
-**Theme status:** Compute Fabric is **software-complete** (Phases 2–7 TESTED; Phase 8–9 regression automation green, race tests, 19 Go packages). The **Agent Kernel theme (v19.4.x) is COMPLETE**: AK-1 foundation (v19.4.0) · AK-2 sessions + REST surface (v19.4.1) · AK-3 grant registry (v19.4.4) · AK-4 audit sink (v19.4.5) · AK-5 compute intake (v19.4.6) — all merged, tagged, CI-green, released. v19.4.2 was a dependency-pin-hygiene release; v19.4.3 the KpK review remediation. Target-host hardware acceptance per `docs/HARDWARE_ACCEPTANCE_PROTOCOL.md` is **OPEN** (KPK-06) — CI green ≠ hardware verified. “LLM navrhuje, politika rozhoduje.” **Next theme (Fáza B): ScarliBar MVP + Agent Fabric (v19.5.x).**
+**Theme status:** Compute Fabric is **software-complete** (Phases 2–7 TESTED; Phase 8–9 regression automation green, race tests, 19 Go packages). The **Agent Kernel theme (v19.4.x) is COMPLETE**: AK-1 foundation (v19.4.0) · AK-2 sessions + REST surface (v19.4.1) · AK-3 grant registry (v19.4.4) · AK-4 audit sink (v19.4.5) · AK-5 compute intake (v19.4.6) — all merged, tagged, CI-green, released. v19.4.2 was a dependency-pin-hygiene release; v19.4.3 the KpK review remediation. **Agent Fabric theme (v19.5.x) is OPEN**: BF-1 command lifecycle + ScarliBar panel (v19.5.0) done — BF-2 agent workspaces, BF-3 coding/research agent runtimes, BF-4 approvals, BF-5 phase closure follow. Target-host hardware acceptance per `docs/HARDWARE_ACCEPTANCE_PROTOCOL.md` is **OPEN** (KPK-06) — CI green ≠ hardware verified. “LLM navrhuje, politika rozhoduje.”
 
 **v19.1.16 → v19.1.20 in one line each:** .16 heredoc P0 fix + security hardening · .17 fish `agent.env.fish` hardening · .18 audit closure + secret hardening · .19 audit closure + portable base64 · .20 mutation-hardened smoke guard.
 
