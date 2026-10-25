@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time" // v18.6 P1: explicit server timeouts
 
@@ -24,7 +25,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.5.0"
+var Version = "19.5.1"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -190,7 +191,29 @@ func main() {
 		if err := apiHandler.ConfigureAgentFabric(fabricStore); err != nil {
 			log.Fatalf("agent fabric configuration failed: %v", err)
 		}
+		// BF-2 (v19.5.1): the workspace store rides the fabric opt-in — no
+		// separate flag. Its file defaults to workspaces.json NEXT TO the
+		// commands file (same 0700 directory, same tamper discipline);
+		// SCARLIHQ_AGENTFABRIC_WORKSPACES_FILE overrides the location for
+		// operators who want the stores on separate volumes. Fail-closed
+		// load like every persisted store — a tampered workspaces file
+		// aborts startup, it never degrades into "some workspaces work".
+		workspacesFile := strings.TrimSpace(os.Getenv("SCARLIHQ_AGENTFABRIC_WORKSPACES_FILE"))
+		if workspacesFile == "" {
+			workspacesFile = filepath.Join(filepath.Dir(commandsFile), "workspaces.json")
+		}
+		wsStore, err := agentfabric.NewWorkspaceStore(workspacesFile, agentfabric.DefaultMaxWorkspaces)
+		if err != nil {
+			log.Fatalf("agent fabric workspace store construction failed: %v", err)
+		}
+		if err := wsStore.Load(); err != nil {
+			log.Fatalf("agent fabric workspace store load failed: %v (fix the file or archive it deliberately — never run on a tampered workspace history)", err)
+		}
+		if err := apiHandler.ConfigureAgentWorkspaces(wsStore); err != nil {
+			log.Fatalf("agent fabric workspace configuration failed: %v", err)
+		}
 		log.Printf("Agent Fabric command API enabled (ScarliBar backend; commands file: %s; bound %d records — the file is the history, rotate deliberately)", commandsFile, agentfabric.DefaultMaxCommands)
+		log.Printf("Agent Fabric workspace API enabled (workspaces file: %s; bound %d workspaces / %d sessions each — ARCHIVED is the terminal tombstone)", workspacesFile, agentfabric.DefaultMaxWorkspaces, agentfabric.MaxSessionsPerWorkspace)
 	} else {
 		log.Printf("Agent Fabric command API disabled; set SCARLIHQ_AGENTFABRIC_ENABLED=true (requires the agent kernel + SCARLIHQ_AGENTFABRIC_COMMANDS_FILE)")
 	}

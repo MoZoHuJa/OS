@@ -18,11 +18,19 @@ import (
 )
 
 // newFabricTestServer builds a mux with ALL routes registered and the
-// Agent Kernel (legacy mode) + Agent Fabric configured — the BF-1 fixture
-// (the established agent-kernel test-server pattern).
+// Agent Kernel (legacy mode) + Agent Fabric (commands + workspaces)
+// configured — the BF-2 fixture (the established agent-kernel test-server
+// pattern) on its own fresh temp dir.
 func newFabricTestServer(t *testing.T) (*http.ServeMux, *Handler) {
 	t.Helper()
 	dir := t.TempDir()
+	return newFabricTestServerOnDir(t, dir)
+}
+
+// newFabricTestServerOnDir is the same fixture over an EXPLICIT directory
+// — the reload/restart tests point a second handler at the same files.
+func newFabricTestServerOnDir(t *testing.T, dir string) (*http.ServeMux, *Handler) {
+	t.Helper()
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatalf("chmod temp dir: %v", err)
 	}
@@ -47,6 +55,18 @@ func newFabricTestServer(t *testing.T) (*http.ServeMux, *Handler) {
 	}
 	if err := h.ConfigureAgentFabric(fabricStore); err != nil {
 		t.Fatalf("configure fabric: %v", err)
+	}
+	// BF-2: the workspace store rides the fabric wiring (the main.go
+	// contract — no separate opt-in; the two stores arrive together).
+	wsStore, err := agentfabric.NewWorkspaceStore(filepath.Join(dir, "workspaces.json"), agentfabric.DefaultMaxWorkspaces)
+	if err != nil {
+		t.Fatalf("workspace store: %v", err)
+	}
+	if err := wsStore.Load(); err != nil {
+		t.Fatalf("workspace load: %v", err)
+	}
+	if err := h.ConfigureAgentWorkspaces(wsStore); err != nil {
+		t.Fatalf("configure workspaces: %v", err)
 	}
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)

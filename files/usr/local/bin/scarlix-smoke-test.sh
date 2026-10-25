@@ -1548,6 +1548,117 @@ check_23_agent_fabric_commands() {
 }
 
 # ===========================================================================
+# [24] Agent Fabric workspaces (BF-2, v19.5.1)
+# ===========================================================================
+# Deterministic, source-level: the workspace store follows the grants.json/
+# commands.json discipline; the isolation contract (one workspace per
+# session, member-only routing, ARCHIVED terminal tombstone) is wired end
+# to end — store, API surface, main.go wiring, compose opt-in, dashboard.
+check_24_agent_fabric_workspaces() {
+    echo "--- [24] Agent Fabric workspaces (BF-2): isolation contexts, member-only routing, terminal archive ---"
+    local ws_store="$REPO_DIR/scarlihq/internal/agentfabric/wstore.go"
+    local ws_model="$REPO_DIR/scarlihq/internal/agentfabric/workspace.go"
+    local api_ws="$REPO_DIR/scarlihq/internal/api/agentfabric_ws.go"
+    local api_cmd="$REPO_DIR/scarlihq/internal/api/agentfabric.go"
+    local rest_src="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+    local dashboard="$REPO_DIR/scarlihq/cmd/scarlihq/frontend/dist/index.html"
+
+    if [[ ! -f "$ws_store" || ! -f "$ws_model" ]]; then
+        fail "agent fabric workspace store/model missing (BF-2, v19.5.1)"
+        return
+    fi
+
+    # Fail-closed load: schema version + permissions discipline (the store precedent).
+    if ! grep -q "workspacesFileVersion" "$ws_store" || ! grep -q "explicit migration required" "$ws_store"; then
+        fail "workspace store must version its schema and reject unknown versions (fail-closed load)"
+        return
+    fi
+    if ! grep -q "ErrWorkspaceFilePermissions" "$ws_store"; then
+        fail "workspace store must fail-closed on loose file/dir permissions (tamper discipline)"
+        return
+    fi
+    # Atomic persistence: temp file in the same directory + rename.
+    if ! grep -q "CreateTemp" "$ws_store" || ! grep -q "os.Rename" "$ws_store"; then
+        fail "workspace store must persist atomically (temp + rename, the grants.json discipline)"
+        return
+    fi
+    # Bounded stores — no unbounded growth.
+    if ! grep -q "DefaultMaxWorkspaces" "$ws_store" || ! grep -q "ErrWorkspaceLimit" "$ws_store"; then
+        fail "workspace store must be bounded (DefaultMaxWorkspaces + ErrWorkspaceLimit)"
+        return
+    fi
+    if ! grep -q "MaxSessionsPerWorkspace" "$ws_store" || ! grep -q "ErrSessionLimit" "$ws_store"; then
+        fail "workspace membership must be bounded (MaxSessionsPerWorkspace + ErrSessionLimit)"
+        return
+    fi
+    # One workspace per session — the unambiguous routing namespace (load-time
+    # cross-record check + join-time claim check).
+    if ! grep -q "ErrSessionClaimed" "$ws_store" || ! grep -q "claimed by both" "$ws_store"; then
+        fail "workspace store must enforce one workspace per session (claim check + load-time duplicate-claim rejection)"
+        return
+    fi
+    # ARCHIVED is the terminal tombstone: closed enumeration, no membership
+    # changes, no new submissions, routing closed.
+    if ! grep -q "WorkspaceArchived" "$ws_model" || ! grep -q "terminal" "$ws_model"; then
+        fail "workspace state must be a closed enumeration with ARCHIVED terminal"
+        return
+    fi
+    if ! grep -q "ErrWorkspaceState" "$ws_store"; then
+        fail "workspace store must reject mutations on ARCHIVED workspaces (ErrWorkspaceState)"
+        return
+    fi
+    # The isolation contract at the API layer: scoped commands resolve ONLY
+    # member sessions of an ACTIVE workspace.
+    if ! grep -q "resolveWorkspaceScopedSession" "$api_ws" || ! grep -q "ws.IsMember" "$api_ws"; then
+        fail "the API layer must resolve scoped routing through workspace membership only"
+        return
+    fi
+    # ARCHIVED refusals: submit/route check the state explicitly (409), and
+    # the workspace surface maps the store's ErrWorkspaceState to 409s.
+    if ! grep -q "WorkspaceArchived" "$api_cmd"; then
+        fail "command submit/route must refuse ARCHIVED workspaces (409 state conflicts — WorkspaceArchived checks)"
+        return
+    fi
+    if ! grep -q "ErrWorkspaceState" "$api_ws"; then
+        fail "the workspace surface must map ARCHIVED-state conflicts to 409 (ErrWorkspaceState)"
+        return
+    fi
+    # Submission carries the optional scope (additive — the BF-1 unscoped
+    # behavior must stay the default).
+    if ! grep -q 'workspace_id,omitempty' "$api_cmd"; then
+        fail "command submission must carry the optional workspace scope (workspace_id)"
+        return
+    fi
+    # main.go wiring: the workspace store rides the fabric opt-in with its own
+    # overridable file (default next to the commands file).
+    if ! grep -q "SCARLIHQ_AGENTFABRIC_WORKSPACES_FILE" "$main_src" || ! grep -q "ConfigureAgentWorkspaces" "$main_src"; then
+        fail "main.go must wire the workspace store into the fabric opt-in (SCARLIHQ_AGENTFABRIC_WORKSPACES_FILE + ConfigureAgentWorkspaces)"
+        return
+    fi
+    # Auth-gated routes (4 surfaces).
+    for route in '/api/bar/workspaces"' '/api/bar/workspaces/archive"' '/api/bar/workspaces/sessions"' '/api/bar/workspaces/sessions/leave"'; do
+        if ! grep -q "$route" "$rest_src"; then
+            fail "rest.go must register the auth-gated route $route"
+            return
+        fi
+    done
+    # Compose carries the documented opt-in (env + mount note).
+    if ! grep -q "SCARLIHQ_AGENTFABRIC_WORKSPACES_FILE" "$compose"; then
+        fail "compose must document the workspace store override (SCARLIHQ_AGENTFABRIC_WORKSPACES_FILE)"
+        return
+    fi
+    # Dashboard: the scope selector + the workspaces card.
+    if ! grep -q 'id="barWs"' "$dashboard" || ! grep -q 'id="wsbody"' "$dashboard"; then
+        fail "the dashboard must carry the workspace scope selector and the workspaces card"
+        return
+    fi
+
+    pass "agent fabric workspaces: isolation contexts (one workspace per session), member-only scoped routing, ARCHIVED terminal tombstone, persisted bounded stores (fail-closed load), auth-gated routes, opt-in wiring"
+}
+
+# ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
@@ -1577,6 +1688,7 @@ SMOKE_CHECKS=(
     check_21_agent_kernel_audit
     check_22_agent_kernel_compute
     check_23_agent_fabric_commands
+    check_24_agent_fabric_workspaces
 )
 
 run_check() {

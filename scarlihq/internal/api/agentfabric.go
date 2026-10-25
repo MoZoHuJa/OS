@@ -57,12 +57,16 @@ func (h *Handler) agentFabricDisabled(w http.ResponseWriter) bool {
 // barCommandSubmitRequest: one JSON object, unknown fields rejected.
 // SessionID is optional: empty means "resolve the newest ACTIVE session
 // of the agent"; absent session → the command is captured SUBMITTED
-// (awaiting routing — the intent is never lost).
+// (awaiting routing — the intent is never lost). WorkspaceID (BF-2) is
+// optional: empty = unscoped (the BF-1 behavior); non-empty = the command
+// is submitted into that workspace's isolation scope and routes ONLY
+// through its member sessions.
 type barCommandSubmitRequest struct {
-	Intent     string `json:"intent"`
-	AgentID    string `json:"agent_id"`
-	Capability string `json:"capability"`
-	SessionID  string `json:"session_id,omitempty"`
+	Intent      string `json:"intent"`
+	AgentID     string `json:"agent_id"`
+	Capability  string `json:"capability"`
+	SessionID   string `json:"session_id,omitempty"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
 }
 
 type barCommandRouteRequest struct {
@@ -75,11 +79,13 @@ type barCommandCancelRequest struct {
 
 // barCommandView is the user-visible command status (P4: ScarliBar's
 // ownership). Decision fields are present exactly when state=DECIDED.
+// WorkspaceID is present exactly when the command is workspace-scoped.
 type barCommandView struct {
 	ID          string `json:"id"`
 	Intent      string `json:"intent"`
 	AgentID     string `json:"agent_id"`
 	Capability  string `json:"capability"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
 	SessionID   string `json:"session_id,omitempty"`
 	State       string `json:"state"`
 	Allow       *bool  `json:"allow,omitempty"`
@@ -97,6 +103,7 @@ func viewFromCommand(c agentfabric.CommandRecord) barCommandView {
 		Intent:      c.Intent,
 		AgentID:     string(c.AgentID),
 		Capability:  string(c.Capability),
+		WorkspaceID: c.WorkspaceID,
 		SessionID:   c.SessionID,
 		State:       string(c.State),
 		SubmittedAt: c.SubmittedAt.Format(time.RFC3339),
@@ -214,7 +221,8 @@ func (h *Handler) barCommandMutationError(w http.ResponseWriter, err error) {
 	}
 }
 
-// barCommands handles GET (list, newest-first, bounded) and POST (submit).
+// barCommands handles GET (list, newest-first, bounded; optional
+// workspace_id filter) and POST (submit).
 func (h *Handler) barCommands(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -230,7 +238,51 @@ func (h *Handler) barCommands(w http.ResponseWriter, r *http.Request) {
 			}
 			limit = n
 		}
-		records := h.agentFabric.ListLast(limit)
+		// BF-2: optional workspace scope filter. "" (absent) = all commands
+		// (the BF-1 surface). A well-formed non-empty id selects that
+		// workspace's commands — the special literal "unscoped" selects the
+		// unscoped namespace (the dashboard's "— unscoped —" view).
+		scope := strings.TrimSpace(r.URL.Query().Get("workspace_id"))
+		var scopeID agentfabric.WorkspaceID
+		switch {
+		case scope == "":
+			// all commands
+		case scope == "unscoped":
+			scopeID = agentfabric.WorkspaceID("") // sentinel match on empty scope
+		default:
+			scopeID = agentfabric.WorkspaceID(scope)
+			if err := scopeID.Validate(); err != nil {
+				writeJSONError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			// The filter must reference a real workspace — a typo'd id is a
+			// client error, not an silently-empty list.
+			if h.agentWorkspaces == nil {
+				writeJSONError(w, http.StatusServiceUnavailable, "agent fabric workspaces are disabled")
+				return
+			}
+			if _, ok := h.agentWorkspaces.Get(scopeID); !ok {
+				writeJSONError(w, http.StatusNotFound, "unknown workspace")
+				return
+			}
+		}
+		if scope == "" {
+			records := h.agentFabric.ListLast(limit)
+			views := make([]barCommandView, 0, len(records))
+			for _, rec := range records {
+				views = append(views, viewFromCommand(rec))
+			}
+			writeJSON(w, map[string]interface{}{
+				"commands":   views,
+				"count":      len(views),
+				"counts":     h.agentFabric.Counts(),
+				"limit":      limit,
+				"store_path": h.agentFabric.Path(),
+				"total":      h.agentFabric.Count(),
+			})
+			return
+		}
+		records := h.agentFabric.ListLastWorkspace(limit, scopeID)
 		views := make([]barCommandView, 0, len(records))
 		for _, rec := range records {
 			views = append(views, viewFromCommand(rec))
@@ -238,10 +290,10 @@ func (h *Handler) barCommands(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{
 			"commands":   views,
 			"count":      len(views),
-			"counts":     h.agentFabric.Counts(),
+			"counts":     h.agentFabric.CountsWorkspace(scopeID),
 			"limit":      limit,
 			"store_path": h.agentFabric.Path(),
-			"total":      h.agentFabric.Count(),
+			"total":      h.agentFabric.CountWorkspace(scopeID),
 		})
 	case http.MethodPost:
 		h.barCommandSubmit(w, r)
@@ -264,6 +316,7 @@ func (h *Handler) barCommandSubmit(w http.ResponseWriter, r *http.Request) {
 	agent := agentkernel.AgentID(strings.TrimSpace(req.AgentID))
 	capability := agentkernel.Capability(strings.TrimSpace(req.Capability))
 	namedSession := strings.TrimSpace(req.SessionID)
+	workspaceID := agentfabric.WorkspaceID(strings.TrimSpace(req.WorkspaceID))
 
 	// Early validation for clean 400s (the store re-validates — defense
 	// in depth; the store is the authority).
@@ -285,26 +338,62 @@ func (h *Handler) barCommandSubmit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// BF-2: a workspace-scoped submission requires a REAL, ACTIVE
+	// workspace — checked BEFORE the intent is captured (a bad scope is a
+	// client error, like a bad capability; the never-lost contract covers
+	// routability, not malformed requests). An ARCHIVED workspace is a
+	// 409 state conflict: the isolation context is closed.
+	var scoped *agentfabric.WorkspaceRecord
+	if workspaceID != "" {
+		if err := workspaceID.Validate(); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if h.agentWorkspaces == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "agent fabric workspaces are disabled")
+			return
+		}
+		ws, ok := h.agentWorkspaces.Get(workspaceID)
+		if !ok {
+			writeJSONError(w, http.StatusNotFound, "unknown workspace")
+			return
+		}
+		if ws.State == agentfabric.WorkspaceArchived {
+			writeJSONError(w, http.StatusConflict, "workspace "+ws.ID+" is ARCHIVED — it accepts no new commands (its history stays visible)")
+			return
+		}
+		if namedSession != "" && !ws.IsMember(namedSession) {
+			writeJSONError(w, http.StatusBadRequest, "named session is not a member of workspace "+ws.ID+" — join it first (POST /api/bar/workspaces/sessions)")
+			return
+		}
+		scoped = &ws
+	}
 
 	// 1. Capture the intent — persisted BEFORE any routing attempt. An
 	//    intent is never lost, even when nothing is routable right now.
-	cmd, err := h.agentFabric.Submit(intent, agent, capability, time.Now().UTC())
+	cmd, err := h.agentFabric.Submit(intent, agent, capability, workspaceID, time.Now().UTC())
 	if err != nil {
 		h.barCommandMutationError(w, err)
 		return
 	}
 	id := agentfabric.CommandID(cmd.ID)
 
-	// 2. Resolve a routable session (named or newest ACTIVE). A named
-	//    session that is not ACTIVE for this agent is a client error —
-	//    the captured intent stays SUBMITTED (re-route when live).
-	sessionID := h.resolveActiveSession(agent, namedSession)
+	// 2. Resolve a routable session (named or newest ACTIVE; scoped
+	//    commands resolve only MEMBER sessions). A named session that is
+	//    not routable for this intent is a client error — the captured
+	//    intent stays SUBMITTED (re-route when live).
+	var sessionID string
+	if scoped != nil {
+		sessionID = h.resolveWorkspaceScopedSession(*scoped, agent, namedSession)
+	} else {
+		sessionID = h.resolveActiveSession(agent, namedSession)
+	}
 	if namedSession != "" && sessionID == "" {
 		writeJSONError(w, http.StatusBadRequest, "named session is not an ACTIVE session of this agent — the intent was captured as "+cmd.ID+" (SUBMITTED); re-route when a session is active")
 		return
 	}
 
-	// 3. No ACTIVE session: the intent is captured, status visible.
+	// 3. No routable session: the intent is captured, status visible.
 	if sessionID == "" {
 		w.WriteHeader(http.StatusCreated)
 		writeJSON(w, viewFromCommand(cmd))
@@ -322,7 +411,9 @@ func (h *Handler) barCommandSubmit(w http.ResponseWriter, r *http.Request) {
 
 // barCommandRoute re-attempts routing+evaluation for a SUBMITTED (or
 // ROUTED — re-bind) command: resolves the newest ACTIVE session of the
-// command's agent and runs the full route→evaluate→decide chain.
+// command's agent (workspace-scoped commands resolve only MEMBER
+// sessions of an ACTIVE workspace) and runs the full
+// route→evaluate→decide chain.
 func (h *Handler) barCommandRoute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "use POST")
@@ -348,10 +439,39 @@ func (h *Handler) barCommandRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := h.resolveActiveSession(cmd.AgentID, "")
-	if sessionID == "" {
-		writeJSONError(w, http.StatusConflict, "no ACTIVE session for agent "+string(cmd.AgentID)+" — start/activate a session first (POST /api/agent/sessions/transition)")
-		return
+	// BF-2: a workspace-scoped command routes only inside its scope — and
+	// only while that scope is ACTIVE. An ARCHIVED workspace closes
+	// routing for its live commands (they stay visible and cancellable).
+	var sessionID string
+	if cmd.WorkspaceID != "" {
+		if h.agentWorkspaces == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "agent fabric workspaces are disabled")
+			return
+		}
+		wsID := agentfabric.WorkspaceID(cmd.WorkspaceID)
+		ws, ok := h.agentWorkspaces.Get(wsID)
+		if !ok {
+			// Cannot happen through the API (submission validates existence)
+			// — but a hand-edited commands file could produce it. Fail
+			// closed: routing into a vanished scope is refused.
+			writeJSONError(w, http.StatusConflict, "workspace "+cmd.WorkspaceID+" does not exist — routing refused (fail-closed)")
+			return
+		}
+		if ws.State == agentfabric.WorkspaceArchived {
+			writeJSONError(w, http.StatusConflict, "workspace "+ws.ID+" is ARCHIVED — routing is closed (the command stays "+string(cmd.State)+", cancellable, visible)")
+			return
+		}
+		sessionID = h.resolveWorkspaceScopedSession(ws, cmd.AgentID, "")
+		if sessionID == "" {
+			writeJSONError(w, http.StatusConflict, "no ACTIVE member session for agent "+string(cmd.AgentID)+" in workspace "+ws.ID+" — join a session (POST /api/bar/workspaces/sessions) or activate one")
+			return
+		}
+	} else {
+		sessionID = h.resolveActiveSession(cmd.AgentID, "")
+		if sessionID == "" {
+			writeJSONError(w, http.StatusConflict, "no ACTIVE session for agent "+string(cmd.AgentID)+" — start/activate a session first (POST /api/agent/sessions/transition)")
+			return
+		}
 	}
 
 	decided, ok := h.routeAndDecide(w, id, sessionID)
