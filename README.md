@@ -697,7 +697,7 @@ scarlix-smoke-test.sh         → offline: 11 PASS + 1 WARN (registry skipped) �
 
 ### Process / hygiene (from the approving KpK audit)
 
-- **Pin freshness (P2-01):** scheduled CI workflow `pin-freshness.yml` re-downloads the Pi-Bolt installer weekly and compares the hash with the shipped pin — drift fails the job. README records: **Pi-Bolt pin last verified: 2026-10-20**.
+- **Pin freshness (P2-01):** scheduled CI workflow `pin-freshness.yml` re-downloads the Pi-Bolt installer weekly and compares the hash with the shipped pin — drift fails the job. README records: **Pi-Bolt pin last verified: 2026-10-25**.
 - **CleanupVerified semantics documented (P2-02):** SECURITY_MAP now states that `allocation RELEASED` implies **reservation-layer** verified cleanup; hardware proof is the verifier implementation's responsibility (production verifier in Phase 5 / host E2E).
 - **Temp cleanup (P3-01):** both Pi-Bolt temp copies (root + user) are removed on every success/failure/interrupt path (`EXIT`/`INT`/`TERM` traps + inline removal).
 - **RUNTIME_MAP (P3-04):** the `device_ids` **override model** is documented (base compose files stay untouched; `scarlix-mode` generates the single-GPU override).
