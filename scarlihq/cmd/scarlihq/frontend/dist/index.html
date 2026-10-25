@@ -91,7 +91,22 @@
   .pill.rou{background:rgba(6,182,212,.15);color:var(--cyan)}
   .bar-note{color:var(--muted);font-size:11px;margin-top:8px}
   .bar-reason{color:var(--muted);font-size:11px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  @media(max-width:640px){.bar-agent{width:100%}.bar-cap{width:100%}.bar-intent{min-width:100%}}
+  /* v19.5.1 (BF-2): workspace selector + workspace card */
+  .bar-ws{width:170px}
+  .ws-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .ws-row input,.ws-row select{padding:12px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:ui-monospace,monospace}
+  .ws-row input:focus,.ws-row select:focus{outline:none;border-color:var(--accent)}
+  .ws-name{flex:1;min-width:160px}
+  .ws-desc{flex:2;min-width:220px}
+  .ws-create{padding:12px 18px;min-height:44px;border:none;border-radius:8px;background:linear-gradient(135deg,var(--accent),#0c8a5e);color:#0b0e14;font-weight:700;cursor:pointer;font-size:13px}
+  .ws-create:hover{filter:brightness(1.1)}
+  .ws-create:disabled{opacity:.6;cursor:default}
+  .ws-sess{display:inline-flex;align-items:center;gap:4px;margin:2px 4px 2px 0;padding:3px 8px;border-radius:99px;background:rgba(6,182,212,.12);border:1px solid rgba(6,182,212,.25);font-size:10px;font-family:ui-monospace,monospace;color:var(--cyan)}
+  .ws-x{background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:0 2px;min-height:22px}
+  .ws-x:hover{color:var(--red)}
+  .ws-note{color:var(--muted);font-size:11px;margin-top:8px}
+  .ws-tag{color:var(--cyan);font-size:10px;font-family:ui-monospace,monospace}
+  @media(max-width:640px){.bar-agent{width:100%}.bar-cap{width:100%}.bar-intent{min-width:100%}.bar-ws{width:100%}.ws-name{min-width:100%}.ws-desc{min-width:100%}}
   @media(max-width:640px){header{flex-direction:column;align-items:flex-start}}
 </style>
 </head>
@@ -193,13 +208,35 @@
         <option value="compute.reserve">compute.reserve</option>
         <option value="compute.release">compute.release</option>
       </select>
+      <select class="bar-ws" id="barWs" title="Workspace scope — scoped intents route only through that workspace's member sessions">
+        <option value="">— unscoped —</option>
+      </select>
       <button class="bar-send" id="barSend">Send</button>
     </div>
     <table>
       <thead><tr><th>Intent</th><th>Agent · Capability</th><th>State</th><th>Decision</th><th></th></tr></thead>
       <tbody id="barbody"><tr><td colspan="5" class="empty">Waiting for fabric…</td></tr></tbody>
     </table>
-    <div class="bar-note" id="barnote">Commands are captured intents routed through the Agent Kernel — decisions are auditable, not executed (BF-1).</div>
+    <div class="bar-note" id="barnote">Commands are captured intents routed through the Agent Kernel — decisions are auditable, not executed (BF-1). Workspace scoping: BF-2.</div>
+  </div>
+
+  <!-- v19.5.1: Agent Workspaces — BF-2. Named isolation contexts: sessions
+       attach (one workspace per session), scoped commands route only
+       through members, ARCHIVED is the terminal tombstone (readable
+       history, closed routing). Data from /api/bar/workspaces (5s
+       polling). All dynamic fields escaped (XSS convention). -->
+  <div class="card" id="wscard">
+    <h2>Agent Workspaces <span class="pill other" id="wscount" style="margin-left:auto">…</span></h2>
+    <div class="ws-row">
+      <input class="ws-name" id="wsName" maxlength="64" placeholder="workspace name (≤64 chars)">
+      <input class="ws-desc" id="wsDesc" maxlength="256" placeholder="description (optional, ≤256 chars)">
+      <button class="ws-create" id="wsCreate">Create</button>
+    </div>
+    <table>
+      <thead><tr><th>Workspace</th><th>State</th><th>Sessions</th><th>Cmds</th><th></th></tr></thead>
+      <tbody id="wsbody"><tr><td colspan="5" class="empty">Waiting for fabric…</td></tr></tbody>
+    </table>
+    <div class="ws-note" id="wsnote">A session belongs to at most one workspace; scoped intents route ONLY through member sessions. ARCHIVED is terminal — history stays visible, routing closes.</div>
   </div>
 
   <footer>
@@ -516,8 +553,9 @@ function renderBar(data){
   const tb = $('#barbody');
   const cmds = data.commands || [];
   const counts = data.counts || {};
+  const scopeSel = $('#barWs').value || '';
   $('#barcounts').textContent = (data.total ?? cmds.length);
-  $('#barcounts').title = 'SUBMITTED: ' + (counts.SUBMITTED||0) + ' · ROUTED: ' + (counts.ROUTED||0)
+  $('#barcounts').title = (scopeSel ? 'workspace '+scopeSel.slice(0,12)+'… — ' : '') + 'SUBMITTED: ' + (counts.SUBMITTED||0) + ' · ROUTED: ' + (counts.ROUTED||0)
     + ' · DECIDED: ' + (counts.DECIDED||0) + ' · CANCELLED: ' + (counts.CANCELLED||0);
   if(!cmds.length){
     tb.innerHTML = '<tr><td colspan="5" class="empty">No commands yet — capture an intent above</td></tr>';
@@ -536,8 +574,9 @@ function renderBar(data){
               + '<button class="bar-act danger" data-barcancel="' + escapeHTML(c.id) + '">cancel</button>';
     }
     const ts = (c.updated_at||'').replace('T',' ').replace(/Z$/,'');
+    const wsTag = c.workspace_id ? '<br><span class="ws-tag" title="' + escapeHTML(c.workspace_id) + '">ws ' + escapeHTML(c.workspace_id.slice(3,15)) + '…</span>' : '';
     return '<tr><td title="' + escapeHTML(c.intent||'') + '">' + intent + '</td>'
-      + '<td style="color:var(--muted);font-size:11px">' + escapeHTML(c.agent_id||'—') + '<br>' + escapeHTML(c.capability||'—') + '</td>'
+      + '<td style="color:var(--muted);font-size:11px">' + escapeHTML(c.agent_id||'—') + '<br>' + escapeHTML(c.capability||'—') + wsTag + '</td>'
       + '<td>' + decision + '</td>'
       + '<td style="color:var(--muted);font-size:11px">' + escapeHTML(ts) + '</td>'
       + '<td style="white-space:nowrap">' + actions + '</td></tr>';
@@ -546,13 +585,19 @@ function renderBar(data){
 
 async function barPoll(){
   if(!TOKEN) return;
-  const r = await fetch('/api/bar/commands?limit=50', {headers:{'Authorization':'Bearer '+TOKEN}});
+  const scope = $('#barWs').value || '';
+  const q = scope ? ('?workspace_id=' + encodeURIComponent(scope) + '&limit=50') : '?limit=50';
+  const r = await fetch('/api/bar/commands' + q, {headers:{'Authorization':'Bearer '+TOKEN}});
   if(r.status === 503){
     $('#barbody').innerHTML = '<tr><td colspan="5" class="empty">Agent Fabric disabled — opt-in via SCARLIHQ_AGENTFABRIC_ENABLED=true + SCARLIHQ_AGENTFABRIC_COMMANDS_FILE</td></tr>';
     $('#barcounts').textContent = 'off';
     return;
   }
   if(r.status === 401){ return; } // global auth gate handles re-login
+  if(r.status === 404){ // selected workspace vanished (rotated file?)
+    $('#barWs').value = '';
+    return barPoll();
+  }
   if(!r.ok) return;
   const data = await r.json();
   renderBar(data);
@@ -569,26 +614,29 @@ async function barSubmit(){
   const intent = $('#barIntent').value.trim();
   const agent = $('#barAgent').value.trim();
   const capability = $('#barCap').value;
+  const workspace = $('#barWs').value || '';
   if(!intent){ toast('Intent cannot be empty', true); return; }
   if(!agent){ toast('Agent cannot be empty (kind.name)', true); return; }
   const btn = $('#barSend');
   btn.disabled = true;
   try{
+    const body = {intent, agent_id: agent, capability};
+    if(workspace) body.workspace_id = workspace;
     const r = await fetch('/api/bar/commands', {
       method:'POST',
       headers:{'Authorization':'Bearer '+TOKEN, 'Content-Type':'application/json'},
-      body: JSON.stringify({intent, agent_id: agent, capability})
+      body: JSON.stringify(body)
     });
     if(r.status === 401){ showAuth('Token rejected — re-enter SCARLIHQ_TOKEN'); return; }
-    const body = await r.json().catch(()=>({}));
+    const resp = await r.json().catch(()=>({}));
     if(!r.ok){
-      toast('Bar: ' + (body.error||('HTTP '+r.status)), true);
+      toast('Bar: ' + (resp.error||('HTTP '+r.status)), true);
       return;
     }
-    if(body.state === 'DECIDED'){
-      toast(body.allow ? 'Command '+body.id.slice(0,12)+'… ALLOWED — ' + body.reason : 'Command '+body.id.slice(0,12)+'… DENIED — ' + body.reason, !body.allow);
+    if(resp.state === 'DECIDED'){
+      toast(resp.allow ? 'Command '+resp.id.slice(0,12)+'… ALLOWED — ' + resp.reason : 'Command '+resp.id.slice(0,12)+'… DENIED — ' + resp.reason, !resp.allow);
     }else{
-      toast('Intent captured as '+body.id.slice(0,12)+'… (SUBMITTED — no ACTIVE session; route when live)');
+      toast('Intent captured as '+resp.id.slice(0,12)+'… (SUBMITTED — no routable member session; route when live)');
     }
     $('#barIntent').value = '';
     barPoll();
@@ -624,12 +672,153 @@ async function barAction(id, kind){
 $('#barSend').addEventListener('click', barSubmit);
 $('#barIntent').addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); barSubmit(); } });
 $('#barAgent').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); barSubmit(); } });
+$('#barWs').addEventListener('change', barPoll);
 // Delegated actions (route/cancel buttons live inside re-rendered rows).
 $('#barbody').addEventListener('click', e=>{
   const route = e.target.closest('[data-barroute]');
   const cancel = e.target.closest('[data-barcancel]');
   if(route){ barAction(route.getAttribute('data-barroute'), 'route'); }
   else if(cancel){ barAction(cancel.getAttribute('data-barcancel'), 'cancel'); }
+});
+
+// =========================================================================
+// v19.5.1 — Agent Workspaces (BF-2): named isolation contexts. Sessions
+// attach (one workspace per session); scoped intents route ONLY through
+// member sessions; ARCHIVED is terminal (readable history, closed routing).
+// All dynamic fields escaped (XSS convention). 5s polling like ScarliBar.
+// =========================================================================
+let WS_ACTIVE_SESSIONS = []; // ACTIVE kernel sessions for the join picker
+
+function wsStatePill(state){
+  return state === 'ACTIVE'
+    ? '<span class="pill up">ACTIVE</span>'
+    : '<span class="pill down">ARCHIVED</span>';
+}
+
+function renderWorkspaces(data){
+  if(!data) return;
+  const tb = $('#wsbody');
+  const list = data.workspaces || [];
+  $('#wscount').textContent = (data.total ?? list.length);
+  $('#wscount').title = 'workspaces file: ' + (data.store_path || '—');
+
+  // Keep the scope selector in sync with the store (preserve selection).
+  const sel = $('#barWs');
+  const current = sel.value;
+  const known = [''];
+  for(const ws of list){ known.push(ws.id); }
+  if(!known.includes(current)){ sel.value = ''; }
+  sel.innerHTML = '<option value="">— unscoped —</option>'
+    + list.map(ws=>'<option value="'+escapeHTML(ws.id)+'"'+(current===ws.id?' selected':'')+'>'+escapeHTML(ws.name)+'</option>').join('');
+
+  if(!list.length){
+    tb.innerHTML = '<tr><td colspan="5" class="empty">No workspaces — create one above</td></tr>';
+    return;
+  }
+  tb.innerHTML = list.map(ws=>{
+    const desc = ws.description ? '<div class="bar-reason" title="'+escapeHTML(ws.description)+'">'+escapeHTML(ws.description)+'</div>' : '';
+    const sessions = (ws.sessions||[]).map(sid=>
+      '<span class="ws-sess" title="'+escapeHTML(sid)+'">'+escapeHTML(sid.slice(4,16))+'…'
+      + (ws.state === 'ACTIVE' ? ' <button class="ws-x" data-wsleave="'+escapeHTML(ws.id)+'|'+escapeHTML(sid)+'" title="detach this session">✕</button>' : '')
+      + '</span>').join('') || '<span style="color:var(--muted);font-size:11px">no members</span>';
+    // Join picker: ACTIVE sessions (claimed ones are rejected by the server
+    // with a 409 — the toast explains; the client cannot know claims).
+    let actions = '';
+    if(ws.state === 'ACTIVE'){
+      const opts = WS_ACTIVE_SESSIONS.map(s=>'<option value="'+escapeHTML(s.session_id)+'">'+escapeHTML(s.agent_id+' · '+s.session_id.slice(4,16))+'…</option>').join('');
+      actions = '<select class="ws-joinsel" data-ws="'+escapeHTML(ws.id)+'" style="max-width:190px">'
+        + '<option value="">pick a session…</option>' + opts + '</select> '
+        + '<button class="bar-act" data-wsjoin="'+escapeHTML(ws.id)+'">join</button> '
+        + '<button class="bar-act danger" data-wsarch="'+escapeHTML(ws.id)+'">archive</button>';
+    }else{
+      actions = '<span style="color:var(--muted);font-size:11px">terminal — history visible</span>';
+    }
+    const ts = (ws.created_at||'').replace('T',' ').replace(/Z$/,'');
+    return '<tr><td title="'+escapeHTML(ws.id)+'"><strong>'+escapeHTML(ws.name)+'</strong>'+desc+'<div style="color:var(--muted);font-size:10px">'+escapeHTML(ts)+'</div></td>'
+      + '<td>'+wsStatePill(ws.state)+'</td>'
+      + '<td>'+sessions+'</td>'
+      + '<td style="color:var(--muted);font-size:11px">'+escapeHTML(String(ws.commands_count ?? 0))+'</td>'
+      + '<td style="white-space:nowrap">'+actions+'</td></tr>';
+  }).join('');
+}
+
+async function wsPoll(){
+  if(!TOKEN) return;
+  const r = await fetch('/api/bar/workspaces', {headers:{'Authorization':'Bearer '+TOKEN}});
+  if(r.status === 503){
+    $('#wsbody').innerHTML = '<tr><td colspan="5" class="empty">Agent Fabric workspaces disabled — the fabric opt-in carries them (SCARLIHQ_AGENTFABRIC_ENABLED)</td></tr>';
+    $('#wscount').textContent = 'off';
+    return;
+  }
+  if(r.status === 401){ return; }
+  if(!r.ok) return;
+  const data = await r.json();
+  // ACTIVE kernel sessions feed the join picker (same source as barAgents).
+  const s = await fetch('/api/agent/sessions', {headers:{'Authorization':'Bearer '+TOKEN}});
+  if(s.ok){
+    const sd = await s.json();
+    WS_ACTIVE_SESSIONS = (sd.sessions||[]).filter(x=>x.state==='ACTIVE');
+    // (session objects carry session_id/agent_id/state — the kernel view shape)
+  }
+  renderWorkspaces(data);
+}
+
+async function wsAction(path, body, okMsg){
+  try{
+    const r = await fetch(path, {
+      method:'POST',
+      headers:{'Authorization':'Bearer '+TOKEN, 'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    if(r.status === 401){ showAuth('Token rejected — re-enter SCARLIHQ_TOKEN'); return; }
+    const resp = await r.json().catch(()=>({}));
+    if(!r.ok){
+      toast('Workspaces: ' + (resp.error||('HTTP '+r.status)), true);
+      return;
+    }
+    toast(okMsg);
+    wsPoll();
+    barPoll();
+  }catch(e){
+    toast('Workspaces: request failed', true);
+  }
+}
+
+async function wsCreate(){
+  const name = $('#wsName').value.trim();
+  const description = $('#wsDesc').value.trim();
+  if(!name){ toast('Workspace name cannot be empty', true); return; }
+  const btn = $('#wsCreate');
+  btn.disabled = true;
+  try{
+    await wsAction('/api/bar/workspaces', {name, description}, 'Workspace created — ACTIVE');
+    $('#wsName').value = '';
+    $('#wsDesc').value = '';
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+$('#wsCreate').addEventListener('click', wsCreate);
+$('#wsName').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); wsCreate(); } });
+$('#wsDesc').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); wsCreate(); } });
+
+// Delegated workspace actions (buttons/selects live inside re-rendered rows).
+$('#wsbody').addEventListener('click', e=>{
+  const arch = e.target.closest('[data-wsarch]');
+  const join = e.target.closest('[data-wsjoin]');
+  const leave = e.target.closest('[data-wsleave]');
+  if(arch){
+    wsAction('/api/bar/workspaces/archive', {workspace_id: arch.getAttribute('data-wsarch')}, 'Workspace ARCHIVED — history visible, routing closed (terminal)');
+  }else if(join){
+    const wsId = join.getAttribute('data-wsjoin');
+    const sel = document.querySelector('.ws-joinsel[data-ws="'+CSS.escape(wsId)+'"]');
+    if(!sel || !sel.value){ toast('Pick a session to join first', true); return; }
+    wsAction('/api/bar/workspaces/sessions', {workspace_id: wsId, session_id: sel.value}, 'Session joined the workspace');
+  }else if(leave){
+    const [wsId, sid] = leave.getAttribute('data-wsleave').split('|');
+    wsAction('/api/bar/workspaces/sessions/leave', {workspace_id: wsId, session_id: sid}, 'Session left the workspace');
+  }
 });
 
 // v18.7.5 P1: Dynamic version from /api/health (was: hardcoded v17.9.9 in HTML).
@@ -661,6 +850,8 @@ function initApp(){
     setInterval(pollStatus, 5000);
     barPoll();            // v19.5.0: ScarliBar command status (5s polling)
     setInterval(barPoll, 5000);
+    wsPoll();             // v19.5.1: Agent Workspaces (5s polling)
+    setInterval(wsPoll, 5000);
   }).catch(()=>{
     // Backend down — show dashboard anyway (will show stale/empty data)
     hideAuth();

@@ -174,6 +174,10 @@ type Handler struct {
 	// BF-1 (v19.5.0): Agent Fabric command store (ScarliBar backend) —
 	// nil until ConfigureAgentFabric is called (opt-in; 503 without it).
 	agentFabric *agentfabric.CommandStore
+	// BF-2 (v19.5.1): Agent Fabric workspace store — nil until
+	// ConfigureAgentWorkspaces is called (wired whenever the fabric is
+	// enabled; 503 without it).
+	agentWorkspaces *agentfabric.WorkspaceStore
 }
 
 // NewHandler creates a new API handler.
@@ -231,6 +235,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/bar/commands", h.auth(h.barCommands))
 	mux.HandleFunc("/api/bar/commands/route", h.auth(h.barCommandRoute))
 	mux.HandleFunc("/api/bar/commands/cancel", h.auth(h.barCommandCancel))
+	// BF-2 (v19.5.1): Agent Fabric workspace surface — named isolation
+	// contexts for agent sessions and commands. Same auth gate; 503 until
+	// the workspace store is configured (it is wired whenever the fabric
+	// is enabled — no extra opt-in beyond the fabric itself).
+	mux.HandleFunc("/api/bar/workspaces", h.auth(h.barWorkspaces))
+	mux.HandleFunc("/api/bar/workspaces/archive", h.auth(h.barWorkspaceArchive))
+	mux.HandleFunc("/api/bar/workspaces/sessions", h.auth(h.barWorkspaceJoin))
+	mux.HandleFunc("/api/bar/workspaces/sessions/leave", h.auth(h.barWorkspaceLeave))
 }
 
 // auth middleware: validates Bearer token header only.

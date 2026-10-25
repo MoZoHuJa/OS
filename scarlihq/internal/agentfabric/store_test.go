@@ -104,7 +104,7 @@ func TestSubmitValidationMatrix(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := s.Submit(tc.intent, tc.agent, tc.capability, tc.at)
+			_, err := s.Submit(tc.intent, tc.agent, tc.capability, "", tc.at)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Submit() error = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -117,7 +117,7 @@ func TestSubmitRNGFailClosed(t *testing.T) {
 	orig := rngCommandID
 	rngCommandID = func() (string, error) { return "", ErrRNG }
 	defer func() { rngCommandID = orig }()
-	if _, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, time.Now().UTC()); !errors.Is(err, ErrRNG) {
+	if _, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, "", time.Now().UTC()); !errors.Is(err, ErrRNG) {
 		t.Fatalf("Submit with dead RNG = %v, want ErrRNG", err)
 	}
 	if s.Count() != 0 {
@@ -129,11 +129,11 @@ func TestSubmitCommandLimit(t *testing.T) {
 	s := newTestStore(t, fabricTestDir(t), 3)
 	now := time.Now().UTC()
 	for i := 0; i < 3; i++ {
-		if _, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, now.Add(time.Duration(i)*time.Second)); err != nil {
+		if _, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, "", now.Add(time.Duration(i)*time.Second)); err != nil {
 			t.Fatalf("Submit %d: %v", i, err)
 		}
 	}
-	if _, err := s.Submit("one too many", "coder.agent-one", agentkernel.CapabilityStatusRead, now.Add(10*time.Second)); !errors.Is(err, ErrCommandLimit) {
+	if _, err := s.Submit("one too many", "coder.agent-one", agentkernel.CapabilityStatusRead, "", now.Add(10*time.Second)); !errors.Is(err, ErrCommandLimit) {
 		t.Fatalf("Submit over bound = %v, want ErrCommandLimit", err)
 	}
 	if s.Count() != 3 {
@@ -147,7 +147,7 @@ func TestCommandLifecycleWithPersistence(t *testing.T) {
 	base := time.Now().UTC()
 
 	// 1. Submit with no session available: the intent is captured, never lost.
-	cmd, err := s.Submit("check the gaming inventory", "research.agent-two", agentkernel.CapabilityGamingRead, base)
+	cmd, err := s.Submit("check the gaming inventory", "research.agent-two", agentkernel.CapabilityGamingRead, "", base)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestCommandLifecycleWithPersistence(t *testing.T) {
 	}
 
 	// 6. Decide without reason is rejected (kernel decisions name their rule).
-	cmd2, err := s.Submit("second intent", "coder.agent-one", agentkernel.CapabilityStatusRead, base.Add(4*time.Minute))
+	cmd2, err := s.Submit("second intent", "coder.agent-one", agentkernel.CapabilityStatusRead, "", base.Add(4*time.Minute))
 	if err != nil {
 		t.Fatalf("Submit 2: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestCommandLifecycleWithPersistence(t *testing.T) {
 func TestRebindRoutedCommand(t *testing.T) {
 	s := newTestStore(t, fabricTestDir(t), 16)
 	base := time.Now().UTC()
-	cmd, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, base)
+	cmd, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, "", base)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -256,11 +256,11 @@ func TestRebindRoutedCommand(t *testing.T) {
 func TestCancelLifecycle(t *testing.T) {
 	s := newTestStore(t, fabricTestDir(t), 16)
 	base := time.Now().UTC()
-	sub, err := s.Submit("cancel me early", "coder.agent-one", agentkernel.CapabilityStatusRead, base)
+	sub, err := s.Submit("cancel me early", "coder.agent-one", agentkernel.CapabilityStatusRead, "", base)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
-	routed, err := s.Submit("cancel me late", "coder.agent-one", agentkernel.CapabilityStatusRead, base.Add(time.Second))
+	routed, err := s.Submit("cancel me late", "coder.agent-one", agentkernel.CapabilityStatusRead, "", base.Add(time.Second))
 	if err != nil {
 		t.Fatalf("Submit 2: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestListLastNewestFirst(t *testing.T) {
 	s := newTestStore(t, fabricTestDir(t), 16)
 	base := time.Now().UTC()
 	for i := 0; i < 5; i++ {
-		if _, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, base.Add(time.Duration(i)*time.Second)); err != nil {
+		if _, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, "", base.Add(time.Duration(i)*time.Second)); err != nil {
 			t.Fatalf("Submit %d: %v", i, err)
 		}
 	}
@@ -323,9 +323,9 @@ func TestListLastNewestFirst(t *testing.T) {
 func TestCounts(t *testing.T) {
 	s := newTestStore(t, fabricTestDir(t), 16)
 	base := time.Now().UTC()
-	a, _ := s.Submit("a", "coder.agent-one", agentkernel.CapabilityStatusRead, base)
-	b, _ := s.Submit("b", "coder.agent-one", agentkernel.CapabilityStatusRead, base.Add(time.Second))
-	c, _ := s.Submit("c", "coder.agent-one", agentkernel.CapabilityStatusRead, base.Add(2*time.Second))
+	a, _ := s.Submit("a", "coder.agent-one", agentkernel.CapabilityStatusRead, "", base)
+	b, _ := s.Submit("b", "coder.agent-one", agentkernel.CapabilityStatusRead, "", base.Add(time.Second))
+	c, _ := s.Submit("c", "coder.agent-one", agentkernel.CapabilityStatusRead, "", base.Add(2*time.Second))
 	_, _ = s.Route(CommandID(b.ID), "aks-one", base.Add(time.Minute))
 	_, _ = s.Route(CommandID(c.ID), "aks-one", base.Add(time.Minute))
 	_, _ = s.Decide(CommandID(c.ID), agentkernel.Decision{Allow: true, Reason: "grant: x"}, base.Add(2*time.Minute))
@@ -347,7 +347,7 @@ func TestCounts(t *testing.T) {
 func TestGetReturnsCopies(t *testing.T) {
 	s := newTestStore(t, fabricTestDir(t), 16)
 	base := time.Now().UTC()
-	cmd, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, base)
+	cmd, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, "", base)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -449,7 +449,7 @@ func TestLoadFailClosedPermissions(t *testing.T) {
 	if err := s.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if _, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, time.Now().UTC()); err != nil {
+	if _, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, "", time.Now().UTC()); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
 
@@ -502,7 +502,7 @@ func TestPersistFailureRollsBack(t *testing.T) {
 	dir := fabricTestDir(t)
 	s := newTestStore(t, dir, 16)
 	base := time.Now().UTC()
-	cmd, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, base)
+	cmd, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, "", base)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -539,7 +539,7 @@ func TestPersistFailureRollsBack(t *testing.T) {
 func TestRouteRejectsEmptySession(t *testing.T) {
 	s := newTestStore(t, fabricTestDir(t), 16)
 	base := time.Now().UTC()
-	cmd, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, base)
+	cmd, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, "", base)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -551,7 +551,7 @@ func TestRouteRejectsEmptySession(t *testing.T) {
 func TestBackwardsClockRejected(t *testing.T) {
 	s := newTestStore(t, fabricTestDir(t), 16)
 	base := time.Now().UTC()
-	cmd, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, base.Add(time.Minute))
+	cmd, err := s.Submit("intent", "coder.agent-one", agentkernel.CapabilityStatusRead, "", base.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
