@@ -165,11 +165,15 @@ func validCommandState(s CommandState) bool {
 // the user-visible command status (P4: ScarliBar's second ownership).
 // SessionID/Decision/timestamps are present exactly when the state says
 // so — load-time validation enforces these invariants fail-closed.
+// WorkspaceID (BF-2) is the isolation scope: empty = unscoped (the BF-1
+// behavior — any ACTIVE session of the agent); non-empty = the command
+// routes ONLY through member sessions of that workspace.
 type CommandRecord struct {
 	ID          string                 `json:"id"`
 	Intent      string                 `json:"intent"`
 	AgentID     agentkernel.AgentID    `json:"agent_id"`
 	Capability  agentkernel.Capability `json:"capability"`
+	WorkspaceID string                 `json:"workspace_id,omitempty"`
 	SessionID   string                 `json:"session_id,omitempty"`
 	State       CommandState           `json:"state"`
 	Decision    *agentkernel.Decision  `json:"decision,omitempty"`
@@ -203,6 +207,15 @@ func (r CommandRecord) validate() error {
 	}
 	if !r.Capability.IsValid() {
 		return fmt.Errorf("agentfabric: command %s: unknown capability %q (closed enumeration)", r.ID, r.Capability)
+	}
+	// BF-2: the isolation scope, when present, must be a well-formed
+	// workspace ID. Whether the workspace exists (and is ACTIVE) is the
+	// API layer's check at submission/routing time — the store persists
+	// the scope, it does not resolve it.
+	if r.WorkspaceID != "" {
+		if err := WorkspaceID(r.WorkspaceID).Validate(); err != nil {
+			return fmt.Errorf("agentfabric: command %s: %v", r.ID, err)
+		}
 	}
 	if !validCommandState(r.State) {
 		return fmt.Errorf("agentfabric: command %s: unknown state %q", r.ID, r.State)

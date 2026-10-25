@@ -298,11 +298,12 @@ func (s *CommandStore) mutate(id CommandID, fn func(rec *CommandRecord) error) (
 }
 
 // Submit captures a new intent as a SUBMITTED command and persists it.
-// The intent, agent ID and capability are re-validated here (defense in
-// depth — the HTTP layer validates early for clean 400 messages; the
-// store is the authority). Fail-closed: RNG failure aborts submission
-// (never a predictable ID); at capacity ErrCommandLimit.
-func (s *CommandStore) Submit(intent string, agent agentkernel.AgentID, capability agentkernel.Capability, now time.Time) (CommandRecord, error) {
+// The intent, agent ID, capability and workspace scope are re-validated
+// here (defense in depth — the HTTP layer validates early for clean 400
+// messages; the store is the authority). workspaceID may be empty
+// (unscoped, the BF-1 behavior). Fail-closed: RNG failure aborts
+// submission (never a predictable ID); at capacity ErrCommandLimit.
+func (s *CommandStore) Submit(intent string, agent agentkernel.AgentID, capability agentkernel.Capability, workspaceID WorkspaceID, now time.Time) (CommandRecord, error) {
 	if err := ValidateIntent(intent); err != nil {
 		return CommandRecord{}, err
 	}
@@ -311,6 +312,11 @@ func (s *CommandStore) Submit(intent string, agent agentkernel.AgentID, capabili
 	}
 	if !capability.IsValid() {
 		return CommandRecord{}, fmt.Errorf("agentfabric: unknown capability %q (closed enumeration)", capability)
+	}
+	if workspaceID != "" {
+		if err := workspaceID.Validate(); err != nil {
+			return CommandRecord{}, err
+		}
 	}
 	if now.IsZero() {
 		return CommandRecord{}, fmt.Errorf("agentfabric: submission time is required")
@@ -324,6 +330,7 @@ func (s *CommandStore) Submit(intent string, agent agentkernel.AgentID, capabili
 		Intent:      intent,
 		AgentID:     agent,
 		Capability:  capability,
+		WorkspaceID: string(workspaceID),
 		State:       CommandSubmitted,
 		SubmittedAt: now.UTC(),
 		UpdatedAt:   now.UTC(),
@@ -466,6 +473,78 @@ func (s *CommandStore) ListLast(n int) []CommandRecord {
 		out = append(out, copyCommandRecord(s.commands[i]))
 	}
 	return out
+}
+
+// ListLastWorkspace returns the last n commands of ONE workspace scope,
+// newest-first. An empty workspaceID selects the UNSCOPED commands (the
+// BF-1 namespace); a well-formed non-empty one selects that workspace's
+// commands. Any other shape is a caller bug (empty string is the only
+// sentinel) — the API layer validates shapes before calling.
+func (s *CommandStore) ListLastWorkspace(n int, workspaceID WorkspaceID) []CommandRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n < 1 {
+		n = 1
+	}
+	want := string(workspaceID)
+	out := make([]CommandRecord, 0)
+	for i := len(s.commands) - 1; i >= 0 && len(out) < n; i-- {
+		if s.commands[i].WorkspaceID == want {
+			out = append(out, copyCommandRecord(s.commands[i]))
+		}
+	}
+	return out
+}
+
+// WorkspaceCounts returns the number of commands per workspace id, plus
+// the "" key for unscoped commands. Deterministic read for the workspace
+// list surface (every workspace appears in the API response whether or
+// not it carries commands — the API layer merges).
+func (s *CommandStore) WorkspaceCounts() map[string]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	counts := make(map[string]int, len(s.commands)+1)
+	for _, rec := range s.commands {
+		counts[rec.WorkspaceID]++
+	}
+	return counts
+}
+
+// CountsWorkspace returns the per-state counts of ONE workspace scope
+// (empty = unscoped). All states are always present in the map.
+func (s *CommandStore) CountsWorkspace(workspaceID WorkspaceID) map[string]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	want := string(workspaceID)
+	counts := map[string]int{
+		string(CommandSubmitted): 0,
+		string(CommandRouted):    0,
+		string(CommandDecided):   0,
+		string(CommandCancelled): 0,
+	}
+	for _, rec := range s.commands {
+		if rec.WorkspaceID == want {
+			if _, known := counts[string(rec.State)]; known {
+				counts[string(rec.State)]++
+			}
+		}
+	}
+	return counts
+}
+
+// CountWorkspace returns the total number of commands in ONE workspace
+// scope (empty = unscoped).
+func (s *CommandStore) CountWorkspace(workspaceID WorkspaceID) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	want := string(workspaceID)
+	total := 0
+	for _, rec := range s.commands {
+		if rec.WorkspaceID == want {
+			total++
+		}
+	}
+	return total
 }
 
 // Counts returns the number of commands per state (deterministic order:

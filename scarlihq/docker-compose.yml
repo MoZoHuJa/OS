@@ -86,6 +86,14 @@ services:
       # deliberately). Shares the agentkernel mount below.
       #   - SCARLIHQ_AGENTFABRIC_ENABLED=true
       #   - SCARLIHQ_AGENTFABRIC_COMMANDS_FILE=/var/lib/scarlix-agentfabric/commands.json
+      # v19.5.1 — the workspace store rides the SAME opt-in (BF-2: named
+      # isolation contexts — sessions attach, scoped intents route only
+      # through members, ARCHIVED is terminal). No extra flag; the file
+      # defaults to workspaces.json next to the commands file (same 0700
+      # directory, same fail-closed load, bounded 64 workspaces / 32
+      # sessions each). Override only if the stores live on separate
+      # volumes:
+      #   - SCARLIHQ_AGENTFABRIC_WORKSPACES_FILE=/var/lib/scarlix-agentfabric/workspaces.json
     # v19.3.2 — OPT-IN compute lifecycle mounts (see env notes above).
     #   - /var/lib/scarlix-reservation:/var/lib/scarlix-reservation:rw
     #   - /run/scarlix-workload-bridge/bridge.sock:/run/scarlix-workload-bridge/bridge.sock
@@ -98,6 +106,8 @@ services:
     # SCARLIHQ_AGENTFABRIC_COMMANDS_FILE above). Same discipline: directory
     # must exist host-side with mode 0700 (the command store fail-closes on
     # looser permissions — tamper discipline).
+    # v19.5.1 — the same mount carries the workspace store (BF-2): it
+    # defaults to workspaces.json in this directory.
     #   - /var/lib/scarlix-agentfabric:/var/lib/scarlix-agentfabric:rw
     networks: [scarlix-net]
 networks:
