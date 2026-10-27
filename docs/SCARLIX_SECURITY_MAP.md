@@ -163,7 +163,7 @@ The **default AI path is tag-pinned** (`sglang`, `vllm`, `ollama`, `llamacpp` co
 | Pin refresh | deliberate manual action when upgrading to a newer Pi-Bolt installer — recompute the hash and commit the pin file with the release |
 | Enforcement | smoke-test check 12 fails the release if the pin or the verification logic is missing |
 | **v19.2.13 execution handoff** (KPK-19.2.12-P2-01) | the verified installer was a root-owned `mktemp` file (mode `0600`) executed via `sudo -u "$REAL_USER" bash` — the unprivileged user could never READ it, so the pinned install always failed at execution. Now the verified content is handed to a **user-owned private copy**: user-side `mktemp` as `$REAL_USER` + `install -o $REAL_USER -m 0600` from root (never world-readable; integrity preserved between verification and execution). Both temp copies are cleaned up on every success/failure/interrupt path (`EXIT`/`INT`/`TERM` traps). Smoke-test check 13 verifies the pattern and the runtime mechanic. |
-| **v19.2.13 pin freshness** (KpK audit P2-01) | scheduled CI job (`.github/workflows/pin-freshness.yml`, weekly) re-downloads the installer and compares the hash with the shipped pin — drift fails the job. Pi-Bolt pin last verified: **2026-10-25**. |
+| **v19.2.13 pin freshness** (KpK audit P2-01) | scheduled CI job (`.github/workflows/pin-freshness.yml`, weekly) re-downloads the installer and compares the hash with the shipped pin — drift fails the job. Pi-Bolt pin last verified: **2026-10-27**. |
 
 ## (j) Reservation-layer `CleanupVerified` semantics (v19.2.13, KpK audit P2-02)
 
