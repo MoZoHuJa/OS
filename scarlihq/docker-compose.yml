@@ -94,6 +94,17 @@ services:
       # sessions each). Override only if the stores live on separate
       # volumes:
       #   - SCARLIHQ_AGENTFABRIC_WORKSPACES_FILE=/var/lib/scarlix-agentfabric/workspaces.json
+      # v19.5.2 — the execution store + the fabric event bus ride the SAME
+      # opt-in (BF-3: coding/research agent runtimes — a DECIDED+ALLOWED
+      # command executes under its closed runtime with a FRESH kernel
+      # evaluation first: the stale-allow guard; records are terminal
+      # COMPLETED/FAILED/SKIPPED, one execution per command). No extra
+      # flag; the file defaults to executions.json next to the commands
+      # file (same 0700 directory, same fail-closed load, bounded 512).
+      # /ws/bar push (change signals, shared 16-slot WS budget with /ws)
+      # rides the same opt-in — nil bus answers 503 before upgrade.
+      # Override only if the stores live on separate volumes:
+      #   - SCARLIHQ_AGENTFABRIC_EXECUTIONS_FILE=/var/lib/scarlix-agentfabric/executions.json
     # v19.3.2 — OPT-IN compute lifecycle mounts (see env notes above).
     #   - /var/lib/scarlix-reservation:/var/lib/scarlix-reservation:rw
     #   - /run/scarlix-workload-bridge/bridge.sock:/run/scarlix-workload-bridge/bridge.sock

@@ -25,7 +25,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.5.1"
+var Version = "19.5.2"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -173,6 +173,10 @@ func main() {
 	// bounded history). Enablement: SCARLIHQ_AGENTFABRIC_ENABLED=true +
 	// SCARLIHQ_AGENTFABRIC_COMMANDS_FILE=/var/lib/scarlix-agentfabric/
 	// commands.json.
+	// BF-3 (v19.5.2): fabricBusRef carries the change-signal bus out of the
+	// opt-in block — /ws/bar is ALWAYS registered (503 with a nil bus, the
+	// fabric-off contract; never a silently-dead push surface).
+	var fabricBusRef *agentfabric.FabricBus
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("SCARLIHQ_AGENTFABRIC_ENABLED")), "true") {
 		if kernelStore == nil {
 			log.Fatal("agent fabric enabled but the agent kernel is not (agent fabric requires SCARLIHQ_AGENTKERNEL_ENABLED=true — intents route through kernel sessions)")
@@ -212,8 +216,37 @@ func main() {
 		if err := apiHandler.ConfigureAgentWorkspaces(wsStore); err != nil {
 			log.Fatalf("agent fabric workspace configuration failed: %v", err)
 		}
+		// BF-3 (v19.5.2): the execution store + the change-signal bus ride
+		// the SAME opt-in (coding/research agent runtimes — no extra flag).
+		// The file defaults to executions.json NEXT TO the commands file
+		// (same 0700 directory, same tamper discipline);
+		// SCARLIHQ_AGENTFABRIC_EXECUTIONS_FILE overrides the location. The
+		// runtime mapping invariant is checked at load (a drifted
+		// kernel/mapping pair aborts startup — the fabric never runs with
+		// a partial mapping). The bus is the /ws/bar push backbone
+		// (bounded 16×16, drop-not-block, no replay).
+		executionsFile := strings.TrimSpace(os.Getenv("SCARLIHQ_AGENTFABRIC_EXECUTIONS_FILE"))
+		if executionsFile == "" {
+			executionsFile = filepath.Join(filepath.Dir(commandsFile), "executions.json")
+		}
+		if err := agentfabric.ValidateRuntimeMapping(); err != nil {
+			log.Fatalf("agent fabric runtime mapping invalid: %v (a new kernel capability must declare its runtime deliberately)", err)
+		}
+		execStore, err := agentfabric.NewExecutionStore(executionsFile, agentfabric.DefaultMaxExecutions)
+		if err != nil {
+			log.Fatalf("agent fabric execution store construction failed: %v", err)
+		}
+		if err := execStore.Load(); err != nil {
+			log.Fatalf("agent fabric execution store load failed: %v (fix the file or archive it deliberately — never run on a tampered execution history)", err)
+		}
+		fabricBus := agentfabric.NewFabricBus()
+		if err := apiHandler.ConfigureAgentFabricExecutions(execStore, fabricBus); err != nil {
+			log.Fatalf("agent fabric execution configuration failed: %v", err)
+		}
 		log.Printf("Agent Fabric command API enabled (ScarliBar backend; commands file: %s; bound %d records — the file is the history, rotate deliberately)", commandsFile, agentfabric.DefaultMaxCommands)
 		log.Printf("Agent Fabric workspace API enabled (workspaces file: %s; bound %d workspaces / %d sessions each — ARCHIVED is the terminal tombstone)", workspacesFile, agentfabric.DefaultMaxWorkspaces, agentfabric.MaxSessionsPerWorkspace)
+		log.Printf("Agent Fabric execution API enabled (runtimes: research read-only / coding bridged; executions file: %s; bound %d records — one execution per command, records are terminal; stale-allow guard evaluates FRESH at execute time)", executionsFile, agentfabric.DefaultMaxExecutions)
+		fabricBusRef = fabricBus
 	} else {
 		log.Printf("Agent Fabric command API disabled; set SCARLIHQ_AGENTFABRIC_ENABLED=true (requires the agent kernel + SCARLIHQ_AGENTFABRIC_COMMANDS_FILE)")
 	}
@@ -223,6 +256,11 @@ func main() {
 	mcpServer.RegisterRoutes(mux)
 
 	webui.RegisterWS(mux, authToken, mode, pf)
+	// BF-3 (v19.5.2): the fabric push surface — /ws/bar shares the ticket
+	// discipline AND the wsSlots budget with /ws; a nil bus (fabric off)
+	// answers 503 before the upgrade. Change signals, not state: the
+	// client refetches through the auth-gated REST surface.
+	webui.RegisterBarWS(mux, fabricBusRef)
 
 	// Start server
 	port := os.Getenv("SCARLIHQ_PORT")

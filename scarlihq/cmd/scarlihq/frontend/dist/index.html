@@ -217,7 +217,7 @@
       <thead><tr><th>Intent</th><th>Agent · Capability</th><th>State</th><th>Decision</th><th></th></tr></thead>
       <tbody id="barbody"><tr><td colspan="5" class="empty">Waiting for fabric…</td></tr></tbody>
     </table>
-    <div class="bar-note" id="barnote">Commands are captured intents routed through the Agent Kernel — decisions are auditable, not executed (BF-1). Workspace scoping: BF-2.</div>
+    <div class="bar-note" id="barnote">Commands are captured intents routed through the Agent Kernel — decisions are auditable. ALLOWED intents execute under their closed runtime with a FRESH kernel evaluation (BF-3: research read-only / coding bridged; terminal records). Workspace scoping: BF-2. Push: /ws/bar (BF-3), 5s polling fallback.</div>
   </div>
 
   <!-- v19.5.1: Agent Workspaces — BF-2. Named isolation contexts: sessions
@@ -532,11 +532,14 @@ async function pollStatus(){
 
 // =========================================================================
 // v19.5.0 — ScarliBar (Agent Fabric BF-1): intent capture + command status.
-// The bar NEVER executes anything: POST /api/bar/commands captures the
-// intent; the Agent Kernel decides (allow AND deny are both decisions);
-// GET /api/bar/commands is the user-visible status (5s polling — the same
-// fallback pattern as pollStatus; WS push for fabric events lands with the
-// agent runtime). All dynamic fields escaped (XSS convention).
+// v19.5.2 — BF-3: ALLOWED commands execute under their closed runtime
+// (research read-only / coding bridged) with a FRESH kernel evaluation at
+// execute time (the stale-allow guard — a fresh denial is an audited
+// SKIPPED, a failed act is an honest FAILED). POST /api/bar/commands/execute
+// runs the act; the composed `execution` field on each command view carries
+// the terminal record. WS push (/ws/bar) refetches on command.*/execution.*
+// change signals — 5s polling stays the reliable fallback. All dynamic
+// fields escaped (XSS convention).
 // =========================================================================
 function barStatePill(state, allow){
   if(state === 'DECIDED'){
@@ -546,6 +549,14 @@ function barStatePill(state, allow){
   if(state === 'ROUTED')    return '<span class="pill rou">ROUTED</span>';
   if(state === 'CANCELLED') return '<span class="pill down">CANCELLED</span>';
   return '<span class="pill other">' + escapeHTML(state) + '</span>';
+}
+
+// v19.5.2 — execution state pills (terminal records: COMPLETED/FAILED/SKIPPED).
+function barExecPill(exec){
+  if(exec.state === 'COMPLETED') return '<span class="pill up">⚡ completed</span>';
+  if(exec.state === 'FAILED')    return '<span class="pill down">⚡ failed</span>';
+  if(exec.state === 'SKIPPED')   return '<span class="pill other">⚡ skipped (fresh deny)</span>';
+  return '<span class="pill other">' + escapeHTML(exec.state||'') + '</span>';
 }
 
 function renderBar(data){
@@ -563,15 +574,26 @@ function renderBar(data){
   }
   tb.innerHTML = cmds.map(c=>{
     const intent = escapeHTML((c.intent||'').length > 60 ? (c.intent).slice(0,60)+'…' : c.intent);
-    const decision = c.state === 'DECIDED'
+    // v19.5.2: the decision column composes the terminal execution when it
+    // exists (additive field) — the outcome/reason line sits under the pill.
+    let decision = c.state === 'DECIDED'
       ? barStatePill(c.state, c.allow) + '<div class="bar-reason" title="' + escapeHTML(c.reason||'') + '">' + escapeHTML(c.reason||'') + '</div>'
       : barStatePill(c.state, c.allow);
-    // Route/cancel actions only for live commands (44px-touch rows: the
-    // action cell keeps two compact buttons; SUBMITTED/ROUTED only).
+    if(c.execution){
+      decision += '<div style="margin-top:4px">' + barExecPill(c.execution)
+        + '<div class="bar-reason" title="' + escapeHTML(c.execution.outcome || c.execution.reason || '') + '">'
+        + escapeHTML(c.execution.outcome || c.execution.reason || '') + '</div></div>';
+    }
+    // Route/cancel actions only for live commands; v19.5.2: exec for
+    // DECIDED+allowed commands WITHOUT an execution yet (one per command,
+    // terminal — the button disappears once the record exists).
     let actions = '';
     if(c.state === 'SUBMITTED' || c.state === 'ROUTED'){
       actions = '<button class="bar-act" data-barroute="' + escapeHTML(c.id) + '">route</button> '
               + '<button class="bar-act danger" data-barcancel="' + escapeHTML(c.id) + '">cancel</button>';
+    }
+    if(c.state === 'DECIDED' && c.allow === true && !c.execution){
+      actions = '<button class="bar-act" data-barexec="' + escapeHTML(c.id) + '" title="' + escapeHTML(c.capability||'') + ' — runs a FRESH kernel evaluation, then the act">exec</button>';
     }
     const ts = (c.updated_at||'').replace('T',' ').replace(/Z$/,'');
     const wsTag = c.workspace_id ? '<br><span class="ws-tag" title="' + escapeHTML(c.workspace_id) + '">ws ' + escapeHTML(c.workspace_id.slice(3,15)) + '…</span>' : '';
@@ -669,17 +691,115 @@ async function barAction(id, kind){
   }
 }
 
+// v19.5.2 — execute a DECIDED+ALLOWED command under its runtime. The
+// capability's closed params shape decides what we send: research caps
+// take NO params; coding caps prompt for the one field the act needs.
+async function barExec(id, capability){
+  const body = {command_id: id};
+  try{
+    if(capability === 'mode.request'){
+      const mode = (window.prompt('mode.request params — desired mode (ai, stop, game, creative, turbo, offline, tv):', 'ai')||'').trim();
+      if(!mode){ return; } // cancelled
+      body.params = {mode};
+    }else if(capability === 'compute.reserve' || capability === 'compute.release'){
+      const allocation_id = (window.prompt(capability+' params — allocation_id (1..128 chars):', '')||'').trim();
+      if(!allocation_id){ return; } // cancelled
+      body.params = {allocation_id};
+    }else{
+      body.params = {}; // research runtime: no params (closed shape)
+    }
+    const r = await fetch('/api/bar/commands/execute', {
+      method:'POST',
+      headers:{'Authorization':'Bearer '+TOKEN, 'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    if(r.status === 401){ showAuth('Token rejected — re-enter SCARLIHQ_TOKEN'); return; }
+    const resp = await r.json().catch(()=>({}));
+    if(!r.ok){
+      toast('Execute: ' + (resp.error||('HTTP '+r.status)), true);
+      return;
+    }
+    if(resp.state === 'COMPLETED') toast('Executed '+ (resp.id||'').slice(0,12)+'… — '+ (resp.outcome||''));
+    else if(resp.state === 'SKIPPED') toast('Skipped (fresh evaluation denied): '+ (resp.reason||''), true);
+    else toast('FAILED (act error): '+ (resp.reason||''), true);
+    barPoll();
+  }catch(e){
+    toast('Execute: request failed', true);
+  }
+}
+
 $('#barSend').addEventListener('click', barSubmit);
 $('#barIntent').addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); barSubmit(); } });
 $('#barAgent').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); barSubmit(); } });
 $('#barWs').addEventListener('change', barPoll);
-// Delegated actions (route/cancel buttons live inside re-rendered rows).
+// Delegated actions (route/cancel/exec buttons live inside re-rendered rows).
 $('#barbody').addEventListener('click', e=>{
   const route = e.target.closest('[data-barroute]');
   const cancel = e.target.closest('[data-barcancel]');
+  const exec = e.target.closest('[data-barexec]');
   if(route){ barAction(route.getAttribute('data-barroute'), 'route'); }
   else if(cancel){ barAction(cancel.getAttribute('data-barcancel'), 'cancel'); }
+  else if(exec){ barExec(exec.getAttribute('data-barexec'), exec.getAttribute('title').split(' ')[0]); }
 });
+
+// =========================================================================
+// v19.5.2 — Fabric push (/ws/bar, BF-3): change signals, not state. The
+// server pushes one-line notifications (command.*/execution.* + fabric.*
+// control frames); the CLIENT refetches through the auth-gated REST
+// surface. Ticket discipline identical to the /ws status socket (POST
+// /api/ws-ticket → single-use ?ticket=). On any change signal we refetch
+// the bar AND the workspaces (a workspace card may carry command counts);
+// fabric.subscribed is the first-refetch cue (NO replay — nothing before
+// this moment is ever delivered). 5s polling stays the reliable fallback —
+// the push only makes the status FRESHER.
+// =========================================================================
+let barWS = null;
+let barWSConnecting = false;
+let barWSReconnect = null;
+function barWSScheduleReconnect(ms){
+  if(barWSReconnect) clearTimeout(barWSReconnect);
+  barWSReconnect = setTimeout(()=>{ barWSReconnect = null; if(TOKEN) connectBarWS(); }, ms);
+}
+async function connectBarWS(){
+  if(barWSConnecting || !TOKEN) return;
+  barWSConnecting = true;
+  if(barWSReconnect){ clearTimeout(barWSReconnect); barWSReconnect = null; }
+  try{
+    const ticketResp = await fetch('/api/ws-ticket', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + TOKEN }
+    });
+    if(!ticketResp.ok){ barWSConnecting = false; barWSScheduleReconnect(8000); return; }
+    const ticketData = await ticketResp.json();
+    if(!ticketData.ticket){ barWSConnecting = false; barWSScheduleReconnect(8000); return; }
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    barWS = new WebSocket(proto+'://'+location.host+'/ws/bar?ticket='+encodeURIComponent(ticketData.ticket));
+    barWS.onopen = ()=>{ barWSConnecting = false; };
+    barWS.onmessage = (ev)=>{
+      try{
+        const msg = JSON.parse(ev.data);
+        // LIVE CATCH (BF-3): change signals are command.*/execution.* —
+        // fabric.* frames are CONTROL frames (subscribed/dropped cues).
+        // Filter on the CHANGE namespace, never on fabric.* (a refetch
+        // triggered only on fabric.* would never fire).
+        if(msg.type && (msg.type.indexOf('command.') === 0 || msg.type.indexOf('execution.') === 0)){
+          barPoll();
+          if(typeof wsPoll === 'function') wsPoll();
+        }else if(msg.type === 'fabric.subscribed'){
+          barPoll(); // first authoritative state (no replay — refetch NOW)
+        }
+      }catch(e){}
+    };
+    barWS.onclose = ()=>{
+      barWSConnecting = false;
+      barWSScheduleReconnect(5000); // fabric off (503) lands here too — back off
+    };
+    barWS.onerror = ()=>{ try{barWS.close();}catch(e){} };
+  }catch(e){
+    barWSConnecting = false;
+    barWSScheduleReconnect(8000);
+  }
+}
 
 // =========================================================================
 // v19.5.1 — Agent Workspaces (BF-2): named isolation contexts. Sessions
@@ -852,6 +972,7 @@ function initApp(){
     setInterval(barPoll, 5000);
     wsPoll();             // v19.5.1: Agent Workspaces (5s polling)
     setInterval(wsPoll, 5000);
+    connectBarWS();       // v19.5.2: fabric push (/ws/bar) — change signals refetch; polling stays the fallback
   }).catch(()=>{
     // Backend down — show dashboard anyway (will show stale/empty data)
     hideAuth();

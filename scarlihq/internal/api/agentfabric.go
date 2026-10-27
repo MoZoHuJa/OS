@@ -80,21 +80,80 @@ type barCommandCancelRequest struct {
 // barCommandView is the user-visible command status (P4: ScarliBar's
 // ownership). Decision fields are present exactly when state=DECIDED.
 // WorkspaceID is present exactly when the command is workspace-scoped.
+// Execution (BF-3, additive) is present exactly when the command has
+// been executed — one terminal record per command.
 type barCommandView struct {
-	ID          string `json:"id"`
-	Intent      string `json:"intent"`
-	AgentID     string `json:"agent_id"`
-	Capability  string `json:"capability"`
-	WorkspaceID string `json:"workspace_id,omitempty"`
-	SessionID   string `json:"session_id,omitempty"`
-	State       string `json:"state"`
-	Allow       *bool  `json:"allow,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	SubmittedAt string `json:"submitted_at"`
-	RoutedAt    string `json:"routed_at,omitempty"`
-	DecidedAt   string `json:"decided_at,omitempty"`
-	CancelledAt string `json:"cancelled_at,omitempty"`
-	UpdatedAt   string `json:"updated_at"`
+	ID          string               `json:"id"`
+	Intent      string               `json:"intent"`
+	AgentID     string               `json:"agent_id"`
+	Capability  string               `json:"capability"`
+	WorkspaceID string               `json:"workspace_id,omitempty"`
+	SessionID   string               `json:"session_id,omitempty"`
+	State       string               `json:"state"`
+	Allow       *bool                `json:"allow,omitempty"`
+	Reason      string               `json:"reason,omitempty"`
+	SubmittedAt string               `json:"submitted_at"`
+	RoutedAt    string               `json:"routed_at,omitempty"`
+	DecidedAt   string               `json:"decided_at,omitempty"`
+	CancelledAt string               `json:"cancelled_at,omitempty"`
+	UpdatedAt   string               `json:"updated_at"`
+	Execution   *barExecutionSummary `json:"execution,omitempty"`
+}
+
+// barExecutionSummary is the composed execution view on a command (the
+// additive BF-3 field): present exactly when the command has been
+// executed (one execution per command — the record is terminal).
+type barExecutionSummary struct {
+	ID         string `json:"id"`
+	State      string `json:"state"`
+	Runtime    string `json:"runtime"`
+	Allow      bool   `json:"allow"`
+	Outcome    string `json:"outcome,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	ExecutedAt string `json:"executed_at"`
+}
+
+// composeExecution attaches the command's execution summary when the
+// execution store is configured and the command carries a record. The
+// composition is ADDITIVE: BF-1/BF-2 clients that do not know the field
+// are unaffected (omitempty); the view never lies about what exists.
+func (h *Handler) composeExecution(c agentfabric.CommandRecord) *barExecutionSummary {
+	if h.agentExecutions == nil {
+		return nil
+	}
+	rec, ok := h.agentExecutions.GetByCommand(agentfabric.CommandID(c.ID))
+	if !ok {
+		return nil
+	}
+	return &barExecutionSummary{
+		ID:         rec.ID,
+		State:      string(rec.State),
+		Runtime:    string(rec.Runtime),
+		Allow:      rec.Allow,
+		Outcome:    rec.Outcome,
+		Reason:     rec.Reason,
+		ExecutedAt: rec.ExecutedAt.Format(time.RFC3339),
+	}
+}
+
+// viewWithExecution composes the command view + the additive execution
+// field (nil-safe when the execution store is not configured).
+func (h *Handler) viewWithExecution(c agentfabric.CommandRecord) barCommandView {
+	v := viewFromCommand(c)
+	if e := h.composeExecution(c); e != nil {
+		v.Execution = e
+	}
+	return v
+}
+
+// fabricPublish emits a change signal (drop-not-block). Nil-safe: the
+// bus is configured with the execution store — a BF-2-era wiring (tests,
+// partial upgrades) has no bus and no push, only the 5s polling fallback.
+func (h *Handler) fabricPublish(typ agentfabric.SignalType, ref string) {
+	if h.agentBus == nil {
+		return
+	}
+	h.agentBus.Publish(agentfabric.Signal{Type: typ, Ref: ref, At: time.Now().UTC()})
 }
 
 func viewFromCommand(c agentfabric.CommandRecord) barCommandView {
@@ -167,6 +226,7 @@ func (h *Handler) routeAndDecide(w http.ResponseWriter, id agentfabric.CommandID
 		h.barCommandMutationError(w, err)
 		return agentfabric.CommandRecord{}, false
 	}
+	h.fabricPublish(agentfabric.SignalCommandRouted, routed.ID)
 
 	policy := h.agentPolicy
 	if h.agentGrants != nil {
@@ -200,6 +260,7 @@ func (h *Handler) routeAndDecide(w http.ResponseWriter, id agentfabric.CommandID
 		h.barCommandMutationError(w, err)
 		return agentfabric.CommandRecord{}, false
 	}
+	h.fabricPublish(agentfabric.SignalCommandDecided, decided.ID)
 	return decided, true
 }
 
@@ -270,7 +331,7 @@ func (h *Handler) barCommands(w http.ResponseWriter, r *http.Request) {
 			records := h.agentFabric.ListLast(limit)
 			views := make([]barCommandView, 0, len(records))
 			for _, rec := range records {
-				views = append(views, viewFromCommand(rec))
+				views = append(views, h.viewWithExecution(rec))
 			}
 			writeJSON(w, map[string]interface{}{
 				"commands":   views,
@@ -285,7 +346,7 @@ func (h *Handler) barCommands(w http.ResponseWriter, r *http.Request) {
 		records := h.agentFabric.ListLastWorkspace(limit, scopeID)
 		views := make([]barCommandView, 0, len(records))
 		for _, rec := range records {
-			views = append(views, viewFromCommand(rec))
+			views = append(views, h.viewWithExecution(rec))
 		}
 		writeJSON(w, map[string]interface{}{
 			"commands":   views,
@@ -376,6 +437,7 @@ func (h *Handler) barCommandSubmit(w http.ResponseWriter, r *http.Request) {
 		h.barCommandMutationError(w, err)
 		return
 	}
+	h.fabricPublish(agentfabric.SignalCommandSubmitted, cmd.ID)
 	id := agentfabric.CommandID(cmd.ID)
 
 	// 2. Resolve a routable session (named or newest ACTIVE; scoped
@@ -396,7 +458,7 @@ func (h *Handler) barCommandSubmit(w http.ResponseWriter, r *http.Request) {
 	// 3. No routable session: the intent is captured, status visible.
 	if sessionID == "" {
 		w.WriteHeader(http.StatusCreated)
-		writeJSON(w, viewFromCommand(cmd))
+		writeJSON(w, h.viewWithExecution(cmd))
 		return
 	}
 
@@ -406,7 +468,7 @@ func (h *Handler) barCommandSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, viewFromCommand(decided))
+	writeJSON(w, h.viewWithExecution(decided))
 }
 
 // barCommandRoute re-attempts routing+evaluation for a SUBMITTED (or
@@ -478,7 +540,7 @@ func (h *Handler) barCommandRoute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, viewFromCommand(decided))
+	writeJSON(w, h.viewWithExecution(decided))
 }
 
 // barCommandCancel withdraws a command before a decision.
@@ -502,5 +564,6 @@ func (h *Handler) barCommandCancel(w http.ResponseWriter, r *http.Request) {
 		h.barCommandMutationError(w, err)
 		return
 	}
-	writeJSON(w, viewFromCommand(cmd))
+	h.fabricPublish(agentfabric.SignalCommandCancelled, cmd.ID)
+	writeJSON(w, h.viewWithExecution(cmd))
 }
