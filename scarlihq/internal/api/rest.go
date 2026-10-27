@@ -178,6 +178,14 @@ type Handler struct {
 	// ConfigureAgentWorkspaces is called (wired whenever the fabric is
 	// enabled; 503 without it).
 	agentWorkspaces *agentfabric.WorkspaceStore
+	// BF-3 (v19.5.2): Agent Fabric execution store (executions.json) —
+	// nil until ConfigureAgentFabricExecutions is called (rides the
+	// fabric opt-in; 503 without it).
+	agentExecutions *agentfabric.ExecutionStore
+	// BF-3 (v19.5.2): Agent Fabric change-signal bus — the /ws/bar push
+	// backbone (bounded 16×16, drop-not-block, no replay). Nil until
+	// ConfigureAgentFabricExecutions is called.
+	agentBus *agentfabric.FabricBus
 }
 
 // NewHandler creates a new API handler.
@@ -243,6 +251,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/bar/workspaces/archive", h.auth(h.barWorkspaceArchive))
 	mux.HandleFunc("/api/bar/workspaces/sessions", h.auth(h.barWorkspaceJoin))
 	mux.HandleFunc("/api/bar/workspaces/sessions/leave", h.auth(h.barWorkspaceLeave))
+	// BF-3 (v19.5.2): Agent Fabric execution surface — coding/research
+	// agent runtimes. Same auth gate; 503 until the execution store is
+	// configured (rides the fabric opt-in with its own persisted
+	// executions file). Execute runs a FRESH kernel evaluation (the
+	// stale-allow guard) before the act; executions are terminal records.
+	mux.HandleFunc("/api/bar/commands/execute", h.auth(h.barCommandExecute))
+	mux.HandleFunc("/api/bar/executions", h.auth(h.barExecutions))
 }
 
 // auth middleware: validates Bearer token header only.

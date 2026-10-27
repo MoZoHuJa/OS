@@ -1658,6 +1658,163 @@ check_24_agent_fabric_workspaces() {
     pass "agent fabric workspaces: isolation contexts (one workspace per session), member-only scoped routing, ARCHIVED terminal tombstone, persisted bounded stores (fail-closed load), auth-gated routes, opt-in wiring"
 }
 
+check_25_agent_fabric_runtimes() {
+    echo "--- [25] Agent Fabric execution surface (BF-3): coding/research runtimes, fresh evaluation, terminal records ---"
+    local rt_model="$REPO_DIR/scarlihq/internal/agentfabric/agentruntime.go"
+    local exec_model="$REPO_DIR/scarlihq/internal/agentfabric/execution.go"
+    local exec_store="$REPO_DIR/scarlihq/internal/agentfabric/estore.go"
+    local bus_src="$REPO_DIR/scarlihq/internal/agentfabric/fabricbus.go"
+    local wsbar_src="$REPO_DIR/scarlihq/internal/webui/wsbar.go"
+    local api_exec="$REPO_DIR/scarlihq/internal/api/agentfabric_exec.go"
+    local api_cmd="$REPO_DIR/scarlihq/internal/api/agentfabric.go"
+    local rest_src="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+    local dashboard="$REPO_DIR/scarlihq/cmd/scarlihq/frontend/dist/index.html"
+
+    if [[ ! -f "$rt_model" || ! -f "$exec_model" || ! -f "$exec_store" ]]; then
+        fail "agent fabric runtime/execution model missing (BF-3, v19.5.2)"
+        return
+    fi
+
+    # Closed, total runtime mapping: every kernel capability maps to exactly
+    # one runtime (research read-only / coding act) — load-time invariant.
+    if ! grep -q "func RuntimeForCapability" "$rt_model" || ! grep -q "func ValidateRuntimeMapping" "$rt_model"; then
+        fail "runtime mapping must be closed and total (RuntimeForCapability + ValidateRuntimeMapping — a drifted enumeration aborts startup)"
+        return
+    fi
+    if ! grep -q "RuntimeResearch" "$rt_model" || ! grep -q "RuntimeCoding" "$rt_model"; then
+        fail "the runtime enumeration must be research + coding (closed set)"
+        return
+    fi
+    # Terminal-only execution states: NO in-flight state exists.
+    if ! grep -q "ExecutionCompleted" "$exec_model" || ! grep -q "ExecutionFailed" "$exec_model" || ! grep -q "ExecutionSkipped" "$exec_model"; then
+        fail "execution states must be COMPLETED/FAILED/SKIPPED (terminal by construction)"
+        return
+    fi
+    if grep -q "ExecutionPending\|ExecutionRunning\|ExecutionInProgress" "$exec_model" "$exec_store" "$api_exec"; then
+        fail "an in-flight execution state exists — records are terminal BY CONSTRUCTION (no PENDING/RUNNING)"
+        return
+    fi
+    # State↔allow↔fields coherence enforced at validate (load-time integrity).
+    if ! grep -q "COMPLETED with allow=false" "$exec_model" || ! grep -q "SKIPPED with allow=true" "$exec_model"; then
+        fail "execution validate must enforce state↔allow coherence (completed needs allow, skipped is a fresh denial)"
+        return
+    fi
+    # Runtime↔capability coherence: the closed mapping is record integrity.
+    if ! grep -q "closed mapping coherence" "$exec_model"; then
+        fail "execution records must pin runtime == RuntimeForCapability(capability) (closed mapping coherence)"
+        return
+    fi
+    # One execution per command, load-enforced (duplicate = corruption).
+    if ! grep -q "executed TWICE" "$exec_store" || ! grep -q "ErrAlreadyExecuted" "$exec_store"; then
+        fail "execution store must enforce ONE execution per command (Record refusal + load-time duplicate rejection)"
+        return
+    fi
+    # Fail-closed store: schema version + permissions + atomic persist + bound.
+    if ! grep -q "executionsFileVersion" "$exec_store" || ! grep -q "explicit migration required" "$exec_store"; then
+        fail "execution store must version its schema and reject unknown versions (fail-closed load)"
+        return
+    fi
+    if ! grep -q "ErrExecutionFilePermissions" "$exec_store"; then
+        fail "execution store must fail-closed on loose file/dir permissions (tamper discipline)"
+        return
+    fi
+    if ! grep -q "CreateTemp" "$exec_store" || ! grep -q "os.Rename" "$exec_store"; then
+        fail "execution store must persist atomically (temp + rename)"
+        return
+    fi
+    if ! grep -q "DefaultMaxExecutions" "$exec_store" || ! grep -q "ErrExecutionLimit" "$exec_store"; then
+        fail "execution store must be bounded (DefaultMaxExecutions + ErrExecutionLimit)"
+        return
+    fi
+    # The stale-allow guard: FRESH kernel evaluation at execute time; a
+    # fresh denial is an AUDITED SKIPPED (never an executed act).
+    if ! grep -q "STALE-ALLOW GUARD" "$api_exec" || ! grep -q "ExecutionSkipped" "$api_exec"; then
+        fail "execute must run a FRESH kernel evaluation (stale-allow guard) and record the fresh denial as SKIPPED"
+        return
+    fi
+    if ! grep -q "audit write failed — execution not recorded" "$api_exec"; then
+        fail "the fresh evaluation must be audited BEFORE the execution record exists (fail-closed ordering)"
+        return
+    fi
+    # Closed params shapes (DisallowUnknownFields — a param shape is a contract).
+    if ! grep -q "DisallowUnknownFields" "$rt_model" || ! grep -q "func ParseRuntimeParams" "$rt_model"; then
+        fail "params must be closed shapes per capability (ParseRuntimeParams + DisallowUnknownFields)"
+        return
+    fi
+    # ARCHIVED closes execution (the tombstone contract).
+    if ! grep -q "WorkspaceArchived" "$api_exec"; then
+        fail "execute must refuse ARCHIVED workspaces (409 — execution closed with routing)"
+        return
+    fi
+    # CommandID shape BEFORE the lookup (400 vs 404 — the filter precedent).
+    if ! grep -q "SHAPE first" "$api_exec"; then
+        fail "execute must validate the command id shape BEFORE the lookup (400 shape vs 404 unknown)"
+        return
+    fi
+    # Bounded bus: 16 subscribers × 16 slots, drop-not-block, no replay.
+    if ! grep -q "MaxBusSubscribers" "$bus_src" || ! grep -q "BusSubscriberQueue" "$bus_src"; then
+        fail "the fabric bus must be bounded (16 subscribers × 16 queues)"
+        return
+    fi
+    if ! grep -q "DROP" "$bus_src" || ! grep -q "no replay\|NO REPLAY\|NoReplay" "$bus_src"; then
+        fail "the fabric bus must drop-not-block and never replay (polling covers drops)"
+        return
+    fi
+    # WS /ws/bar: ticket reserved BEFORE upgrade, shared wsSlots, nil bus 503.
+    if ! grep -q "api.ReserveWSTicket" "$wsbar_src"; then
+        fail "/ws/bar must reserve the single-use ticket BEFORE upgrader.Upgrade (the /ws discipline)"
+        return
+    fi
+    if ! grep -q "wsSlots" "$wsbar_src"; then
+        fail "/ws/bar must share the wsSlots budget with /ws (one bound across both surfaces)"
+        return
+    fi
+    if ! grep -q "503" "$wsbar_src" || ! grep -q "bus == nil" "$wsbar_src"; then
+        fail "/ws/bar must answer 503 BEFORE upgrade when the bus is nil (fabric off)"
+        return
+    fi
+    # Change signals are command.*/execution.* — fabric.* are control frames.
+    if ! grep -q "SignalExecutionRecorded" "$bus_src" || ! grep -q "SignalCommandSubmitted" "$bus_src"; then
+        fail "the bus must carry command.*/execution.* change signals (the pinned closed set)"
+        return
+    fi
+    # Auth-gated routes (2 surfaces) + the composed additive field.
+    for route in '/api/bar/commands/execute"' '/api/bar/executions"'; do
+        if ! grep -q "$route" "$rest_src"; then
+            fail "rest.go must register the auth-gated route $route"
+            return
+        fi
+    done
+    if ! grep -q 'execution,omitempty' "$api_cmd"; then
+        fail "command views must compose the additive execution field (omitempty — BF-1/BF-2 clients unaffected)"
+        return
+    fi
+    # main.go wiring: the execution store + bus ride the fabric opt-in; the
+    # runtime mapping invariant aborts startup on drift.
+    if ! grep -q "SCARLIHQ_AGENTFABRIC_EXECUTIONS_FILE" "$main_src" || ! grep -q "ConfigureAgentFabricExecutions" "$main_src"; then
+        fail "main.go must wire the execution store + bus into the fabric opt-in (SCARLIHQ_AGENTFABRIC_EXECUTIONS_FILE + ConfigureAgentFabricExecutions)"
+        return
+    fi
+    if ! grep -q "ValidateRuntimeMapping" "$main_src" || ! grep -q "RegisterBarWS" "$main_src"; then
+        fail "main.go must check the runtime mapping at load AND register /ws/bar (always — 503 with nil bus)"
+        return
+    fi
+    # Compose carries the documented opt-in (env override).
+    if ! grep -q "SCARLIHQ_AGENTFABRIC_EXECUTIONS_FILE" "$compose"; then
+        fail "compose must document the execution store override (SCARLIHQ_AGENTFABRIC_EXECUTIONS_FILE)"
+        return
+    fi
+    # Dashboard: the exec button + the wsBar push client.
+    if ! grep -q 'data-barexec' "$dashboard" || ! grep -q "connectBarWS" "$dashboard"; then
+        fail "the dashboard must carry the exec button and the /ws/bar push client (command.*/execution.* refetch)"
+        return
+    fi
+
+    pass "agent fabric runtimes: closed total mapping (research read-only / coding bridged, load-time invariant), terminal-only execution records (COMPLETED/FAILED/SKIPPED, one per command), stale-allow guard (fresh evaluation, audited SKIPPED), closed params shapes, executions.json store (fail-closed, atomic, bounded 512), bounded bus (16×16 drop-not-block no-replay), /ws/bar ticket+shared-slots+503-nil-bus, auth-gated execute/executions routes, composed additive field, opt-in wiring"
+}
+
 # ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
@@ -1689,6 +1846,7 @@ SMOKE_CHECKS=(
     check_22_agent_kernel_compute
     check_23_agent_fabric_commands
     check_24_agent_fabric_workspaces
+    check_25_agent_fabric_runtimes
 )
 
 run_check() {
