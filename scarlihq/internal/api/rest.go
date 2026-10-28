@@ -23,7 +23,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.5.2"
+var Version = "19.5.3"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -182,6 +182,11 @@ type Handler struct {
 	// nil until ConfigureAgentFabricExecutions is called (rides the
 	// fabric opt-in; 503 without it).
 	agentExecutions *agentfabric.ExecutionStore
+	// BF-4 (v19.5.3): Agent Fabric approval store (approvals.json) —
+	// nil until ConfigureAgentFabricApprovals is called (rides the
+	// fabric opt-in; 503 without it — mutating acts never bypass the
+	// human gate).
+	agentApprovals *agentfabric.ApprovalStore
 	// BF-3 (v19.5.2): Agent Fabric change-signal bus — the /ws/bar push
 	// backbone (bounded 16×16, drop-not-block, no replay). Nil until
 	// ConfigureAgentFabricExecutions is called.
@@ -258,6 +263,15 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// stale-allow guard) before the act; executions are terminal records.
 	mux.HandleFunc("/api/bar/commands/execute", h.auth(h.barCommandExecute))
 	mux.HandleFunc("/api/bar/executions", h.auth(h.barExecutions))
+	// BF-4 (v19.5.3): Agent Fabric operator-approval surface — the human
+	// gate for mutating (coding) acts. Same auth gate; 503 until the
+	// approval store is configured (rides the fabric opt-in). Execute on
+	// a coding capability creates the PENDING request (202); approve runs
+	// the act (the full BF-3 flow + the operator's yes); reject is
+	// terminal. One request per command, ever.
+	mux.HandleFunc("/api/bar/approvals", h.auth(h.barApprovals))
+	mux.HandleFunc("/api/bar/approvals/approve", h.auth(h.barApprovalApprove))
+	mux.HandleFunc("/api/bar/approvals/reject", h.auth(h.barApprovalReject))
 }
 
 // auth middleware: validates Bearer token header only.

@@ -52,6 +52,15 @@ const (
 	// SignalExecutionRecorded: a terminal execution record was persisted
 	// (COMPLETED / FAILED / SKIPPED).
 	SignalExecutionRecorded SignalType = "execution.recorded"
+	// SignalApprovalRequested: a coding act's execution needs an
+	// operator approval — a PENDING approval request was persisted
+	// (BF-4; the human gate for mutating acts).
+	SignalApprovalRequested SignalType = "approval.requested"
+	// SignalApprovalDecided: an operator decision (APPROVED / REJECTED —
+	// the closed two-way terminal) closed an approval request. There is
+	// deliberately NO withdrawn state: a PENDING request's command is
+	// DECIDED (terminal), so the request stays answerable until decided.
+	SignalApprovalDecided SignalType = "approval.decided"
 )
 
 // Signal is one change notification: what changed (Type), which record

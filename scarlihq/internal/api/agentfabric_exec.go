@@ -304,6 +304,21 @@ func (h *Handler) barCommandExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ------------------------------------------------------------------
+	// BF-4 (v19.5.3): THE OPERATOR APPROVAL GATE. The approval boundary
+	// IS the runtime boundary: coding capabilities (bridged acts that
+	// mutate host state) NEVER execute on this call — the execute
+	// surface creates the ONE approval request for the command (202 +
+	// PENDING view, params captured, submitter labeled) and an operator
+	// decides (approve runs the act through the full flow below; reject
+	// is terminal). Research capabilities are read-only by construction
+	// — they execute directly, unchanged (the BF-3 flow).
+	// ------------------------------------------------------------------
+	if agentfabric.ApprovalRequiredForCapability(cmd.Capability) {
+		h.barApprovalRequest(w, cmd, params)
+		return
+	}
+
+	// ------------------------------------------------------------------
 	// STALE-ALLOW GUARD: a FRESH kernel evaluation. The command's
 	// decision may be arbitrarily old; the world moved. The fresh
 	// evaluation (registry policy when configured — runtime kill-switches
