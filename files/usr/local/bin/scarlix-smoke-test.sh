@@ -2019,6 +2019,115 @@ check_26_agent_fabric_approvals() {
     pass "agent fabric approvals: the operator gate (coding acts never execute directly — execute creates the ONE PENDING request, 202), approve runs the act (full BF-3 flow, FRESH evaluation at approve time, audited SKIPPED = APPROVED+SKIPPED, stored params — no re-steering, reconciliation), unconditional terminal reject, PENDING-only-in-flight closed enumeration (no withdrawn), one request per command (load-enforced), submitter/approver attribution labels (never credentials), approvals.json store (fail-closed, atomic, bounded 256), bus approval.* signals, auth-gated routes, additive composed field, opt-in wiring + compose + dashboard"
 }
 
+check_27_agent_fabric_closure() {
+    echo "--- [27] Agent Fabric phase closure (BF-5): the phase-level coherence gate — Fáza B closes on proof, not promise ---"
+    local accept_doc="$REPO_DIR/docs/PHASE_B_ACCEPTANCE.md"
+    local readme="$REPO_DIR/README.md"
+    local apv_model="$REPO_DIR/scarlihq/internal/agentfabric/approval.go"
+    local apv_store="$REPO_DIR/scarlihq/internal/agentfabric/astore.go"
+    local exec_store="$REPO_DIR/scarlihq/internal/agentfabric/estore.go"
+    local cmd_src="$REPO_DIR/scarlihq/internal/agentfabric/command.go"
+    local cmd_store="$REPO_DIR/scarlihq/internal/agentfabric/store.go"
+    local ws_store="$REPO_DIR/scarlihq/internal/agentfabric/wstore.go"
+    local rt_src="$REPO_DIR/scarlihq/internal/agentfabric/agentruntime.go"
+    local api_cmd="$REPO_DIR/scarlihq/internal/api/agentfabric.go"
+    local api_appr="$REPO_DIR/scarlihq/internal/api/agentfabric_appr.go"
+    local bus_src="$REPO_DIR/scarlihq/internal/agentfabric/fabricbus.go"
+
+    if [[ ! -f "$accept_doc" ]]; then
+        fail "docs/PHASE_B_ACCEPTANCE.md missing — the phase cannot close without its acceptance gate (BF-5, v19.5.4)"
+        return
+    fi
+    # The acceptance doc must carry the full genre: the loop table, the
+    # phase-level invariants, automated acceptance, the HONEST open-item
+    # ledger and the release decision.
+    for section in '## 1. What Phase B delivers' '## 2. Phase-level invariants' '## 3. Automated acceptance' '## 4. Honest open items' '## 5. Release decision'; do
+        if ! grep -q "$section" "$accept_doc"; then
+            fail "the acceptance doc must carry section '$section' (the PHASE3-G1 acceptance genre)"
+            return
+        fi
+    done
+    # All five steps are in the loop table, and the honest ledger keeps
+    # KPK-06 (hardware acceptance) open + Phase C is named as next.
+    for step in '| BF-1 | v19.5.0 |' '| BF-2 | v19.5.1 |' '| BF-3 | v19.5.2 |' '| BF-4 | v19.5.3 |' '| BF-5 | v19.5.4 |'; do
+        if ! grep -q "$step" "$accept_doc"; then
+            fail "the acceptance loop table must list $step — a step cannot silently vanish at closure"
+            return
+        fi
+    done
+    if ! grep -q "KPK-06" "$accept_doc" || ! grep -q "HARDWARE_ACCEPTANCE_PROTOCOL" "$accept_doc"; then
+        fail "the closure ledger must keep KPK-06 hardware acceptance OPEN with its protocol reference (CI green ≠ hardware verified)"
+        return
+    fi
+    if ! grep -q "Universal AI Runtime" "$accept_doc"; then
+        fail "the acceptance doc must name the next theme (Phase C — Universal AI Runtime; LLM navrhuje, politika rozhoduje)"
+        return
+    fi
+
+    # README closure surface: changelog row, What's New section, the theme
+    # status flip and the COMPLETE line row (the Agent Kernel precedent).
+    if ! grep -q '\*\*v19.5.4\*\*' "$readme" || ! grep -q "What's New in v19.5.4" "$readme"; then
+        fail "README must carry the v19.5.4 changelog row + What's New section (the closure is a release like any other)"
+        return
+    fi
+    if ! grep -q 'Agent Fabric theme (v19.5.x) is COMPLETE' "$readme"; then
+        fail "README theme status must flip to 'Agent Fabric theme (v19.5.x) is COMPLETE' — five merged, tagged, CI-green releases"
+        return
+    fi
+    if ! grep -q '| Agent Fabric line | \*\*COMPLETE\*\* (v19.5.0–v19.5.4) |' "$readme"; then
+        fail "README must carry the 'Agent Fabric line | COMPLETE (v19.5.0–v19.5.4)' row (the Agent Kernel line precedent)"
+        return
+    fi
+    if grep -q 'Agent Fabric theme (v19.5.x) is OPEN' "$readme"; then
+        fail "README still says the Agent Fabric theme is OPEN — the closure flip is incomplete"
+        return
+    fi
+
+    # --- Cross-release coherence: the closure re-asserts the phase-level
+    # invariants at source level (each was guarded by its own check; the
+    # closure check proves they HOLD TOGETHER in one tree).
+    # (1) Closed approval enumeration, deliberately NO withdrawn.
+    if grep -q "ApprovalWithdrawn\|ApprovalCancelled\|approval.withdrawn" "$apv_model" "$apv_store" "$api_appr" "$bus_src"; then
+        fail "a withdrawn/cancelled approval state/signal exists — the enumeration is PENDING/APPROVED/REJECTED (a PENDING request stays answerable)"
+        return
+    fi
+    # (2) The approval boundary IS the runtime boundary (DERIVED, not
+    # re-declared) + the closed total runtime mapping validated at load.
+    if ! grep -q "func ApprovalRequiredForCapability" "$apv_model" || ! grep -q "func ValidateRuntimeMapping" "$rt_src"; then
+        fail "closure requires the DERIVED approval boundary AND the load-validated runtime mapping (the two policies cannot drift)"
+        return
+    fi
+    # (3) All four stores in the tree, grants.json discipline each.
+    for store_file in "$cmd_store" "$ws_store" "$exec_store" "$apv_store"; do
+        if [[ ! -f "$store_file" ]]; then
+            fail "fabric store missing: $store_file (commands/workspaces/executions/approvals — one-file discipline)"
+            return
+        fi
+    done
+    if ! grep -q "ErrApprovalFilePermissions" "$apv_store" || ! grep -q "ErrExecutionFilePermissions" "$exec_store"; then
+        fail "execution + approval stores must fail-closed on loose permissions (the grants.json discipline across all four stores)"
+        return
+    fi
+    # (4) ONE execution per command + ONE request per command (both
+    # load-enforced — the file is the authority).
+    if ! grep -q "ErrAlreadyExecuted" "$exec_store" || ! grep -q "ErrAlreadyRequested" "$apv_store"; then
+        fail "one-execution-per-command (ErrAlreadyExecuted) and one-request-per-command (ErrAlreadyRequested) must both hold at closure"
+        return
+    fi
+    # (5) Additive schema discipline: commands.json stays v1 — scope,
+    # submitter and both composed view fields are omitempty additions.
+    if ! grep -q 'workspace_id,omitempty' "$cmd_src" || ! grep -q 'submitter,omitempty' "$cmd_src"; then
+        fail "command records must carry the additive omitempty fields (workspace_id, submitter — the commands schema stays v1)"
+        return
+    fi
+    if ! grep -q 'execution,omitempty' "$api_cmd" || ! grep -q 'approval,omitempty' "$api_cmd"; then
+        fail "command views must compose the additive execution + approval fields (omitempty — BF-1..BF-3 clients unaffected)"
+        return
+    fi
+
+    pass "agent fabric phase closure: acceptance gate docs/PHASE_B_ACCEPTANCE.md (loop BF-1..BF-5, phase-level invariants, automated acceptance, honest ledger w/ KPK-06 open, release decision), README closure (changelog + What's New v19.5.4 + theme status COMPLETE + line row), cross-release coherence held together in one tree (no withdrawn, derived boundary + load-validated runtime mapping, all four stores w/ fail-closed discipline, one-execution + one-request per command, additive v1 schema)"
+}
+
 # ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
@@ -2052,6 +2161,7 @@ SMOKE_CHECKS=(
     check_24_agent_fabric_workspaces
     check_25_agent_fabric_runtimes
     check_26_agent_fabric_approvals
+    check_27_agent_fabric_closure
 )
 
 run_check() {
