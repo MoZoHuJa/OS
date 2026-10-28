@@ -81,6 +81,12 @@
   .bar-intent{flex:1;min-width:220px}
   .bar-agent{width:170px}
   .bar-cap{width:150px}
+  /* v19.5.3 — BF-4: submitter label input (attribution, not a credential). */
+  .bar-submitter{width:170px}
+  .apv-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .apv-row input{padding:12px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:ui-monospace,monospace}
+  .apv-row input:focus{outline:none;border-color:var(--accent)}
+  .apv-approver{flex:1;min-width:220px}
   .bar-send{padding:12px 18px;min-height:44px;border:none;border-radius:8px;background:linear-gradient(135deg,var(--accent),#0c8a5e);color:#0b0e14;font-weight:700;cursor:pointer;font-size:13px}
   .bar-send:hover{filter:brightness(1.1)}
   .bar-send:disabled{opacity:.6;cursor:default}
@@ -106,7 +112,7 @@
   .ws-x:hover{color:var(--red)}
   .ws-note{color:var(--muted);font-size:11px;margin-top:8px}
   .ws-tag{color:var(--cyan);font-size:10px;font-family:ui-monospace,monospace}
-  @media(max-width:640px){.bar-agent{width:100%}.bar-cap{width:100%}.bar-intent{min-width:100%}.bar-ws{width:100%}.ws-name{min-width:100%}.ws-desc{min-width:100%}}
+  @media(max-width:640px){.bar-agent{width:100%}.bar-cap{width:100%}.bar-intent{min-width:100%}.bar-ws{width:100%}.bar-submitter{width:100%}.ws-name{min-width:100%}.ws-desc{min-width:100%}.apv-approver{min-width:100%}}
   @media(max-width:640px){header{flex-direction:column;align-items:flex-start}}
 </style>
 </head>
@@ -211,13 +217,16 @@
       <select class="bar-ws" id="barWs" title="Workspace scope — scoped intents route only through that workspace's member sessions">
         <option value="">— unscoped —</option>
       </select>
+      <!-- v19.5.3 — BF-4: submitter attribution label (optional; a label,
+           never a credential — the bearer token is the only auth boundary). -->
+      <input class="bar-submitter" id="barSubmitter" maxlength="64" placeholder="submitter (optional label)">
       <button class="bar-send" id="barSend">Send</button>
     </div>
     <table>
       <thead><tr><th>Intent</th><th>Agent · Capability</th><th>State</th><th>Decision</th><th></th></tr></thead>
       <tbody id="barbody"><tr><td colspan="5" class="empty">Waiting for fabric…</td></tr></tbody>
     </table>
-    <div class="bar-note" id="barnote">Commands are captured intents routed through the Agent Kernel — decisions are auditable. ALLOWED intents execute under their closed runtime with a FRESH kernel evaluation (BF-3: research read-only / coding bridged; terminal records). Workspace scoping: BF-2. Push: /ws/bar (BF-3), 5s polling fallback.</div>
+    <div class="bar-note" id="barnote">Commands are captured intents routed through the Agent Kernel — decisions are auditable. ALLOWED intents execute under their closed runtime with a FRESH kernel evaluation (BF-3: research read-only executes directly / coding bridged requires the operator's approval — BF-4). Workspace scoping: BF-2. Push: /ws/bar (BF-3), 5s polling fallback.</div>
   </div>
 
   <!-- v19.5.1: Agent Workspaces — BF-2. Named isolation contexts: sessions
@@ -237,6 +246,26 @@
       <tbody id="wsbody"><tr><td colspan="5" class="empty">Waiting for fabric…</td></tr></tbody>
     </table>
     <div class="ws-note" id="wsnote">A session belongs to at most one workspace; scoped intents route ONLY through member sessions. ARCHIVED is terminal — history stays visible, routing closes.</div>
+  </div>
+
+  <!-- v19.5.3: Operator Approvals — BF-4. The human gate for MUTATING
+       (coding) acts: a coding execution creates a PENDING request (params
+       captured); the operator APPROVES (the act runs with a FRESH kernel
+       evaluation — the stale-allow guard applies at approve time) or
+       REJECTS (terminal). Research acts never appear here — read-only by
+       construction, they execute directly. One request per command, ever.
+       Data from /api/bar/approvals (5s polling + approval.* WS push). All
+       dynamic fields escaped (XSS convention). -->
+  <div class="card" id="apvcard">
+    <h2>Operator Approvals <span class="pill other" id="apvcounts" style="margin-left:auto">…</span></h2>
+    <div class="apv-row">
+      <input class="apv-approver" id="apvApprover" maxlength="64" placeholder="approver label (who answers — attribution, not a credential)">
+    </div>
+    <table>
+      <thead><tr><th>Intent · Params</th><th>Agent · Capability</th><th>Submitter</th><th>State</th><th></th></tr></thead>
+      <tbody id="apvbody"><tr><td colspan="5" class="empty">Waiting for fabric…</td></tr></tbody>
+    </table>
+    <div class="ws-note" id="apvnote">Coding acts mutate host state — an operator's explicit yes runs them (approve = the full BF-3 flow + the operator's decision; the params were captured at request time). REJECTED closes the command's execution path — retry is a NEW intent. Labels are attribution, never credentials.</div>
   </div>
 
   <footer>
@@ -584,15 +613,24 @@ function renderBar(data){
         + '<div class="bar-reason" title="' + escapeHTML(c.execution.outcome || c.execution.reason || '') + '">'
         + escapeHTML(c.execution.outcome || c.execution.reason || '') + '</div></div>';
     }
+    // v19.5.3 — BF-4: the composed approval field (additive — coding acts
+    // only). The state pill rides the decision column: an approval request
+    // exists, the operator's decision is the Approvals card's business.
+    if(c.approval){
+      decision += '<div style="margin-top:4px">' + apvStatePill(c.approval.state) + '</div>';
+    }
     // Route/cancel actions only for live commands; v19.5.2: exec for
     // DECIDED+allowed commands WITHOUT an execution yet (one per command,
     // terminal — the button disappears once the record exists).
+    // v19.5.3 — BF-4: also WITHOUT an approval request — a coding act's
+    // exec CREATES the request (the decision moves to the Approvals
+    // card; a second execute would honestly 409).
     let actions = '';
     if(c.state === 'SUBMITTED' || c.state === 'ROUTED'){
       actions = '<button class="bar-act" data-barroute="' + escapeHTML(c.id) + '">route</button> '
               + '<button class="bar-act danger" data-barcancel="' + escapeHTML(c.id) + '">cancel</button>';
     }
-    if(c.state === 'DECIDED' && c.allow === true && !c.execution){
+    if(c.state === 'DECIDED' && c.allow === true && !c.execution && !c.approval){
       actions = '<button class="bar-act" data-barexec="' + escapeHTML(c.id) + '" title="' + escapeHTML(c.capability||'') + ' — runs a FRESH kernel evaluation, then the act">exec</button>';
     }
     const ts = (c.updated_at||'').replace('T',' ').replace(/Z$/,'');
@@ -694,6 +732,10 @@ async function barAction(id, kind){
 // v19.5.2 — execute a DECIDED+ALLOWED command under its runtime. The
 // capability's closed params shape decides what we send: research caps
 // take NO params; coding caps prompt for the one field the act needs.
+// v19.5.3 — BF-4: a CODING capability's execute CREATES the operator
+// approval request (202 + PENDING view — the params captured, the
+// submitter labeled); the operator decides in the Approvals card.
+// Research caps execute directly (read-only by construction).
 async function barExec(id, capability){
   const body = {command_id: id};
   try{
@@ -715,8 +757,14 @@ async function barExec(id, capability){
     });
     if(r.status === 401){ showAuth('Token rejected — re-enter SCARLIHQ_TOKEN'); return; }
     const resp = await r.json().catch(()=>({}));
+    if(r.status === 202){ // BF-4: the approval request was created (PENDING)
+      toast('Approval requested ('+(resp.id||'').slice(0,12)+'…) — awaiting the operator (Approvals card)');
+      barPoll(); approvalsPoll();
+      return;
+    }
     if(!r.ok){
       toast('Execute: ' + (resp.error||('HTTP '+r.status)), true);
+      barPoll(); approvalsPoll();
       return;
     }
     if(resp.state === 'COMPLETED') toast('Executed '+ (resp.id||'').slice(0,12)+'… — '+ (resp.outcome||''));
@@ -740,6 +788,129 @@ $('#barbody').addEventListener('click', e=>{
   if(route){ barAction(route.getAttribute('data-barroute'), 'route'); }
   else if(cancel){ barAction(cancel.getAttribute('data-barcancel'), 'cancel'); }
   else if(exec){ barExec(exec.getAttribute('data-barexec'), exec.getAttribute('title').split(' ')[0]); }
+});
+
+// =========================================================================
+// v19.5.3 — Operator Approvals (BF-4): the human gate for MUTATING
+// (coding) acts. A coding capability's execute CREATES the PENDING request
+// (params captured, submitter labeled); the operator approves (the act
+// runs — the full BF-3 flow with a FRESH kernel evaluation) or rejects
+// (terminal — the command's execution path closes). Research acts never
+// appear here (read-only by construction, they execute directly).
+// Data from /api/bar/approvals (5s polling + approval.* WS push). All
+// dynamic fields escaped (XSS convention).
+// =========================================================================
+function apvStatePill(state){
+  if(state === 'PENDING')  return '<span class="pill sub">approval pending</span>';
+  if(state === 'APPROVED') return '<span class="pill up">approved — act ran</span>';
+  if(state === 'REJECTED') return '<span class="pill down">rejected</span>';
+  return '<span class="pill other">' + escapeHTML(state||'') + '</span>';
+}
+
+function renderApprovals(data){
+  if(!data) return;
+  const tb = $('#apvbody');
+  const list = data.approvals || [];
+  const counts = data.counts || {};
+  $('#apvcounts').textContent = (data.total ?? list.length);
+  $('#apvcounts').title = 'PENDING: ' + (counts.PENDING||0) + ' · APPROVED: ' + (counts.APPROVED||0)
+    + ' · REJECTED: ' + (counts.REJECTED||0) + ' — approvals file: ' + (data.store_path || '—');
+  if(!list.length){
+    tb.innerHTML = '<tr><td colspan="5" class="empty">No approval requests — coding acts appear here after their execute</td></tr>';
+    return;
+  }
+  tb.innerHTML = list.map(a=>{
+    const intent = escapeHTML((a.intent||'').length > 60 ? (a.intent).slice(0,60)+'…' : a.intent);
+    // The captured params (the closed shape — the approved thing is the
+    // requested thing; the act re-uses exactly these).
+    let params = '';
+    if(a.params){
+      if(a.params.mode){ params = '<div class="bar-reason">mode: '+escapeHTML(a.params.mode)+'</div>'; }
+      else if(a.params.allocation_id){ params = '<div class="bar-reason" title="'+escapeHTML(a.params.allocation_id)+'">allocation: '+escapeHTML(a.params.allocation_id.slice(0,24))+'…</div>'; }
+    }
+    let decision = apvStatePill(a.state);
+    if(a.reason) decision += '<div class="bar-reason" title="'+escapeHTML(a.reason)+'">'+escapeHTML(a.reason)+'</div>';
+    // The composed terminal execution rides APPROVED rows (additive field).
+    if(a.state === 'APPROVED' && a.execution){
+      decision += '<div style="margin-top:4px">' + barExecPill(a.execution)
+        + '<div class="bar-reason" title="'+escapeHTML(a.execution.outcome || a.execution.reason || '')+'">'
+        + escapeHTML(a.execution.outcome || a.execution.reason || '')+'</div></div>';
+    }
+    let actions = '';
+    if(a.state === 'PENDING'){
+      actions = '<button class="bar-act" data-apvapprove="'+escapeHTML(a.id)+'" title="runs the act with a FRESH kernel evaluation">approve</button> '
+              + '<button class="bar-act danger" data-apvreject="'+escapeHTML(a.id)+'">reject</button>';
+    }
+    const ts = ((a.decided_at || a.requested_at)||'').replace('T',' ').replace(/Z$/,'');
+    return '<tr><td title="'+escapeHTML(a.intent||'')+'">'+intent+params+'</td>'
+      + '<td style="color:var(--muted);font-size:11px">'+escapeHTML(a.agent_id||'—')+'<br>'+escapeHTML(a.capability||'—')+'</td>'
+      + '<td style="color:var(--muted);font-size:11px">'+escapeHTML(a.submitter||'—')+(a.approver?'<br>decided: '+escapeHTML(a.approver):'')+'</td>'
+      + '<td>'+decision+'<div style="color:var(--muted);font-size:11px">'+escapeHTML(ts)+'</div></td>'
+      + '<td style="white-space:nowrap">'+actions+'</td></tr>';
+  }).join('');
+}
+
+async function approvalsPoll(){
+  if(!TOKEN) return;
+  const r = await fetch('/api/bar/approvals?limit=50', {headers:{'Authorization':'Bearer '+TOKEN}});
+  if(r.status === 503){
+    $('#apvbody').innerHTML = '<tr><td colspan="5" class="empty">Agent Fabric approvals disabled — the fabric opt-in carries them (SCARLIHQ_AGENTFABRIC_ENABLED)</td></tr>';
+    $('#apvcounts').textContent = 'off';
+    return;
+  }
+  if(r.status === 401){ return; } // global auth gate handles re-login
+  if(!r.ok) return;
+  const data = await r.json();
+  renderApprovals(data);
+}
+
+// v19.5.3 — the operator decision. Approve RUNS THE ACT (the full BF-3
+// flow with a FRESH kernel evaluation — the response carries both the
+// approval and the terminal execution; APPROVED + SKIPPED is the honest
+// "operator allowed, kernel did not"); reject is terminal. The approver
+// label is REQUIRED (attribution — who answered; never a credential).
+async function apvDecide(id, kind){
+  const approver = $('#apvApprover').value.trim();
+  if(!approver){ toast('Approver label is required (attribution — who answers)', true); return; }
+  const body = {approval_id: id, approver};
+  if(kind === 'reject'){
+    const reason = (window.prompt('Rejection reason (optional, at most 256 chars):', '')||'').trim();
+    if(reason) body.reason = reason;
+  }
+  try{
+    const r = await fetch('/api/bar/approvals/'+kind, {
+      method:'POST',
+      headers:{'Authorization':'Bearer '+TOKEN, 'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    if(r.status === 401){ showAuth('Token rejected — re-enter SCARLIHQ_TOKEN'); return; }
+    const resp = await r.json().catch(()=>({}));
+    if(!r.ok){
+      toast('Approvals '+kind+': ' + (resp.error||('HTTP '+r.status)), true);
+      approvalsPoll(); barPoll();
+      return;
+    }
+    if(kind === 'approve'){
+      const exec = resp.execution || {};
+      if(exec.state === 'COMPLETED')      toast('Approved — act executed: '+ (exec.outcome||''));
+      else if(exec.state === 'SKIPPED')   toast('Approved — but the FRESH evaluation denied (audited SKIPPED): '+ (exec.reason||''), true);
+      else if(exec.state === 'FAILED')    toast('Approved — the act FAILED: '+ (exec.reason||''), true);
+      else toast('Approved' + (resp.reconciled ? ' (reconciled — the execution already existed, no new act)' : ''));
+    }else{
+      toast('Rejected — terminal; the command\'s execution path is closed (retry is a new intent)');
+    }
+    approvalsPoll(); barPoll();
+  }catch(e){
+    toast('Approvals '+kind+': request failed', true);
+  }
+}
+
+// Delegated approval actions (buttons live inside re-rendered rows).
+$('#apvbody').addEventListener('click', e=>{
+  const approve = e.target.closest('[data-apvapprove]');
+  const reject = e.target.closest('[data-apvreject]');
+  if(approve){ apvDecide(approve.getAttribute('data-apvapprove'), 'approve'); }
+  else if(reject){ apvDecide(reject.getAttribute('data-apvreject'), 'reject'); }
 });
 
 // =========================================================================
@@ -782,11 +953,15 @@ async function connectBarWS(){
         // fabric.* frames are CONTROL frames (subscribed/dropped cues).
         // Filter on the CHANGE namespace, never on fabric.* (a refetch
         // triggered only on fabric.* would never fire).
-        if(msg.type && (msg.type.indexOf('command.') === 0 || msg.type.indexOf('execution.') === 0)){
+        // v19.5.3 — BF-4: approval.* joins the change namespace
+        // (approval.requested / approval.decided).
+        if(msg.type && (msg.type.indexOf('command.') === 0 || msg.type.indexOf('execution.') === 0 || msg.type.indexOf('approval.') === 0)){
           barPoll();
+          approvalsPoll();
           if(typeof wsPoll === 'function') wsPoll();
         }else if(msg.type === 'fabric.subscribed'){
           barPoll(); // first authoritative state (no replay — refetch NOW)
+          approvalsPoll();
         }
       }catch(e){}
     };
@@ -972,6 +1147,8 @@ function initApp(){
     setInterval(barPoll, 5000);
     wsPoll();             // v19.5.1: Agent Workspaces (5s polling)
     setInterval(wsPoll, 5000);
+    approvalsPoll();      // v19.5.3: Operator Approvals (5s polling)
+    setInterval(approvalsPoll, 5000);
     connectBarWS();       // v19.5.2: fabric push (/ws/bar) — change signals refetch; polling stays the fallback
   }).catch(()=>{
     // Backend down — show dashboard anyway (will show stale/empty data)

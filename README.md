@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.5.2 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.5.3 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.5.2</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.5.3</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.5.2-B87333?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.5.3-B87333?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-D4A574?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-A8C5D4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-D4A574?style=flat-square" /></a>
@@ -59,7 +59,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.5.2 (Agent Fabric BF-3 — coding/research agent runtimes; Phase B OPEN) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.5.3 (Agent Fabric BF-4 — operator approvals; Phase B OPEN) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ### 📑 Changelog Index (v19.5.x / v19.4.x / v19.3.x / v19.2.x)
 
@@ -67,6 +67,7 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 | Version | One line | Reference |
 |---------|----------|-----------|
+| **v19.5.3** | Agent Fabric BF-4: operator approvals — the human gate for MUTATING acts (the approval boundary IS the runtime boundary: `ApprovalRequiredForCapability` is DERIVED from the closed runtime mapping — the two policies cannot drift; coding acts NEVER execute on POST execute — the surface creates the ONE PENDING approval request, 202, params captured, submitter labeled), approve RUNS THE ACT (the full BF-3 flow composed with the operator's yes: FRESH kernel evaluation at approve time — APPROVED+SKIPPED is the honest "operator allowed, kernel did not" — audit-before-record, stored params so a decision cannot re-steer the act, reconciliation so no act runs twice), reject is UNCONDITIONAL + terminal (closes the command's execution path; the escape hatch for orphaned requests), closed PENDING/APPROVED/REJECTED enumeration (deliberately NO withdrawn — a PENDING request stays answerable), one request per command (load-enforced), submitter/approver attribution labels (never credentials — the bearer token is the only auth boundary), approvals.json store (grants.json discipline, bounded 256, fail-closed), bus `approval.*` change signals + dashboard Operator Approvals card | 📄 [What's New](#-whats-new-in-v1953--agent-fabric-bf-4-operator-approvals) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.5.3) |
 | **v19.5.2** | Agent Fabric BF-3: coding/research agent runtimes — the closed total mapping (research read-only / coding bridged, load-time invariant), execute surface with the STALE-ALLOW GUARD (FRESH kernel evaluation at execute time; a fresh denial is an audited SKIPPED — never an executed act), terminal-only execution records (COMPLETED/FAILED/SKIPPED, one execution per command, runtime↔capability coherence enforced at load), closed params shapes (DisallowUnknownFields), executions.json store (grants.json discipline, bounded 512, fail-closed), FabricBus change signals (bounded 16×16 drop-not-block, no replay) + `/ws/bar` push (ticket-before-upgrade, shared 16-slot WS budget, 503 nil-bus), composed `execution` field on command views (additive), exec button + push client in the dashboard | 📄 [What's New](#-whats-new-in-v1952--agent-fabric-bf-3-codingresearch-agent-runtimes) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.5.2) |
 | **v19.5.1** | Agent Fabric BF-2: agent workspaces — named, persisted isolation contexts (a session belongs to AT MOST ONE workspace — an unambiguous routing namespace), workspace-scoped commands route ONLY through member sessions (an ACTIVE-but-non-member session is invisible to scoped routing — that IS the isolation), ARCHIVED is the terminal tombstone (readable history + cancellable live commands, closed routing/membership/submissions), workspaces.json store (grants.json discipline: 0600/0700 fail-closed, atomic persist, bounded 64/32), additive scope field (commands schema stays v1 — BF-1 files load unchanged), workspace card + scope selector in the dashboard | 📄 [What's New](#-whats-new-in-v1951--agent-fabric-bf-2-agent-workspaces) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.5.1) |
 | **v19.5.0** | Agent Fabric BF-1 (Phase B opens): ScarliBar command lifecycle — intent capture persisted FIRST (an intent is never lost, even with no live agent session), deterministic routing (named or newest ACTIVE session), kernel-decided status (allow AND deny are both DECIDED with the fired rule — denial-is-200 carried into user-visible status), audit-before-serve (fail-closed), persisted bounded history (commands.json, 0600/0700, atomic writes, 512 bound), ScarliBar dashboard panel + `/api/bar/commands` surface | 📄 [What's New](#-whats-new-in-v1950--agent-fabric-bf-1-scarlibar-command-lifecycle) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.5.0) |
@@ -125,6 +126,42 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.5.3 — Agent Fabric BF-4 (Operator Approvals)
+
+**Štvrtá rada Fázy B: ľudská brána.** BF-3 vykonal coding akt na jeden
+POST — ten istý request, ktorý zachytil zámer, aj zmutoval host.
+BF-4 vkladá chýbajúce ľudské rozhodnutie: **mutujúci (coding) akt nikdy
+nebeží bez explicitného áno operátora.** Research akty sú read-only
+konštrukciou — tie stále exekutujú priamo (BF-3 flow, žiadna approval sa
+pre ne nikdy nevytvorí).
+
+| Koncept | Zmluva |
+|---|---|
+| **Hranica approvalu = hranica runtimeu** | `ApprovalRequiredForCapability` je **ODVODENÁ** z uzavretého mapovania runtimeov (odpovedá presne capability viazané na coding). Nie druhý literál — dve politiky, ktoré nemôžu driftovať. Neznáma capability odpovedá VYŽADUJ (fail-closed — nikdy tichá auto-exekúcia). |
+| **Uzavretá enumerácia stavov** | `PENDING` (jediný in-flight stav celého fabricu — žiadosť, ktorú drží človek) → `APPROVED` (akt bežal; `execution_id` referencuje terminálny záznam VŽDY — **APPROVED + SKIPPED = čestná kompozícia „operátor povolil, kernel nie"**) / `REJECTED` (terminál, žiadny akt nikdy). **Úmyselne ŽIADNY withdrawn** — príkaz žiadosti je DECIDED (terminálny), žiadosť zostáva zodpovedateľná, kým operátor nerozhodne. |
+| **Brána na execute** | Coding capability na `POST /api/bar/commands/execute` NIKDY neexekuuje priamo: povrch vytvorí JEDNU approval žiadosť (params zachytené v čase žiadosti, submitter label) → **202 + PENDING view**. Druhá žiadosť → 409; REJECTED zatvára exekúčnu cestu príkazu (retry = NOVÝ zámer). Bez approval store → **503** (mutácia nikdy ticho neobíde ľudskú bránu). |
+| **Approve = plný BF-3 flow** | Tvar id PRVÝ (400 vs 404) → PENDING brána → command gates znovu (svet sa pohnul) → **reconciliácia** (crashnutý approve po persist exekúcie zavrie APPROVED proti EXISTUJÚCEMU záznamu — žiadny akt nebeží dvakrát) → **akt re-používa ULOŽENÉ params** (rozhodnutie nemôže prešetriť akt — approve nemá params pole, unknown fields → 400) → **STALE-ALLOW GUARD v čase approvu** (ČERSTVÁ evaluácia; čerstvé odmietnutie = auditovaný SKIPPED) → audit PRED záznamom (fail-closed) → akt → terminálny záznam PRED zatvorením approvalu. |
+| **Reject je bezpodmienečný** | Operátorove NIE nepotrebuje žiadnu kernelovú evaluáciu (žiadny akt beží, niet čo hodnotiť): PENDING brána, povinný approver label, voliteľný bounded reason → **201 REJECTED** (nikdy execution referenciu). Zároveň únikový východ pre orphaned žiadosti (napr. in-memory session prežila reštart — approve fail-closed 409, reject stále odpovedá 201). |
+| **Jedna žiadosť per príkaz** | Vynútené DVAKRÁT: Request odmieta druhú žiadosť (`ErrAlreadyRequested` → 409) AJ Load abortuje na duplikáte v súbore — hand-editovaný duplikát je korupcia. Terminálne rozhodnutia sa nikdy re-rozhodujú (409). |
+| **Atribučné labely** | `submitter` (kto zachytil zámer — aditívne pole na commande, `omitempty`, commands schema zostáva v1) a `approver` (kto odpovedal): ≤ 64 runes, bez ctrl znakov. **Atribúcia, NIE credentials** — bearer token zostáva jedinou autentifikačnou hranicou (single-principal). |
+| Perzistencia + signaly | `approvals.json` — grants.json disciplína: schema v1, 0600/0700 fail-closed, atomic tmp+rename s rollbackom, bounded **256**, nič sa nemaže — súbor je reviewateľná história. Default vedľa commands.json; override `SCARLIHQ_AGENTFABRIC_APPROVALS_FILE`. Bus: `approval.requested`/`approval.decided` pridávajú do CHANGE namespace (command.*/execution.*; fabric.* ostáva kontrolné). |
+| REST + dashboard | `GET /api/bar/approvals` (bounded, filtre state/command_id s 400/404 disciplínou, counts vždy) · `POST /api/bar/approvals/approve|reject` · komponované pole `approval` na command views (**aditívne** — BF-1..BF-3 klienti unaffected) · **Operator Approvals karta** (approver input, riadky so zachytenými params + submitterom, approve/reject akcie na PENDING, komponovaná exekúcia na APPROVED), exec button na bare mizne so vznikom žiadosti, approval pill v decizion stĺpci, `/ws/bar` refetch na approval.* signaly. |
+
+Opt-in: **approval store ide na fabric opt-ine — žiadny extra flag**
+(rovnaký vzor ako BF-2/BF-3). 26. smoke check s overenou negatívnou
+kontrolou (rozbitie `ConfigureAgentFabricApprovals` v main.go → FAIL →
+revert → PASS). E2E na reálnej binárke **134/134** vrátane reštartu
+(história + terminálne rozhodnutia prežijú; orphaned PENDING — kernel
+sessiony sú in-memory — approve fail-closed 409 „session vanished",
+reject ostáva 201 únikový východ). Čestné non-goals v
+`docs/AGENT_FABRIC_BF4_DESIGN.md`: bez multi-principal autentifikácie
+(labely sú atribúcia), bez cross-file atomicity (poriadie je čestné,
+crash = reconciliácia), bez timeoutu na PENDING (expirovanie by ticho
+spravilo nerozhodnutie z rozhodnutia), bez quora (jeden operátor
+rozhoduje).
 
 ---
 
@@ -790,10 +827,11 @@ scarlix-smoke-test.sh         → online: 18 PASS + 0 FAIL + 0 WARN (14 checks)
 | Agent Fabric commands (BF-1) | **TESTED** (v19.5.0) | `internal/agentfabric` + `/api/bar/commands` (submit/list/route/cancel, auth-gated, 503 bez kernelu): intent capture persisted first (never lost), deterministic routing (named/newest ACTIVE), kernel-decided status (denial-is-a-decision), audit-before-serve fail-closed, persisted bounded history (commands.json 0600/0700, atomic, 512); ScarliBar dashboard panel; opt-in `SCARLIHQ_AGENTFABRIC_ENABLED` + `_COMMANDS_FILE`; smoke check 23 w/ verified negative control |
 | Agent Fabric workspaces (BF-2) | **TESTED** (v19.5.1) | `internal/agentfabric` (workspace.go/wstore.go) + `/api/bar/workspaces*` + scoped submit/route/list: named isolation contexts, ONE workspace per session (join-time claim + load-time duplicate-claim rejection), member-only scoped routing (ACTIVE non-members invisible — that IS the isolation), ARCHIVED terminal tombstone (readable history, cancellable live commands, closed routing/membership/submissions), workspaces.json store (grants.json discipline, bounded 64/32, fail-closed load, atomic persist), additive scope field (commands schema stays v1 — BF-1 files load unchanged), dashboard scope selector + workspaces card; workspace store rides the fabric opt-in (default file next to commands.json, `SCARLIHQ_AGENTFABRIC_WORKSPACES_FILE` override); smoke check 24 w/ verified negative control; E2E on the real binary 25/25 incl. restart persistence |
 | Agent Fabric runtimes (BF-3) | **TESTED** (v19.5.2) | `internal/agentfabric` (agentruntime.go/execution.go/estore.go/fabricbus.go) + `webui/wsbar.go` + `/api/bar/commands/execute` + `/api/bar/executions`: closed TOTAL runtime mapping (research read-only / coding bridged — `ValidateRuntimeMapping` aborts startup on drift), stale-allow guard (FRESH kernel evaluation at execute time; fresh denial = audited SKIPPED, act never runs), terminal-only records (COMPLETED/FAILED/SKIPPED — no in-flight state; ONE execution per command, load-enforced; state↔allow↔runtime coherence validated at load+persist), closed params shapes (DisallowUnknownFields per capability), executions.json store (grants.json discipline, schema v1, 0600/0700, atomic, bounded 512), FabricBus change signals (bounded 16×16 drop-not-block, no replay) + `/ws/bar` push (ticket-before-upgrade, SHARED wsSlots 16 across both WS surfaces, nil bus 503 before upgrade), composed additive `execution` field on command views, dashboard exec button + wsBar client; execution store + bus ride the fabric opt-in (`SCARLIHQ_AGENTFABRIC_EXECUTIONS_FILE` override); smoke check 25 w/ verified negative control; E2E on the real binary 86/86 incl. restart persistence |
+| Agent Fabric approvals (BF-4) | **TESTED** (v19.5.3) | `internal/agentfabric` (approval.go/astore.go) + `/api/bar/approvals` + `/api/bar/approvals/approve|reject` + the execute gate: the operator gate for MUTATING acts (the approval boundary IS the runtime boundary — `ApprovalRequiredForCapability` DERIVED from the closed mapping, cannot drift; coding acts NEVER execute on POST execute — the ONE PENDING request is created, 202, params captured, submitter labeled; 503 without the approval store), approve RUNS THE ACT (full BF-3 flow at approve time: re-checked command gates, reconciliation against an existing execution — no act twice, STORED params — no re-steering, FRESH kernel evaluation — APPROVED+SKIPPED is the honest composition, audit-before-record), reject UNCONDITIONAL + terminal (closes the command's execution path; the escape hatch for orphaned requests), closed PENDING/APPROVED/REJECTED enumeration (deliberately NO withdrawn), ONE request per command (request refusal + load-time duplicate rejection), submitter/approver attribution labels (≤64 runes, never credentials), approvals.json store (grants.json discipline, schema v1, 0600/0700, atomic, bounded 256, never deleted), bus `approval.requested`/`approval.decided` change signals, composed additive `approval` field on command views, dashboard Operator Approvals card (approver input, approve/reject actions, captured params display, approval.* WS refetch); approval store rides the fabric opt-in (`SCARLIHQ_AGENTFABRIC_APPROVALS_FILE` override, default approvals.json next to commands.json); smoke check 26 w/ verified negative control; E2E on the real binary 134/134 incl. restart persistence (orphaned PENDING: approve fail-closed, reject escape hatch) |
 | Agent Kernel line | **COMPLETE** (v19.4.0–v19.4.6) | AK-1…AK-5 all merged, tagged, released — the deterministic core (identity, capabilities, sessions, grants, audit, compute intake) |
 | Gaming stack integration | **TESTED** (v19.3.1) + owner-attested host run | profile-based `scarlix-gaming-install` (never removes), one shared manifest, read-only `/api/gaming` + dashboard card, smoke checks 15/16; `gaming/README.md` |
 
-**Theme status:** Compute Fabric is **software-complete** (Phases 2–7 TESTED; Phase 8–9 regression automation green, race tests, 19 Go packages). The **Agent Kernel theme (v19.4.x) is COMPLETE**: AK-1 foundation (v19.4.0) · AK-2 sessions + REST surface (v19.4.1) · AK-3 grant registry (v19.4.4) · AK-4 audit sink (v19.4.5) · AK-5 compute intake (v19.4.6) — all merged, tagged, CI-green, released. v19.4.2 was a dependency-pin-hygiene release; v19.4.3 the KpK review remediation. **Agent Fabric theme (v19.5.x) is OPEN**: BF-1 command lifecycle + ScarliBar panel (v19.5.0), BF-2 agent workspaces (v19.5.1) and BF-3 coding/research agent runtimes (v19.5.2) done — BF-4 approvals, BF-5 phase closure follow. Target-host hardware acceptance per `docs/HARDWARE_ACCEPTANCE_PROTOCOL.md` is **OPEN** (KPK-06) — CI green ≠ hardware verified. “LLM navrhuje, politika rozhoduje.”
+**Theme status:** Compute Fabric is **software-complete** (Phases 2–7 TESTED; Phase 8–9 regression automation green, race tests, 19 Go packages). The **Agent Kernel theme (v19.4.x) is COMPLETE**: AK-1 foundation (v19.4.0) · AK-2 sessions + REST surface (v19.4.1) · AK-3 grant registry (v19.4.4) · AK-4 audit sink (v19.4.5) · AK-5 compute intake (v19.4.6) — all merged, tagged, CI-green, released. v19.4.2 was a dependency-pin-hygiene release; v19.4.3 the KpK review remediation. **Agent Fabric theme (v19.5.x) is OPEN**: BF-1 command lifecycle + ScarliBar panel (v19.5.0), BF-2 agent workspaces (v19.5.1), BF-3 coding/research agent runtimes (v19.5.2) and BF-4 operator approvals (v19.5.3) done — BF-5 phase closure follows. Target-host hardware acceptance per `docs/HARDWARE_ACCEPTANCE_PROTOCOL.md` is **OPEN** (KPK-06) — CI green ≠ hardware verified. “LLM navrhuje, politika rozhoduje.”
 
 **v19.1.16 → v19.1.20 in one line each:** .16 heredoc P0 fix + security hardening · .17 fish `agent.env.fish` hardening · .18 audit closure + secret hardening · .19 audit closure + portable base64 · .20 mutation-hardened smoke guard.
 

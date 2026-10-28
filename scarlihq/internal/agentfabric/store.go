@@ -303,7 +303,19 @@ func (s *CommandStore) mutate(id CommandID, fn func(rec *CommandRecord) error) (
 // messages; the store is the authority). workspaceID may be empty
 // (unscoped, the BF-1 behavior). Fail-closed: RNG failure aborts
 // submission (never a predictable ID); at capacity ErrCommandLimit.
+//
+// BF-4: SubmitWithSubmitter carries the optional submitter attribution
+// label; Submit (the BF-1/BF-2/BF-3 signature) submits unlabeled —
+// existing callers and tests are unaffected.
 func (s *CommandStore) Submit(intent string, agent agentkernel.AgentID, capability agentkernel.Capability, workspaceID WorkspaceID, now time.Time) (CommandRecord, error) {
+	return s.SubmitWithSubmitter(intent, agent, capability, workspaceID, "", now)
+}
+
+// SubmitWithSubmitter is Submit with the optional submitter attribution
+// label (BF-4): WHO captured the intent. Empty = unlabeled (the BF-1
+// behavior). The label is validated (bounded, no control characters —
+// attribution for the reviewable history, never a credential).
+func (s *CommandStore) SubmitWithSubmitter(intent string, agent agentkernel.AgentID, capability agentkernel.Capability, workspaceID WorkspaceID, submitter string, now time.Time) (CommandRecord, error) {
 	if err := ValidateIntent(intent); err != nil {
 		return CommandRecord{}, err
 	}
@@ -321,6 +333,11 @@ func (s *CommandStore) Submit(intent string, agent agentkernel.AgentID, capabili
 	if now.IsZero() {
 		return CommandRecord{}, fmt.Errorf("agentfabric: submission time is required")
 	}
+	if submitter != "" {
+		if err := ValidatePrincipalLabel(submitter); err != nil {
+			return CommandRecord{}, fmt.Errorf("agentfabric: submitter: %v", err)
+		}
+	}
 	id, err := rngCommandID()
 	if err != nil {
 		return CommandRecord{}, err
@@ -331,6 +348,7 @@ func (s *CommandStore) Submit(intent string, agent agentkernel.AgentID, capabili
 		AgentID:     agent,
 		Capability:  capability,
 		WorkspaceID: string(workspaceID),
+		Submitter:   submitter,
 		State:       CommandSubmitted,
 		SubmittedAt: now.UTC(),
 		UpdatedAt:   now.UTC(),

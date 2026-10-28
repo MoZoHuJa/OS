@@ -105,6 +105,20 @@ services:
       # rides the same opt-in — nil bus answers 503 before upgrade.
       # Override only if the stores live on separate volumes:
       #   - SCARLIHQ_AGENTFABRIC_EXECUTIONS_FILE=/var/lib/scarlix-agentfabric/executions.json
+      # v19.5.3 — the approval store rides the SAME opt-in (BF-4: the
+      # operator approval gate — coding (mutating) acts NEVER execute on
+      # POST /api/bar/commands/execute; the execute creates the ONE
+      # PENDING approval request (202, params captured, submitter
+      # labeled) and the operator decides: approve runs the act through
+      # the full BF-3 flow with a FRESH kernel evaluation at approve
+      # time, reject is terminal. Research (read-only) acts execute
+      # directly, no request is ever created for them. One request per
+      # command, ever; decisions are terminal — the file is the
+      # reviewable history, bounded 256). No extra flag; the file
+      # defaults to approvals.json next to the commands file (same 0700
+      # directory, same fail-closed load). Override only if the stores
+      # live on separate volumes:
+      #   - SCARLIHQ_AGENTFABRIC_APPROVALS_FILE=/var/lib/scarlix-agentfabric/approvals.json
     # v19.3.2 — OPT-IN compute lifecycle mounts (see env notes above).
     #   - /var/lib/scarlix-reservation:/var/lib/scarlix-reservation:rw
     #   - /run/scarlix-workload-bridge/bridge.sock:/run/scarlix-workload-bridge/bridge.sock
@@ -118,7 +132,8 @@ services:
     # must exist host-side with mode 0700 (the command store fail-closes on
     # looser permissions — tamper discipline).
     # v19.5.1 — the same mount carries the workspace store (BF-2): it
-    # defaults to workspaces.json in this directory.
+    # defaults to workspaces.json in this directory. v19.5.2 (BF-3)
+    # executions.json and v19.5.3 (BF-4) approvals.json default here too.
     #   - /var/lib/scarlix-agentfabric:/var/lib/scarlix-agentfabric:rw
     networks: [scarlix-net]
 networks:

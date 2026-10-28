@@ -1815,6 +1815,210 @@ check_25_agent_fabric_runtimes() {
     pass "agent fabric runtimes: closed total mapping (research read-only / coding bridged, load-time invariant), terminal-only execution records (COMPLETED/FAILED/SKIPPED, one per command), stale-allow guard (fresh evaluation, audited SKIPPED), closed params shapes, executions.json store (fail-closed, atomic, bounded 512), bounded bus (16×16 drop-not-block no-replay), /ws/bar ticket+shared-slots+503-nil-bus, auth-gated execute/executions routes, composed additive field, opt-in wiring"
 }
 
+check_26_agent_fabric_approvals() {
+    echo "--- [26] Agent Fabric operator approvals (BF-4): the human gate for mutating acts, terminal decisions, one request per command ---"
+    local apv_model="$REPO_DIR/scarlihq/internal/agentfabric/approval.go"
+    local apv_store="$REPO_DIR/scarlihq/internal/agentfabric/astore.go"
+    local bus_src="$REPO_DIR/scarlihq/internal/agentfabric/fabricbus.go"
+    local cmd_src="$REPO_DIR/scarlihq/internal/agentfabric/command.go"
+    local cmd_store="$REPO_DIR/scarlihq/internal/agentfabric/store.go"
+    local api_appr="$REPO_DIR/scarlihq/internal/api/agentfabric_appr.go"
+    local api_exec="$REPO_DIR/scarlihq/internal/api/agentfabric_exec.go"
+    local api_cmd="$REPO_DIR/scarlihq/internal/api/agentfabric.go"
+    local rest_src="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+    local dashboard="$REPO_DIR/scarlihq/cmd/scarlihq/frontend/dist/index.html"
+
+    if [[ ! -f "$apv_model" || ! -f "$apv_store" || ! -f "$api_appr" ]]; then
+        fail "agent fabric approval model/store/surface missing (BF-4, v19.5.3)"
+        return
+    fi
+
+    # Closed approval state enumeration: PENDING (the only in-flight state
+    # in the whole fabric) + the terminal APPROVED/REJECTED. Deliberately
+    # NO withdrawn state — a state no surface can reach would be a lie.
+    if ! grep -q "ApprovalPending" "$apv_model" || ! grep -q "ApprovalApproved" "$apv_model" || ! grep -q "ApprovalRejected" "$apv_model"; then
+        fail "approval states must be the closed PENDING/APPROVED/REJECTED enumeration"
+        return
+    fi
+    if grep -q "ApprovalWithdrawn\|ApprovalCancelled" "$apv_model" "$apv_store" "$api_appr" "$bus_src"; then
+        fail "a withdrawn/cancelled approval state exists — the enumeration is deliberately PENDING/APPROVED/REJECTED (a PENDING request stays answerable)"
+        return
+    fi
+    # The approval boundary IS the runtime boundary — DERIVED, not
+    # re-declared (the two policies cannot drift).
+    if ! grep -q "func ApprovalRequiredForCapability" "$apv_model" || ! grep -q "RuntimeCoding" "$apv_model"; then
+        fail "ApprovalRequiredForCapability must be DERIVED from the closed runtime mapping (the boundary is the runtime boundary)"
+        return
+    fi
+    # Principal labels: bounded attribution, never credentials.
+    if ! grep -q "func ValidatePrincipalLabel" "$apv_model" || ! grep -q "MaxPrincipalLabelRunes" "$apv_model"; then
+        fail "submitter/approver labels must be bounded and validated (ValidatePrincipalLabel — attribution, not credentials)"
+        return
+    fi
+    # State↔fields coherence: PENDING carries no decision fields; APPROVED
+    # requires approver+execution+decided_at; REJECTED never an execution.
+    if ! grep -q "PENDING record carries decision fields" "$apv_model" || ! grep -q "REJECTED record carries an execution reference" "$apv_model"; then
+        fail "approval validate must enforce state↔fields coherence (PENDING bare, REJECTED never executed, APPROVED references the act)"
+        return
+    fi
+    if ! grep -q "APPROVED requires the execution reference" "$apv_model"; then
+        fail "APPROVED must require the terminal execution reference (the act ran — even an audited SKIPPED)"
+        return
+    fi
+    # Runtime↔capability + params↔capability coherence on records.
+    if ! grep -q "closed mapping coherence" "$apv_model" || ! grep -q "closed shape was not captured" "$apv_model"; then
+        fail "approval records must pin runtime coherence AND the closed params shape captured at request time"
+        return
+    fi
+    # Fail-closed store: schema version, permissions, atomic persist, bound,
+    # one-request-per-command (refusal + load-time duplicate rejection).
+    if ! grep -q "approvalsFileVersion" "$apv_store" || ! grep -q "explicit migration required" "$apv_store"; then
+        fail "approval store must version its schema and reject unknown versions (fail-closed load)"
+        return
+    fi
+    if ! grep -q "ErrApprovalFilePermissions" "$apv_store"; then
+        fail "approval store must fail-closed on loose file/dir permissions (tamper discipline)"
+        return
+    fi
+    if ! grep -q "CreateTemp" "$apv_store" || ! grep -q "os.Rename" "$apv_store"; then
+        fail "approval store must persist atomically (temp + rename, in-memory rollback)"
+        return
+    fi
+    if ! grep -q "DefaultMaxApprovals" "$apv_store" || ! grep -q "ErrApprovalLimit" "$apv_store"; then
+        fail "approval store must be bounded (DefaultMaxApprovals + ErrApprovalLimit)"
+        return
+    fi
+    if ! grep -q "ErrAlreadyRequested" "$apv_store" || ! grep -q "requested TWICE" "$apv_store"; then
+        fail "approval store must enforce ONE request per command (Request refusal + load-time duplicate rejection)"
+        return
+    fi
+    if ! grep -q "ErrApprovalState" "$apv_store"; then
+        fail "terminal approval decisions must never be re-decided (ErrApprovalState)"
+        return
+    fi
+    if ! grep -q "ErrApprovalRNG" "$apv_store"; then
+        fail "approval id generation must be fail-closed on RNG failure (the cmd-/ws-/afx- precedent)"
+        return
+    fi
+    # The operator gate on the execute surface: coding capabilities NEVER
+    # execute directly — the ONE approval request is created (202).
+    if ! grep -q "ApprovalRequiredForCapability" "$api_exec" || ! grep -q "barApprovalRequest" "$api_exec"; then
+        fail "execute must gate on ApprovalRequiredForCapability — a coding act creates the approval request, never a direct execution"
+        return
+    fi
+    if ! grep -q "StatusAccepted" "$api_appr"; then
+        fail "the approval request must answer 202 Accepted (PENDING — the operator has not answered yet)"
+        return
+    fi
+    if ! grep -q "a mutating (coding) act cannot execute without the operator approval surface" "$api_appr"; then
+        fail "the execute surface must 503 without the approval store — a mutating act never silently bypasses the human gate"
+        return
+    fi
+    # Approve runs the act: the full BF-3 flow (fresh evaluation = the
+    # stale-allow guard at APPROVE time, audit-before-record, the terminal
+    # record) composed with the operator's yes.
+    if ! grep -q "STALE-ALLOW GUARD" "$api_appr" || ! grep -q "APPROVED + SKIPPED" "$api_appr"; then
+        fail "approve must run the FRESH kernel evaluation (stale-allow guard at approve time); APPROVED + SKIPPED is the honest composition"
+        return
+    fi
+    if ! grep -q "audit write failed" "$api_appr"; then
+        fail "the approve-time fresh evaluation must be audited BEFORE the execution record exists (fail-closed ordering)"
+        return
+    fi
+    # Approve cannot re-steer the act: the STORED params are re-used.
+    if ! grep -q "re-uses the STORED params\|re-uses the STORED params" "$api_appr" && ! grep -q "STORED params" "$api_appr"; then
+        fail "approve must re-use the params captured at REQUEST time (an approval decision cannot re-steer the act)"
+        return
+    fi
+    # Reconciliation: a crashed approve after the execution persist closes
+    # APPROVED against the EXISTING execution — no act runs twice.
+    if ! grep -q "RECONCILIATION" "$api_appr"; then
+        fail "approve must reconcile against an existing terminal execution (no act runs twice through that door)"
+        return
+    fi
+    # Reject is UNCONDITIONAL (no kernel evaluation gates a rejection) and
+    # closes the command's execution path.
+    if ! grep -q "UNCONDITIONAL" "$api_appr"; then
+        fail "reject must be unconditional — the operator's no is not kernel-evaluated (no act runs, nothing to evaluate)"
+        return
+    fi
+    # ApprovalID SHAPE first (400 vs 404 — the filter precedent).
+    if ! grep -q "SHAPE first" "$api_appr"; then
+        fail "approve/reject must validate the approval id shape BEFORE the lookup (400 shape vs 404 unknown)"
+        return
+    fi
+    # Closed state filter on the read surface.
+    if ! grep -q "closed enumeration" "$api_appr"; then
+        fail "the approvals read surface must reject unknown state filters (closed enumeration)"
+        return
+    fi
+    # Submitter attribution: additive + omitempty (schema stays v1 —
+    # BF-1/BF-2/BF-3 binaries and files unaffected), Submit stays unlabeled.
+    if ! grep -q "Submitter" "$cmd_src" || ! grep -q "submitter,omitempty" "$cmd_src"; then
+        fail "command records must carry the additive submitter label (omitempty — the commands schema stays v1)"
+        return
+    fi
+    if ! grep -q "func (s \*CommandStore) SubmitWithSubmitter" "$cmd_store" || ! grep -q "return s.SubmitWithSubmitter" "$cmd_store"; then
+        fail "Submit must delegate to SubmitWithSubmitter (BF-1/BF-2/BF-3 callers unaffected — empty label = the BF-1 behavior)"
+        return
+    fi
+    # The composed additive approval field on command views.
+    if ! grep -q 'approval,omitempty' "$api_cmd"; then
+        fail "command views must compose the additive approval field (omitempty — BF-1..BF-3 clients unaffected)"
+        return
+    fi
+    # Bus signals: approval.requested / approval.decided join the change
+    # namespace (command.*/execution.* — fabric.* stays control).
+    if ! grep -q "SignalApprovalRequested" "$bus_src" || ! grep -q "SignalApprovalDecided" "$bus_src"; then
+        fail "the fabric bus must carry approval.requested/approval.decided change signals"
+        return
+    fi
+    if grep -q "SignalApprovalWithdrawn\|approval.withdrawn" "$bus_src"; then
+        fail "an approval.withdrawn signal exists — there is deliberately NO withdrawn state"
+        return
+    fi
+    # Auth-gated routes (3 surfaces).
+    for route in '/api/bar/approvals"' '/api/bar/approvals/approve"' '/api/bar/approvals/reject"'; do
+        if ! grep -q "$route" "$rest_src"; then
+            fail "rest.go must register the auth-gated route $route"
+            return
+        fi
+    done
+    # main.go wiring: the approval store rides the fabric opt-in (no
+    # separate flag), fail-closed load.
+    if ! grep -q "SCARLIHQ_AGENTFABRIC_APPROVALS_FILE" "$main_src" || ! grep -q "ConfigureAgentFabricApprovals" "$main_src"; then
+        fail "main.go must wire the approval store into the fabric opt-in (SCARLIHQ_AGENTFABRIC_APPROVALS_FILE + ConfigureAgentFabricApprovals)"
+        return
+    fi
+    if ! grep -q "approvals.json" "$main_src"; then
+        fail "the approvals file must default to approvals.json NEXT TO the commands file (same directory discipline)"
+        return
+    fi
+    # Compose carries the documented opt-in (env override).
+    if ! grep -q "SCARLIHQ_AGENTFABRIC_APPROVALS_FILE" "$compose"; then
+        fail "compose must document the approval store override (SCARLIHQ_AGENTFABRIC_APPROVALS_FILE)"
+        return
+    fi
+    # Dashboard: the approvals card, the approve/reject actions, the
+    # approvalsPoll refetch and the approval.* WS push filter.
+    if ! grep -q 'id="apvcard"' "$dashboard" || ! grep -q 'data-apvapprove' "$dashboard" || ! grep -q 'data-apvreject' "$dashboard"; then
+        fail "the dashboard must carry the Operator Approvals card with approve/reject actions"
+        return
+    fi
+    if ! grep -q "function approvalsPoll" "$dashboard" || ! grep -q "function apvDecide" "$dashboard"; then
+        fail "the dashboard must poll /api/bar/approvals and POST the operator decision (approvalsPoll + apvDecide)"
+        return
+    fi
+    if ! grep -q "indexOf('approval.')" "$dashboard"; then
+        fail "the /ws/bar client must refetch on approval.* change signals (the LIVE CATCH — never fabric.*)"
+        return
+    fi
+
+    pass "agent fabric approvals: the operator gate (coding acts never execute directly — execute creates the ONE PENDING request, 202), approve runs the act (full BF-3 flow, FRESH evaluation at approve time, audited SKIPPED = APPROVED+SKIPPED, stored params — no re-steering, reconciliation), unconditional terminal reject, PENDING-only-in-flight closed enumeration (no withdrawn), one request per command (load-enforced), submitter/approver attribution labels (never credentials), approvals.json store (fail-closed, atomic, bounded 256), bus approval.* signals, auth-gated routes, additive composed field, opt-in wiring + compose + dashboard"
+}
+
 # ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
@@ -1847,6 +2051,7 @@ SMOKE_CHECKS=(
     check_23_agent_fabric_commands
     check_24_agent_fabric_workspaces
     check_25_agent_fabric_runtimes
+    check_26_agent_fabric_approvals
 )
 
 run_check() {

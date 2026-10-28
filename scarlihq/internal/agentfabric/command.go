@@ -175,13 +175,19 @@ type CommandRecord struct {
 	Capability  agentkernel.Capability `json:"capability"`
 	WorkspaceID string                 `json:"workspace_id,omitempty"`
 	SessionID   string                 `json:"session_id,omitempty"`
-	State       CommandState           `json:"state"`
-	Decision    *agentkernel.Decision  `json:"decision,omitempty"`
-	SubmittedAt time.Time              `json:"submitted_at"`
-	RoutedAt    *time.Time             `json:"routed_at,omitempty"`
-	DecidedAt   *time.Time             `json:"decided_at,omitempty"`
-	CancelledAt *time.Time             `json:"cancelled_at,omitempty"`
-	UpdatedAt   time.Time              `json:"updated_at"`
+	// Submitter (BF-4): optional attribution label — WHO captured the
+	// intent. A label, never a credential (single-principal deployments;
+	// the bearer token is the only authentication boundary). Additive +
+	// omitempty: the commands schema stays v1 — BF-1/BF-2 binaries and
+	// files are unaffected.
+	Submitter   string                `json:"submitter,omitempty"`
+	State       CommandState          `json:"state"`
+	Decision    *agentkernel.Decision `json:"decision,omitempty"`
+	SubmittedAt time.Time             `json:"submitted_at"`
+	RoutedAt    *time.Time            `json:"routed_at,omitempty"`
+	DecidedAt   *time.Time            `json:"decided_at,omitempty"`
+	CancelledAt *time.Time            `json:"cancelled_at,omitempty"`
+	UpdatedAt   time.Time             `json:"updated_at"`
 }
 
 // validate checks the record invariants (used at load AND after every
@@ -222,6 +228,13 @@ func (r CommandRecord) validate() error {
 	}
 	if r.SubmittedAt.IsZero() {
 		return fmt.Errorf("agentfabric: command %s: zero submitted_at", r.ID)
+	}
+	// BF-4: the submitter label, when present, is a bounded principal
+	// label (attribution for the reviewable history, never a credential).
+	if r.Submitter != "" {
+		if err := ValidatePrincipalLabel(r.Submitter); err != nil {
+			return fmt.Errorf("agentfabric: command %s: submitter: %v", r.ID, err)
+		}
 	}
 	if r.UpdatedAt.Before(r.SubmittedAt) {
 		return fmt.Errorf("agentfabric: command %s: updated_at before submitted_at", r.ID)
