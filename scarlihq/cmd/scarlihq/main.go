@@ -243,9 +243,33 @@ func main() {
 		if err := apiHandler.ConfigureAgentFabricExecutions(execStore, fabricBus); err != nil {
 			log.Fatalf("agent fabric execution configuration failed: %v", err)
 		}
+		// BF-4 (v19.5.3): the approval store rides the SAME opt-in (the
+		// operator approval gate — no extra flag). The file defaults to
+		// approvals.json NEXT TO the commands file (same 0700 directory,
+		// same tamper discipline); SCARLIHQ_AGENTFABRIC_APPROVALS_FILE
+		// overrides the location. Fail-closed load like every persisted
+		// store — a tampered approvals file aborts startup, it never
+		// degrades into "some approvals work". The approval boundary is
+		// the runtime boundary (coding acts require the operator's yes;
+		// research acts execute directly — read-only by construction).
+		approvalsFile := strings.TrimSpace(os.Getenv("SCARLIHQ_AGENTFABRIC_APPROVALS_FILE"))
+		if approvalsFile == "" {
+			approvalsFile = filepath.Join(filepath.Dir(commandsFile), "approvals.json")
+		}
+		apvStore, err := agentfabric.NewApprovalStore(approvalsFile, agentfabric.DefaultMaxApprovals)
+		if err != nil {
+			log.Fatalf("agent fabric approval store construction failed: %v", err)
+		}
+		if err := apvStore.Load(); err != nil {
+			log.Fatalf("agent fabric approval store load failed: %v (fix the file or archive it deliberately — never run on a tampered approval history)", err)
+		}
+		if err := apiHandler.ConfigureAgentFabricApprovals(apvStore); err != nil {
+			log.Fatalf("agent fabric approval configuration failed: %v", err)
+		}
 		log.Printf("Agent Fabric command API enabled (ScarliBar backend; commands file: %s; bound %d records — the file is the history, rotate deliberately)", commandsFile, agentfabric.DefaultMaxCommands)
 		log.Printf("Agent Fabric workspace API enabled (workspaces file: %s; bound %d workspaces / %d sessions each — ARCHIVED is the terminal tombstone)", workspacesFile, agentfabric.DefaultMaxWorkspaces, agentfabric.MaxSessionsPerWorkspace)
 		log.Printf("Agent Fabric execution API enabled (runtimes: research read-only / coding bridged; executions file: %s; bound %d records — one execution per command, records are terminal; stale-allow guard evaluates FRESH at execute time)", executionsFile, agentfabric.DefaultMaxExecutions)
+		log.Printf("Agent Fabric approval API enabled (the operator gate: coding acts require an explicit yes — research acts execute directly; approvals file: %s; bound %d records — one request per command, decisions are terminal)", approvalsFile, agentfabric.DefaultMaxApprovals)
 		fabricBusRef = fabricBus
 	} else {
 		log.Printf("Agent Fabric command API disabled; set SCARLIHQ_AGENTFABRIC_ENABLED=true (requires the agent kernel + SCARLIHQ_AGENTFABRIC_COMMANDS_FILE)")

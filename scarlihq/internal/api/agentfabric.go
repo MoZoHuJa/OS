@@ -60,13 +60,17 @@ func (h *Handler) agentFabricDisabled(w http.ResponseWriter) bool {
 // (awaiting routing — the intent is never lost). WorkspaceID (BF-2) is
 // optional: empty = unscoped (the BF-1 behavior); non-empty = the command
 // is submitted into that workspace's isolation scope and routes ONLY
-// through its member sessions.
+// through its member sessions. Submitter (BF-4) is optional: empty =
+// unlabeled; non-empty = a bounded attribution label (WHO captured the
+// intent — a label, never a credential; the bearer token is the only
+// authentication boundary).
 type barCommandSubmitRequest struct {
 	Intent      string `json:"intent"`
 	AgentID     string `json:"agent_id"`
 	Capability  string `json:"capability"`
 	SessionID   string `json:"session_id,omitempty"`
 	WorkspaceID string `json:"workspace_id,omitempty"`
+	Submitter   string `json:"submitter,omitempty"`
 }
 
 type barCommandRouteRequest struct {
@@ -81,7 +85,10 @@ type barCommandCancelRequest struct {
 // ownership). Decision fields are present exactly when state=DECIDED.
 // WorkspaceID is present exactly when the command is workspace-scoped.
 // Execution (BF-3, additive) is present exactly when the command has
-// been executed — one terminal record per command.
+// been executed — one terminal record per command. Approval (BF-4,
+// additive) is present exactly when the command carries an operator
+// approval request — coding acts only (research acts never request
+// approval).
 type barCommandView struct {
 	ID          string               `json:"id"`
 	Intent      string               `json:"intent"`
@@ -89,6 +96,7 @@ type barCommandView struct {
 	Capability  string               `json:"capability"`
 	WorkspaceID string               `json:"workspace_id,omitempty"`
 	SessionID   string               `json:"session_id,omitempty"`
+	Submitter   string               `json:"submitter,omitempty"`
 	State       string               `json:"state"`
 	Allow       *bool                `json:"allow,omitempty"`
 	Reason      string               `json:"reason,omitempty"`
@@ -98,6 +106,7 @@ type barCommandView struct {
 	CancelledAt string               `json:"cancelled_at,omitempty"`
 	UpdatedAt   string               `json:"updated_at"`
 	Execution   *barExecutionSummary `json:"execution,omitempty"`
+	Approval    *barApprovalSummary  `json:"approval,omitempty"`
 }
 
 // barExecutionSummary is the composed execution view on a command (the
@@ -136,12 +145,41 @@ func (h *Handler) composeExecution(c agentfabric.CommandRecord) *barExecutionSum
 	}
 }
 
+// composeApproval attaches the command's approval summary when the
+// approval store is configured and the command carries a request (BF-4:
+// coding acts only). ADDITIVE exactly like the execution composition —
+// BF-1/BF-2/BF-3 clients are unaffected; the view never lies about what
+// exists.
+func (h *Handler) composeApproval(c agentfabric.CommandRecord) *barApprovalSummary {
+	if h.agentApprovals == nil {
+		return nil
+	}
+	rec, ok := h.agentApprovals.GetByCommand(agentfabric.CommandID(c.ID))
+	if !ok {
+		return nil
+	}
+	return &barApprovalSummary{
+		ID:          rec.ID,
+		State:       string(rec.State),
+		Submitter:   rec.Submitter,
+		Approver:    rec.Approver,
+		Reason:      rec.Reason,
+		ExecutionID: rec.ExecutionID,
+		RequestedAt: rec.RequestedAt.Format(time.RFC3339),
+	}
+}
+
 // viewWithExecution composes the command view + the additive execution
-// field (nil-safe when the execution store is not configured).
+// field (nil-safe when the execution store is not configured) + the
+// additive approval field (nil-safe when the approval store is not
+// configured — BF-4).
 func (h *Handler) viewWithExecution(c agentfabric.CommandRecord) barCommandView {
 	v := viewFromCommand(c)
 	if e := h.composeExecution(c); e != nil {
 		v.Execution = e
+	}
+	if a := h.composeApproval(c); a != nil {
+		v.Approval = a
 	}
 	return v
 }
@@ -164,6 +202,7 @@ func viewFromCommand(c agentfabric.CommandRecord) barCommandView {
 		Capability:  string(c.Capability),
 		WorkspaceID: c.WorkspaceID,
 		SessionID:   c.SessionID,
+		Submitter:   c.Submitter,
 		State:       string(c.State),
 		SubmittedAt: c.SubmittedAt.Format(time.RFC3339),
 		UpdatedAt:   c.UpdatedAt.Format(time.RFC3339),
@@ -378,6 +417,13 @@ func (h *Handler) barCommandSubmit(w http.ResponseWriter, r *http.Request) {
 	capability := agentkernel.Capability(strings.TrimSpace(req.Capability))
 	namedSession := strings.TrimSpace(req.SessionID)
 	workspaceID := agentfabric.WorkspaceID(strings.TrimSpace(req.WorkspaceID))
+	submitterLabel := strings.TrimSpace(req.Submitter)
+	if submitterLabel != "" {
+		if err := agentfabric.ValidatePrincipalLabel(submitterLabel); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 
 	// Early validation for clean 400s (the store re-validates — defense
 	// in depth; the store is the authority).
@@ -432,7 +478,9 @@ func (h *Handler) barCommandSubmit(w http.ResponseWriter, r *http.Request) {
 
 	// 1. Capture the intent — persisted BEFORE any routing attempt. An
 	//    intent is never lost, even when nothing is routable right now.
-	cmd, err := h.agentFabric.Submit(intent, agent, capability, workspaceID, time.Now().UTC())
+	//    The submitter label (BF-4) rides the record: attribution for
+	//    the approval line, never a credential.
+	cmd, err := h.agentFabric.SubmitWithSubmitter(intent, agent, capability, workspaceID, submitterLabel, time.Now().UTC())
 	if err != nil {
 		h.barCommandMutationError(w, err)
 		return

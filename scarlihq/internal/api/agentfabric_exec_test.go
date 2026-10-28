@@ -78,6 +78,18 @@ func newExecTestServerOnDir(t *testing.T, dir string) (*http.ServeMux, *Handler,
 	if err := h.ConfigureAgentFabricExecutions(execStore, bus); err != nil {
 		t.Fatalf("configure executions: %v", err)
 	}
+	// BF-4 (v19.5.3): the approval store rides the same fixture (the
+	// main.go wiring, mirrored — coding acts require the operator gate).
+	apvStore, err := agentfabric.NewApprovalStore(filepath.Join(dir, "approvals.json"), agentfabric.DefaultMaxApprovals)
+	if err != nil {
+		t.Fatalf("approval store: %v", err)
+	}
+	if err := apvStore.Load(); err != nil {
+		t.Fatalf("approval load: %v", err)
+	}
+	if err := h.ConfigureAgentFabricApprovals(apvStore); err != nil {
+		t.Fatalf("configure approvals: %v", err)
+	}
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	return mux, h, bus
@@ -395,22 +407,58 @@ func TestExecuteParamsClosedShapes(t *testing.T) {
 // The coding runtime: mode.request executes through the mode bridge
 // ---------------------------------------------------------------------------
 
+// execApprove approves a PENDING approval request (the BF-4 operator
+// decision — POST /api/bar/approvals/approve) and returns the composed
+// response {approval, execution}.
+func execApprove(t *testing.T, mux *http.ServeMux, approvalID, approver string) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	return barRequest(t, mux, http.MethodPost, "/api/bar/approvals/approve",
+		fmt.Sprintf(`{"approval_id":%q,"approver":%q}`, approvalID, approver))
+}
+
 func TestExecuteModeRequestAct(t *testing.T) {
+	// BF-4: coding acts go through the operator gate — execute creates the
+	// PENDING request (202, params captured), approve runs the act through
+	// the mode bridge (the full BF-3 flow composed with the operator's yes).
 	mux, h, _ := newExecTestServer(t)
 	mustCreateActiveSession(t, h, "coder.act", agentkernel.CapabilityModeRequest)
 	id := execSubmitDecided(t, mux, "coder.act", "mode.request")
 
 	rec, body := execCommand(t, mux, fmt.Sprintf(`{"command_id":%q,"params":{"mode":"ai"}}`, id))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("execute (approval request): %d: %s", rec.Code, rec.Body.String())
+	}
+	if body["state"] != "PENDING" {
+		t.Fatalf("approval state = %v, want PENDING: %v", body["state"], body)
+	}
+	apvID, _ := body["id"].(string)
+	if apvID == "" {
+		t.Fatalf("approval id missing: %v", body)
+	}
+	params, _ := body["params"].(map[string]any)
+	if params["mode"] != "ai" {
+		t.Errorf("captured params = %v, want mode=ai (the approved thing is the requested thing)", body["params"])
+	}
+
+	rec, body = execApprove(t, mux, apvID, "op-tester")
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("execute: %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("approve: %d: %s", rec.Code, rec.Body.String())
 	}
-	if body["state"] != "COMPLETED" {
-		t.Fatalf("state = %v, want COMPLETED: %v", body["state"], body)
+	approval, _ := body["approval"].(map[string]any)
+	if approval["state"] != "APPROVED" {
+		t.Fatalf("approval state = %v, want APPROVED: %v", approval["state"], body)
 	}
-	if body["runtime"] != "coding" {
-		t.Errorf("runtime = %v, want coding (closed mapping)", body["runtime"])
+	if approval["approver"] != "op-tester" {
+		t.Errorf("approver = %v, want op-tester (attribution)", approval["approver"])
 	}
-	outcome, _ := body["outcome"].(string)
+	exec, _ := body["execution"].(map[string]any)
+	if exec["state"] != "COMPLETED" {
+		t.Fatalf("execution state = %v, want COMPLETED: %v", exec["state"], body)
+	}
+	if exec["runtime"] != "coding" {
+		t.Errorf("runtime = %v, want coding (closed mapping)", exec["runtime"])
+	}
+	outcome, _ := exec["outcome"].(string)
 	if !strings.Contains(outcome, "desired-mode=ai") {
 		t.Errorf("outcome = %q, want the mode-bridge acceptance line", outcome)
 	}
@@ -419,24 +467,31 @@ func TestExecuteModeRequestAct(t *testing.T) {
 func TestExecuteCodingActFailureIsHonestFailedRecord(t *testing.T) {
 	// An INVALID mode: the fresh evaluation allows, the mode bridge
 	// rejects — the honest terminal outcome is FAILED (201), never a 5xx.
+	// BF-4: the act runs at APPROVE time (params captured at request time).
 	mux, h, _ := newExecTestServer(t)
 	mustCreateActiveSession(t, h, "coder.act2", agentkernel.CapabilityModeRequest)
 	id := execSubmitDecided(t, mux, "coder.act2", "mode.request")
 	rec, body := execCommand(t, mux, fmt.Sprintf(`{"command_id":%q,"params":{"mode":"warp9"}}`, id))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("execute (approval request): %d: %s", rec.Code, rec.Body.String())
+	}
+	apvID, _ := body["id"].(string)
+	rec, body = execApprove(t, mux, apvID, "op-tester")
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("execute: %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("approve: %d: %s", rec.Code, rec.Body.String())
 	}
-	if body["state"] != "FAILED" {
-		t.Fatalf("state = %v, want FAILED (act error is an honest terminal outcome)", body["state"])
+	exec, _ := body["execution"].(map[string]any)
+	if exec["state"] != "FAILED" {
+		t.Fatalf("state = %v, want FAILED (act error is an honest terminal outcome): %v", exec["state"], body)
 	}
-	if allow, _ := body["allow"].(bool); !allow {
-		t.Errorf("allow = %v, want true (the fresh evaluation allowed; the ACT failed)", body["allow"])
+	if allow, _ := exec["allow"].(bool); !allow {
+		t.Errorf("allow = %v, want true (the fresh evaluation allowed; the ACT failed)", exec["allow"])
 	}
-	reason, _ := body["reason"].(string)
+	reason, _ := exec["reason"].(string)
 	if !strings.Contains(reason, "invalid mode") {
 		t.Errorf("reason = %q, want the act error named", reason)
 	}
-	if outcome, _ := body["outcome"].(string); outcome != "" {
+	if outcome, _ := exec["outcome"].(string); outcome != "" {
 		t.Errorf("outcome = %q, want empty — a failed act has no result", outcome)
 	}
 }
