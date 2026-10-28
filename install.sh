@@ -19,7 +19,7 @@ set -euo pipefail
 # Or run the one-line command documented in README.md.
 # ============================================================================
 
-VERSION="19.5.2"
+VERSION="19.5.3"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
