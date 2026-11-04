@@ -296,11 +296,20 @@ check_04_systemd() {
         'Type=oneshot' > "$stubdir/docker.service"
     # Filter dev-box noise: "marked executable" / "not marked executable" /
     # "chmod" hints. Remaining output indicates real unit errors.
+    # v19.6.0 post-release (the v19.3.2 flake precedent): also filter
+    # option-deprecation WARNINGS about units OUTSIDE the repo — the
+    # ubuntu-latest runner image ships its own system units (xfs_scrub_all,
+    # walinuxagent…) that newer systemd flags with "Support for option
+    # CPUAccounting= has been removed". Those units are the runner's, not
+    # the repo's deliverable; a deprecation warning in a REPO unit still
+    # FAILs (the pattern anchors on /usr/lib//lib system paths only).
     local raw filtered
     raw=$(SYSTEMD_UNIT_PATH="$stubdir:" systemd-analyze verify "${units[@]}" 2>&1 || true)
     rm -rf "$stubdir"
     filtered=$(printf '%s\n' "$raw" \
-        | grep -vE 'executable|chmod|Empty|cached' || true)
+        | grep -vE 'executable|chmod|Empty|cached' \
+        | grep -vE '^/(usr/)?lib/systemd/system/.*: Support for option .* has been removed and it is ignored' \
+        || true)
     if [[ -z "$filtered" ]]; then
         pass "systemd-analyze verify clean on ${#units[@]} unit file(s)"
     else
