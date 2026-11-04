@@ -354,6 +354,44 @@ surface (merged from the `19.2.14.P6` line):
   (4KB, one object, unknown fields rejected) + 45s bridge timeout parity
   with the direct lifecycle surface.
 
+## (o) Universal AI Runtime foundation (v19.6.0, CF-1 — Phase C OPENS, unwired)
+
+- **Closed local-stack enumeration:** the provider set in
+  `scarlihq/internal/airuntime` is `sglang`/`vllm`/`beellama`/`ollama`
+  ONLY, in the v19.0.6-locked 4-tier failover order (`DefaultFailoverOrder`).
+  There is deliberately no openai/anthropic/azure — the runtime normalizes
+  the LOCAL sovereign stack and is not a cloud-LLM gateway; cloud names,
+  ports, paths, whitespace and control characters are rejected at
+  validation (tested). Extending the enumeration is a reviewed act
+  (`AllProviders` + `Tier` + the order + tests change together).
+- **Network/IO-free by construction:** no `net/http`, no sockets, no file
+  access, no exec anywhere in the package — runtime AND tests. Smoke check
+  28 scans the source **comment-stripped** (prose that says "no net/http"
+  cannot mask a real import — the scan fires on code, not prose; verified
+  negative control). The cloud-token scan covers the runtime files — the
+  tests legitimately assert rejection, they are the proof, not the
+  violation.
+- **Fail-closed health + routing:** UNKNOWN health never serves (never
+  observed ⇒ never routed — trust is earned by observation); observation
+  time is monotone (a stale probe cannot overwrite a newer one, rejected
+  by name); the router never guesses a model (`ErrUnknownModel`) and
+  never returns an empty plan as success (`ErrNoRoute` — the named skips
+  return alongside the error: fail-closed, not fail-blind). The router is
+  PURE: no clock, no randomness, no network, no LLM — and it never
+  executes anything (execution is the CF-2 adapters' job, behind the
+  fabric's approvals).
+- **Unwired = no new attack surface:** CF-1 deliberately adds no HTTP/MCP
+  surface, no persistence, no compose env, no main.go wiring (the AK-1
+  precedent) — `main.go` and `docker-compose.yml` carry no `airuntime`
+  reference; smoke check 28 enforces the unwired contract. Nothing
+  user-facing changes in v19.6.0.
+- **Bounded normalized contract:** chat content ≤ 4096 runes, ≤ 32
+  messages, closed roles (system/user/assistant — no tool role yet),
+  closed finish reasons (stop/length — deliberately no "error" value: a
+  failed generation is an adapter error, never a response shape),
+  non-negative usage, and every response carries provider attribution +
+  a required UTC timestamp (attribution survives failover).
+
 ## Other security properties
 
 - **REST/MCP/WS auth:** Bearer token only (no `?token=` URL — v18.6 P2 removed the URL fallback that leaked tokens into logs/referrer/proxy). `crypto/subtle.ConstantTimeCompare` (v18.0.0 P1 — was: custom `secureCompare`).

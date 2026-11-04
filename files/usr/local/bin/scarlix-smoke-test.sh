@@ -2129,6 +2129,204 @@ check_27_agent_fabric_closure() {
 }
 
 # ===========================================================================
+# Check 28 — Universal AI Runtime CF-1 foundation (v19.6.0, Phase C opens)
+# ===========================================================================
+# Source-level contract gate over internal/airuntime — the UNWIRED AK-1
+# precedent: the typed foundation is established and tested first; adapters,
+# probing and the REST surface are CF-2+, after review. The network/IO scan
+# is COMMENT-STRIPPED (v19.6.0): prose that says "no net/http" cannot mask a
+# real import — the scan fires on code, not prose (verified negative
+# control: a `var nethttpProbe = "net/http"` line injected into the runtime
+# source FAILS this check; the BF-4/BF-5 prefix-edit lesson respected — the
+# injected symbol is code, so the comment-stripping catches it). The
+# cloud-token scan covers the RUNTIME files only: the tests legitimately
+# assert cloud-name rejection — they are the proof, not the violation.
+_strip_go_comments() {
+    awk '
+        BEGIN { inblock = 0 }
+        {
+            line = $0
+            out = ""
+            i = 1
+            n = length(line)
+            while (i <= n) {
+                two = substr(line, i, 2)
+                if (inblock) {
+                    if (two == "*/") { inblock = 0; i += 2 } else { i += 1 }
+                } else {
+                    if (two == "//") { break }
+                    if (two == "/*") { inblock = 1; i += 2 } else {
+                        out = out substr(line, i, 1)
+                        i += 1
+                    }
+                }
+            }
+            print out
+        }
+    ' "$1"
+}
+
+check_28_ai_runtime_foundation() {
+    echo "--- [28] Universal AI Runtime CF-1 (v19.6.0, Phase C opens): closed local-stack enumeration, fail-closed health/routing, network/IO-free by construction, UNWIRED ---"
+    local pkg="$REPO_DIR/scarlihq/internal/airuntime"
+    local providers="$pkg/provider.go"
+    local models="$pkg/model.go"
+    local health="$pkg/health.go"
+    local chat="$pkg/chat.go"
+    local router="$pkg/router.go"
+    local design_doc="$REPO_DIR/docs/AI_RUNTIME_CF1_DESIGN.md"
+    local readme="$REPO_DIR/README.md"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local rest_src="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+
+    if [[ ! -d "$pkg" ]] || [[ ! -f "$providers" ]]; then
+        fail "internal/airuntime missing (CF-1, v19.6.0 — Phase C opens on typed foundations)"
+        return
+    fi
+
+    # --- The closed provider enumeration: exactly the REAL local stack. ---
+    local declared declared_csv
+    declared=$(grep -oE 'Provider[A-Za-z]+ +Provider = "[^"]+"' "$providers" | grep -oE '"[^"]+"' | tr -d '"' | sort -u || true)
+    declared_csv=$(printf '%s\n' "$declared" | paste -sd, -)
+    if [[ "$declared_csv" != "beellama,ollama,sglang,vllm" ]]; then
+        fail "provider enumeration must be exactly the closed local stack (sglang/vllm/beellama/ollama), got: ${declared_csv:-none} — the runtime is not a cloud-LLM gateway"
+        return
+    fi
+    # The v19.0.6 release-locked 4-tier failover order, encoded once.
+    local order
+    order=$(awk '/var DefaultFailoverOrder/,/^}/' "$providers" | grep -oE 'ProviderSGLang|ProviderVLLM|ProviderBeeLlama|ProviderOllama' | paste -sd' ' - || true)
+    if [[ "$order" != "ProviderSGLang ProviderVLLM ProviderBeeLlama ProviderOllama" ]]; then
+        fail "DefaultFailoverOrder must stay the v19.0.6-locked 4-tier order (SGLang → vLLM → BeeLlama → Ollama) — not a runtime option, not a request parameter"
+        return
+    fi
+
+    # --- Network/IO-free by construction: the COMMENT-STRIPPED scan over
+    # runtime AND test files. Prose cannot mask code; code cannot hide.
+    local runtime_files=("$providers" "$models" "$health" "$chat" "$router")
+    local test_files=("$pkg/provider_test.go" "$pkg/model_test.go" "$pkg/health_test.go" "$pkg/chat_test.go" "$pkg/router_test.go")
+    local f code_hits
+    for f in "${runtime_files[@]}" "${test_files[@]}"; do
+        if [[ ! -f "$f" ]]; then
+            fail "airuntime source missing: $f"
+            return
+        fi
+        code_hits=$(_strip_go_comments "$f" | grep -nE 'net/http|\b(net|os|exec|syscall)\.|\bsocket\b' || true)
+        if [[ -n "$code_hits" ]]; then
+            fail "airuntime must be network/IO-free by construction (runtime AND tests) — code-level hit in ${f##*/}: $code_hits"
+            return
+        fi
+    done
+    # The cloud-token scan covers the RUNTIME files only (tests legitimately
+    # assert rejection — they are the proof, not the violation).
+    for f in "${runtime_files[@]}"; do
+        code_hits=$(_strip_go_comments "$f" | grep -niE 'openai|anthropic|azure|api[_-]?key|bearer|secret' || true)
+        if [[ -n "$code_hits" ]]; then
+            fail "airuntime runtime files must carry no cloud-LLM tokens (the runtime normalizes the LOCAL stack) — hit in ${f##*/}: $code_hits"
+            return
+        fi
+    done
+
+    # --- The normalized chat bounds stay explicit constants. ---
+    if ! grep -qE 'MaxContentRunes += +4096' "$chat" || ! grep -qE 'MaxMessages += +32' "$chat"; then
+        fail "chat contract bounds must stay explicit constants (MaxContentRunes 4096 runes, MaxMessages 32)"
+        return
+    fi
+
+    # --- Fail-closed markers: health + routing name their rules. ---
+    if ! grep -q "UNKNOWN never serves" "$health"; then
+        fail "health must encode the fail-closed marker 'UNKNOWN never serves' (trust is earned by observation, not assumed)"
+        return
+    fi
+    if ! grep -q "ErrUnknownModel" "$router" || ! grep -q "the router never guesses a model" "$router"; then
+        fail "router must carry ErrUnknownModel + the never-guesses-a-model marker"
+        return
+    fi
+    if ! grep -q "ErrNoRoute" "$router" || ! grep -q "fail-closed, not fail-blind" "$router"; then
+        fail "router must carry ErrNoRoute + the skips-return-with-the-error marker (never an empty plan as success)"
+        return
+    fi
+
+    # --- Purity + charter, encoded in the package doc. The charter must be
+    # on ONE comment line (grep cannot match across lines — the v19.6.0
+    # lesson; zalomenie = FAIL).
+    if ! grep -q "network/IO-free by construction" "$providers"; then
+        fail "the package doc must carry the purity marker 'network/IO-free by construction'"
+        return
+    fi
+    if ! grep -q "LLM navrhuje, politika rozhoduje" "$providers"; then
+        fail "the Phase C charter must be encoded in the package doc ON ONE LINE (LLM navrhuje, politika rozhoduje)"
+        return
+    fi
+
+    # --- The design doc: the AK-1 genre + the CF-1..CF-5 sub-phase plan
+    # (a step cannot silently vanish — literal ** must be escaped in BRE).
+    if [[ ! -f "$design_doc" ]]; then
+        fail "docs/AI_RUNTIME_CF1_DESIGN.md missing (CF-1 contract + plan)"
+        return
+    fi
+    local section
+    for section in '## 1. Where this fits' '## 2. Sub-phase plan' '## 3. CF-1 contract' '## 4. Non-goals' '## 5. Verification'; do
+        if ! grep -q "$section" "$design_doc"; then
+            fail "the design doc must carry section '$section' (the AK-1 design genre)"
+            return
+        fi
+    done
+    local step
+    for step in CF-1 CF-2 CF-3 CF-4 CF-5; do
+        if ! grep -q "| \\*\\*${step}\\*\\* |" "$design_doc"; then
+            fail "the CF-1..CF-5 sub-phase plan must list ${step} — a step cannot silently vanish"
+            return
+        fi
+    done
+    if ! grep -q 'DONE — merged as v19.6.0' "$design_doc"; then
+        fail "the CF-1 plan row must be stamped DONE — merged as v19.6.0"
+        return
+    fi
+
+    # --- README v19.6.0 surface: the release is a release like any other. ---
+    if ! grep -q 'ScarLiXoS v19.6.0 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.0-B87333' "$readme"; then
+        fail "README banner/h1/badge must say v19.6.0"
+        return
+    fi
+    if ! grep -q 'Version:\*\* v19.6.0 (Universal AI Runtime CF-1 — foundation; Phase C OPENS)' "$readme"; then
+        fail "README version line must say v19.6.0 (Universal AI Runtime CF-1 — foundation; Phase C OPENS)"
+        return
+    fi
+    if ! grep -q '\*\*v19.6.0\*\*' "$readme" || ! grep -q "What's New in v19.6.0" "$readme"; then
+        fail "README must carry the v19.6.0 changelog row + What's New section"
+        return
+    fi
+    if ! grep -q 'Universal AI Runtime theme (v19.6.x) is OPEN' "$readme"; then
+        fail "README theme status must flip to 'Universal AI Runtime theme (v19.6.x) is OPEN'"
+        return
+    fi
+    if grep -q 'Universal AI Runtime theme (v19.6.x) is COMPLETE' "$readme"; then
+        fail "README claims the Universal AI Runtime theme is COMPLETE — the theme just OPENED (CF-1 only)"
+        return
+    fi
+    if ! grep -q '| Universal AI Runtime foundation (CF-1) | \*\*TESTED\*\* (v19.6.0) |' "$readme"; then
+        fail "README must carry the 'Universal AI Runtime foundation (CF-1) | TESTED (v19.6.0)' roadmap row"
+        return
+    fi
+    if ! grep -q 'One-command install — v19.6.0 Universal AI Runtime foundation' "$readme"; then
+        fail "README install header must be refreshed to v19.6.0 (was drifting at v19.4.6)"
+        return
+    fi
+
+    # --- The UNWIRED contract (the AK-1 precedent): main.go, rest.go and
+    # compose carry NO airuntime reference — nothing user-facing changes.
+    for f in "$main_src" "$rest_src" "$compose"; do
+        if grep -q 'airuntime' "$f"; then
+            fail "CF-1 is UNWIRED by design (AK-1 precedent): ${f##*/} carries an airuntime reference"
+            return
+        fi
+    done
+
+    pass "universal AI runtime CF-1: closed local-stack enumeration (4 providers, v19.0.6-locked failover order encoded once), bounded explicit model registry (no auto-discovery), fail-closed observed health (UNKNOWN never serves, monotone observation time), normalized chat bounds (4096 runes / 32 messages / no error finish), pure deterministic router w/ ErrUnknownModel + ErrNoRoute (never guesses, never executes), network/IO-free by construction — comment-stripped scan clean over runtime + tests, cloud-token scan clean over runtime files, charter on one line, design doc + CF-1..CF-5 plan, README v19.6.0 surface (changelog + What's New + theme OPEN + roadmap TESTED + install header), UNWIRED contract (main.go/rest.go/compose carry no airuntime)"
+}
+
+# ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
@@ -2162,6 +2360,7 @@ SMOKE_CHECKS=(
     check_25_agent_fabric_runtimes
     check_26_agent_fabric_approvals
     check_27_agent_fabric_closure
+    check_28_ai_runtime_foundation
 )
 
 run_check() {
