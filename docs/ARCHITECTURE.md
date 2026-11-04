@@ -227,6 +227,46 @@ the allocation id + outcome (`compute.reserve`/`compute.release` lines).
 Enablement is the composition (kernel + registry + compute lifecycle), no
 env of its own. **The v19.4.x line is COMPLETE — Phase A delivered.**
 
+## Universal AI Runtime foundation (v19.6.0, CF-1 — Phase C OPENS)
+
+Phase C builds the LLM layer that will PROPOSE to the closed fabric —
+*"LLM navrhuje, politika rozhoduje"*: the LLM proposes, policy decides;
+the fabric + kernel remain the deciding, auditable path. CF-1 lands the
+typed foundation only, **unwired** by the AK-1 precedent (adapters,
+probing and the REST surface are CF-2+, after review; no user-facing
+surface changes in v19.6.0). The routing pipeline the types describe:
+
+```
+Provider (closed enumeration: sglang · vllm · beellama · ollama — the REAL
+   │       local stack, NO cloud-LLM gateway; DefaultFailoverOrder =
+   │       the v19.0.6-locked 4-tier order SGLang → vLLM → BeeLlama → Ollama)
+   ▼
+ModelRegistry (explicit, bounded 64 DISTINCT models, no auto-discovery —
+   │       "provider P serves model M" is an operator declaration; duplicate
+   │       pairs rejected; deterministic tier-ordered listings)
+   ▼
+HealthTable (observed, fail-closed: latest-per-provider, MONOTONE time —
+   │       stale probes rejected by name; UNKNOWN never serves; DEGRADED
+   │       serves honestly, cited in the plan; never expires on its own)
+   ▼
+Router.Plan(registry, health, model) → Plan{Steps[primary/fallback], Skips}
+   │       PURE + deterministic (100× repetition-tested): tier-order steps
+   │       citing the health they were planned under, named skip rules
+   │       (rule/health-unknown | rule/health-unavailable), ErrUnknownModel
+   │       (never guesses a model) + ErrNoRoute (skips return with the error)
+   ▼
+Chat contract (roles system/user/assistant · content ≤4096 runes · ≤32
+           messages · finish stop/length — NO error value: failure is an
+           adapter error, not a response shape · provider attribution +
+           required UTC timestamp on every response)
+```
+
+Network/IO-free by construction (no net/http, no sockets, no file access,
+no exec — runtime and tests; smoke check 28 scans the source
+comment-stripped). Package: `scarlihq/internal/airuntime`. Design +
+CF-1..CF-5 sub-phase plan (adapters · propose surface · audit/dashboard ·
+closure): `docs/AI_RUNTIME_CF1_DESIGN.md`.
+
 ## GPU Arbitration (scarlix-mode)
 
 | Mode | GPU 0 | GPU 1 | CPU | Notes |
