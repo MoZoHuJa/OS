@@ -11,6 +11,8 @@ import (
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/agentfabric"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/agentkernel"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/airt"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/airuntime"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/api"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/compute"
@@ -25,7 +27,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.6.0"
+var Version = "19.6.1"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -274,6 +276,75 @@ func main() {
 	} else {
 		log.Printf("Agent Fabric command API disabled; set SCARLIHQ_AGENTFABRIC_ENABLED=true (requires the agent kernel + SCARLIHQ_AGENTFABRIC_COMMANDS_FILE)")
 	}
+
+	// CF-2 (v19.6.1): Universal AI Runtime — the normalized LLM layer behind
+	// the pure CF-1 contract (internal/airuntime, untouched). Opt-in like
+	// every user-facing surface: four local-stack adapters + the health
+	// prober + the REST surface (/api/ai/*), all fail-closed (503) until
+	// SCARLIHQ_AIRUNTIME_ENABLED=true. Endpoints default to the API-map host
+	// ports; inside this container the stack is reachable by service name —
+	// override with SCARLIHQ_AIRUNTIME_SGLANG_URL / _VLLM_URL / _BEELLAMA_URL / _OLLAMA_URL.
+	// Chat is transport-only: an LLM response becoming a fabric PROPOSAL is
+	// CF-3, behind the fabric's approvals ("LLM navrhuje, politika
+	// rozhoduje").
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("SCARLIHQ_AIRUNTIME_ENABLED")), "true") {
+		endpoints, err := airt.EndpointsFromEnv(os.Getenv)
+		if err != nil {
+			log.Fatalf("ai runtime endpoint configuration failed: %v (an invalid override is never a silent fall-back — fix the env)", err)
+		}
+		adapters, prober, err := airt.NewLocalStack(endpoints)
+		if err != nil {
+			log.Fatalf("ai runtime transport construction failed: %v", err)
+		}
+		registry, err := airuntime.NewModelRegistry(airuntime.DefaultMaxModels)
+		if err != nil {
+			log.Fatalf("ai runtime model registry construction failed: %v", err)
+		}
+		aiRuntime, err := airt.NewRuntime(registry, airuntime.NewHealthTable(), prober, adapters)
+		if err != nil {
+			log.Fatalf("ai runtime construction failed: %v", err)
+		}
+		// Operator bootstrap: SCARLIHQ_AIRUNTIME_MODELS="provider:model,..."
+		// declares the initial routing surface (the registry IS the routing
+		// surface; the pair splits on the FIRST colon — model ids may carry
+		// their own, e.g. qwen3:4b). A malformed declaration aborts startup:
+		// the runtime never boots on a guessed registry.
+		if raw := strings.TrimSpace(os.Getenv("SCARLIHQ_AIRUNTIME_MODELS")); raw != "" {
+			for _, pair := range strings.Split(raw, ",") {
+				pair = strings.TrimSpace(pair)
+				if pair == "" {
+					continue
+				}
+				parts := strings.SplitN(pair, ":", 2)
+				if len(parts) != 2 {
+					log.Fatalf("ai runtime models bootstrap: %q is not provider:model (split on the first colon — model ids may carry their own)", pair)
+				}
+				if err := aiRuntime.Register(airuntime.Provider(parts[0]), airuntime.ModelID(parts[1])); err != nil {
+					log.Fatalf("ai runtime models bootstrap: %q: %v", pair, err)
+				}
+			}
+		}
+		// Freshness loop: probing on an interval is opt-in (without it,
+		// POST /api/ai/probe is the operator's refresh — the table never
+		// expires entries on its own, the CF-1 discipline).
+		if raw := strings.TrimSpace(os.Getenv("SCARLIHQ_AIRUNTIME_PROBE_INTERVAL")); raw != "" {
+			interval, err := time.ParseDuration(raw)
+			if err != nil || interval <= 0 {
+				log.Fatalf("ai runtime probe interval %q is not a positive Go duration (e.g. 30s)", raw)
+			}
+			if _, err := aiRuntime.StartProber(interval); err != nil {
+				log.Fatalf("ai runtime prober start failed: %v", err)
+			}
+			log.Printf("Universal AI Runtime probe loop started (interval %s — every tier probed and recorded each round)", interval)
+		}
+		if err := apiHandler.ConfigureAIRuntime(aiRuntime); err != nil {
+			log.Fatalf("ai runtime configuration failed: %v", err)
+		}
+		log.Printf("Universal AI Runtime API enabled (/api/ai/health, /api/ai/models, /api/ai/probe, /api/ai/chat — Bearer-gated; sglang %s · vllm %s · beellama %s · ollama %s; %d models registered; the LLM proposes, policy decides)", endpoints[airuntime.ProviderSGLang], endpoints[airuntime.ProviderVLLM], endpoints[airuntime.ProviderBeeLlama], endpoints[airuntime.ProviderOllama], registry.Len())
+	} else {
+		log.Printf("Universal AI Runtime API disabled; set SCARLIHQ_AIRUNTIME_ENABLED=true to enable (/api/ai/* — adapters for the local stack + health probing + failover chat)")
+	}
+
 	apiHandler.RegisterRoutes(mux)
 
 	mcpServer := mcp.NewServer(g, mode, pf, authToken, Version)

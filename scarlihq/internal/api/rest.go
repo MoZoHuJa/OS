@@ -13,6 +13,7 @@ import (
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/agentfabric"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/agentkernel"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/airt"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/gaming"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
@@ -23,7 +24,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.6.0"
+var Version = "19.6.1"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -191,6 +192,10 @@ type Handler struct {
 	// backbone (bounded 16×16, drop-not-block, no replay). Nil until
 	// ConfigureAgentFabricExecutions is called.
 	agentBus *agentfabric.FabricBus
+	// CF-2 (v19.6.1): Universal AI Runtime — the normalized LLM layer
+	// (adapters + probing + failover chat behind the CF-1 contract).
+	// Nil until ConfigureAIRuntime is called (opt-in; 503 without it).
+	aiRuntime *airt.Runtime
 }
 
 // NewHandler creates a new API handler.
@@ -272,6 +277,16 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/bar/approvals", h.auth(h.barApprovals))
 	mux.HandleFunc("/api/bar/approvals/approve", h.auth(h.barApprovalApprove))
 	mux.HandleFunc("/api/bar/approvals/reject", h.auth(h.barApprovalReject))
+	// CF-2 (v19.6.1): Universal AI Runtime surface — the normalized LLM
+	// layer (adapters for the documented local stack, health probing,
+	// failover chat). Same Bearer auth gate; 503 until the runtime is
+	// configured (SCARLIHQ_AIRUNTIME_ENABLED=true, own opt-in). Chat is
+	// transport-only: it mutates nothing on the host — an LLM response
+	// becoming a fabric PROPOSAL is CF-3, behind the fabric's approvals.
+	mux.HandleFunc("/api/ai/health", h.auth(h.aiHealth))
+	mux.HandleFunc("/api/ai/models", h.auth(h.aiModels))
+	mux.HandleFunc("/api/ai/probe", h.auth(h.aiProbe))
+	mux.HandleFunc("/api/ai/chat", h.auth(h.aiChat))
 }
 
 // auth middleware: validates Bearer token header only.

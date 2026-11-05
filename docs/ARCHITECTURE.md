@@ -227,14 +227,16 @@ the allocation id + outcome (`compute.reserve`/`compute.release` lines).
 Enablement is the composition (kernel + registry + compute lifecycle), no
 env of its own. **The v19.4.x line is COMPLETE — Phase A delivered.**
 
-## Universal AI Runtime foundation (v19.6.0, CF-1 — Phase C OPENS)
+## Universal AI Runtime (v19.6.x, Phase C — CF-1 foundation · CF-2 transport)
 
 Phase C builds the LLM layer that will PROPOSE to the closed fabric —
 *"LLM navrhuje, politika rozhoduje"*: the LLM proposes, policy decides;
-the fabric + kernel remain the deciding, auditable path. CF-1 lands the
-typed foundation only, **unwired** by the AK-1 precedent (adapters,
-probing and the REST surface are CF-2+, after review; no user-facing
-surface changes in v19.6.0). The routing pipeline the types describe:
+the fabric + kernel remain the deciding, auditable path. CF-1 (v19.6.0)
+landed the typed foundation; CF-2 (v19.6.1) wires it — the real
+local-stack adapters, the health prober and the auth-gated REST surface
+(opt-in), all BEHIND the pure contract, in a separate package
+(`internal/airt`): the contract decides, the transport serves. The
+routing pipeline, foundation to execution:
 
 ```
 Provider (closed enumeration: sglang · vllm · beellama · ollama — the REAL
@@ -262,10 +264,57 @@ Chat contract (roles system/user/assistant · content ≤4096 runes · ≤32
 ```
 
 Network/IO-free by construction (no net/http, no sockets, no file access,
-no exec — runtime and tests; smoke check 28 scans the source
-comment-stripped). Package: `scarlihq/internal/airuntime`. Design +
+no exec — runtime and tests; smoke check 28 scans the WHOLE package
+source comment-stripped). Package: `scarlihq/internal/airuntime`. Design +
 CF-1..CF-5 sub-phase plan (adapters · propose surface · audit/dashboard ·
 closure): `docs/AI_RUNTIME_CF1_DESIGN.md`.
+
+### CF-2 (v19.6.1) — the transport layer behind the contract
+
+`internal/airt` imports the pure contract and executes it against the
+REAL local stack:
+
+```
+POST /api/ai/chat (Bearer-gated, 503 until SCARLIHQ_AIRUNTIME_ENABLED=true)
+   │
+   ▼
+airt.Runtime.Chat ── validate ──► Router.Plan (CF-1, PURE, replanned from
+   │                              LIVE state every request — a probe between
+   │                              two requests redirects the second)
+   ▼
+plan steps in tier order ──► LocalAdapter (one per tier, ALL FOUR always):
+   │       POST {endpoint}/v1/chat/completions — the OpenAI-compatible wire
+   │       sglang/vllm/beellama/ollama all speak; 30s attempt bound, 1 MiB
+   │       body bound, fail-closed normalization (unknown finish reasons are
+   │       adapter errors, never coerced)
+   ├─ adapter fails ──► Attempt{provider, tier, role, error} ──► next step
+   ▼
+first answer wins ──► Response (provider attribution + UTC timestamp —
+                       attribution survives failover) + attempts[] (the
+                       failed tiers, plan order)
+```
+
+- **Endpoints (closed shape):** the `SCARLIX_API_MAP.md` documented
+  addresses (sglang `:30000` · vllm `:8089` · beellama `:11438` · ollama
+  `:11435`), http only, explicit port, host is loopback OR a single-label
+  docker service name — a dotted host is the cloud-gateway shape,
+  rejected BY NAME. Container-side overrides:
+  `SCARLIHQ_AIRUNTIME_SGLANG_URL / _VLLM_URL / _BEELLAMA_URL / _OLLAMA_URL` — invalid
+  overrides abort startup, never a silent fall-back.
+- **Prober (the honesty matrix):** /health for sglang/vllm/beellama,
+  /api/tags for ollama; 2xx → HEALTHY · standing-but-unready → DEGRADED
+  (serves) · dead/timed-out → UNAVAILABLE · never-probed → UNKNOWN (never
+  serves). ProbeAll: concurrent, tier-ordered results, dead tiers
+  observed, never omitted. Optional freshness loop
+  (SCARLIHQ_AIRUNTIME_PROBE_INTERVAL); POST /api/ai/probe is the
+  operator's on-demand round.
+- **REST surface:** /api/ai/health (view) · /api/ai/models (view + the
+  operator registration act) · /api/ai/probe (round, recorded) ·
+  /api/ai/chat (the failover chat — attempts/skips ride every error:
+  fail-closed, not fail-blind). Chat is TRANSPORT ONLY — it mutates
+  nothing on the host; an LLM response becoming a fabric PROPOSAL is
+  CF-3, behind the fabric's approvals.
+- Design + verification: `docs/AI_RUNTIME_CF2_DESIGN.md`.
 
 ## GPU Arbitration (scarlix-mode)
 

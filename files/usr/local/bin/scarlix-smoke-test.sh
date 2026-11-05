@@ -2176,7 +2176,7 @@ _strip_go_comments() {
 }
 
 check_28_ai_runtime_foundation() {
-    echo "--- [28] Universal AI Runtime CF-1 (v19.6.0, Phase C opens): closed local-stack enumeration, fail-closed health/routing, network/IO-free by construction, UNWIRED ---"
+    echo "--- [28] Universal AI Runtime CF-1 (v19.6.0, Phase C opens): closed local-stack enumeration, fail-closed health/routing, network/IO-free by construction; v19.6.1 (CF-2): the purity scan covers the WHOLE package, the wiring goes through internal/airt ---"
     local pkg="$REPO_DIR/scarlihq/internal/airuntime"
     local providers="$pkg/provider.go"
     local models="$pkg/model.go"
@@ -2211,23 +2211,21 @@ check_28_ai_runtime_foundation() {
     fi
 
     # --- Network/IO-free by construction: the COMMENT-STRIPPED scan over
-    # runtime AND test files. Prose cannot mask code; code cannot hide.
-    local runtime_files=("$providers" "$models" "$health" "$chat" "$router")
-    local test_files=("$pkg/provider_test.go" "$pkg/model_test.go" "$pkg/health_test.go" "$pkg/chat_test.go" "$pkg/router_test.go")
+    # EVERY .go file in the package (v19.6.1: the CF-2 evolution — the scan
+    # covers the WHOLE internal/airuntime package, not just the five CF-1
+    # files; a future file cannot carry the network in through the back
+    # door). Prose cannot mask code; code cannot hide.
     local f code_hits
-    for f in "${runtime_files[@]}" "${test_files[@]}"; do
-        if [[ ! -f "$f" ]]; then
-            fail "airuntime source missing: $f"
-            return
-        fi
+    while IFS= read -r f; do
         code_hits=$(_strip_go_comments "$f" | grep -nE 'net/http|\b(net|os|exec|syscall)\.|\bsocket\b' || true)
         if [[ -n "$code_hits" ]]; then
-            fail "airuntime must be network/IO-free by construction (runtime AND tests) — code-level hit in ${f##*/}: $code_hits"
+            fail "airuntime must be network/IO-free by construction (the WHOLE package, runtime AND tests) — code-level hit in ${f##*/}: $code_hits"
             return
         fi
-    done
+    done < <(find "$pkg" -maxdepth 1 -name '*.go' -type f | sort)
     # The cloud-token scan covers the RUNTIME files only (tests legitimately
     # assert rejection — they are the proof, not the violation).
+    local runtime_files=("$providers" "$models" "$health" "$chat" "$router")
     for f in "${runtime_files[@]}"; do
         code_hits=$(_strip_go_comments "$f" | grep -niE 'openai|anthropic|azure|api[_-]?key|bearer|secret' || true)
         if [[ -n "$code_hits" ]]; then
@@ -2293,13 +2291,17 @@ check_28_ai_runtime_foundation() {
         return
     fi
 
-    # --- README v19.6.0 surface: the release is a release like any other. ---
-    if ! grep -q 'ScarLiXoS v19.6.0 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.0-B87333' "$readme"; then
-        fail "README banner/h1/badge must say v19.6.0"
+    # --- README surface: the CURRENT-release assertions move with the
+    # release (v19.6.1 now — the check_27 precedent: current surface
+    # tracked, historical content stays asserted below); the v19.6.0
+    # historical surface must ALSO stay (the changelog row + the What's New
+    # section are the release's permanent record).
+    if ! grep -q 'ScarLiXoS v19.6.1 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.1-B87333' "$readme"; then
+        fail "README banner/h1/badge must say v19.6.1"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.6.0 (Universal AI Runtime CF-1 — foundation; Phase C OPENS)' "$readme"; then
-        fail "README version line must say v19.6.0 (Universal AI Runtime CF-1 — foundation; Phase C OPENS)"
+    if ! grep -q 'Version:\*\* v19.6.1 (Universal AI Runtime CF-2 — adapters + probing + REST; Phase C)' "$readme"; then
+        fail "README version line must say v19.6.1 (Universal AI Runtime CF-2 — adapters + probing + REST; Phase C)"
         return
     fi
     if ! grep -q '\*\*v19.6.0\*\*' "$readme" || ! grep -q "What's New in v19.6.0" "$readme"; then
@@ -2318,21 +2320,210 @@ check_28_ai_runtime_foundation() {
         fail "README must carry the 'Universal AI Runtime foundation (CF-1) | TESTED (v19.6.0)' roadmap row"
         return
     fi
-    if ! grep -q 'One-command install — v19.6.0 Universal AI Runtime foundation' "$readme"; then
-        fail "README install header must be refreshed to v19.6.0 (was drifting at v19.4.6)"
+    if ! grep -q 'One-command install — v19.6.1 Universal AI Runtime adapters' "$readme"; then
+        fail "README install header must be refreshed to v19.6.1 (the current-release surface — it drifted at v19.4.6 once)"
         return
     fi
 
-    # --- The UNWIRED contract (the AK-1 precedent): main.go, rest.go and
-    # compose carry NO airuntime reference — nothing user-facing changes.
-    for f in "$main_src" "$rest_src" "$compose"; do
-        if grep -q 'airuntime' "$f"; then
-            fail "CF-1 is UNWIRED by design (AK-1 precedent): ${f##*/} carries an airuntime reference"
+    # --- The wiring contract, evolved with CF-2 (v19.6.1): CF-1 was UNWIRED
+    # by design (AK-1 precedent); CF-2 is the reviewed act that wires it —
+    # THROUGH internal/airt, never inside the contract package. The successor
+    # truth: main.go/rest.go/compose may carry airuntime references ONLY via
+    # the airt import/env (the transport owns the network); the contract
+    # package itself must not be imported for anything but its types (it has
+    # no network to offer). check_29 asserts the transport side.
+    if ! grep -q 'internal/airt' "$main_src" || ! grep -q 'internal/airt' "$rest_src"; then
+        fail "CF-2 wires the runtime THROUGH internal/airt — main.go/rest.go must import it (the transport layer is the only path to the contract)"
+        return
+    fi
+
+    pass "universal AI runtime CF-1: closed local-stack enumeration (4 providers, v19.0.6-locked failover order encoded once), bounded explicit model registry (no auto-discovery), fail-closed observed health (UNKNOWN never serves, monotone observation time), normalized chat bounds (4096 runes / 32 messages / no error finish), pure deterministic router w/ ErrUnknownModel + ErrNoRoute (never guesses, never executes), network/IO-free by construction — the v19.6.1 evolution: the comment-stripped scan covers the WHOLE package (every .go file, runtime AND tests), cloud-token scan clean over runtime files, charter on one line, design doc + CF-1..CF-5 plan, README current-release surface v19.6.1 + historical v19.6.0 surface (changelog + What's New + theme OPEN + roadmap TESTED), wiring contract evolved: CF-2 wires THROUGH internal/airt (the transport owns the network, the contract stays pure)"
+}
+
+# ===========================================================================
+# check_29 — Universal AI Runtime CF-2 (v19.6.1): the transport layer
+# ===========================================================================
+check_29_ai_runtime_adapters() {
+    echo "--- [29] Universal AI Runtime CF-2 (v19.6.1, Phase C): real adapters + health probing + the auth-gated REST surface (opt-in) BEHIND the pure contract — internal/airt ---"
+    local pkg="$REPO_DIR/scarlihq/internal/airt"
+    local endpoints="$pkg/endpoints.go"
+    local wire="$pkg/wire.go"
+    local adapter="$pkg/adapter.go"
+    local prober="$pkg/prober.go"
+    local runtime="$pkg/runtime.go"
+    local airt_doc="$pkg/airt.go"
+    local design_doc="$REPO_DIR/docs/AI_RUNTIME_CF2_DESIGN.md"
+    local readme="$REPO_DIR/README.md"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local rest_src="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local api_src="$REPO_DIR/scarlihq/internal/api/airuntime.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+
+    if [[ ! -d "$pkg" ]] || [[ ! -f "$endpoints" ]]; then
+        fail "internal/airt missing (CF-2, v19.6.1 — the transport layer behind the contract)"
+        return
+    fi
+    local f
+    for f in "$wire" "$adapter" "$prober" "$runtime" "$airt_doc"; do
+        if [[ ! -f "$f" ]]; then
+            fail "airt source missing: $f"
             return
         fi
     done
 
-    pass "universal AI runtime CF-1: closed local-stack enumeration (4 providers, v19.0.6-locked failover order encoded once), bounded explicit model registry (no auto-discovery), fail-closed observed health (UNKNOWN never serves, monotone observation time), normalized chat bounds (4096 runes / 32 messages / no error finish), pure deterministic router w/ ErrUnknownModel + ErrNoRoute (never guesses, never executes), network/IO-free by construction — comment-stripped scan clean over runtime + tests, cloud-token scan clean over runtime files, charter on one line, design doc + CF-1..CF-5 plan, README v19.6.0 surface (changelog + What's New + theme OPEN + roadmap TESTED + install header), UNWIRED contract (main.go/rest.go/compose carry no airuntime)"
+    # --- The separation invariant, BOTH directions: the contract package
+    # stays pure (check 28 scans it whole); the transport package IMPORTS
+    # the contract (it serves the contract, it never copies it).
+    if ! grep -q 'internal/airuntime' "$runtime"; then
+        fail "internal/airt must compose the CF-1 contract (import internal/airuntime) — the transport serves the contract, it never re-implements it"
+        return
+    fi
+    # And the transport owns the network: net/http lives HERE (that is its
+    # purpose), but NOTHING LISTENS in it — no server surface, dial-out only.
+    local listener_hits
+    listener_hits=$(cat "$adapter" "$prober" "$runtime" "$wire" "$endpoints" | grep -nE 'ListenAndServe|http\.Server|net\.Listen' || true)
+    if [[ -n "$listener_hits" ]]; then
+        fail "internal/airt must not listen (dial-out transport only — /api/ai/* rides the existing ScarliHQ listener): $listener_hits"
+        return
+    fi
+
+    # --- The charter, on ONE line in the package doc (the check_28 lesson:
+    # grep cannot match across lines — zalomenie = FAIL).
+    if ! grep -q "LLM navrhuje, politika rozhoduje" "$airt_doc"; then
+        fail "the airt package doc must carry the Phase C charter ON ONE LINE (LLM navrhuje, politika rozhoduje)"
+        return
+    fi
+
+    # --- The API-map endpoints, release-locked: the four documented
+    # addresses of the real local stack.
+    local port
+    for port in '127.0.0.1:30000' '127.0.0.1:8089' '127.0.0.1:11438' '127.0.0.1:11435'; do
+        if ! grep -q "http://$port" "$endpoints"; then
+            fail "DefaultEndpoints must carry the API-map address $port (the documented local stack, release-locked like DefaultFailoverOrder)"
+            return
+        fi
+    done
+    # --- The cloud-gateway guard, BY NAME: the dotted-host rejection and
+    # the plain-HTTP rule are contract markers, not accidents.
+    if ! grep -q "not a cloud-LLM gateway" "$endpoints"; then
+        fail "the endpoint validation must NAME the cloud-gateway rule ('not a cloud-LLM gateway' — dotted hosts rejected by design)"
+        return
+    fi
+    if ! grep -q "plain HTTP" "$endpoints"; then
+        fail "the endpoint validation must NAME the plain-HTTP rule (the local stack carries no TLS)"
+        return
+    fi
+    # The env override surface: the four documented variables.
+    if ! grep -q 'SCARLIHQ_AIRUNTIME_SGLANG_URL' "$endpoints" || ! grep -q 'SCARLIHQ_AIRUNTIME_BEELLAMA_URL' "$endpoints"; then
+        fail "EndpointsFromEnv must carry the documented override variables (SCARLIHQ_AIRUNTIME_*_URL)"
+        return
+    fi
+
+    # --- The wire discipline: unknown finish reasons are transport
+    # failures, never coerced; stream is always false.
+    if ! grep -q "never coerced" "$wire"; then
+        fail "the wire decode must carry the never-coerced marker (unknown finish reasons are transport failures)"
+        return
+    fi
+    if ! grep -q "Stream   bool" "$wire" && ! grep -q "Stream bool" "$wire"; then
+        fail "the wire request must carry the stream flag (CF-2 chat is request/response — a streaming surface would be a separate reviewed act)"
+        return
+    fi
+
+    # --- The prober honesty matrix, stated in the source.
+    if ! grep -q "standing-but-unready server is DEGRADED, a dead one is UNAVAILABLE" "$prober"; then
+        fail "the prober must state the honesty matrix on one line (a standing-but-unready server is DEGRADED, a dead one is UNAVAILABLE)"
+        return
+    fi
+    if ! grep -q '/api/tags' "$prober"; then
+        fail "the prober must ask ollama on /api/tags (the documented health surface — its healthcheck is 'ollama list')"
+        return
+    fi
+
+    # --- The executor: attribution + fail-closed markers.
+    if ! grep -q "attribution survives failover" "$runtime"; then
+        fail "the executor must carry the attribution marker (attribution survives failover)"
+        return
+    fi
+    if ! grep -q "ErrAllAdaptersFailed" "$runtime"; then
+        fail "the executor must carry ErrAllAdaptersFailed (every step failed — the attempts return alongside)"
+        return
+    fi
+    if ! grep -q "fail-closed, not fail-blind" "$runtime"; then
+        fail "the executor must carry the fail-closed-not-fail-blind marker"
+        return
+    fi
+
+    # --- The REST surface: all five routes behind the standard auth gate.
+    for route in '/api/ai/health' '/api/ai/models' '/api/ai/probe' '/api/ai/chat'; do
+        if ! grep -q "\"$route\"" "$rest_src"; then
+            fail "the REST surface must register $route (Bearer-gated like every route)"
+            return
+        fi
+    done
+    if ! grep -q 'SCARLIHQ_AIRUNTIME_ENABLED' "$api_src"; then
+        fail "the API surface must document the opt-in (SCARLIHQ_AIRUNTIME_ENABLED=true — 503 without it)"
+        return
+    fi
+
+    # --- The opt-in wiring in main.go + the compose env block.
+    if ! grep -q 'SCARLIHQ_AIRUNTIME_ENABLED' "$main_src"; then
+        fail "main.go must carry the SCARLIHQ_AIRUNTIME_ENABLED opt-in (fail-closed wiring, the compute/kernel/fabric precedent)"
+        return
+    fi
+    if ! grep -q 'ConfigureAIRuntime' "$main_src"; then
+        fail "main.go must ConfigureAIRuntime (the opt-in attaches the runtime; nil is rejected — no half-configured surface)"
+        return
+    fi
+    if ! grep -q 'SCARLIHQ_AIRUNTIME_ENABLED=true' "$compose"; then
+        fail "the compose file must document the CF-2 opt-in env block (SCARLIHQ_AIRUNTIME_ENABLED=true + the _URL overrides + _MODELS + _PROBE_INTERVAL)"
+        return
+    fi
+
+    # --- The design doc: the genre + the plan stamped.
+    if [[ ! -f "$design_doc" ]]; then
+        fail "docs/AI_RUNTIME_CF2_DESIGN.md missing (CF-2 contract + plan)"
+        return
+    fi
+    local section
+    for section in '## 1. Where this fits' '## 2. Sub-phase plan' '## 3. CF-2 contract' '## 4. Non-goals' '## 5. Verification'; do
+        if ! grep -q "$section" "$design_doc"; then
+            fail "the CF-2 design doc must carry section '$section' (the CF-1 design genre)"
+            return
+        fi
+    done
+    if ! grep -q 'DONE — merged as v19.6.1' "$design_doc"; then
+        fail "the CF-2 plan row must be stamped DONE — merged as v19.6.1"
+        return
+    fi
+
+    # --- README v19.6.1 surface: the release is a release like any other.
+    if ! grep -q "What's New in v19.6.1" "$readme" || ! grep -q '\*\*v19.6.1\*\*' "$readme"; then
+        fail "README must carry the v19.6.1 changelog row + What's New section"
+        return
+    fi
+    if ! grep -q '| Universal AI Runtime adapters + REST (CF-2) | \*\*TESTED\*\* (v19.6.1) |' "$readme"; then
+        fail "README must carry the 'Universal AI Runtime adapters + REST (CF-2) | TESTED (v19.6.1)' roadmap row"
+        return
+    fi
+    if ! grep -q 'Universal AI Runtime theme (v19.6.x) is OPEN' "$readme"; then
+        fail "README theme status must stay OPEN (CF-2 is the second of five steps — the theme is not COMPLETE)"
+        return
+    fi
+
+    # --- The cloud-token scan over the airt RUNTIME files: the wire format
+    # is named in PROSE (comment-stripped away); a real cloud endpoint,
+    # cloud-vendor token or secret must not exist in code.
+    local code_hits
+    for f in "$endpoints" "$wire" "$adapter" "$prober" "$runtime" "$airt_doc"; do
+        code_hits=$(_strip_go_comments "$f" | grep -niE 'anthropic|azure|openai\.(com|org)|api\.openai|api[_-]?key|bearer|secret' || true)
+        if [[ -n "$code_hits" ]]; then
+            fail "airt runtime files must carry no cloud-LLM endpoints or tokens in code — hit in ${f##*/}: $code_hits"
+            return
+        fi
+    done
+
+    pass "universal AI runtime CF-2: the transport layer BEHIND the pure contract (internal/airt imports internal/airuntime, the contract stays pure — check 28 scans it whole), closed endpoint shape w/ the API-map defaults (30000/8089/11438/11435) + the cloud-gateway guard BY NAME (dotted hosts, https, userinfo, paths, implicit ports rejected — invalid env overrides abort, never a silent fall-back), LocalAdapter per tier over the OpenAI-compatible wire w/ never-coerced finish reasons + stream:false + 30s/1MiB bounds, the prober honesty matrix (2xx HEALTHY / standing-but-unready DEGRADED-serves / dead UNAVAILABLE / never-probed UNKNOWN; /health + /api/tags; concurrent tier-ordered rounds), the failover executor (pure CF-1 router replanned per request, attribution survives failover, ErrAllAdaptersFailed carries the attempts — fail-closed not fail-blind), no listener in the transport (dial-out only), the REST surface /api/ai/health|models|probe|chat Bearer-gated + 503-until-opt-in, main.go + compose wiring (SCARLIHQ_AIRUNTIME_ENABLED/_URL/_MODELS/_PROBE_INTERVAL), design doc genre + CF-2 stamped DONE, README v19.6.1 surface, cloud-token scan clean"
 }
 
 # ===========================================================================
@@ -2370,6 +2561,7 @@ SMOKE_CHECKS=(
     check_26_agent_fabric_approvals
     check_27_agent_fabric_closure
     check_28_ai_runtime_foundation
+    check_29_ai_runtime_adapters
 )
 
 run_check() {

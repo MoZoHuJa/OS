@@ -392,6 +392,60 @@ surface (merged from the `19.2.14.P6` line):
   non-negative usage, and every response carries provider attribution +
   a required UTC timestamp (attribution survives failover).
 
+## (p) Universal AI Runtime transport (v19.6.1, CF-2 — Phase C, opt-in)
+
+CF-2 wires the pure CF-1 contract to the real local stack through a
+SEPARATE transport package (`internal/airt`) — the network lives behind
+the contract, never inside it (smoke check 28 now scans the WHOLE
+`internal/airuntime` package comment-stripped; check 29 scans the
+transport's own markers). The security posture:
+
+- **The cloud-gateway guard is structural:** endpoints validate http-only
+  (no TLS anywhere in the local stack), no userinfo, explicit port, no
+  path/query/fragment — and the host must be LOOPBACK or a SINGLE-LABEL
+  docker service name. A dotted host is the cloud-gateway shape, rejected
+  BY NAME, before any cosmetic rule fires. The runtime cannot be pointed
+  at a public endpoint even by a misconfigured env override: an invalid
+  override aborts startup (fail-closed, never a silent fall-back).
+- **No new listening surface:** /api/ai/* rides the existing
+  Bearer-gated ScarliHQ listener (8090) — nothing in `internal/airt`
+  listens; the adapters only DIAL OUT to the documented local stack
+  (smoke check 29 asserts no listener in the transport). All five routes
+  sit behind `h.auth` and answer 503 until
+  `SCARLIHQ_AIRUNTIME_ENABLED=true` configures the runtime (the same
+  opt-in contract as every surface since v19.3.2).
+- **Bounded transport, bounded answers:** 30s per adapter attempt (the
+  ai/smg timeout precedent), 5s per probe, the response body read through
+  a 1 MiB limit (a runaway response must not eat memory — the content
+  itself is bounded to 4096 runes by the contract), the chat request body
+  bounded to 1 MiB with unknown-fields-rejected decode (the full
+  legitimate 32×4096-rune range stays reachable).
+- **Fail-closed normalization at the wire boundary:** exactly one choice;
+  the response role must be assistant; finish reasons only stop/length —
+  unknown finish reasons are adapter ERRORS the plan skips past, never
+  coerced values; absent usage is zero accounting, negative usage fails;
+  content must survive Message validation on real transport answers.
+- **Failover is honest, not silent:** the executor walks the pure CF-1
+  router's plan (replanned from live state every request); the first
+  answering tier's attribution rides the response, every failed step is
+  an Attempt{provider, tier, role, error} — the caller SEES the failover
+  (fail-closed, not fail-blind). ErrNoRoute carries the named-rule skips;
+  ErrAllAdaptersFailed carries the attempts.
+- **Construction is closed:** the adapter set must cover EXACTLY the
+  four-provider local stack (a missing tier would be a silent fail-open
+  hole in failover — rejected by name); the prober set is complete;
+  requests are deep-copied to adapters (copy isolation, tested in both
+  directions — an adapter cannot corrupt a caller's request).
+- **Chat mutates nothing on the host:** it is transport to local model
+  servers, read-only from the host's perspective. An LLM response
+  becoming a fabric PROPOSAL is CF-3, behind the fabric's operator
+  approvals — the LLM never decides anything here ("LLM navrhuje,
+  politika rozhoduje").
+- **No persistence in CF-2:** the model registry is in-memory, rebuilt at
+  boot from `SCARLIHQ_AIRUNTIME_MODELS` + operator POSTs — a malformed
+  bootstrap declaration aborts startup (the runtime never boots on a
+  guessed registry). No new files, no new mounts, no new env secrets.
+
 ## Other security properties
 
 - **REST/MCP/WS auth:** Bearer token only (no `?token=` URL — v18.6 P2 removed the URL fallback that leaked tokens into logs/referrer/proxy). `crypto/subtle.ConstantTimeCompare` (v18.0.0 P1 — was: custom `secureCompare`).

@@ -119,6 +119,25 @@ services:
       # directory, same fail-closed load). Override only if the stores
       # live on separate volumes:
       #   - SCARLIHQ_AGENTFABRIC_APPROVALS_FILE=/var/lib/scarlix-agentfabric/approvals.json
+      # v19.6.1 (CF-2) — OPT-IN Universal AI Runtime (/api/ai/*: adapters
+      # for the documented local stack, health probing, failover chat).
+      # Uncomment to enable. Endpoints default to the API-map HOST ports
+      # (127.0.0.1:30000/8089/11435/11438); INSIDE this container the local
+      # stack is reachable by service name on scarlix-net — set the four
+      # _URL vars accordingly (validated: loopback or single-label service
+      # names only — the runtime is not a cloud-LLM gateway):
+      #   - SCARLIHQ_AIRUNTIME_ENABLED=true
+      #   - SCARLIHQ_AIRUNTIME_SGLANG_URL=http://sglang:30000
+      #   - SCARLIHQ_AIRUNTIME_VLLM_URL=http://vllm:8000
+      #   - SCARLIHQ_AIRUNTIME_BEELLAMA_URL=http://beellama:8080
+      #   - SCARLIHQ_AIRUNTIME_OLLAMA_URL=http://ollama-agent:11434
+      # Operator bootstrap (provider:model, comma-separated — the registry
+      # IS the routing surface; split on the FIRST colon, model ids may
+      # carry their own, e.g. qwen3:4b):
+      #   - SCARLIHQ_AIRUNTIME_MODELS=sglang:qwen3-14b,ollama:qwen3:4b
+      # Optional freshness loop (Go duration; without it POST /api/ai/probe
+      # is the operator's refresh — the table never expires on its own):
+      #   - SCARLIHQ_AIRUNTIME_PROBE_INTERVAL=30s
     # v19.3.2 — OPT-IN compute lifecycle mounts (see env notes above).
     #   - /var/lib/scarlix-reservation:/var/lib/scarlix-reservation:rw
     #   - /run/scarlix-workload-bridge/bridge.sock:/run/scarlix-workload-bridge/bridge.sock
