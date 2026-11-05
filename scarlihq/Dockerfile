@@ -1,7 +1,4 @@
 # ScarliHQ v19.6.0 — Multi-stage Dockerfile (Secure Host-Bridge architecture)
-# v19.6.0: Header bumped from v19.4.6 (stale through the whole v19.5.x line —
-#   the v19.0.5 P2 header-drift precedent; ARG SCARLIX_VERSION tracked VERSION
-#   correctly. Header only — runtime unchanged.)
 # v19.0.5 P2: Header bumped from v18.5.2 (was stale by 10 minor releases even
 #   though ARG SCARLIX_VERSION tracked VERSION correctly. Header only — runtime
 #   unchanged.)
