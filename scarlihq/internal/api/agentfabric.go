@@ -97,6 +97,7 @@ type barCommandView struct {
 	WorkspaceID string               `json:"workspace_id,omitempty"`
 	SessionID   string               `json:"session_id,omitempty"`
 	Submitter   string               `json:"submitter,omitempty"`
+	ProposalID  string               `json:"proposal_id,omitempty"`
 	State       string               `json:"state"`
 	Allow       *bool                `json:"allow,omitempty"`
 	Reason      string               `json:"reason,omitempty"`
@@ -107,6 +108,7 @@ type barCommandView struct {
 	UpdatedAt   string               `json:"updated_at"`
 	Execution   *barExecutionSummary `json:"execution,omitempty"`
 	Approval    *barApprovalSummary  `json:"approval,omitempty"`
+	Proposal    *barProposalSummary  `json:"proposal,omitempty"`
 }
 
 // barExecutionSummary is the composed execution view on a command (the
@@ -120,6 +122,40 @@ type barExecutionSummary struct {
 	Outcome    string `json:"outcome,omitempty"`
 	Reason     string `json:"reason,omitempty"`
 	ExecutedAt string `json:"executed_at"`
+}
+
+// barProposalSummary is the composed proposal view on a command (the
+// additive CF-3 field): present exactly when the command was born from
+// an accepted proposal (the durable linkage). ADDITIVE exactly like the
+// execution/approval compositions — BF-1..BF-4 clients are unaffected;
+// the view never lies about what exists.
+type barProposalSummary struct {
+	ID         string `json:"id"`
+	State      string `json:"state"`
+	Proposer   string `json:"proposer"`
+	Operator   string `json:"operator,omitempty"`
+	CapturedAt string `json:"captured_at"`
+}
+
+// composeProposal attaches the command's proposal summary when the
+// proposal store is configured and an ACCEPTED proposal references the
+// command (GetByCommand — one command reference per proposal, the only
+// match). Nil-safe when the proposal store is not configured.
+func (h *Handler) composeProposal(c agentfabric.CommandRecord) *barProposalSummary {
+	if h.agentProposals == nil {
+		return nil
+	}
+	rec, ok := h.agentProposals.GetByCommand(agentfabric.CommandID(c.ID))
+	if !ok {
+		return nil
+	}
+	return &barProposalSummary{
+		ID:         rec.ID,
+		State:      string(rec.State),
+		Proposer:   string(rec.ProposerProvider) + "/" + string(rec.ProposerModel),
+		Operator:   rec.Operator,
+		CapturedAt: rec.CapturedAt.Format(time.RFC3339),
+	}
 }
 
 // composeExecution attaches the command's execution summary when the
@@ -172,7 +208,8 @@ func (h *Handler) composeApproval(c agentfabric.CommandRecord) *barApprovalSumma
 // viewWithExecution composes the command view + the additive execution
 // field (nil-safe when the execution store is not configured) + the
 // additive approval field (nil-safe when the approval store is not
-// configured — BF-4).
+// configured — BF-4) + the additive proposal field (nil-safe when the
+// proposal store is not configured — CF-3).
 func (h *Handler) viewWithExecution(c agentfabric.CommandRecord) barCommandView {
 	v := viewFromCommand(c)
 	if e := h.composeExecution(c); e != nil {
@@ -180,6 +217,9 @@ func (h *Handler) viewWithExecution(c agentfabric.CommandRecord) barCommandView 
 	}
 	if a := h.composeApproval(c); a != nil {
 		v.Approval = a
+	}
+	if p := h.composeProposal(c); p != nil {
+		v.Proposal = p
 	}
 	return v
 }
@@ -203,6 +243,7 @@ func viewFromCommand(c agentfabric.CommandRecord) barCommandView {
 		WorkspaceID: c.WorkspaceID,
 		SessionID:   c.SessionID,
 		Submitter:   c.Submitter,
+		ProposalID:  c.ProposalID,
 		State:       string(c.State),
 		SubmittedAt: c.SubmittedAt.Format(time.RFC3339),
 		UpdatedAt:   c.UpdatedAt.Format(time.RFC3339),

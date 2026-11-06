@@ -32,7 +32,7 @@ later, after review. No user-facing surface changes in this release.
 |---|---|---|
 | **CF-1** | Typed foundations: closed provider enumeration (the REAL local stack, v19.0.6-locked failover order), bounded explicit model registry, observed fail-closed health, normalized chat contract, pure deterministic router | **DONE — merged as v19.6.0** |
 | **CF-2** | Real adapters (SGLang/vLLM/BeeLlama/Ollama behind the contract) + health probing + the auth-gated REST surface (opt-in) | **DONE — merged as v19.6.1** (design: `docs/AI_RUNTIME_CF2_DESIGN.md`) |
-| **CF-3** | Propose surface: an LLM response becomes a fabric PROPOSAL — never an auto-submitted command | planned |
+| **CF-3** | Propose surface: an LLM response becomes a fabric PROPOSAL — never an auto-submitted command | **DONE — merged as v19.6.2** (design: `docs/AI_RUNTIME_CF3_DESIGN.md`) |
 | **CF-4** | Runtime audit + dashboard (the operator's view into the routing layer) | planned |
 | **CF-5** | Phase closure (the acceptance gate: cross-release coherence, honest ledger) | planned |
 

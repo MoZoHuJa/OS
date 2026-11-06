@@ -268,6 +268,31 @@ func main() {
 		if err := apiHandler.ConfigureAgentFabricApprovals(apvStore); err != nil {
 			log.Fatalf("agent fabric approval configuration failed: %v", err)
 		}
+		// CF-3 (v19.6.2): the proposal store rides the SAME opt-in (the LLM
+		// propose surface — no extra flag; the proposal is a fabric entity:
+		// it becomes a command only through the operator's accept). The file
+		// defaults to proposals.json NEXT TO the commands file (same 0700
+		// directory, same tamper discipline); SCARLIHQ_AGENTFABRIC_PROPOSALS_FILE
+		// overrides the location. Fail-closed load like every persisted store —
+		// a tampered proposals file aborts startup, it never degrades into
+		// "some proposals work". The propose endpoint additionally requires
+		// SCARLIHQ_AIRUNTIME_ENABLED=true (the runtime side of the bridge);
+		// accept/dismiss/list need only the fabric — 503 otherwise, honestly.
+		proposalsFile := strings.TrimSpace(os.Getenv("SCARLIHQ_AGENTFABRIC_PROPOSALS_FILE"))
+		if proposalsFile == "" {
+			proposalsFile = filepath.Join(filepath.Dir(commandsFile), "proposals.json")
+		}
+		prpStore, err := agentfabric.NewProposalStore(proposalsFile, agentfabric.DefaultMaxProposals)
+		if err != nil {
+			log.Fatalf("agent fabric proposal store construction failed: %v", err)
+		}
+		if err := prpStore.Load(); err != nil {
+			log.Fatalf("agent fabric proposal store load failed: %v (fix the file or archive it deliberately — never run on a tampered proposal history)", err)
+		}
+		if err := apiHandler.ConfigureAgentFabricProposals(prpStore); err != nil {
+			log.Fatalf("agent fabric proposal configuration failed: %v", err)
+		}
+		log.Printf("Agent Fabric proposal API enabled (the LLM propose surface: an LLM response becomes a fabric PROPOSAL — never an auto-submitted command; the operator's accept is the only door to a command; proposals file: %s; bound %d records — one command reference per proposal, decisions are terminal; POST /api/ai/propose additionally needs SCARLIHQ_AIRUNTIME_ENABLED=true)", proposalsFile, agentfabric.DefaultMaxProposals)
 		log.Printf("Agent Fabric command API enabled (ScarliBar backend; commands file: %s; bound %d records — the file is the history, rotate deliberately)", commandsFile, agentfabric.DefaultMaxCommands)
 		log.Printf("Agent Fabric workspace API enabled (workspaces file: %s; bound %d workspaces / %d sessions each — ARCHIVED is the terminal tombstone)", workspacesFile, agentfabric.DefaultMaxWorkspaces, agentfabric.MaxSessionsPerWorkspace)
 		log.Printf("Agent Fabric execution API enabled (runtimes: research read-only / coding bridged; executions file: %s; bound %d records — one execution per command, records are terminal; stale-allow guard evaluates FRESH at execute time)", executionsFile, agentfabric.DefaultMaxExecutions)
@@ -340,7 +365,7 @@ func main() {
 		if err := apiHandler.ConfigureAIRuntime(aiRuntime); err != nil {
 			log.Fatalf("ai runtime configuration failed: %v", err)
 		}
-		log.Printf("Universal AI Runtime API enabled (/api/ai/health, /api/ai/models, /api/ai/probe, /api/ai/chat — Bearer-gated; sglang %s · vllm %s · beellama %s · ollama %s; %d models registered; the LLM proposes, policy decides)", endpoints[airuntime.ProviderSGLang], endpoints[airuntime.ProviderVLLM], endpoints[airuntime.ProviderBeeLlama], endpoints[airuntime.ProviderOllama], registry.Len())
+		log.Printf("Universal AI Runtime API enabled (/api/ai/health, /api/ai/models, /api/ai/probe, /api/ai/chat, /api/ai/propose with the fabric's proposal store — Bearer-gated; sglang %s · vllm %s · beellama %s · ollama %s; %d models registered; the LLM proposes, policy decides)", endpoints[airuntime.ProviderSGLang], endpoints[airuntime.ProviderVLLM], endpoints[airuntime.ProviderBeeLlama], endpoints[airuntime.ProviderOllama], registry.Len())
 	} else {
 		log.Printf("Universal AI Runtime API disabled; set SCARLIHQ_AIRUNTIME_ENABLED=true to enable (/api/ai/* — adapters for the local stack + health probing + failover chat)")
 	}

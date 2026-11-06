@@ -2292,20 +2292,24 @@ check_28_ai_runtime_foundation() {
     fi
 
     # --- README surface: the CURRENT-release assertions move with the
-    # release (v19.6.1 now — the check_27 precedent: current surface
-    # tracked, historical content stays asserted below); the v19.6.0
-    # historical surface must ALSO stay (the changelog row + the What's New
-    # section are the release's permanent record).
-    if ! grep -q 'ScarLiXoS v19.6.1 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.1-B87333' "$readme"; then
-        fail "README banner/h1/badge must say v19.6.1"
+    # release (v19.6.2 now — the check_27 precedent: current surface
+    # tracked, historical content stays asserted below); the v19.6.0 and
+    # v19.6.1 historical surfaces must ALSO stay (the changelog rows + the
+    # What's New sections are the releases' permanent record).
+    if ! grep -q 'ScarLiXoS v19.6.2 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.2-B87333' "$readme"; then
+        fail "README banner/h1/badge must say v19.6.2"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.6.1 (Universal AI Runtime CF-2 — adapters + probing + REST; Phase C)' "$readme"; then
-        fail "README version line must say v19.6.1 (Universal AI Runtime CF-2 — adapters + probing + REST; Phase C)"
+    if ! grep -q 'Version:\*\* v19.6.2 (Universal AI Runtime CF-3 — the propose surface; Phase C)' "$readme"; then
+        fail "README version line must say v19.6.2 (Universal AI Runtime CF-3 — the propose surface; Phase C)"
         return
     fi
     if ! grep -q '\*\*v19.6.0\*\*' "$readme" || ! grep -q "What's New in v19.6.0" "$readme"; then
         fail "README must carry the v19.6.0 changelog row + What's New section"
+        return
+    fi
+    if ! grep -q '\*\*v19.6.1\*\*' "$readme" || ! grep -q "What's New in v19.6.1" "$readme"; then
+        fail "README must carry the v19.6.1 changelog row + What's New section (the permanent record)"
         return
     fi
     if ! grep -q 'Universal AI Runtime theme (v19.6.x) is OPEN' "$readme"; then
@@ -2320,8 +2324,8 @@ check_28_ai_runtime_foundation() {
         fail "README must carry the 'Universal AI Runtime foundation (CF-1) | TESTED (v19.6.0)' roadmap row"
         return
     fi
-    if ! grep -q 'One-command install — v19.6.1 Universal AI Runtime adapters' "$readme"; then
-        fail "README install header must be refreshed to v19.6.1 (the current-release surface — it drifted at v19.4.6 once)"
+    if ! grep -q 'One-command install — v19.6.2 Universal AI Runtime propose surface' "$readme"; then
+        fail "README install header must be refreshed to v19.6.2 (the current-release surface — it drifted at v19.4.6 once)"
         return
     fi
 
@@ -2527,6 +2531,203 @@ check_29_ai_runtime_adapters() {
 }
 
 # ===========================================================================
+# check_30 — Universal AI Runtime CF-3 (v19.6.2): the propose surface
+# ===========================================================================
+check_30_ai_propose_surface() {
+    echo "--- [30] Universal AI Runtime CF-3 (v19.6.2, Phase C): the propose surface — an LLM response becomes a fabric PROPOSAL, never an auto-submitted command (internal/agentfabric proposal.go/pstore.go + internal/api/aipropose.go) ---"
+    local pkg="$REPO_DIR/scarlihq/internal/agentfabric"
+    local proposal="$pkg/proposal.go"
+    local pstore="$pkg/pstore.go"
+    local command_src="$pkg/command.go"
+    local store_src="$pkg/store.go"
+    local fabricbus="$pkg/fabricbus.go"
+    local api_src="$REPO_DIR/scarlihq/internal/api/aipropose.go"
+    local rest_src="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local design_doc="$REPO_DIR/docs/AI_RUNTIME_CF3_DESIGN.md"
+    local readme="$REPO_DIR/README.md"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+
+    if [[ ! -f "$proposal" ]] || [[ ! -f "$pstore" ]]; then
+        fail "internal/agentfabric proposal model/store missing (CF-3, v19.6.2 — the propose surface's persisted entity)"
+        return
+    fi
+    local f
+    for f in "$api_src" "$design_doc"; do
+        if [[ ! -f "$f" ]]; then
+            fail "CF-3 source missing: $f"
+            return
+        fi
+    done
+
+    # --- The charter, on ONE line in the package doc (the check_28/29 lesson:
+    # grep cannot match across lines — zalomenie = FAIL).
+    if ! grep -q "never an auto-submitted command" "$proposal"; then
+        fail "the proposal package doc must carry the CF-3 charter ON ONE LINE (an LLM response becomes a fabric PROPOSAL — never an auto-submitted command)"
+        return
+    fi
+    if ! grep -q "LLM navrhuje, politika rozhoduje" "$proposal"; then
+        fail "the proposal package doc must carry the Phase C charter ON ONE LINE (LLM navrhuje, politika rozhoduje)"
+        return
+    fi
+
+    # --- The fence tag constant: the model's ONE structured freedom.
+    if ! grep -q 'ProposalFenceTag = "```scarlix-proposal"' "$proposal"; then
+        fail "the parser must carry the fenced-block tag constant (ProposalFenceTag = the scarlix-proposal fence — column 0, the closed three-field shape)"
+        return
+    fi
+    # --- The closed state enumeration + the no-withdrawn marker (the BF-4
+    # genre applied to model intents).
+    for state in 'ProposalPending ProposalState = "PENDING"' 'ProposalAccepted ProposalState = "ACCEPTED"' 'ProposalDismissed ProposalState = "DISMISSED"'; do
+        if ! grep -q "$state" "$proposal"; then
+            fail "the closed proposal enumeration must carry $state"
+            return
+        fi
+    done
+    if ! grep -q "NO withdrawn state and NO expiry" "$proposal"; then
+        fail "the proposal lifecycle must NAME the no-withdrawn/no-expiry rule (a PENDING proposal stays answerable — an expiry would turn a non-decision into a decision)"
+        return
+    fi
+    # --- The parser discipline markers: the honest null, the malformed
+    # refusal, never a guess.
+    if ! grep -q "ErrNoProposal" "$proposal" || ! grep -q "ErrMalformedProposal" "$proposal"; then
+        fail "the parser must carry ErrNoProposal (the honest null) AND ErrMalformedProposal (the fail-closed refusal)"
+        return
+    fi
+    if ! grep -q "the parser never fills in a blank agent or" "$proposal"; then
+        fail "the parser must NAME the never-guesses rule (no defaults — never fills in a blank agent or guesses a capability)"
+        return
+    fi
+    if ! grep -q "ambiguity is never resolved by guessing" "$proposal"; then
+        fail "the parser must NAME the two-blocks rule (an example plus a real proposal is ambiguity — never resolved by guessing)"
+        return
+    fi
+    # --- The bar's own validators: no second, weaker standard for
+    # model-authored intents.
+    if ! grep -q "no second, weaker standard" "$proposal" && ! grep -q "same standard as a bar submission" "$proposal"; then
+        fail "the proposal validation must NAME the bar's-own-validators rule (no second, weaker standard for model-authored intents)"
+        return
+    fi
+
+    # --- The store discipline markers: proposals.json, schema v1, bounded,
+    # never deleted, one-command-reference-per-proposal enforced twice.
+    if ! grep -q 'DefaultMaxProposals = 256' "$pstore"; then
+        fail "the proposal store must carry the bounded bound (DefaultMaxProposals = 256)"
+        return
+    fi
+    if ! grep -q 'proposalsFileVersion = 1' "$pstore"; then
+        fail "the proposals file must carry the explicit schema version 1 (unknown versions rejected — explicit migration required)"
+        return
+    fi
+    if ! grep -q "Proposals are never deleted" "$pstore"; then
+        fail "the proposal store must NAME the never-deleted rule (the file is the reviewable history)"
+        return
+    fi
+    if ! grep -q "one command reference per proposal" "$pstore" && ! grep -q "one command per proposal, ever" "$pstore"; then
+        fail "the proposal store must NAME the one-command-per-proposal invariant (enforced on the mutation side AND at load)"
+        return
+    fi
+
+    # --- The additive linkage on the command: schema v1 unchanged (the BF-4
+    # submitter precedent — omitempty, old binaries unaffected).
+    if ! grep -q 'ProposalID  string                `json:"proposal_id,omitempty"`' "$command_src" && ! grep -q 'ProposalID.*json:"proposal_id,omitempty"' "$command_src"; then
+        fail "CommandRecord must carry the additive proposal linkage (proposal_id omitempty — the commands schema stays v1)"
+        return
+    fi
+    # --- The durable linkage + the reconciliation lookup on the store side.
+    if ! grep -q "func (s \*CommandStore) GetByProposal" "$store_src"; then
+        fail "the command store must carry GetByProposal (the durable linkage lookup — accept's crash reconciliation)"
+        return
+    fi
+    if ! grep -q "func (s \*CommandStore) SubmitWithProposal" "$store_src"; then
+        fail "the command store must carry SubmitWithProposal (the accept path's capture — the linkage rides the record)"
+        return
+    fi
+    # --- The load-side duplicate-linkage refusal (corruption, never 'some
+    # proposals work').
+    if ! grep -q "is referenced TWICE" "$store_src"; then
+        fail "the command store Load must refuse a duplicate proposal linkage BY NAME (one command per proposal, ever — fail-closed)"
+        return
+    fi
+
+    # --- The bus signals: proposal.captured / proposal.decided join the
+    # CHANGE namespace.
+    if ! grep -q 'SignalProposalCaptured SignalType = "proposal.captured"' "$fabricbus" || ! grep -q 'SignalProposalDecided SignalType = "proposal.decided"' "$fabricbus"; then
+        fail "the fabric bus must carry proposal.captured + proposal.decided (the CHANGE namespace, extended by two names)"
+        return
+    fi
+
+    # --- The REST surface: all four routes behind the standard auth gate.
+    for route in '/api/ai/propose' '/api/ai/proposals' '/api/ai/proposals/accept' '/api/ai/proposals/dismiss'; do
+        if ! grep -q "\"$route\"" "$rest_src"; then
+            fail "the REST surface must register $route (Bearer-gated like every route)"
+            return
+        fi
+    done
+    # --- The both-opt-ins fail-closed gate + the reconciliation + the
+    # never-an-auto-submitted-command markers in the API layer.
+    if ! grep -q "SCARLIHQ_AIRUNTIME_ENABLED=true" "$api_src" || ! grep -q "SCARLIHQ_AGENTFABRIC_ENABLED=true" "$api_src"; then
+        fail "the propose API must document BOTH opt-ins (SCARLIHQ_AIRUNTIME_ENABLED + SCARLIHQ_AGENTFABRIC_ENABLED — 503 without either)"
+        return
+    fi
+    if ! grep -q "GetByProposal" "$api_src"; then
+        fail "the accept handler must call the reconciliation lookup (GetByProposal — no intent is captured twice)"
+        return
+    fi
+    if ! grep -q "never an auto-submitted command" "$api_src"; then
+        fail "the propose API doc must carry the CF-3 charter (never an auto-submitted command)"
+        return
+    fi
+    if ! grep -q "StatusUnprocessableEntity" "$api_src"; then
+        fail "the propose handler must answer 422 on a malformed proposal block (fail-closed, nothing captured)"
+        return
+    fi
+
+    # --- The wiring: the proposal store rides the fabric opt-in.
+    if ! grep -q 'SCARLIHQ_AGENTFABRIC_PROPOSALS_FILE' "$main_src"; then
+        fail "main.go must carry the SCARLIHQ_AGENTFABRIC_PROPOSALS_FILE override (proposals.json next to commands.json — the fabric opt-in, the approvals precedent)"
+        return
+    fi
+    if ! grep -q 'ConfigureAgentFabricProposals' "$main_src"; then
+        fail "main.go must ConfigureAgentFabricProposals (the fabric opt-in attaches the proposal store — nil is rejected)"
+        return
+    fi
+    if ! grep -q 'SCARLIHQ_AGENTFABRIC_PROPOSALS_FILE' "$compose"; then
+        fail "the compose file must document the proposal store override (SCARLIHQ_AGENTFABRIC_PROPOSALS_FILE + the both-opt-ins note)"
+        return
+    fi
+
+    # --- The design doc: the genre + the plan stamped.
+    local section
+    for section in '## 1. Where this fits' '## 2. The contract' '## 3. Honest non-goals' '## 4. Verification'; do
+        if ! grep -q "$section" "$design_doc"; then
+            fail "the CF-3 design doc must carry section '$section' (the CF-1/CF-2 design genre)"
+            return
+        fi
+    done
+    if ! grep -q 'DONE — merged as v19.6.2' "$REPO_DIR/docs/AI_RUNTIME_CF1_DESIGN.md"; then
+        fail "the CF-1 plan table must stamp CF-3 DONE — merged as v19.6.2"
+        return
+    fi
+
+    # --- README v19.6.2 surface: the release is a release like any other.
+    if ! grep -q "What's New in v19.6.2" "$readme" || ! grep -q '\*\*v19.6.2\*\*' "$readme"; then
+        fail "README must carry the v19.6.2 changelog row + What's New section"
+        return
+    fi
+    if ! grep -q 'Universal AI Runtime propose surface (CF-3) | \*\*TESTED\*\* (v19.6.2)' "$readme"; then
+        fail "README must carry the 'Universal AI Runtime propose surface (CF-3) | TESTED (v19.6.2)' roadmap row"
+        return
+    fi
+    if ! grep -q 'Universal AI Runtime theme (v19.6.x) is OPEN' "$readme"; then
+        fail "README theme status must stay OPEN (CF-3 is the third of five steps — the theme is not COMPLETE)"
+        return
+    fi
+
+    pass "universal AI runtime CF-3: the propose surface (an LLM response becomes a fabric PROPOSAL — never an auto-submitted command): the pure parser (the scarlix-proposal fence at column 0, the closed three-field shape, the bar's own validators, the honest null / the 422 malformed refusal w/ attribution + content, never a guess), the proposal store (proposals.json — the astore discipline: schema v1, 0600/0700, atomic+rollback, bounded 256, never deleted, one-command-per-proposal enforced twice), accept = the ONLY door to a command (the BF-1 SubmitWithProposal path, the DURABLE additive proposal_id linkage — commands schema stays v1, the reconciliation GetByProposal — no intent captured twice), dismiss unconditional + terminal, the closed PENDING/ACCEPTED/DISMISSED enumeration (no withdrawn, no expiry), the four Bearer-gated routes w/ BOTH-opt-ins fail-closed, bus proposal.captured/decided signals, main.go + compose wiring, design doc genre + CF-3 stamped DONE, README v19.6.2 surface"
+}
+
+# ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
@@ -2562,6 +2763,7 @@ SMOKE_CHECKS=(
     check_27_agent_fabric_closure
     check_28_ai_runtime_foundation
     check_29_ai_runtime_adapters
+    check_30_ai_propose_surface
 )
 
 run_check() {

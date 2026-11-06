@@ -119,6 +119,17 @@ services:
       # directory, same fail-closed load). Override only if the stores
       # live on separate volumes:
       #   - SCARLIHQ_AGENTFABRIC_APPROVALS_FILE=/var/lib/scarlix-agentfabric/approvals.json
+      # v19.6.2 (CF-3) — the proposal store rides the SAME fabric opt-in
+      # (the LLM propose surface: an LLM response becomes a fabric
+      # PROPOSAL — never an auto-submitted command; the operator's accept
+      # is the only door to a command, dismiss is terminal. proposals.json
+      # is the reviewable history of every model proposal, acceptance and
+      # dismissal — bounded 256, never deleted). No extra flag; the file
+      # defaults to proposals.json next to the commands file (same 0700
+      # directory, same fail-closed load). POST /api/ai/propose ADDITIONALLY
+      # requires the CF-2 runtime opt-in below — without BOTH it answers
+      # 503 honestly. Override only if the stores live on separate volumes:
+      #   - SCARLIHQ_AGENTFABRIC_PROPOSALS_FILE=/var/lib/scarlix-agentfabric/proposals.json
       # v19.6.1 (CF-2) — OPT-IN Universal AI Runtime (/api/ai/*: adapters
       # for the documented local stack, health probing, failover chat).
       # Uncomment to enable. Endpoints default to the API-map HOST ports
@@ -152,7 +163,8 @@ services:
     # looser permissions — tamper discipline).
     # v19.5.1 — the same mount carries the workspace store (BF-2): it
     # defaults to workspaces.json in this directory. v19.5.2 (BF-3)
-    # executions.json and v19.5.3 (BF-4) approvals.json default here too.
+    # executions.json, v19.5.3 (BF-4) approvals.json and v19.6.2 (CF-3)
+    # proposals.json default here too.
     #   - /var/lib/scarlix-agentfabric:/var/lib/scarlix-agentfabric:rw
     networks: [scarlix-net]
 networks:
