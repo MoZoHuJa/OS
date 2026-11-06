@@ -61,10 +61,12 @@ override is a startup ERROR — never a silent fall-back to the default.
 OpenAI-compatible shape ALL FOUR tiers serve (sglang, vllm,
 beellama/llama.cpp server, ollama). No auth header: the documented local
 stack authenticates nobody; the endpoint shape itself is the boundary.
-Bounded: 30s per attempt (the ai/smg `timeout_ms: 30000` precedent), the
-response body read through a 1 MiB limit (the content itself is bounded
-to 4096 runes by the contract; the envelope leaves room for the servers'
-own decorations). Normalization is fail-closed, by rule: exactly one
+Bounded: 30s per attempt by default (the ai/smg `timeout_ms: 30000`
+precedent; v19.6.3: operator-tunable through
+`SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT` within the 300s named upper bound —
+see section 6), the response body read through a 1 MiB limit (the
+content itself is bounded to 4096 runes by the contract; the envelope
+leaves room for the servers' own decorations). Normalization is fail-closed, by rule: exactly one
 choice; the response role must be `assistant`; finish reasons only
 `stop`/`length` — anything else ("content_filter", "tool_calls", "" …)
 is an adapter ERROR the plan skips past, never a coerced value; absent
@@ -241,3 +243,109 @@ honest non-goal, carried below).
   Configured sanity: `SCARLIHQ_AIRUNTIME_ENABLED=true` with a
   bootstrapped model + a live probe round, exercised on the real binary
   in the release environment.
+
+---
+
+## 6. v19.6.3 remediation — KPK-01/KPK-02 (the v19.6.1 KpK audit)
+
+The audit found two defects in the CF-2 transport as shipped in v19.6.1.
+Both are fixed in v19.6.3; this section is the design record.
+
+### KPK-01 — the local-only client is closed at THREE layers
+
+Go's default `http.Client` FOLLOWS redirects. The audit reproduced it: a
+local tier answering `307` with an external `Location` received — at that
+external destination — the original POST body, i.e. the whole normalized
+conversation, i.e. the private prompts. The endpoint allowlist constrains
+the CONFIGURED destination; it does not constrain a redirect destination.
+That was a confidentiality boundary failure, not a stylistic concern.
+
+The fix is `internal/airt/transport.go` — the ONLY place this package
+constructs an `http.Client` (smoke check 31 counts the constructions):
+
+1. **No redirects.** `CheckRedirect` returns `http.ErrUseLastResponse`:
+   a 307/308 is handed back AS the response and classified by the
+   existing rules — the adapter's 2xx rule (an attempt error), the
+   prober's honesty matrix (DEGRADED: standing but unready). No status
+   is special; none is followed.
+2. **No ambient proxy.** `Transport.Proxy` is explicitly `nil`:
+   `HTTP_PROXY`/`HTTPS_PROXY` never steer local AI traffic. Proxy support
+   would be a separate, explicit, reviewed act — it cannot become a
+   feature by accident.
+3. **The dial guard.** The transport's `DialContext` refuses any
+   destination outside loopback and the configured endpoint hosts
+   (hostname syntax at the endpoint layer does not prove where a
+   connection actually goes; the dial layer does). Defense in depth —
+   each layer would hold alone.
+
+Regression proofs (tests, not claims): `TestLocalAdapterChatRefusesRedirects`
+(307 AND 308 — the external destination receives ZERO requests and ZERO
+prompt bytes), `TestProbeDoesNotFollowRedirects`,
+`TestLocalTransportIgnoresAmbientProxy` (a counting proxy in the env —
+zero traversal), `TestLocalTransportDialGuard` /
+`TestIsLocalDialTarget`, and `TestAIChatRedirectNeverFollowed`
+(end-to-end through the mux). Empirically verified alongside: the client
+closes ITS side of the connection at deadline-abort — no client-side fd
+leak in the ScarliHQ process (the audit's reproduction pattern, where
+the leak appeared, was the test server sharing the process).
+
+### KPK-02 — one end-to-end timeout contract
+
+As shipped in v19.6.1, every adapter attempt could run 30s while the
+HTTP server's `WriteTimeout` was also 30s: a slow-but-valid answer could
+outlive the write deadline; a multi-tier walk could exceed it entirely.
+Two unrelated numbers pretending to be one budget.
+
+The v19.6.3 contract, stated once:
+
+- **The budget** for one AI request is `airt.ChatBudget(perAttempt)` —
+  per-attempt × the closed four-tier set (the complete honest failover
+  walk). Sequential attempts SHARE it through the request context; no
+  tier carries an independent allowance next to it.
+- **The per-attempt bound** is `DefaultAdapterTimeout` (30s, the stack's
+  own `timeout_ms` precedent), operator-tunable through
+  `SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT` within `MaxAdapterTimeout` (300s — a
+  named upper bound; the env is validated fail-closed at startup).
+- **The API layer imposes the budget** as the request context deadline
+  (`aiChatContext` — `/api/ai/chat` AND `/api/ai/propose`, the same
+  contract on both). Every adapter and probe operation propagates it.
+- **Expiry is a deliberate answer:** `airt.ErrBudgetExpired` (wrapping
+  the context's own error) → **504**, the attempts that consumed the
+  budget riding along — never a socket write deadline artifact, never a
+  generic 502 masquerade.
+- **The write path extends beyond the budget:** both handlers extend the
+  per-request write deadline to budget + 10s margin
+  (`http.ResponseController.SetWriteDeadline`). A legitimate slow local
+  generation is WRITTEN. The server's 30s `WriteTimeout` stays the
+  default for every other surface (the slow-client DoS guard unchanged).
+
+Regression proofs: `TestChatBudgetArithmetic`,
+`TestRuntimeChatBudgetFailoverWithinBudget` (a delayed primary plus a
+successful fallback completes within the budget),
+`TestRuntimeChatBudgetSlowButLegit`, `TestRuntimeChatBudgetExpires`
+(expiry by name, attempts riding along, DeadlineExceeded preserved
+through `errors.Is`), `TestRuntimeChatBudgetAlreadyExpired`,
+`TestAIChatBudgetExpiredReturns504` and
+`TestAIChatSlowButLegitAnswerSucceeds` (both through the real mux).
+
+### Hygiene findings carried from the SK audit
+
+- **KPK-19.6.1-P2-01** — README install one-liner drift: the paragraph
+  now names the current release, and smoke check_28 carries a literal
+  drift guard that moves with every release.
+- **KPK-19.6.1-P2-02** — the SECURITY_MAP states the auth inequality:
+  AI Runtime REST auth ≠ inference port auth; the ports remain
+  localhost/scarlix-net only.
+- **KPK-19.6.1-P2-03** — the registry durability truth is stated where
+  the operator reads it (SECURITY_MAP + compose): NOT durable until the
+  CF-4/persistence decision; always declare
+  `SCARLIHQ_AIRUNTIME_MODELS` when enabling.
+- **KPK-19.6.1-P3-01** — the host-bridge header carries no hardcoded
+  release (the VERSION file only).
+- **KPK-19.6.1-P3-02** — the timeout contract is documented (this
+  section) and tunable (`SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT`, bounded).
+
+Smoke check 31 (`check_31_ai_transport_boundary`) gates all of the
+above at the source level; the acceptance of both findings is the test
+suite, the smoke suite, and the release notes
+(`docs/RELEASE_NOTES_v19.6.3.md`).

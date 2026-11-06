@@ -157,6 +157,14 @@ func (h *Handler) aiPropose(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "propose surface requires the agent fabric (SCARLIHQ_AGENTFABRIC_ENABLED=true) — a proposal is a fabric entity; the runtime alone never captures one")
 		return
 	}
+	// KPK-02 (v19.6.3): the propose surface rides the SAME end-to-end
+	// timeout contract as /api/ai/chat — the budget context for the whole
+	// failover walk, the write deadline extended beyond it for the answer
+	// (a proposal capture that outlives the server's write path would be
+	// the same KPK-02 failure wearing a CF-3 coat).
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(h.aiRuntime.ChatBudget() + aiWriteMargin)) //nolint:errcheck — a recorder cannot set deadlines; the budget rides the context regardless
+	ctx, cancel := h.aiChatContext(r)
+	defer cancel()
 	request, ok := decodeChatJSON(w, r, func() any { return &aiProposeRequest{} })
 	if !ok {
 		return
@@ -166,7 +174,7 @@ func (h *Handler) aiPropose(w http.ResponseWriter, r *http.Request) {
 	for _, m := range req.Messages {
 		messages = append(messages, airuntime.Message{Role: airuntime.Role(m.Role), Content: m.Content})
 	}
-	outcome, err := h.aiRuntime.Chat(r.Context(), airuntime.Request{
+	outcome, err := h.aiRuntime.Chat(ctx, airuntime.Request{
 		Model:    airuntime.ModelID(req.Model),
 		Messages: messages,
 	})
@@ -179,6 +187,10 @@ func (h *Handler) aiPropose(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, airuntime.ErrNoRoute):
 			writeJSONStatus(w, http.StatusServiceUnavailable, map[string]interface{}{"error": err.Error(), "skips": skipViews(outcome.Skips)})
+		case errors.Is(err, airt.ErrBudgetExpired):
+			// The deliberate timeout status (KPK-02): the end-to-end budget
+			// expired — 504, the attempts that consumed it riding along.
+			writeJSONStatus(w, http.StatusGatewayTimeout, map[string]interface{}{"error": err.Error(), "attempts": attemptViews(outcome.Attempts)})
 		case errors.Is(err, airt.ErrAllAdaptersFailed):
 			writeJSONStatus(w, http.StatusBadGateway, map[string]interface{}{"error": err.Error(), "attempts": attemptViews(outcome.Attempts)})
 		default:

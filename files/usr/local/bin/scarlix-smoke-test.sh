@@ -2292,16 +2292,16 @@ check_28_ai_runtime_foundation() {
     fi
 
     # --- README surface: the CURRENT-release assertions move with the
-    # release (v19.6.2 now — the check_27 precedent: current surface
-    # tracked, historical content stays asserted below); the v19.6.0 and
-    # v19.6.1 historical surfaces must ALSO stay (the changelog rows + the
-    # What's New sections are the releases' permanent record).
-    if ! grep -q 'ScarLiXoS v19.6.2 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.2-B87333' "$readme"; then
-        fail "README banner/h1/badge must say v19.6.2"
+    # release (v19.6.3 now — the check_27 precedent: current surface
+    # tracked, historical content stays asserted below); the v19.6.0,
+    # v19.6.1 and v19.6.2 historical surfaces must ALSO stay (the changelog
+    # rows + the What's New sections are the releases' permanent record).
+    if ! grep -q 'ScarLiXoS v19.6.3 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.3-B87333' "$readme"; then
+        fail "README banner/h1/badge must say v19.6.3"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.6.2 (Universal AI Runtime CF-3 — the propose surface; Phase C)' "$readme"; then
-        fail "README version line must say v19.6.2 (Universal AI Runtime CF-3 — the propose surface; Phase C)"
+    if ! grep -q 'Version:\*\* v19.6.3 (Universal AI Runtime — transport hardening: KPK-01/KPK-02 remediation; Phase C)' "$readme"; then
+        fail "README version line must say v19.6.3 (Universal AI Runtime — transport hardening: KPK-01/KPK-02 remediation; Phase C)"
         return
     fi
     if ! grep -q '\*\*v19.6.0\*\*' "$readme" || ! grep -q "What's New in v19.6.0" "$readme"; then
@@ -2310,6 +2310,10 @@ check_28_ai_runtime_foundation() {
     fi
     if ! grep -q '\*\*v19.6.1\*\*' "$readme" || ! grep -q "What's New in v19.6.1" "$readme"; then
         fail "README must carry the v19.6.1 changelog row + What's New section (the permanent record)"
+        return
+    fi
+    if ! grep -q '\*\*v19.6.2\*\*' "$readme" || ! grep -q "What's New in v19.6.2" "$readme"; then
+        fail "README must carry the v19.6.2 changelog row + What's New section (the permanent record)"
         return
     fi
     if ! grep -q 'Universal AI Runtime theme (v19.6.x) is OPEN' "$readme"; then
@@ -2324,8 +2328,17 @@ check_28_ai_runtime_foundation() {
         fail "README must carry the 'Universal AI Runtime foundation (CF-1) | TESTED (v19.6.0)' roadmap row"
         return
     fi
-    if ! grep -q 'One-command install — v19.6.2 Universal AI Runtime propose surface' "$readme"; then
-        fail "README install header must be refreshed to v19.6.2 (the current-release surface — it drifted at v19.4.6 once)"
+    if ! grep -q 'One-command install — v19.6.3 Universal AI Runtime (transport-hardened)' "$readme"; then
+        fail "README install header must be refreshed to v19.6.3 (the current-release surface — it drifted at v19.4.6 once)"
+        return
+    fi
+    # v19.6.3 (KPK-19.6.1-P2-01, the audit finding): the install PARAGRAPH
+    # must name the CURRENT release too — the v19.6.1 audit caught the
+    # one-liner still saying 'clones the current v19.6.0 mainline' at a
+    # 19.6.1+ tag. The header alone is not enough; the drift guard is
+    # literal and moves with every release.
+    if ! grep -q 'current v19.6.3 mainline' "$readme"; then
+        fail "README install paragraph must say 'clones the current v19.6.3 mainline' (KPK-19.6.1-P2-01: the one-liner drifts when the header is bumped but the paragraph is not)"
         return
     fi
 
@@ -2341,7 +2354,7 @@ check_28_ai_runtime_foundation() {
         return
     fi
 
-    pass "universal AI runtime CF-1: closed local-stack enumeration (4 providers, v19.0.6-locked failover order encoded once), bounded explicit model registry (no auto-discovery), fail-closed observed health (UNKNOWN never serves, monotone observation time), normalized chat bounds (4096 runes / 32 messages / no error finish), pure deterministic router w/ ErrUnknownModel + ErrNoRoute (never guesses, never executes), network/IO-free by construction — the v19.6.1 evolution: the comment-stripped scan covers the WHOLE package (every .go file, runtime AND tests), cloud-token scan clean over runtime files, charter on one line, design doc + CF-1..CF-5 plan, README current-release surface v19.6.1 + historical v19.6.0 surface (changelog + What's New + theme OPEN + roadmap TESTED), wiring contract evolved: CF-2 wires THROUGH internal/airt (the transport owns the network, the contract stays pure)"
+    pass "universal AI runtime CF-1: closed local-stack enumeration (4 providers, v19.0.6-locked failover order encoded once), bounded explicit model registry (no auto-discovery), fail-closed observed health (UNKNOWN never serves, monotone observation time), normalized chat bounds (4096 runes / 32 messages / no error finish), pure deterministic router w/ ErrUnknownModel + ErrNoRoute (never guesses, never executes), network/IO-free by construction — the v19.6.1 evolution: the comment-stripped scan covers the WHOLE package (every .go file, runtime AND tests), cloud-token scan clean over runtime files, charter on one line, design doc + CF-1..CF-5 plan, README current-release surface v19.6.3 (banner/badge/version-line/install header + the v19.6.3 mainline drift guard, KPK-19.6.1-P2-01) + historical v19.6.0/v19.6.1/v19.6.2 surfaces (changelog + What's New + theme OPEN + roadmap TESTED), wiring contract evolved: CF-2 wires THROUGH internal/airt (the transport owns the network, the contract stays pure)"
 }
 
 # ===========================================================================
@@ -2356,6 +2369,7 @@ check_29_ai_runtime_adapters() {
     local prober="$pkg/prober.go"
     local runtime="$pkg/runtime.go"
     local airt_doc="$pkg/airt.go"
+    local transport="$pkg/transport.go"
     local design_doc="$REPO_DIR/docs/AI_RUNTIME_CF2_DESIGN.md"
     local readme="$REPO_DIR/README.md"
     local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
@@ -2368,7 +2382,7 @@ check_29_ai_runtime_adapters() {
         return
     fi
     local f
-    for f in "$wire" "$adapter" "$prober" "$runtime" "$airt_doc"; do
+    for f in "$wire" "$adapter" "$prober" "$runtime" "$airt_doc" "$transport"; do
         if [[ ! -f "$f" ]]; then
             fail "airt source missing: $f"
             return
@@ -2385,7 +2399,7 @@ check_29_ai_runtime_adapters() {
     # And the transport owns the network: net/http lives HERE (that is its
     # purpose), but NOTHING LISTENS in it — no server surface, dial-out only.
     local listener_hits
-    listener_hits=$(cat "$adapter" "$prober" "$runtime" "$wire" "$endpoints" | grep -nE 'ListenAndServe|http\.Server|net\.Listen' || true)
+    listener_hits=$(cat "$adapter" "$prober" "$runtime" "$wire" "$endpoints" "$transport" | grep -nE 'ListenAndServe|http\.Server|net\.Listen' || true)
     if [[ -n "$listener_hits" ]]; then
         fail "internal/airt must not listen (dial-out transport only — /api/ai/* rides the existing ScarliHQ listener): $listener_hits"
         return
@@ -2519,7 +2533,7 @@ check_29_ai_runtime_adapters() {
     # is named in PROSE (comment-stripped away); a real cloud endpoint,
     # cloud-vendor token or secret must not exist in code.
     local code_hits
-    for f in "$endpoints" "$wire" "$adapter" "$prober" "$runtime" "$airt_doc"; do
+    for f in "$endpoints" "$wire" "$adapter" "$prober" "$runtime" "$airt_doc" "$transport"; do
         code_hits=$(_strip_go_comments "$f" | grep -niE 'anthropic|azure|openai\.(com|org)|api\.openai|api[_-]?key|bearer|secret' || true)
         if [[ -n "$code_hits" ]]; then
             fail "airt runtime files must carry no cloud-LLM endpoints or tokens in code — hit in ${f##*/}: $code_hits"
@@ -2727,6 +2741,218 @@ check_30_ai_propose_surface() {
     pass "universal AI runtime CF-3: the propose surface (an LLM response becomes a fabric PROPOSAL — never an auto-submitted command): the pure parser (the scarlix-proposal fence at column 0, the closed three-field shape, the bar's own validators, the honest null / the 422 malformed refusal w/ attribution + content, never a guess), the proposal store (proposals.json — the astore discipline: schema v1, 0600/0700, atomic+rollback, bounded 256, never deleted, one-command-per-proposal enforced twice), accept = the ONLY door to a command (the BF-1 SubmitWithProposal path, the DURABLE additive proposal_id linkage — commands schema stays v1, the reconciliation GetByProposal — no intent captured twice), dismiss unconditional + terminal, the closed PENDING/ACCEPTED/DISMISSED enumeration (no withdrawn, no expiry), the four Bearer-gated routes w/ BOTH-opt-ins fail-closed, bus proposal.captured/decided signals, main.go + compose wiring, design doc genre + CF-3 stamped DONE, README v19.6.2 surface"
 }
 
+
+# ===========================================================================
+# check_31 — Universal AI Runtime transport hardening (v19.6.3, KPK-01/KPK-02):
+# the local-only client (no redirects, no ambient proxy, dial-guarded) and
+# the end-to-end timeout contract — the v19.6.1 KpK audit remediation
+# ===========================================================================
+check_31_ai_transport_boundary() {
+    echo "--- [31] Universal AI Runtime transport hardening (v19.6.3, KPK-01/KPK-02 remediation): the local-only HTTP client (no redirects, no ambient proxy, dial-guarded) + the end-to-end chat budget (504 on expiry, write path extended beyond it) ---"
+    local pkg="$REPO_DIR/scarlihq/internal/airt"
+    local transport="$pkg/transport.go"
+    local adapter="$pkg/adapter.go"
+    local prober="$pkg/prober.go"
+    local runtime="$pkg/runtime.go"
+    local airt_doc="$pkg/airt.go"
+    local endpoints="$pkg/endpoints.go"
+    local wire="$pkg/wire.go"
+    local api_src="$REPO_DIR/scarlihq/internal/api/airuntime.go"
+    local propose_src="$REPO_DIR/scarlihq/internal/api/aipropose.go"
+    local api_test="$REPO_DIR/scarlihq/internal/api/airuntime_test.go"
+    local transport_test="$pkg/transport_test.go"
+    local runtime_test="$pkg/runtime_test.go"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+    local secmap="$REPO_DIR/docs/SCARLIX_SECURITY_MAP.md"
+    local readme="$REPO_DIR/README.md"
+    local notes="$REPO_DIR/docs/RELEASE_NOTES_v19.6.3.md"
+
+    if [[ ! -f "$transport" ]]; then
+        fail "internal/airt/transport.go missing (v19.6.3 — the local-only client constructor, KPK-01)"
+        return
+    fi
+
+    # --- KPK-01: the no-redirect policy, BY MARKER IN CODE (comment-
+    # stripped — prose cannot mask code, the check_28 lesson): a 3xx is
+    # handed back as the response and classified as the failure it is —
+    # Go's default client FOLLOWS redirects and would replay the POST
+    # body, the whole private conversation, onto whatever Location a
+    # compromised tier answers; the endpoint allowlist constrains the
+    # CONFIGURED destination, never a redirect destination.
+    local code_hits
+    code_hits=$(_strip_go_comments "$transport" | grep -c 'http\.ErrUseLastResponse' || true)
+    if [[ "$code_hits" -eq 0 ]]; then
+        fail "the local-only client must refuse redirects BY POLICY (http.ErrUseLastResponse in transport.go CODE — KPK-01: the redirect boundary is a confidentiality boundary, not a stylistic concern)"
+        return
+    fi
+    # --- KPK-01: no ambient proxy inheritance (Proxy: nil — HTTP_PROXY /
+    # HTTPS_PROXY never steer local AI traffic; proxy support is not a
+    # feature of this transport and cannot become one by accident). Also
+    # comment-stripped: the marker must live in the CODE.
+    code_hits=$(_strip_go_comments "$transport" | grep -cE 'Proxy: *nil' || true)
+    if [[ "$code_hits" -eq 0 ]]; then
+        fail "the local-only transport must carry an explicit 'Proxy: nil' in CODE (ambient proxy env never steers local AI traffic — KPK-01)"
+        return
+    fi
+    # --- KPK-01: the dial guard (defense in depth — hostname syntax at the
+    # endpoint layer does not prove where a connection actually goes; the
+    # dial layer does). The guard's refusal text is the contract marker.
+    if ! grep -q "the local-only transport dials loopback and the configured endpoint hosts, nothing else" "$transport"; then
+        fail "the local-only transport must carry the dial guard w/ its named refusal (loopback + the configured endpoint hosts, nothing else — KPK-01 defense in depth)"
+        return
+    fi
+    # --- The ONE constructor discipline: the whole package builds its
+    # http.Client in EXACTLY ONE place (transport.go) — an http.Client
+    # anywhere else in the airt runtime files would be a second, unaudited
+    # client shape. Comment-stripped: the count must see CODE only.
+    local client_count
+    client_count=$(for f in "$transport" "$adapter" "$prober" "$runtime" "$airt_doc" "$endpoints" "$wire"; do _strip_go_comments "$f"; done | grep -c 'http\.Client{' || true)
+    if [[ "$client_count" != "1" ]]; then
+        fail "internal/airt must construct http.Client in EXACTLY ONE place (the shared local-only constructor, transport.go) — found $client_count constructions across the runtime files (KPK-01: one constructor, closed by construction)"
+        return
+    fi
+    # --- Both consumers ride the constructor: adapter AND prober (in
+    # CODE, comment-stripped).
+    code_hits=$(_strip_go_comments "$adapter" | grep -c 'newLocalClient' || true)
+    local prober_hits
+    prober_hits=$(_strip_go_comments "$prober" | grep -c 'newLocalClient' || true)
+    if [[ "$code_hits" -eq 0 || "$prober_hits" -eq 0 ]]; then
+        fail "the adapter and the prober must both build their clients through newLocalClient (the local-only shape is not optional for either — KPK-01)"
+        return
+    fi
+
+    # --- KPK-02: the budget arithmetic + the named upper bound (in CODE,
+    # comment-stripped).
+    code_hits=$(_strip_go_comments "$transport" | grep -cF 'MaxAdapterTimeout = 300 * time.Second' || true)
+    if [[ "$code_hits" -eq 0 ]]; then
+        fail "the per-attempt timeout must carry the named upper bound (MaxAdapterTimeout = 300s — a bounded number, never an unbounded one)"
+        return
+    fi
+    code_hits=$(_strip_go_comments "$adapter" | grep -c 'func ChatBudget' || true)
+    if [[ "$code_hits" -eq 0 ]]; then
+        fail "the end-to-end budget must be defined ONCE (airt.ChatBudget — per-attempt x the closed four-tier set, KPK-02)"
+        return
+    fi
+    # --- KPK-02: the executor reports the expiry BY NAME (a deliberate
+    # timeout, never a socket write deadline artifact, never a generic
+    # all-failed masquerade). In CODE, comment-stripped.
+    code_hits=$(_strip_go_comments "$airt_doc" | grep -c 'ErrBudgetExpired' || true)
+    local runtime_hits
+    runtime_hits=$(_strip_go_comments "$runtime" | grep -c 'ErrBudgetExpired' || true)
+    if [[ "$code_hits" -eq 0 || "$runtime_hits" -eq 0 ]]; then
+        fail "the executor must carry ErrBudgetExpired (the named end-to-end budget expiry — airt.go declares it, runtime.go reports it; KPK-02)"
+        return
+    fi
+
+    # --- KPK-02: the REST surface — the deliberate 504, the budget
+    # context, the write path extended beyond the budget (BOTH handlers:
+    # /api/ai/chat AND /api/ai/propose ride the same contract). In CODE,
+    # comment-stripped — prose cannot mask a missing mapping.
+    code_hits=$(_strip_go_comments "$api_src" | grep -c 'ErrBudgetExpired' || true)
+    local propose_hits
+    propose_hits=$(_strip_go_comments "$propose_src" | grep -c 'ErrBudgetExpired' || true)
+    if [[ "$code_hits" -eq 0 || "$propose_hits" -eq 0 ]]; then
+        fail "both AI chat handlers must map ErrBudgetExpired (chat AND propose — the budget is one contract on both surfaces; KPK-02)"
+        return
+    fi
+    code_hits=$(_strip_go_comments "$api_src" | grep -c 'StatusGatewayTimeout' || true)
+    propose_hits=$(_strip_go_comments "$propose_src" | grep -c 'StatusGatewayTimeout' || true)
+    if [[ "$code_hits" -eq 0 || "$propose_hits" -eq 0 ]]; then
+        fail "budget expiry must answer the deliberate 504 on both surfaces (StatusGatewayTimeout — never a generic 502 masquerade; KPK-02)"
+        return
+    fi
+    code_hits=$(_strip_go_comments "$api_src" | grep -c 'SetWriteDeadline' || true)
+    propose_hits=$(_strip_go_comments "$propose_src" | grep -c 'SetWriteDeadline' || true)
+    if [[ "$code_hits" -eq 0 || "$propose_hits" -eq 0 ]]; then
+        fail "the AI write path must extend the per-request write deadline beyond the budget (http.ResponseController SetWriteDeadline — a legitimate slow local generation is WRITTEN, never cut by the 30s server default; KPK-02)"
+        return
+    fi
+    code_hits=$(_strip_go_comments "$api_src" | grep -c 'ChatBudget' || true)
+    if [[ "$code_hits" -eq 0 ]]; then
+        fail "the API layer must impose the runtime's chat budget as the request context deadline (KPK-02 — one coherent end-to-end number)"
+        return
+    fi
+
+    # --- The operator surface: the tunable per-attempt timeout, validated
+    # fail-closed at startup (the same env discipline as every surface).
+    # Comment-stripped on main.go too: the wiring must live in CODE.
+    local env_hits bound_hits budget_hits
+    env_hits=$(_strip_go_comments "$main_src" | grep -c 'SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT' || true)
+    bound_hits=$(_strip_go_comments "$main_src" | grep -c 'MaxAdapterTimeout' || true)
+    budget_hits=$(_strip_go_comments "$main_src" | grep -c 'ChatBudget' || true)
+    if [[ "$env_hits" -eq 0 || "$bound_hits" -eq 0 || "$budget_hits" -eq 0 ]]; then
+        fail "main.go must wire SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT (validated within MaxAdapterTimeout) and construct the runtime with airt.ChatBudget (KPK-02 — fail-closed env, explicit budget)"
+        return
+    fi
+    if ! grep -q 'SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT' "$compose"; then
+        fail "the compose env block must document SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT (the operator surface is documented where the operator reads it)"
+        return
+    fi
+
+    # --- The regression PROOFS exist as tests (the proof, not the claim):
+    # redirect refusal (307/308, zero requests + zero prompt bytes at the
+    # external destination), the ambient-proxy refusal, the dial guard,
+    # the budget expiry, the deliberate 504 through the real REST surface.
+    if ! grep -q 'TestLocalAdapterChatRefusesRedirects' "$transport_test" || ! grep -q 'TestProbeDoesNotFollowRedirects' "$transport_test"; then
+        fail "the redirect regression tests must exist (adapter 307/308 + prober — KPK-01 acceptance 1-3)"
+        return
+    fi
+    if ! grep -q 'TestLocalTransportIgnoresAmbientProxy' "$transport_test"; then
+        fail "the ambient-proxy regression test must exist (KPK-01 acceptance 4)"
+        return
+    fi
+    if ! grep -q 'TestRuntimeChatBudgetExpires' "$runtime_test" || ! grep -q 'TestRuntimeChatBudgetFailoverWithinBudget' "$runtime_test"; then
+        fail "the budget regression tests must exist (delayed primary + fallback within budget, expiry by name — KPK-02 acceptance 1-2)"
+        return
+    fi
+    if ! grep -q 'TestAIChatBudgetExpiredReturns504' "$api_test" || ! grep -q 'TestAIChatRedirectNeverFollowed' "$api_test"; then
+        fail "the REST-surface regression tests must exist (504 on expiry + redirect refusal end-to-end through the mux)"
+        return
+    fi
+
+    # --- The security map carries the v19.6.3 posture: the inference-port
+    # auth inequality (KPK-19.6.1-P2-02) and the not-durable registry note
+    # (KPK-19.6.1-P2-03) — operator-facing truths, stated where the
+    # operator reads them.
+    if ! grep -q 'inference port auth' "$secmap"; then
+        fail "SCARLIX_SECURITY_MAP.md must state the auth inequality ('AI Runtime REST auth ≠ inference port auth' — the Bearer gate protects 8090 ONLY; KPK-19.6.1-P2-02)"
+        return
+    fi
+    if ! grep -q 'NOT durable until' "$secmap"; then
+        fail "SCARLIX_SECURITY_MAP.md must state the registry durability truth ('NOT durable until the CF-4/persistence decision' — KPK-19.6.1-P2-03)"
+        return
+    fi
+    if ! grep -q 'KPK-01' "$secmap" || ! grep -q 'KPK-02' "$secmap"; then
+        fail "SCARLIX_SECURITY_MAP.md must carry the v19.6.3 hardening bullets by finding name (KPK-01/KPK-02)"
+        return
+    fi
+
+    # --- README: the release is a release like any other — changelog row,
+    # What's New section, roadmap row, and the release notes document in
+    # the remediation genre (Scope/Changes/Verification status).
+    if ! grep -q "What's New in v19.6.3" "$readme" || ! grep -q '\*\*v19.6.3\*\*' "$readme"; then
+        fail "README must carry the v19.6.3 changelog row + What's New section"
+        return
+    fi
+    if ! grep -q '| AI Runtime transport hardening (KPK-01/02) | \*\*TESTED\*\* (v19.6.3) |' "$readme"; then
+        fail "README must carry the 'AI Runtime transport hardening (KPK-01/02) | TESTED (v19.6.3)' roadmap row"
+        return
+    fi
+    if [[ ! -f "$notes" ]]; then
+        fail "docs/RELEASE_NOTES_v19.6.3.md missing (the KpK remediation release notes — the v19.2.10 genre)"
+        return
+    fi
+    for section in '## Scope' '## Changes' '## Verification status'; do
+        if ! grep -q "$section" "$notes"; then
+            fail "the release notes must carry section '$section' (the remediation genre)"
+            return
+        fi
+    done
+
+    pass "universal AI runtime transport hardening (v19.6.3, the v19.6.1 KpK audit remediation): the local-only HTTP client closed at THREE layers (no redirects — http.ErrUseLastResponse, a 3xx is the failure it is, the POST body is the private conversation; no ambient proxy — Proxy: nil, env never steers local AI traffic; dial-guarded — loopback + the configured endpoint hosts only, defense in depth), ONE http.Client constructor in the whole package (transport.go, both adapter and prober ride it), the end-to-end timeout contract (airt.ChatBudget = per-attempt x the closed four-tier set, SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT within the 300s named bound, the API imposes the budget as the request deadline, ErrBudgetExpired answers the DELIBERATE 504 w/ attempts on both /api/ai/chat and /api/ai/propose, the write path extends beyond the budget via ResponseController so a legitimate slow local generation is written), the regression proofs as tests (307/308 zero-bytes redirect refusal, ambient-proxy refusal, dial guard, delayed-primary-fallback-within-budget, expiry-by-name, 504 + redirect end-to-end through the mux), the security map truths (REST auth ≠ inference port auth — KPK-19.6.1-P2-02; registry NOT durable until CF-4 — KPK-19.6.1-P2-03), README v19.6.3 surface + release notes genre"
+}
+
 # ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
@@ -2764,6 +2990,7 @@ SMOKE_CHECKS=(
     check_28_ai_runtime_foundation
     check_29_ai_runtime_adapters
     check_30_ai_propose_surface
+    check_31_ai_transport_boundary
 )
 
 run_check() {

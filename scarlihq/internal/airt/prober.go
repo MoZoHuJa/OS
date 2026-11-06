@@ -47,7 +47,12 @@ type Prober struct {
 
 // NewProber constructs the prober over a COMPLETE endpoint set (exactly
 // the closed four-provider stack — validated, fail-closed) with the
-// given per-attempt timeout.
+// given per-attempt timeout. The HTTP client is the local-only shape
+// (newLocalClient — no redirects, no ambient proxy, dial-guarded over
+// the endpoint set's hosts; KPK-01, v19.6.3): probes carry no chat
+// transcript, but the local-only contract is a contract — the process
+// must not be steered to a destination outside the declared local
+// endpoint set by anything, a redirect answer included.
 func NewProber(endpoints map[airuntime.Provider]Endpoint, timeout time.Duration) (*Prober, error) {
 	if err := validateEndpointSet(endpoints); err != nil {
 		return nil, err
@@ -57,7 +62,7 @@ func NewProber(endpoints map[airuntime.Provider]Endpoint, timeout time.Duration)
 	}
 	return &Prober{
 		endpoints: endpoints,
-		client:    &http.Client{Timeout: timeout},
+		client:    newLocalClient(timeout, endpointHostsOf(endpoints)),
 	}, nil
 }
 
@@ -68,7 +73,9 @@ func NewProber(endpoints map[airuntime.Provider]Endpoint, timeout time.Duration)
 //	HTTP 2xx          → HEALTHY    (the tier answered, ready to serve)
 //	any other status  → DEGRADED   (standing but unready — e.g. 503 while
 //	                                 a model loads; DEGRADED serves and the
-//	                                 adapter failure path handles the rest)
+//	                                 adapter failure path handles the rest;
+//	                                 a 3xx lands here too — the local-only
+//	                                 client hands it back unfollowed, KPK-01)
 //	transport error   → UNAVAILABLE (refused, timed out, unreachable —
 //	                                 the tier is not answering at all)
 //

@@ -49,6 +49,16 @@ var (
 	// are ALWAYS constructed — health gates routing, construction does
 	// not (a missing tier would be a silent fail-open hole in failover).
 	ErrIncompleteAdapterSet = errors.New("airt: adapters must cover exactly the closed local stack (sglang/vllm/beellama/ollama)")
+
+	// ErrBudgetExpired is returned when the END-TO-END chat budget (the
+	// request context deadline the API layer imposes — ChatBudget(per-
+	// attempt), KPK-02, v19.6.3) expires before any tier answered. A
+	// deliberate, named timeout: the API maps it to 504 with the failed
+	// attempts riding along — never a socket write deadline artifact, and
+	// never a generic all-failed masquerade. The wrapped error is the
+	// context's own (context.DeadlineExceeded or context.Canceled), so
+	// errors.Is keeps working for callers that reason about cancellation.
+	ErrBudgetExpired = errors.New("airt: chat budget expired before a tier answered (the end-to-end request deadline — attempts returned alongside, fail-closed not fail-blind)")
 )
 
 // Adapter is one provider's transport behind the normalized chat

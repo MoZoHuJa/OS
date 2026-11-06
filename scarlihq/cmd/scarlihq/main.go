@@ -27,7 +27,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.6.2"
+var Version = "19.6.3"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -317,7 +317,23 @@ func main() {
 		if err != nil {
 			log.Fatalf("ai runtime endpoint configuration failed: %v (an invalid override is never a silent fall-back — fix the env)", err)
 		}
-		adapters, prober, err := airt.NewLocalStack(endpoints)
+		// KPK-02 (v19.6.3): the per-attempt chat timeout is operator-tunable
+		// (SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT — default 30s, the stack's own
+		// timeout_ms precedent; upper bound 300s, a named number never an
+		// unbounded one). The END-TO-END budget for one AI request is the
+		// timeout × the closed four-tier set (airt.ChatBudget — the complete
+		// honest failover walk); the API layer imposes it as the request
+		// deadline and extends the HTTP write path beyond it (see
+		// internal/api/airuntime.go). One coherent contract, documented once.
+		chatTimeout := airt.DefaultAdapterTimeout
+		if raw := strings.TrimSpace(os.Getenv("SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT")); raw != "" {
+			d, err := time.ParseDuration(raw)
+			if err != nil || d <= 0 || d > airt.MaxAdapterTimeout {
+				log.Fatalf("ai runtime chat timeout %q is not a positive Go duration within the %s upper bound (e.g. 30s — the per-attempt bound; the end-to-end budget is 4x that)", raw, airt.MaxAdapterTimeout)
+			}
+			chatTimeout = d
+		}
+		adapters, prober, err := airt.NewLocalStack(endpoints, chatTimeout)
 		if err != nil {
 			log.Fatalf("ai runtime transport construction failed: %v", err)
 		}
@@ -325,7 +341,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("ai runtime model registry construction failed: %v", err)
 		}
-		aiRuntime, err := airt.NewRuntime(registry, airuntime.NewHealthTable(), prober, adapters)
+		aiRuntime, err := airt.NewRuntime(registry, airuntime.NewHealthTable(), prober, adapters, airt.ChatBudget(chatTimeout))
 		if err != nil {
 			log.Fatalf("ai runtime construction failed: %v", err)
 		}
@@ -365,7 +381,7 @@ func main() {
 		if err := apiHandler.ConfigureAIRuntime(aiRuntime); err != nil {
 			log.Fatalf("ai runtime configuration failed: %v", err)
 		}
-		log.Printf("Universal AI Runtime API enabled (/api/ai/health, /api/ai/models, /api/ai/probe, /api/ai/chat, /api/ai/propose with the fabric's proposal store — Bearer-gated; sglang %s · vllm %s · beellama %s · ollama %s; %d models registered; the LLM proposes, policy decides)", endpoints[airuntime.ProviderSGLang], endpoints[airuntime.ProviderVLLM], endpoints[airuntime.ProviderBeeLlama], endpoints[airuntime.ProviderOllama], registry.Len())
+		log.Printf("Universal AI Runtime API enabled (/api/ai/health, /api/ai/models, /api/ai/probe, /api/ai/chat, /api/ai/propose with the fabric's proposal store — Bearer-gated; sglang %s · vllm %s · beellama %s · ollama %s; %d models registered; per-attempt %s, end-to-end budget %s (KPK-02 — the write path extends beyond it); the local-only transport: no redirects, no ambient proxy, dial-guarded (KPK-01); the LLM proposes, policy decides)", endpoints[airuntime.ProviderSGLang], endpoints[airuntime.ProviderVLLM], endpoints[airuntime.ProviderBeeLlama], endpoints[airuntime.ProviderOllama], registry.Len(), chatTimeout, airt.ChatBudget(chatTimeout))
 	} else {
 		log.Printf("Universal AI Runtime API disabled; set SCARLIHQ_AIRUNTIME_ENABLED=true to enable (/api/ai/* — adapters for the local stack + health probing + failover chat)")
 	}
@@ -399,6 +415,10 @@ func main() {
 	log.Printf("WebSocket:   ws://localhost:%s/ws?ticket=<one-time>  (POST /api/ws-ticket to obtain)", port)
 
 	// v18.6 P1: Explicit HTTP server timeouts (was: ListenAndServe with no timeouts → slow-client DoS)
+	// v19.6.3 (KPK-02): WriteTimeout stays the 30s DEFAULT for every surface;
+	// /api/ai/chat and /api/ai/propose extend their own per-request write deadline
+	// beyond the AI chat budget (http.ResponseController — internal/api/airuntime.go),
+	// so a legitimate slow local-model answer is written, never cut by this default.
 	srv := &http.Server{
 		Addr:              ":" + port,
 		Handler:           mux,

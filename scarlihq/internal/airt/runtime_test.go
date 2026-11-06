@@ -14,11 +14,16 @@ import (
 
 // fakeAdapter is an in-memory Adapter: no network, a configurable
 // response or error. The executor is thereby testable WITHOUT transport
-// — the interface exists for exactly this.
+// — the interface exists for exactly this. delay stalls the answer
+// (bounded by the context — the KPK-02 budget tests drive deterministic
+// slow tiers); hang blocks until the context dies (a dead-but-listening
+// port that never answers).
 type fakeAdapter struct {
 	provider airuntime.Provider
 	response airuntime.Response
 	err      error
+	delay    time.Duration
+	hang     bool
 	calls    int
 	mu       sync.Mutex
 }
@@ -29,6 +34,19 @@ func (f *fakeAdapter) Chat(ctx context.Context, req airuntime.Request) (airuntim
 	f.mu.Lock()
 	f.calls++
 	f.mu.Unlock()
+	if f.hang {
+		<-ctx.Done()
+		return airuntime.Response{}, ctx.Err()
+	}
+	if f.delay > 0 {
+		timer := time.NewTimer(f.delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return airuntime.Response{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
 	if f.err != nil {
 		return airuntime.Response{}, f.err
 	}
@@ -77,7 +95,7 @@ func newFakeStack(t *testing.T, fakes map[airuntime.Provider]*fakeAdapter) (*Run
 	if err != nil {
 		t.Fatalf("prober: %v", err)
 	}
-	runtime, err := NewRuntime(registry, table, prober, adapters)
+	runtime, err := NewRuntime(registry, table, prober, adapters, ChatBudget(DefaultAdapterTimeout))
 	if err != nil {
 		t.Fatalf("runtime: %v", err)
 	}
@@ -120,17 +138,22 @@ func TestRuntimeConstructionFailClosed(t *testing.T) {
 	registry, _ := airuntime.NewModelRegistry(4)
 	table := airuntime.NewHealthTable()
 	// Nil inputs, each named.
-	if _, err := NewRuntime(nil, table, prober, adapters); !errors.Is(err, ErrNilRuntimeInput) {
+	if _, err := NewRuntime(nil, table, prober, adapters, ChatBudget(DefaultAdapterTimeout)); !errors.Is(err, ErrNilRuntimeInput) {
 		t.Fatalf("nil registry must be ErrNilRuntimeInput, got %v", err)
 	}
-	if _, err := NewRuntime(registry, nil, prober, adapters); !errors.Is(err, ErrNilRuntimeInput) {
+	if _, err := NewRuntime(registry, nil, prober, adapters, ChatBudget(DefaultAdapterTimeout)); !errors.Is(err, ErrNilRuntimeInput) {
 		t.Fatalf("nil health table must be ErrNilRouterInput, got %v", err)
 	}
-	if _, err := NewRuntime(registry, table, nil, adapters); !errors.Is(err, ErrNilRuntimeInput) {
+	if _, err := NewRuntime(registry, table, nil, adapters, ChatBudget(DefaultAdapterTimeout)); !errors.Is(err, ErrNilRuntimeInput) {
 		t.Fatalf("nil prober must be ErrNilRuntimeInput, got %v", err)
 	}
-	if _, err := NewRuntime(registry, table, prober, nil); !errors.Is(err, ErrNilRuntimeInput) {
+	if _, err := NewRuntime(registry, table, prober, nil, ChatBudget(DefaultAdapterTimeout)); !errors.Is(err, ErrNilRuntimeInput) {
 		t.Fatalf("nil adapters must be ErrNilRuntimeInput, got %v", err)
+	}
+	// Non-positive chat budget: the end-to-end deadline is a required,
+	// named number (KPK-02) — never a zero default.
+	if _, err := NewRuntime(registry, table, prober, adapters, 0); !errors.Is(err, ErrNilRuntimeInput) {
+		t.Fatalf("a zero chat budget must be rejected, got %v", err)
 	}
 	// Missing tier: named, fail-closed (health gates routing, construction must not).
 	incomplete := make(map[airuntime.Provider]Adapter)
@@ -140,7 +163,7 @@ func TestRuntimeConstructionFailClosed(t *testing.T) {
 		}
 		incomplete[p] = f
 	}
-	_, err = NewRuntime(registry, table, prober, incomplete)
+	_, err = NewRuntime(registry, table, prober, incomplete, ChatBudget(DefaultAdapterTimeout))
 	if !errors.Is(err, ErrIncompleteAdapterSet) || !strings.Contains(err.Error(), "beellama") {
 		t.Fatalf("a missing tier must fail closed and be named, got %v", err)
 	}
@@ -150,7 +173,7 @@ func TestRuntimeConstructionFailClosed(t *testing.T) {
 		foreign[p] = f
 	}
 	foreign["openai"] = &fakeAdapter{provider: "openai"}
-	if _, err := NewRuntime(registry, table, prober, foreign); err == nil {
+	if _, err := NewRuntime(registry, table, prober, foreign, ChatBudget(DefaultAdapterTimeout)); err == nil {
 		t.Fatal("a foreign provider in the adapter set must be rejected (the closed set only)")
 	}
 	// An adapter claiming the wrong provider for its slot: rejected.
@@ -159,7 +182,7 @@ func TestRuntimeConstructionFailClosed(t *testing.T) {
 		mislabeled[p] = f
 	}
 	mislabeled[airuntime.ProviderSGLang] = &fakeAdapter{provider: airuntime.ProviderVLLM}
-	if _, err := NewRuntime(registry, table, prober, mislabeled); err == nil {
+	if _, err := NewRuntime(registry, table, prober, mislabeled, ChatBudget(DefaultAdapterTimeout)); err == nil {
 		t.Fatal("an adapter claiming another provider's slot must be rejected")
 	}
 }
@@ -300,7 +323,7 @@ func TestRuntimeChatNoRouteCarriesSkips(t *testing.T) {
 		adapters[p] = f
 	}
 	prober, _ := NewProber(DefaultEndpoints(), DefaultProbeTimeout)
-	runtime, err := NewRuntime(registry, table, prober, adapters)
+	runtime, err := NewRuntime(registry, table, prober, adapters, ChatBudget(DefaultAdapterTimeout))
 	if err != nil {
 		t.Fatalf("runtime: %v", err)
 	}
@@ -405,7 +428,7 @@ func TestRuntimeChatRequestCopyIsolation(t *testing.T) {
 			t.Fatalf("observe %s: %v", p, err)
 		}
 	}
-	runtime, err := NewRuntime(registry, table, prober, adapters)
+	runtime, err := NewRuntime(registry, table, prober, adapters, ChatBudget(DefaultAdapterTimeout))
 	if err != nil {
 		t.Fatalf("runtime: %v", err)
 	}
@@ -514,7 +537,7 @@ func TestRuntimeHealthView(t *testing.T) {
 	for p, f := range fakes {
 		adapters[p] = f
 	}
-	rt2, err := NewRuntime(fresh, airuntime.NewHealthTable(), prober, adapters)
+	rt2, err := NewRuntime(fresh, airuntime.NewHealthTable(), prober, adapters, ChatBudget(DefaultAdapterTimeout))
 	if err != nil {
 		t.Fatalf("runtime: %v", err)
 	}
@@ -522,5 +545,131 @@ func TestRuntimeHealthView(t *testing.T) {
 		if entry.State != airuntime.HealthUnknown || entry.Serves || entry.LastObserved != "" {
 			t.Fatalf("never-observed must show UNKNOWN/empty/never-serving, got %+v", entry)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// KPK-02 (v19.6.3): the end-to-end chat budget — deterministic delayed
+// tiers, exactly the acceptance shape the audit demanded.
+// ---------------------------------------------------------------------------
+
+// TestChatBudgetArithmetic: the budget is per-attempt × the closed
+// four-tier set — the complete honest failover walk, one named number.
+func TestChatBudgetArithmetic(t *testing.T) {
+	if got := ChatBudget(30 * time.Second); got != 120*time.Second {
+		t.Fatalf("ChatBudget(30s) must be 120s (4 tiers x 30s), got %s", got)
+	}
+	if got := ChatBudget(time.Second); got != 4*time.Second {
+		t.Fatalf("ChatBudget(1s) must be 4s, got %s", got)
+	}
+	if got := ChatBudget(0); got != 0 {
+		t.Fatalf("ChatBudget(0) must stay 0 — NewRuntime rejects it by name (got %s)", got)
+	}
+}
+
+// TestRuntimeChatBudgetFailoverWithinBudget: a delayed primary PLUS a
+// successful fallback completes WITHIN the declared budget and returns a
+// valid response (KPK-02 acceptance 1). The delayed primary fails after
+// its delay; the fallback answers immediately; the walk stays far below
+// the budget; attribution names the fallback.
+func TestRuntimeChatBudgetFailoverWithinBudget(t *testing.T) {
+	fakes := fourFakes()
+	fakes[airuntime.ProviderSGLang].delay = 80 * time.Millisecond
+	fakes[airuntime.ProviderSGLang].err = errors.New("primary tier failed after its delay")
+	runtime, _, _ := newFakeStack(t, fakes)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	outcome, err := runtime.Chat(ctx, validChatRequest())
+	if err != nil {
+		t.Fatalf("a delayed primary + a working fallback must answer within the budget: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 450*time.Millisecond {
+		t.Fatalf("the walk must complete well within the budget, took %s", elapsed)
+	}
+	if outcome.Response.Provider != airuntime.ProviderVLLM {
+		t.Fatalf("attribution must name the fallback tier, got %s", outcome.Response.Provider)
+	}
+	if len(outcome.Attempts) != 1 || outcome.Attempts[0].Provider != airuntime.ProviderSGLang {
+		t.Fatalf("the delayed primary must be the one recorded attempt, got %+v", outcome.Attempts)
+	}
+}
+
+// TestRuntimeChatBudgetSlowButLegit: a single tier answering slowly — but
+// within the budget — succeeds (KPK-02 acceptance 3: the budget is a
+// budget, not a race; a legitimate slow local generation is an answer).
+func TestRuntimeChatBudgetSlowButLegit(t *testing.T) {
+	fakes := fourFakes()
+	for p := range fakes {
+		fakes[p].delay = 250 * time.Millisecond
+	}
+	runtime, _, _ := newFakeStack(t, fakes)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	outcome, err := runtime.Chat(ctx, validChatRequest())
+	if err != nil {
+		t.Fatalf("a slow-but-within-budget tier must answer: %v", err)
+	}
+	if outcome.Response.Provider != airuntime.ProviderSGLang {
+		t.Fatalf("the primary must answer when it fits the budget, got %s", outcome.Response.Provider)
+	}
+	if len(outcome.Attempts) != 0 {
+		t.Fatalf("no failed attempts expected, got %+v", outcome.Attempts)
+	}
+}
+
+// TestRuntimeChatBudgetExpires: every tier hangs — the end-to-end budget
+// expires mid-walk and the executor reports ErrBudgetExpired BY NAME with
+// the attempts that consumed the budget riding along (KPK-02 acceptance 2:
+// a deliberate timeout, never a socket write deadline artifact, never a
+// generic all-failed masquerade).
+func TestRuntimeChatBudgetExpires(t *testing.T) {
+	fakes := fourFakes()
+	for p := range fakes {
+		fakes[p].hang = true
+	}
+	runtime, _, _ := newFakeStack(t, fakes)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	outcome, err := runtime.Chat(ctx, validChatRequest())
+	if !errors.Is(err, ErrBudgetExpired) {
+		t.Fatalf("budget expiry must be ErrBudgetExpired by name, got %v", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the wrapped error must stay the context's own (errors.Is on DeadlineExceeded), got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 450*time.Millisecond {
+		t.Fatalf("expiry must be reported at the deadline, not after a full hang walk, took %s", elapsed)
+	}
+	if len(outcome.Attempts) < 1 {
+		t.Fatalf("the attempts that consumed the budget ride along, got none")
+	}
+}
+
+// TestRuntimeChatBudgetAlreadyExpired: an already-expired context answers
+// ErrBudgetExpired immediately — no attempt is made, none is fabricated.
+func TestRuntimeChatBudgetAlreadyExpired(t *testing.T) {
+	fakes := fourFakes()
+	runtime, _, _ := newFakeStack(t, fakes)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+	if _, err := runtime.Chat(ctx, validChatRequest()); !errors.Is(err, ErrBudgetExpired) {
+		t.Fatalf("a spent context must answer ErrBudgetExpired immediately, got %v", err)
+	}
+	for p, f := range fakes {
+		if f.callCount() != 0 {
+			t.Fatalf("%s must not be dialed with a spent budget", p)
+		}
+	}
+}
+
+// TestRuntimeChatBudgetAccessor: the runtime carries its budget — the
+// number the API layer imposes as the request deadline (KPK-02).
+func TestRuntimeChatBudgetAccessor(t *testing.T) {
+	runtime, _, _ := newFakeStack(t, fourFakes())
+	if runtime.ChatBudget() != ChatBudget(DefaultAdapterTimeout) {
+		t.Fatalf("the runtime must expose the budget it was constructed with, got %s", runtime.ChatBudget())
 	}
 }

@@ -415,11 +415,46 @@ transport's own markers). The security posture:
   `SCARLIHQ_AIRUNTIME_ENABLED=true` configures the runtime (the same
   opt-in contract as every surface since v19.3.2).
 - **Bounded transport, bounded answers:** 30s per adapter attempt (the
-  ai/smg timeout precedent), 5s per probe, the response body read through
-  a 1 MiB limit (a runaway response must not eat memory — the content
-  itself is bounded to 4096 runes by the contract), the chat request body
-  bounded to 1 MiB with unknown-fields-rejected decode (the full
-  legitimate 32×4096-rune range stays reachable).
+  ai/smg timeout precedent; v19.6.3: operator-tunable through
+  `SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT` within the 300s named upper bound),
+  5s per probe, the response body read through a 1 MiB limit (a runaway
+  response must not eat memory — the content itself is bounded to 4096
+  runes by the contract), the chat request body bounded to 1 MiB with
+  unknown-fields-rejected decode (the full legitimate 32×4096-rune range
+  stays reachable).
+- **v19.6.3 (KPK-01) — the local-only client is closed at THREE layers:**
+  the ONLY `http.Client` this package constructs (`airt/transport.go`,
+  asserted by smoke check 31) follows NO redirects (`http.ErrUseLastResponse`
+  — a 307/308 is handed back as the response and classified as the failure
+  it is: a compromised or misconfigured tier cannot bounce the conversation,
+  the POST body is the private prompts, onto any `Location` it answers),
+  inherits NO ambient proxy (`Proxy: nil` — `HTTP_PROXY`/`HTTPS_PROXY` never
+  steer local AI traffic; proxy support is not a feature of this transport
+  and cannot become one by accident), and DIALS only loopback or the
+  configured endpoint hosts (the dial guard — hostname syntax at the
+  endpoint layer does not prove where a connection actually goes; the dial
+  layer does). Redirect and proxy regression tests assert ZERO requests and
+  ZERO prompt bytes at the external destination.
+- **v19.6.3 (KPK-02) — one end-to-end timeout contract:** the budget for
+  one AI request is per-attempt × the closed four-tier set
+  (`airt.ChatBudget` — the complete honest failover walk; sequential
+  attempts SHARE it, never an independent per-tier allowance). The API
+  layer imposes it as the request context deadline, every adapter and
+  probe operation propagates it, its expiry is reported as a DELIBERATE
+  504 (`airt.ErrBudgetExpired`, attempts riding along — never a socket
+  write deadline artifact, never a generic 502 masquerade), and the
+  `/api/ai/chat|propose` write path extends beyond it with a 10s margin
+  (`http.ResponseController`) so a legitimate slow local generation is
+  WRITTEN, never cut by the server's 30s default WriteTimeout (which keeps
+  serving every other surface unchanged).
+- **AI Runtime REST auth ≠ inference port auth:** the Bearer gate protects
+  the ScarliHQ REST surface (8090) ONLY — the inference ports themselves
+  (30000/8089/11438/11435) authenticate nobody by design (the documented
+  local stack). The ports remain localhost / scarlix-net ONLY: keep the
+  compose `127.0.0.1:` binds and the host firewall as invariant — anyone
+  who reaches `scarlix-net` or the host ports bypasses ScarliHQ's gate and
+  talks to the models directly. Never add cloud keys to the adapter "for
+  convenience".
 - **Fail-closed normalization at the wire boundary:** exactly one choice;
   the response role must be assistant; finish reasons only stop/length —
   unknown finish reasons are adapter ERRORS the plan skips past, never
@@ -441,10 +476,14 @@ transport's own markers). The security posture:
   becoming a fabric PROPOSAL is CF-3, behind the fabric's operator
   approvals — the LLM never decides anything here ("LLM navrhuje,
   politika rozhoduje").
-- **No persistence in CF-2:** the model registry is in-memory, rebuilt at
-  boot from `SCARLIHQ_AIRUNTIME_MODELS` + operator POSTs — a malformed
-  bootstrap declaration aborts startup (the runtime never boots on a
-  guessed registry). No new files, no new mounts, no new env secrets.
+- **No persistence in CF-2 — the registry is NOT durable until the
+  CF-4/persistence decision:** it is in-memory, rebuilt at boot from
+  `SCARLIHQ_AIRUNTIME_MODELS` + operator POSTs — a malformed bootstrap
+  declaration aborts startup (the runtime never boots on a guessed
+  registry). An operator enabling the runtime must ALWAYS declare the
+  models in the env (restart = the registry restores from env + operator
+  acts; registrations do not survive). No new files, no new mounts, no new
+  env secrets.
 
 ## (q) Universal AI Runtime propose surface (v19.6.2, CF-3 — Phase C, both opt-ins)
 
