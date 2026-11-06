@@ -14,6 +14,16 @@
 //   - the transport normalizes the LOCAL sovereign stack only — endpoints
 //     are loopback addresses or single-label docker service names, never
 //     a dotted public host: the runtime is not a cloud-LLM gateway
+//   - the dial guard validates DESTINATIONS, not just names (KPK-03,
+//     v19.6.4): a configured name is resolved, every answered address is
+//     validated against the trusted local networks (loopback always; the
+//     Docker default pools or the operator's declared set), and the
+//     connection is PINNED to a validated address — a poisoned resolver
+//     can only produce refused dials
+//   - a cancelled observation is not evidence (KPK-04, v19.6.4): a probe
+//     round whose caller context is done aborts and records NOTHING —
+//     the health table's last-known-good stands; only a completed round
+//     with a live parent context may write observations
 //   - probing is honest: a 2xx answer is HEALTHY, a standing-but-unready
 //     server is DEGRADED, a dead one is UNAVAILABLE — and UNKNOWN still
 //     never serves (the CF-1 fail-closed contract, fed by real probes)

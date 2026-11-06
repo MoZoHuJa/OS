@@ -2,6 +2,7 @@ package airt
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -286,4 +287,223 @@ func TestProberConstruction(t *testing.T) {
 	if _, err := NewProber(DefaultEndpoints(), 0); err == nil {
 		t.Fatal("a non-positive timeout must be rejected")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// KPK-04 (v19.6.4): a CANCELLED round is not evidence about the providers.
+// Every test here is a REGRESSION for the audit finding — a cancelled
+// probe round used to convert context.Canceled into UNAVAILABLE
+// observations and overwrite all four providers' last-known-good health.
+// ---------------------------------------------------------------------------
+
+// TestProbeCancelledContextRefusesToFabricate: a single probe against an
+// already-cancelled context must return an ERROR (KPK-04), never an
+// UNAVAILABLE observation — a cancelled observation is not evidence about
+// the provider. The error must keep errors.Is(err, context.Canceled)
+// working for callers that reason about cancellation.
+func TestProbeCancelledContextRefusesToFabricate(t *testing.T) {
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer healthy.Close()
+	endpoints := endpointsFromServers(t, healthy.URL, healthy.URL, healthy.URL, healthy.URL)
+	prober, err := NewProber(endpoints, DefaultProbeTimeout)
+	if err != nil {
+		t.Fatalf("prober: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	obs, err := prober.Probe(ctx, airuntime.ProviderSGLang)
+	if err == nil {
+		t.Fatal("a probe against a cancelled context must return an ERROR, not an observation (KPK-04 — a cancelled observation is not evidence about the provider)")
+	}
+	if obs.State != "" {
+		t.Fatalf("no observation may be fabricated for a cancelled probe, got state %q (KPK-04 — the zero observation, nothing else)", obs.State)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("the cancellation must stay identifiable through the wrap (errors.Is context.Canceled), got: %v", err)
+	}
+}
+
+// TestProbeAllCancelledRoundPreservesLastKnownGood: the KPK-04 acceptance
+// path end-to-end — seed all four providers HEALTHY through a real round,
+// then start a round against DELAYED endpoints and cancel the caller's
+// context before the probes complete: ProbeAllAndObserve must return
+// context.Canceled and the health table must still contain the ORIGINAL
+// observations (states AND timestamps — a cancelled caller overwrites
+// nothing).
+func TestProbeAllCancelledRoundPreservesLastKnownGood(t *testing.T) {
+	// Seed: a fast healthy round first — all four tiers observed HEALTHY.
+	seed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer seed.Close()
+	endpoints := endpointsFromServers(t, seed.URL, seed.URL, seed.URL, seed.URL)
+	prober, err := NewProber(endpoints, DefaultProbeTimeout)
+	if err != nil {
+		t.Fatalf("prober: %v", err)
+	}
+	table := airuntime.NewHealthTable()
+	if _, err := prober.ProbeAllAndObserve(context.Background(), table); err != nil {
+		t.Fatalf("seed round: %v", err)
+	}
+	seededAt := map[airuntime.Provider]time.Time{}
+	for _, p := range airuntime.AllProviders() {
+		if !table.Serves(p) {
+			t.Fatalf("seed: %s must serve after a HEALTHY round", p)
+		}
+		seededAt[p] = table.Snapshot(p).At
+	}
+
+	// The attack surface: delayed endpoints + a caller that walks away
+	// mid-round (browser closed / proxy aborted).
+	delayed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer delayed.Close()
+	delayedEndpoints := endpointsFromServers(t, delayed.URL, delayed.URL, delayed.URL, delayed.URL)
+	delayedProber, err := NewProber(delayedEndpoints, DefaultProbeTimeout)
+	if err != nil {
+		t.Fatalf("delayed prober: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond) // mid-round, probes still in flight
+		cancel()
+	}()
+	observations, err := delayedProber.ProbeAllAndObserve(ctx, table)
+	if err == nil {
+		t.Fatal("a cancelled round must return the context error — the round is aborted, not answered (KPK-04)")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("the cancellation must stay identifiable (errors.Is context.Canceled), got: %v", err)
+	}
+	if observations != nil {
+		t.Fatalf("a cancelled round must return NO observations, got %d (KPK-04 — nothing is fabricated)", len(observations))
+	}
+	// The health table: last-known-good STANDS — states and timestamps.
+	for _, p := range airuntime.AllProviders() {
+		if !table.Serves(p) {
+			t.Fatalf("KPK-04 regression: a cancelled round marked %s non-serving — the caller cancelled the observation, the providers were not proven unavailable", p)
+		}
+		if got := table.Snapshot(p).At; !got.Equal(seededAt[p]) {
+			t.Fatalf("KPK-04 regression: %s observation timestamp moved (%v -> %v) — a cancelled round must not touch the table", p, seededAt[p], got)
+		}
+	}
+}
+
+// TestProbeAllDeadlineExpiredRoundAborts: a round whose parent context
+// DEADLINE expires mid-round aborts the same way (context.DeadlineExceeded
+// — distinct from Canceled but equally not evidence about the providers);
+// nothing is recorded, last-known-good stands.
+func TestProbeAllDeadlineExpiredRoundAborts(t *testing.T) {
+	seed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer seed.Close()
+	endpoints := endpointsFromServers(t, seed.URL, seed.URL, seed.URL, seed.URL)
+	prober, err := NewProber(endpoints, DefaultProbeTimeout)
+	if err != nil {
+		t.Fatalf("prober: %v", err)
+	}
+	table := airuntime.NewHealthTable()
+	if _, err := prober.ProbeAllAndObserve(context.Background(), table); err != nil {
+		t.Fatalf("seed round: %v", err)
+	}
+	for _, p := range airuntime.AllProviders() {
+		if !table.Serves(p) {
+			t.Fatalf("seed: %s must serve", p)
+		}
+	}
+
+	delayed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(400 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer delayed.Close()
+	delayedEndpoints := endpointsFromServers(t, delayed.URL, delayed.URL, delayed.URL, delayed.URL)
+	delayedProber, err := NewProber(delayedEndpoints, DefaultProbeTimeout)
+	if err != nil {
+		t.Fatalf("delayed prober: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := delayedProber.ProbeAllAndObserve(ctx, table); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("an expired round deadline must abort with context.DeadlineExceeded, got: %v", err)
+	}
+	for _, p := range airuntime.AllProviders() {
+		if !table.Serves(p) {
+			t.Fatalf("KPK-04: an expired round deadline marked %s non-serving — it is not evidence about the provider", p)
+		}
+	}
+}
+
+// TestProbeAllGenuineFailureOnlyThatProvider: the KPK-04 counterweight —
+// with the parent context LIVE, a genuinely dead endpoint IS observed
+// UNAVAILABLE and recorded (the honest matrix is preserved: cancellation
+// stops poisoning the table, real failures still land in it). Only the
+// dead tier goes non-serving; the three live tiers stay HEALTHY.
+func TestProbeAllGenuineFailureOnlyThatProvider(t *testing.T) {
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer healthy.Close()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	dead := "http://" + listener.Addr().String()
+	listener.Close()
+	endpoints := endpointsFromServers(t, dead, healthy.URL, healthy.URL, healthy.URL)
+	prober, err := NewProber(endpoints, DefaultProbeTimeout)
+	if err != nil {
+		t.Fatalf("prober: %v", err)
+	}
+	table := airuntime.NewHealthTable()
+	observations, err := prober.ProbeAllAndObserve(context.Background(), table)
+	if err != nil {
+		t.Fatalf("a live round with one dead tier must complete (fail-closed, not fail-blind): %v", err)
+	}
+	if len(observations) != 4 || observations[0].State != airuntime.HealthUnavailable {
+		t.Fatalf("the dead tier must be observed UNAVAILABLE (the parent context is live — a genuine failure, recorded), got %d observations", len(observations))
+	}
+	if table.Serves(airuntime.ProviderSGLang) {
+		t.Fatal("the dead tier must not serve after a genuine UNAVAILABLE observation")
+	}
+	for _, p := range []airuntime.Provider{airuntime.ProviderVLLM, airuntime.ProviderBeeLlama, airuntime.ProviderOllama} {
+		if !table.Serves(p) {
+			t.Fatalf("the live tiers must stay serving (only the dead tier is UNAVAILABLE) — %s", p)
+		}
+	}
+}
+
+// TestProberLoopSlowTierStaysGenuine: the background loop's round budget
+// (probeRoundBudget = 2x the per-probe timeout, KPK-04) keeps the two
+// clocks unambiguous — a tier slower than the probe timeout is classified
+// by the probe's OWN timeout as UNAVAILABLE (genuine, recorded by the
+// loop), not as a cancelled round that records nothing.
+func TestProberLoopSlowTierStaysGenuine(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slow.Close()
+	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer fast.Close()
+	// Probe timeout 50ms, round budget 100ms: the slow tier's client
+	// timeout (50ms) fires well before the round budget — UNAVAILABLE.
+	endpoints := endpointsFromServers(t, slow.URL, fast.URL, fast.URL, fast.URL)
+	prober, err := NewProber(endpoints, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("prober: %v", err)
+	}
+	table := airuntime.NewHealthTable()
+	stop, err := prober.Start(20*time.Millisecond, table)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer stop()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if !table.Serves(airuntime.ProviderSGLang) && table.Snapshot(airuntime.ProviderSGLang).State == airuntime.HealthUnavailable {
+			if table.Serves(airuntime.ProviderVLLM) && table.Serves(airuntime.ProviderBeeLlama) && table.Serves(airuntime.ProviderOllama) {
+				return // the loop classified the slow tier genuinely, fast tiers healthy
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("the loop must record the slow tier UNAVAILABLE (genuine per-probe timeout, parent live) while the fast tiers stay HEALTHY — the round budget margin keeps the clocks unambiguous")
 }

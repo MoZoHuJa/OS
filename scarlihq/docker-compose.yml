@@ -155,9 +155,21 @@ services:
       # v19.6.3 (KPK-02) — optional per-attempt chat timeout (Go duration,
       # upper bound 300s; default 30s = the stack's timeout_ms precedent).
       # The END-TO-END budget for one AI request is 4x this value (the
-      # complete failover walk); /api/ai/chat|propose extend their write
-      # deadline beyond it — a slow local generation is written, not cut:
+      # complete failover walk) — the named maximum wall clock is
+      # 4 x min(CHAT_TIMEOUT, 300s) = 20 minutes at the widest setting;
+      # /api/ai/chat|propose extend their write deadline beyond it — a
+      # slow local generation is written, not cut:
       #   - SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT=30s
+      # v19.6.4 (KPK-03) — optional trusted dial networks for the
+      # service-name endpoints above (comma-separated CIDRs). The dial
+      # guard RESOLVES a configured name, validates EVERY answered
+      # address against these networks and PINS the connection to a
+      # validated address — loopback is always trusted and never needs
+      # declaring. Unset → the Docker default pools (172.17.0.0/12 +
+      # 192.168.0.0/16); a declared set REPLACES them (10.0.0.0/8 must be
+      # declared explicitly — no blind RFC1918 trust; a custom compose
+      # network in 172.18.x declares 172.18.0.0/16):
+      #   - SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS=172.18.0.0/16
     # v19.3.2 — OPT-IN compute lifecycle mounts (see env notes above).
     #   - /var/lib/scarlix-reservation:/var/lib/scarlix-reservation:rw
     #   - /run/scarlix-workload-bridge/bridge.sock:/run/scarlix-workload-bridge/bridge.sock
