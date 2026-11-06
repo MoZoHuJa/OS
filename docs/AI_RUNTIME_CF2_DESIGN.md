@@ -389,9 +389,9 @@ IP-level sandbox.
 
 **The trust model:** loopback (`127.0.0.0/8`, `::1`) is always trusted
 (definitionally local — the bare-metal default endpoints are
-literals). The non-loopback trust defaults to Docker's own address
-pools (`172.17.0.0/12` + `192.168.0.0/16` — where scarlix-net lives)
-and is REPLACED by the operator declaration
+literals). The non-loopback trust defaults to Docker's own default
+bridge pool (`172.17.0.0/12` — v19.6.5 below: the home-LAN range was
+removed from the default) and is REPLACED by the operator declaration
 `SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS` (comma-separated CIDRs, parsed
 fail-closed at startup; deliberately NOT the whole RFC1918 —
 `10.0.0.0/8` is out until declared). A service-name endpoint with
@@ -469,3 +469,110 @@ Smoke check 32 (`check_32_ai_dial_pin_probe_cancel`) gates all of the
 above at the source level; the acceptance of both findings is the test
 suite, the smoke suite, and the release notes
 (`docs/RELEASE_NOTES_v19.6.4.md`).
+
+## 8. v19.6.5 remediation — KPK-19.6.4-P2-01/P2-02 (the independent v19.6.4 audit)
+
+The independent audit returned a CONDITIONAL PASS on v19.6.4: the two
+v19.6.3 findings were substantially remediated, but two residual issues
+were named before the local AI transport boundary and the probe-cancellation
+semantics could be called fully closed. This section is the remediation.
+
+### KPK-19.6.4-P2-01 — the default trust scope (192.168.0.0/16 removed)
+
+**The finding:** the implicit default trusted CIDRs included the entire
+home-LAN range `192.168.0.0/16`. That range is not a per-deployment
+Docker boundary — it covers every `192.168.x.x` destination (typical
+home routers, NAS devices, workstations, printers), and the compose file
+declares `scarlix-net` as an EXTERNAL network whose subnet is not pinned
+in this repository. A compromised resolver mapping an allowed endpoint
+name (`sglang`) to a LAN address (`192.168.1.1`) passed the address
+policy; the public-IP exploit was closed, but poisoned answers could
+still direct prompts to unrelated private-LAN destinations.
+
+**The fix (`internal/airt/transport.go`):**
+
+1. `DefaultTrustedDialCIDRs()` returns the Docker default bridge pool
+   `172.17.0.0/12` ONLY — the home-LAN range is operator territory,
+   declared, never implicit.
+2. Operators obtain their ACTUAL subnet (`docker network inspect
+   scarlix-net`) and declare it via `SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS` —
+   explicit, visible, auditable (compose + SECURITY_MAP + README all
+   say exactly this).
+3. The hardening note adopted as policy: a UNIVERSAL route declaration
+   (`0.0.0.0/0`, `::/0`) is REFUSED fail-closed at startup — a
+   declaration that would nullify the destination boundary is a
+   configuration error, not a posture.
+4. Loopback stays implicitly trusted, exactly as before.
+
+**Regression proofs:** `TestDefaultTrustedDialCIDRs` (the default is
+ONE pool; `192.168.1.1`/`192.168.0.1`/`192.168.5.1` rejected — the
+audit's acceptance list), `TestDefaultTrustRejectsUnrelatedLANDestinations`
+(a poisoned resolver answering a LAN address for an approved name → ZERO
+dials; the bridge pool still carries approved names),
+`TestDeclaredSubnetMixedWithLANRefusedWhole` (one declared-subnet address
++ one unrelated LAN address → refused WHOLE),
+`TestDeclaredSubnetPinsAcrossResolveValidateDial` (the production-shaped
+resolve → validate → pin → dial against the CONFIGURED subnet still
+succeeds), `TestTrustedDialCIDRsFromEnv` (universal routes rejected by
+name; the declared `172.18.0.0/16` accepted).
+
+### KPK-19.6.4-P2-02 — the commit-boundary race (atomic batch commit)
+
+**The finding:** `ProbeAll` checked the context after the probes
+returned, but `ProbeAllAndObserve` then wrote observations one-by-one
+(`table.Observe` in a loop) with no re-check before the write phase — a
+cancellation arriving in the gap between `ProbeAll` returning and the
+first write still landed its observations, and a partial round was a
+future bug away.
+
+**The fix (`internal/airuntime/health.go` + `internal/airt/prober.go`):**
+
+1. `HealthTable.ObserveBatch(ctx, observations)` — the batch operation
+   the audit asked for: every observation validated, the batch
+   monotonicity-checked, the writes applied under ONE lock; a stale or
+   invalid member rejects the batch WHOLE (atomic all-or-nothing).
+2. The commit boundary is CONTEXT-AWARE: `ctx.Err()` is checked
+   immediately before the writes begin — a done context there means
+   ZERO writes, the context error returns `errors.Is`-identifiable.
+3. `ProbeAllAndObserve` commits through `ObserveBatch`, never a
+   per-provider loop.
+4. The linearization rule is documented on both functions: cancellation
+   BEFORE the batch commit means zero writes; cancellation AFTER the
+   commit does not retroactively undo a completed round.
+5. The injectable seam: `Prober.preCommit` runs between `ProbeAll`
+   completion and the commit — nil in production (zero behavior
+   change), set by the deterministic regression test to cancel the
+   caller's context in EXACTLY the audited window.
+
+**Regression proofs:** `TestObserveBatchCommitsWholeRound`,
+`TestObserveBatchAtomicOnInvalidMember`, `TestObserveBatchAtomicOnStaleMember`
+(nothing lands when a sibling is stale — atomicity),
+`TestObserveBatchCancelledAtCommitBoundary` (the audit's exact
+acceptance: cancelled at the boundary → context error, every previous
+state AND timestamp preserved, plus the live-context counterweight),
+`TestObserveBatchDeadlineAtCommitBoundary`,
+`TestObserveBatchConcurrentRoundsMonotone` (racing rounds — the newer
+round wins whole, never torn), `TestObserveBatchEdges` (nil table/nil
+context named errors, empty batch a no-op), and in `airt`:
+`TestProbeAllCancelBetweenRoundAndCommit` (the deterministic window —
+cancel AFTER the round-end guard passes, BEFORE the commit → nothing
+recorded) + `TestProbeAllCommitAfterSeamStillCommits` (the seam's
+non-cancelling counterweight).
+
+### The documentation residuals (the SK-audit v19.6.4 follow-ups)
+
+- SECURITY_MAP: the narrowed default + the operator guidance
+  (`docker network inspect scarlix-net`) + the universal-route refusal
+  + the IPv6 dual-stack note + the inherent in-subnet lateral residual,
+  all stated by finding name.
+- Compose: the `SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS` block now carries the
+  subnet-derivation command, the universal-route refusal, and the
+  dual-stack note.
+- README: What's New v19.6.5 + the themes row + the roadmap row.
+- Release notes: `docs/RELEASE_NOTES_v19.6.5.md` (the remediation genre).
+
+Smoke check 33 (`check_33_ai_trust_scope_commit_atomicity`) gates all
+of the above at the source level (comment-stripped code markers —
+prose cannot mask code); the acceptance of both findings is the test
+suite, the smoke suite, and the release notes
+(`docs/RELEASE_NOTES_v19.6.5.md`).

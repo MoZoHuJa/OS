@@ -507,3 +507,99 @@ func TestProberLoopSlowTierStaysGenuine(t *testing.T) {
 	}
 	t.Fatal("the loop must record the slow tier UNAVAILABLE (genuine per-probe timeout, parent live) while the fast tiers stay HEALTHY — the round budget margin keeps the clocks unambiguous")
 }
+
+// ---------------------------------------------------------------------------
+// KPK-19.6.4-P2-02 (v19.6.5): the commit-boundary race, made deterministic.
+// The independent v19.6.4 audit found the window the v19.6.4 round-end
+// guard structurally cannot close: all probes complete, ProbeAll's ctx
+// check passes, the caller cancels, and the write loop still lands its
+// observations (or a partial subset of them). The preCommit seam pins a
+// cancellation into EXACTLY that window; the ObserveBatch commit boundary
+// must refuse the whole round.
+// ---------------------------------------------------------------------------
+
+// TestProbeAllCancelBetweenRoundAndCommit: the audit's exact acceptance —
+// cancel the caller's context IMMEDIATELY AFTER all probe goroutines
+// complete but BEFORE the batch commit: ProbeAllAndObserve must return a
+// context-identifiable error and the health table must preserve every
+// previous state and timestamp (zero writes, no partial batch visible).
+func TestProbeAllCancelBetweenRoundAndCommit(t *testing.T) {
+	// Seed: a fast healthy round first — all four tiers observed HEALTHY.
+	seed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer seed.Close()
+	endpoints := endpointsFromServers(t, seed.URL, seed.URL, seed.URL, seed.URL)
+	prober, err := NewProber(endpoints, DefaultProbeTimeout)
+	if err != nil {
+		t.Fatalf("prober: %v", err)
+	}
+	table := airuntime.NewHealthTable()
+	if _, err := prober.ProbeAllAndObserve(context.Background(), table); err != nil {
+		t.Fatalf("seed round: %v", err)
+	}
+	seededAt := map[airuntime.Provider]time.Time{}
+	for _, p := range airuntime.AllProviders() {
+		if !table.Serves(p) {
+			t.Fatalf("seed: %s must serve after a HEALTHY round", p)
+		}
+		seededAt[p] = table.Snapshot(p).At
+	}
+
+	// The attacked window, deterministically: fast endpoints (the round
+	// completes instantly), a seam that cancels the caller's context
+	// AFTER ProbeAll's round-end check has passed and BEFORE the commit.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	prober.preCommit = func(observations []airuntime.Observation) {
+		if len(observations) != 4 {
+			t.Errorf("the seam must see the completed round's four observations, got %d", len(observations))
+		}
+		cancel() // the caller walks away exactly here — after the probes, before the commit
+	}
+	observations, err := prober.ProbeAllAndObserve(ctx, table)
+	if err == nil {
+		t.Fatal("a cancellation between round completion and the commit must abort the RECORDING (KPK-19.6.4-P2-02: the check-to-write race is closed by the commit boundary)")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("the abort must stay context-identifiable (errors.Is context.Canceled), got: %v", err)
+	}
+	if observations != nil {
+		t.Fatalf("an aborted commit must return NO observations, got %d", len(observations))
+	}
+	// Zero writes, no partial batch: states AND timestamps unchanged.
+	for _, p := range airuntime.AllProviders() {
+		if !table.Serves(p) {
+			t.Fatalf("KPK-19.6.4-P2-02 regression: the aborted commit marked %s non-serving — a cancelled commit is not evidence about the providers", p)
+		}
+		if got := table.Snapshot(p).At; !got.Equal(seededAt[p]) {
+			t.Fatalf("KPK-19.6.4-P2-02 regression: %s timestamp moved (%v -> %v) — a cancelled commit records NOTHING", p, seededAt[p], got)
+		}
+	}
+}
+
+// TestProbeAllCommitAfterSeamStillCommits: the seam's counterweight — a
+// seam that does NOT cancel leaves the round committing normally through
+// the batch path (the seam itself never swallows a round; only a done
+// context at the boundary does).
+func TestProbeAllCommitAfterSeamStillCommits(t *testing.T) {
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer healthy.Close()
+	endpoints := endpointsFromServers(t, healthy.URL, healthy.URL, healthy.URL, healthy.URL)
+	prober, err := NewProber(endpoints, DefaultProbeTimeout)
+	if err != nil {
+		t.Fatalf("prober: %v", err)
+	}
+	prober.preCommit = func(observations []airuntime.Observation) {
+		if len(observations) != 4 {
+			t.Errorf("the seam must see the completed round, got %d", len(observations))
+		}
+	}
+	table := airuntime.NewHealthTable()
+	if _, err := prober.ProbeAllAndObserve(context.Background(), table); err != nil {
+		t.Fatalf("a live round through the seam must commit normally: %v", err)
+	}
+	for _, p := range airuntime.AllProviders() {
+		if !table.Serves(p) {
+			t.Fatalf("%s must serve after a live round through the seam", p)
+		}
+	}
+}

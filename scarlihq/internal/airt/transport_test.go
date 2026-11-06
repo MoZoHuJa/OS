@@ -685,13 +685,19 @@ func TestApprovedResolvedIPs(t *testing.T) {
 	}
 }
 
-// TestDefaultTrustedDialCIDRs: the defaults are the Docker pools — and
-// deliberately NOT the whole RFC1918 space (10.0.0.0/8 absent until an
-// operator declares it).
+// TestDefaultTrustedDialCIDRs: v19.6.5 (KPK-19.6.4-P2-01) — the default is
+// the Docker default bridge pool ONLY. The home-LAN range 192.168.0.0/16
+// was REMOVED from the implicit default: it is not a per-deployment Docker
+// boundary, it covers every 192.168.x.x destination (routers, NAS,
+// workstations — unrelated LAN hosts), and a poisoned resolver answering
+// 192.168.1.1 for an approved service name must NOT pass the address
+// policy by default. Deliberately NOT the whole RFC1918 space either —
+// 10.0.0.0/8 and 192.168.0.0/16 are absent until an operator declares
+// them.
 func TestDefaultTrustedDialCIDRs(t *testing.T) {
 	cidrs := DefaultTrustedDialCIDRs()
-	if len(cidrs) != 2 {
-		t.Fatalf("the defaults are exactly the two Docker pools, got %v", cidrs)
+	if len(cidrs) != 1 {
+		t.Fatalf("the default is exactly the ONE Docker default bridge pool (v19.6.5, KPK-19.6.4-P2-01: the home-LAN range was removed), got %v", cidrs)
 	}
 	for _, c := range cidrs {
 		if c.IP.IsLoopback() {
@@ -701,8 +707,12 @@ func TestDefaultTrustedDialCIDRs(t *testing.T) {
 	if !ipIsTrusted(mustIP(t, "172.17.0.9"), cidrs) || !ipIsTrusted(mustIP(t, "172.31.255.1"), cidrs) {
 		t.Fatal("the 172.17.0.0/12 pool must cover the default bridge range")
 	}
-	if !ipIsTrusted(mustIP(t, "192.168.5.1"), cidrs) {
-		t.Fatal("the 192.168.0.0/16 pool must be trusted by default")
+	// The independent v19.6.4 audit's acceptance list: unrelated LAN
+	// destinations are NOT trusted by default.
+	for _, lan := range []string{"192.168.1.1", "192.168.0.1", "192.168.5.1"} {
+		if ipIsTrusted(mustIP(t, lan), cidrs) {
+			t.Fatalf("%s must NOT be trusted by default (KPK-19.6.4-P2-01: the home-LAN range is operator territory — declared via SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS, never implicit)", lan)
+		}
 	}
 	if ipIsTrusted(mustIP(t, "10.0.0.1"), cidrs) {
 		t.Fatal("10.0.0.0/8 must NOT be trusted by default — an operator declares it explicitly (KPK-03: no blind RFC1918 trust)")
@@ -714,7 +724,11 @@ func TestDefaultTrustedDialCIDRs(t *testing.T) {
 
 // TestTrustedDialCIDRsFromEnv: the operator surface parses fail-closed —
 // unset/blank → defaults (nil), valid CIDRs → the declared set, garbage →
-// an error naming the variable and the entry.
+// an error naming the variable and the entry. v19.6.5: a UNIVERSAL route
+// (0.0.0.0/0, ::/0) is REJECTED — a declaration that would nullify the
+// destination boundary is a configuration error, not a posture (the
+// independent v19.6.4 audit's hardening recommendation, adopted as
+// policy).
 func TestTrustedDialCIDRsFromEnv(t *testing.T) {
 	if cidrs, err := TrustedDialCIDRsFromEnv(func(string) string { return "" }); err != nil || cidrs != nil {
 		t.Fatalf("unset/blank must mean the defaults (nil, nil), got (%v, %v)", cidrs, err)
@@ -753,19 +767,45 @@ func TestTrustedDialCIDRsFromEnv(t *testing.T) {
 	}); err == nil {
 		t.Fatal("a bare IP is not a CIDR — refused (declare networks, not addresses)")
 	}
+	// v19.6.5 (the independent audit's hardening note): universal
+	// routes are rejected by name — both families.
+	for _, universal := range []string{"0.0.0.0/0", "::/0", "172.18.0.0/16,0.0.0.0/0"} {
+		if _, err := TrustedDialCIDRsFromEnv(func(k string) string {
+			if k == TrustedCIDRsEnvVar {
+				return universal
+			}
+			return ""
+		}); err == nil {
+			t.Fatalf("the universal route %q must be REJECTED — declaring the whole address space nullifies the destination boundary (KPK-03)", universal)
+		}
+	}
+	// The v19.6.4 audit's acceptance list: a specifically declared
+	// Docker subnet (172.18.0.0/16) IS accepted.
+	cidrs, err = TrustedDialCIDRsFromEnv(func(k string) string {
+		if k == TrustedCIDRsEnvVar {
+			return "172.18.0.0/16"
+		}
+		return ""
+	})
+	if err != nil || len(cidrs) != 1 || !ipIsTrusted(mustIP(t, "172.18.0.9"), cidrs) {
+		t.Fatalf("a specifically declared Docker subnet must be accepted, got (%v, %v)", cidrs, err)
+	}
+	if ipIsTrusted(mustIP(t, "192.168.1.1"), cidrs) {
+		t.Fatal("an unrelated LAN address outside the declared subnet must not be trusted")
+	}
 }
 
-// TestResolveDialCIDRsOptionPrecedence: no option → the Docker defaults;
-// a declared option REPLACES them (empty declaration = loopback only);
-// the LAST declaration wins.
+// TestResolveDialCIDRsOptionPrecedence: no option → the Docker default
+// bridge pool (ONE network, v19.6.5); a declared option REPLACES it
+// (empty declaration = loopback only); the LAST declaration wins.
 func TestResolveDialCIDRsOptionPrecedence(t *testing.T) {
-	if got := resolveDialCIDRs(nil); len(got) != 2 {
-		t.Fatalf("no option → the Docker default pools, got %v", got)
+	if got := resolveDialCIDRs(nil); len(got) != 1 {
+		t.Fatalf("no option → the Docker default bridge pool (v19.6.5: exactly one network), got %v", got)
 	}
 	declared := []*net.IPNet{mustCIDR(t, "10.0.0.0/8")}
 	got := resolveDialCIDRs([]DialOption{WithTrustedDialCIDRs(declared)})
 	if len(got) != 1 || !got[0].Contains(mustIP(t, "10.1.2.3")) {
-		t.Fatalf("a declared option replaces the defaults, got %v", got)
+		t.Fatalf("a declared option replaces the default, got %v", got)
 	}
 	if got := resolveDialCIDRs([]DialOption{WithTrustedDialCIDRs(nil)}); len(got) != 0 {
 		t.Fatalf("an EMPTY declaration trusts loopback only, got %v", got)
@@ -853,4 +893,109 @@ func TestLocalAdapterLocalhostNameThroughRealResolver(t *testing.T) {
 	if resp.Message.Content != "pinned" {
 		t.Fatalf("the pinned round trip must answer, got %q", resp.Message.Content)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// KPK-19.6.4-P2-01 (v19.6.5): the DEFAULT trust scope is the Docker
+// default bridge pool — the home-LAN range is operator territory. Every
+// test here is a REGRESSION for the independent v19.6.4 audit finding:
+// the implicit 192.168.0.0/16 default covered every 192.168.x.x
+// destination (routers, NAS, workstations — unrelated LAN hosts), so a
+// poisoned resolver mapping an approved service name to 192.168.1.1
+// passed the address policy and could receive the POST body.
+// ---------------------------------------------------------------------------
+
+// TestDefaultTrustRejectsUnrelatedLANDestinations: under the DEFAULT
+// trust (no declaration), a service name whose resolution answers a LAN
+// address is refused — ZERO dials. This is the exact audit acceptance:
+// default trust rejects 192.168.1.1, 192.168.0.1 and other unrelated
+// LAN destinations; only loopback and the Docker default bridge pool
+// pass without a declaration.
+func TestDefaultTrustRejectsUnrelatedLANDestinations(t *testing.T) {
+	allowed := map[string]struct{}{"sglang": {}}
+	for _, lan := range []string{"192.168.1.1", "192.168.0.1", "192.168.5.1", "10.0.0.5"} {
+		resolver := staticResolver{"sglang": {mustIP(t, lan)}}
+		rec := &recordingDial{}
+		transport := newLocalTransportDialing(allowed, DefaultTrustedDialCIDRs(), resolver.resolve, rec.dial)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		if _, err := transport.DialContext(ctx, "tcp", "sglang:30000"); err == nil {
+			cancel()
+			t.Fatalf("a service name resolving to the unrelated LAN address %s must be refused under the DEFAULT trust (KPK-19.6.4-P2-01: the home-LAN range is operator territory, declared — never implicit)", lan)
+		}
+		if len(rec.dialed) != 0 {
+			cancel()
+			t.Fatalf("the dialer must see ZERO dials for the LAN resolution %s, got %v (KPK-19.6.4-P2-01: zero packets, zero prompt bytes)", lan, rec.dialed)
+		}
+		cancel()
+	}
+	// The Docker default bridge pool still carries an approved name —
+	// the default keeps working for what it actually is.
+	resolver := staticResolver{"sglang": {mustIP(t, "172.17.0.9")}}
+	rec := &recordingDial{}
+	transport := newLocalTransportDialing(allowed, DefaultTrustedDialCIDRs(), resolver.resolve, rec.dial)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	conn, err := transport.DialContext(ctx, "tcp", "sglang:30000")
+	if err != nil {
+		t.Fatalf("a service name resolving into the Docker default bridge pool must dial under the DEFAULT trust: %v", err)
+	}
+	defer conn.Close()
+	if len(rec.dialed) != 1 || rec.dialed[0] != "172.17.0.9:30000" {
+		t.Fatalf("the dialer must receive the pinned pool address 172.17.0.9:30000, got %v", rec.dialed)
+	}
+}
+
+// TestDeclaredSubnetMixedWithLANRefusedWhole: a resolution answering one
+// address in the DECLARED Docker subnet AND one unrelated LAN address is
+// rejected WHOLE under that declaration — the fail-closed mixed-answer
+// policy applied to the v19.6.4-P2-01 acceptance list (the operator's
+// declared boundary is not a filter either).
+func TestDeclaredSubnetMixedWithLANRefusedWhole(t *testing.T) {
+	allowed := map[string]struct{}{"sglang": {}}
+	declared := TrustedDialCIDRsOf(t, "172.18.0.0/16")
+	resolver := staticResolver{"sglang": {mustIP(t, "172.18.0.9"), mustIP(t, "192.168.1.1")}}
+	rec := &recordingDial{}
+	transport := newLocalTransportDialing(allowed, declared, resolver.resolve, rec.dial)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := transport.DialContext(ctx, "tcp", "sglang:30000"); err == nil {
+		t.Fatal("a MIXED answer (declared subnet + unrelated LAN) must be refused WHOLE (KPK-19.6.4-P2-01 acceptance: fail-closed, never a filtered guess)")
+	}
+	if len(rec.dialed) != 0 {
+		t.Fatalf("no address of a mixed declared/LAN set may be dialed, got %v", rec.dialed)
+	}
+}
+
+// TestDeclaredSubnetPinsAcrossResolveValidateDial: the PRODUCTION-shaped
+// acceptance — a declared Docker subnet (the operator's actual
+// scarlix-net), a name resolving into it: resolve → validate → pin → dial
+// still succeeds against the CONFIGURED subnet (the v19.6.4 acceptance
+// list, restated under the narrowed default).
+func TestDeclaredSubnetPinsAcrossResolveValidateDial(t *testing.T) {
+	allowed := map[string]struct{}{"sglang": {}}
+	declared := TrustedDialCIDRsOf(t, "172.18.0.0/16")
+	resolver := staticResolver{"sglang": {mustIP(t, "172.18.0.9")}}
+	rec := &recordingDial{}
+	transport := newLocalTransportDialing(allowed, declared, resolver.resolve, rec.dial)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	conn, err := transport.DialContext(ctx, "tcp", "sglang:30000")
+	if err != nil {
+		t.Fatalf("the production resolve-validate-pin-dial path must succeed against the CONFIGURED Docker subnet: %v", err)
+	}
+	defer conn.Close()
+	if len(rec.dialed) != 1 || rec.dialed[0] != "172.18.0.9:30000" {
+		t.Fatalf("the dialer must receive the pinned validated address 172.18.0.9:30000, got %v", rec.dialed)
+	}
+}
+
+// TrustedDialCIDRsOf parses the operator-style declaration for tests
+// (comma-separated, exactly like SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS).
+func TrustedDialCIDRsOf(t *testing.T, raw string) []*net.IPNet {
+	t.Helper()
+	cidrs, err := TrustedDialCIDRsFromEnv(func(string) string { return raw })
+	if err != nil {
+		t.Fatalf("test declaration %q: %v", raw, err)
+	}
+	return cidrs
 }

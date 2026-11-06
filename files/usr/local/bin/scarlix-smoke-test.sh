@@ -2297,12 +2297,12 @@ check_28_ai_runtime_foundation() {
     # v19.6.1, v19.6.2 and v19.6.3 historical surfaces must ALSO stay (the
     # changelog rows + the What's New sections are the releases' permanent
     # record).
-    if ! grep -q 'ScarLiXoS v19.6.4 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.4-B87333' "$readme"; then
-        fail "README banner/h1/badge must say v19.6.4"
+    if ! grep -q 'ScarLiXoS v19.6.5 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.5-B87333' "$readme"; then
+        fail "README banner/h1/badge must say v19.6.5"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.6.4 (Universal AI Runtime — transport hardening II: KPK-03/KPK-04 remediation; Phase C)' "$readme"; then
-        fail "README version line must say v19.6.4 (Universal AI Runtime — transport hardening II: KPK-03/KPK-04 remediation; Phase C)"
+    if ! grep -q 'Version:\*\* v19.6.5 (Universal AI Runtime — trust scope + commit atomicity: KPK-19.6.4-P2-01/P2-02 remediation; Phase C)' "$readme"; then
+        fail "README version line must say v19.6.5 (Universal AI Runtime — trust scope + commit atomicity: KPK-19.6.4-P2-01/P2-02 remediation; Phase C)"
         return
     fi
     if ! grep -q '\*\*v19.6.0\*\*' "$readme" || ! grep -q "What's New in v19.6.0" "$readme"; then
@@ -2333,8 +2333,8 @@ check_28_ai_runtime_foundation() {
         fail "README must carry the 'Universal AI Runtime foundation (CF-1) | TESTED (v19.6.0)' roadmap row"
         return
     fi
-    if ! grep -q 'One-command install — v19.6.4 Universal AI Runtime (transport-hardened II)' "$readme"; then
-        fail "README install header must be refreshed to v19.6.4 (the current-release surface — it drifted at v19.4.6 once)"
+    if ! grep -q 'One-command install — v19.6.5 Universal AI Runtime (trust-scoped, commit-atomic)' "$readme"; then
+        fail "README install header must be refreshed to v19.6.5 (the current-release surface — it drifted at v19.4.6 once)"
         return
     fi
     # v19.6.3 (KPK-19.6.1-P2-01, the audit finding): the install PARAGRAPH
@@ -2342,8 +2342,8 @@ check_28_ai_runtime_foundation() {
     # one-liner still saying 'clones the current v19.6.0 mainline' at a
     # 19.6.1+ tag. The header alone is not enough; the drift guard is
     # literal and moves with every release.
-    if ! grep -q 'current v19.6.4 mainline' "$readme"; then
-        fail "README install paragraph must say 'clones the current v19.6.4 mainline' (KPK-19.6.1-P2-01: the one-liner drifts when the header is bumped but the paragraph is not)"
+    if ! grep -q 'current v19.6.5 mainline' "$readme"; then
+        fail "README install paragraph must say 'clones the current v19.6.5 mainline' (KPK-19.6.1-P2-01: the one-liner drifts when the header is bumped but the paragraph is not)"
         return
     fi
 
@@ -2359,7 +2359,7 @@ check_28_ai_runtime_foundation() {
         return
     fi
 
-    pass "universal AI runtime CF-1: closed local-stack enumeration (4 providers, v19.0.6-locked failover order encoded once), bounded explicit model registry (no auto-discovery), fail-closed observed health (UNKNOWN never serves, monotone observation time), normalized chat bounds (4096 runes / 32 messages / no error finish), pure deterministic router w/ ErrUnknownModel + ErrNoRoute (never guesses, never executes), network/IO-free by construction — the v19.6.1 evolution: the comment-stripped scan covers the WHOLE package (every .go file, runtime AND tests), cloud-token scan clean over runtime files, charter on one line, design doc + CF-1..CF-5 plan, README current-release surface v19.6.4 (banner/badge/version-line/install header + the v19.6.4 mainline drift guard, KPK-19.6.1-P2-01) + historical v19.6.0/v19.6.1/v19.6.2/v19.6.3 surfaces (changelog + What's New + theme OPEN + roadmap TESTED), wiring contract evolved: CF-2 wires THROUGH internal/airt (the transport owns the network, the contract stays pure)"
+    pass "universal AI runtime CF-1: closed local-stack enumeration (4 providers, v19.0.6-locked failover order encoded once), bounded explicit model registry (no auto-discovery), fail-closed observed health (UNKNOWN never serves, monotone observation time), normalized chat bounds (4096 runes / 32 messages / no error finish), pure deterministic router w/ ErrUnknownModel + ErrNoRoute (never guesses, never executes), network/IO-free by construction — the v19.6.1 evolution: the comment-stripped scan covers the WHOLE package (every .go file, runtime AND tests), cloud-token scan clean over runtime files, charter on one line, design doc + CF-1..CF-5 plan, README current-release surface v19.6.5 (banner/badge/version-line/install header + the v19.6.5 mainline drift guard, KPK-19.6.1-P2-01) + historical v19.6.0/v19.6.1/v19.6.2/v19.6.3 surfaces (changelog + What's New + theme OPEN + roadmap TESTED), wiring contract evolved: CF-2 wires THROUGH internal/airt (the transport owns the network, the contract stays pure)"
 }
 
 # ===========================================================================
@@ -3014,10 +3014,17 @@ check_32_ai_dial_pin_probe_cancel() {
         fail "transport.go must define the address-level boundary (ipIsTrusted + approvedResolvedIPs — KPK-03: destination validation, not name validation)"
         return
     fi
-    # --- KPK-03: the default trust is the Docker pools — NOT the whole
-    # RFC1918 (10.0.0.0/8 is out until an operator declares it).
+    # --- KPK-03 + KPK-19.6.4-P2-01 (v19.6.5 evolution): the default trust is
+    # the Docker DEFAULT BRIDGE POOL — exactly ONE network. The v19.6.4
+    # posture (two pools incl. the home-LAN range) was narrowed by the
+    # independent v19.6.4 audit; the marker is the EXACT one-argument call
+    # (a two-pool default would carry a comma and fail this grep).
+    if ! _strip_go_comments "$transport" | grep -qF 'parseCIDRsOrPanic("172.17.0.0/12")' || _strip_go_comments "$transport" | grep -qF 'parseCIDRsOrPanic("172.17.0.0/12", "192.168.0.0/16")'; then
+        fail "the default trusted dial network must be the Docker default bridge pool ONLY (parseCIDRsOrPanic(\"172.17.0.0/12\") — exactly ONE argument; KPK-19.6.4-P2-01: the home-LAN range is operator territory, declared — never implicit)"
+        return
+    fi
     if ! grep -q '172.17.0.0/12' "$transport" || ! grep -q '192.168.0.0/16' "$transport"; then
-        fail "the default trusted dial networks must be the Docker pools (172.17.0.0/12 + 192.168.0.0/16 in transport.go — KPK-03: no blind RFC1918 trust)"
+        fail "transport.go must still NAME both ranges (the pool that IS the default + the LAN range that now requires an explicit declaration — the boundary text carries both)"
         return
     fi
     # --- KPK-03: the operator surface + the fail-closed construction (a
@@ -3129,7 +3136,7 @@ check_32_ai_dial_pin_probe_cancel() {
     # What's New section, roadmap row, and the release notes document in
     # the remediation genre (Scope/Changes/Verification status).
     if ! grep -q "What's New in v19.6.4" "$readme" || ! grep -q '\*\*v19.6.4\*\*' "$readme"; then
-        fail "README must carry the v19.6.4 changelog row + What's New section"
+        fail "README must carry the v19.6.4 changelog row + What's New section (the permanent record — the v19.6.5 remediation built on it; check_33 gates the v19.6.5 surface)"
         return
     fi
     if ! grep -q '| AI Runtime transport hardening II (KPK-03/04) | \*\*TESTED\*\* (v19.6.4) |' "$readme"; then
@@ -3147,7 +3154,163 @@ check_32_ai_dial_pin_probe_cancel() {
         fi
     done
 
-    pass "universal AI runtime transport hardening II (v19.6.4, the v19.6.3 KpK audit remediation): the dial guard validates DESTINATIONS not just names (a configured name is RESOLVED through the process's own resolver, EVERY answered address validated against the trusted local networks — loopback always, the Docker default pools or the operator's SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS declaration, fail-closed at startup, no blind RFC1918 — and the connection PINNED to a validated address: the IP that is dialed is the IP that was validated, mixed answer sets refused WHOLE, public resolutions ZERO dials/zero prompt bytes, a service-name endpoint with loopback-only trust fails at construction), a cancelled probe round is not evidence about the providers (a caller-closed context aborts the round — the context error returns errors.Is-identifiable, ProbeAllAndObserve records NOTHING, last-known-good states AND timestamps stand; genuine per-provider failures still record with a live parent; the loop's 2x round-budget margin keeps the probe-timeout vs round-clock classification unambiguous), the regression proofs as tests (pin by recording dialer, public/mixed/empty/TOCTOU refusals, construction fail-closed, env parse truth table, cancelled-round preservation + genuine-failure counterweight + the production path through the real resolver), the security map truths (the address-level boundary + the honest resolver residual + the named 20-minute maximum wall clock), README v19.6.4 surface + release notes genre"
+    pass "universal AI runtime transport hardening II (v19.6.4, the v19.6.3 KpK audit remediation): the dial guard validates DESTINATIONS not just names (a configured name is RESOLVED through the process's own resolver, EVERY answered address validated against the trusted local networks — loopback always, the Docker default bridge pool (v19.6.5: ONE network — the home-LAN range 192.168.0.0/16 is operator territory, declared via SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS, never implicit) or the operator's declaration, fail-closed at startup, no blind RFC1918 — and the connection PINNED to a validated address: the IP that is dialed is the IP that was validated, mixed answer sets refused WHOLE, public resolutions ZERO dials/zero prompt bytes, a service-name endpoint with loopback-only trust fails at construction), a cancelled probe round is not evidence about the providers (a caller-closed context aborts the round — the context error returns errors.Is-identifiable, ProbeAllAndObserve records NOTHING, last-known-good states AND timestamps stand; genuine per-provider failures still record with a live parent; the loop's 2x round-budget margin keeps the probe-timeout vs round-clock classification unambiguous), the regression proofs as tests (pin by recording dialer, public/mixed/empty/TOCTOU refusals, construction fail-closed, env parse truth table, cancelled-round preservation + genuine-failure counterweight + the production path through the real resolver), the security map truths (the address-level boundary + the honest resolver residual + the named 20-minute maximum wall clock), README v19.6.4 surface + release notes genre"
+}
+
+# ===========================================================================
+# check_33 — Universal AI Runtime trust scope + commit atomicity (v19.6.5,
+# KPK-19.6.4-P2-01/P2-02): the default trust is the Docker bridge pool
+# ONLY — and a probe round commits atomically at one context-aware
+# boundary
+# ===========================================================================
+check_33_ai_trust_scope_commit_atomicity() {
+    echo "--- [33] Universal AI Runtime trust scope + commit atomicity (v19.6.5, KPK-19.6.4-P2-01/P2-02 remediation): the DEFAULT trusted network is the Docker bridge pool ONLY (the home-LAN range is declared, never implicit; universal routes refused) + the probe round's observations commit through ONE atomic, context-aware batch boundary (cancellation before the commit = zero writes) ---"
+    local pkg="$REPO_DIR/scarlihq/internal/airt"
+    local transport="$pkg/transport.go"
+    local prober="$pkg/prober.go"
+    local transport_test="$pkg/transport_test.go"
+    local prober_test="$pkg/prober_test.go"
+    local health="$REPO_DIR/scarlihq/internal/airuntime/health.go"
+    local health_test="$REPO_DIR/scarlihq/internal/airuntime/health_test.go"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+    local secmap="$REPO_DIR/docs/SCARLIX_SECURITY_MAP.md"
+    local readme="$REPO_DIR/README.md"
+    local notes="$REPO_DIR/docs/RELEASE_NOTES_v19.6.5.md"
+
+    if [[ ! -f "$transport" ]] || [[ ! -f "$health" ]]; then
+        fail "internal/airt/transport.go or internal/airuntime/health.go missing (v19.6.5 — the trust scope + the atomic batch commit, KPK-19.6.4-P2-01/P2-02)"
+        return
+    fi
+
+    # --- KPK-19.6.4-P2-01: the single-pool default, BY MARKER IN CODE
+    # (comment-stripped — prose cannot mask code): the EXACT one-argument
+    # call; a two-pool default (the v19.6.4 posture) FAILS this marker.
+    if ! _strip_go_comments "$transport" | grep -qF 'parseCIDRsOrPanic("172.17.0.0/12")'; then
+        fail "DefaultTrustedDialCIDRs must call parseCIDRsOrPanic with EXACTLY ONE network — 172.17.0.0/12 (KPK-19.6.4-P2-01: the home-LAN range 192.168.0.0/16 is operator territory, declared via SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS, never implicit)"
+        return
+    fi
+    if _strip_go_comments "$transport" | grep -qF 'parseCIDRsOrPanic("172.17.0.0/12", "192.168.0.0/16")'; then
+        fail "DefaultTrustedDialCIDRs must NOT carry the two-pool v19.6.4 default (172.17.0.0/12 + 192.168.0.0/16) — the home-LAN range was REMOVED by the independent v19.6.4 audit finding"
+        return
+    fi
+    # --- KPK-19.6.4-P2-01 (hardening → policy): the UNIVERSAL-route
+    # refusal exists in CODE — the helper + its use in the env parse.
+    local universal_hits
+    universal_hits=$(_strip_go_comments "$transport" | grep -c 'func isUniversalCIDR' || true)
+    if [[ "$universal_hits" -eq 0 ]]; then
+        fail "transport.go must define the universal-route detector (func isUniversalCIDR — 0.0.0.0/0 and ::/0 nullify the destination boundary; the audit's hardening note, adopted as policy)"
+        return
+    fi
+    if ! _strip_go_comments "$transport" | grep -q 'isUniversalCIDR(ipnet)'; then
+        fail "TrustedDialCIDRsFromEnv must REFUSE universal routes (the isUniversalCIDR check in the env parse — a declaration that would nullify the boundary is a configuration error, not a posture)"
+        return
+    fi
+    if ! grep -q 'UNIVERSAL route' "$transport"; then
+        fail "the universal-route refusal must carry its named error text ('UNIVERSAL route' — the operator sees WHY the declaration was refused)"
+        return
+    fi
+
+    # --- KPK-19.6.4-P2-02: the atomic batch commit, BY MARKER IN CODE —
+    # the batch operation itself, the commit-boundary context check
+    # (distinct from every other ctx.Err() guard by its named refusal),
+    # and the one-lock apply.
+    local batch_hits
+    batch_hits=$(_strip_go_comments "$health" | grep -c 'func (t \*HealthTable) ObserveBatch' || true)
+    if [[ "$batch_hits" -eq 0 ]]; then
+        fail "health.go must define the batch commit operation (HealthTable.ObserveBatch — the audit's remediation item 1: validate all, apply under one lock)"
+        return
+    fi
+    if ! grep -q "rejected at the commit boundary" "$health"; then
+        fail "ObserveBatch must carry the named commit-boundary refusal ('rejected at the commit boundary' — cancellation between probe completion and the commit records NOTHING, KPK-19.6.4-P2-02)"
+        return
+    fi
+    if ! grep -q "batches are atomic" "$health"; then
+        fail "ObserveBatch's stale rejection must name the batch atomicity ('batches are atomic' — a stale member rejects the round WHOLE, never partially applied)"
+        return
+    fi
+    # --- KPK-19.6.4-P2-02: ProbeAllAndObserve commits through the batch —
+    # never the per-provider Observe loop the audit found racy.
+    if ! _strip_go_comments "$prober" | grep -q 'table.ObserveBatch(ctx, observations)'; then
+        fail "ProbeAllAndObserve must commit the round through table.ObserveBatch (the per-provider Observe loop is the check-to-write race the audit found — KPK-19.6.4-P2-02 remediation item 3)"
+        return
+    fi
+    # --- The injectable seam (remediation item 4): the deterministic
+    # window between ProbeAll completion and the commit.
+    local seam_hits
+    seam_hits=$(_strip_go_comments "$prober" | grep -c 'p.preCommit' || true)
+    if [[ "$seam_hits" -eq 0 ]]; then
+        fail "the Prober must carry the preCommit test seam (p.preCommit between ProbeAll completion and the commit — the deterministic cancellation window the audit's acceptance asks for)"
+        return
+    fi
+
+    # --- The regression PROOFS exist as tests (the proof, not the claim):
+    # the audit's acceptance lists, by name.
+    if ! grep -q 'TestDefaultTrustRejectsUnrelatedLANDestinations' "$transport_test" || ! grep -q 'TestDeclaredSubnetMixedWithLANRefusedWhole' "$transport_test"; then
+        fail "the KPK-19.6.4-P2-01 regression tests must exist (default trust rejects unrelated LAN destinations + a declared-subnet/LAN mixed set refused whole — the audit's acceptance list)"
+        return
+    fi
+    if ! grep -q 'TestDeclaredSubnetPinsAcrossResolveValidateDial' "$transport_test"; then
+        fail "the production-path regression must exist (TestDeclaredSubnetPinsAcrossResolveValidateDial — resolve-validate-pin-dial against the CONFIGURED Docker subnet)"
+        return
+    fi
+    if ! grep -q 'TestObserveBatchCancelledAtCommitBoundary' "$health_test" || ! grep -q 'TestObserveBatchConcurrentRoundsMonotone' "$health_test"; then
+        fail "the KPK-19.6.4-P2-02 regression tests must exist (cancelled at the commit boundary preserves everything + concurrent rounds stay monotone and whole — the audit's acceptance list)"
+        return
+    fi
+    if ! grep -q 'TestObserveBatchAtomicOnInvalidMember' "$health_test" || ! grep -q 'TestObserveBatchAtomicOnStaleMember' "$health_test"; then
+        fail "the batch atomicity regression tests must exist (an invalid or stale member rejects the batch WHOLE — no partial round is ever visible)"
+        return
+    fi
+    if ! grep -q 'TestProbeAllCancelBetweenRoundAndCommit' "$prober_test" || ! grep -q 'TestProbeAllCommitAfterSeamStillCommits' "$prober_test"; then
+        fail "the deterministic window regression must exist (cancel BETWEEN round completion and commit → nothing recorded + the non-cancelling seam counterweight)"
+        return
+    fi
+
+    # --- The operator guidance is documented where the operator reads it:
+    # the compose env block derives the subnet; the security map names the
+    # narrowed default and the honest residuals; main.go wires unchanged.
+    if ! grep -q 'docker network inspect scarlix-net' "$compose" || ! grep -q 'docker network inspect scarlix-net' "$secmap"; then
+        fail "the operator subnet derivation must be documented (docker network inspect scarlix-net — compose AND SECURITY_MAP: the actual network is operator-declared, explicit and auditable)"
+        return
+    fi
+    if ! grep -q 'KPK-19.6.4-P2-01' "$secmap" || ! grep -q 'KPK-19.6.4-P2-02' "$secmap"; then
+        fail "SCARLIX_SECURITY_MAP.md must state both v19.6.5 closures by finding name (KPK-19.6.4-P2-01 narrowed default + KPK-19.6.4-P2-02 atomic commit)"
+        return
+    fi
+    if ! grep -q 'dual-stack' "$compose" || ! grep -q 'Dual-stack note' "$secmap"; then
+        fail "the IPv6 dual-stack note must be documented (compose + SECURITY_MAP — an unapproved AAAA answer refuses the set whole; declare the IPv6 pool or prefer IPv4 literals)"
+        return
+    fi
+    code_hits=$(_strip_go_comments "$main_src" | grep -c 'TrustedDialCIDRsFromEnv' || true)
+    if [[ "$code_hits" -eq 0 ]]; then
+        fail "main.go must still wire SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS through TrustedDialCIDRsFromEnv (the narrowed default changed the DEFAULTS, not the wiring)"
+        return
+    fi
+
+    # --- README: the release is a release like any other — changelog row,
+    # What's New section, roadmap row; the release notes document in the
+    # remediation genre.
+    if ! grep -q "What's New in v19.6.5" "$readme" || ! grep -q '\*\*v19.6.5\*\*' "$readme"; then
+        fail "README must carry the v19.6.5 changelog row + What's New section"
+        return
+    fi
+    if ! grep -q '| AI Runtime trust scope + commit atomicity (KPK-19.6.4-P2-01/02) | \*\*TESTED\*\* (v19.6.5) |' "$readme"; then
+        fail "README must carry the 'AI Runtime trust scope + commit atomicity (KPK-19.6.4-P2-01/02) | TESTED (v19.6.5)' roadmap row"
+        return
+    fi
+    if [[ ! -f "$notes" ]]; then
+        fail "docs/RELEASE_NOTES_v19.6.5.md missing (the KpK remediation release notes — the v19.6.4 genre)"
+        return
+    fi
+    for section in '## Scope' '## Changes' '## Verification status' '## Known limitation'; do
+        if ! grep -q "$section" "$notes"; then
+            fail "the release notes must carry section '$section' (the remediation genre)"
+            return
+        fi
+    done
+
+    pass "universal AI runtime trust scope + commit atomicity (v19.6.5, the v19.6.4 KpK audit remediation): the DEFAULT trusted dial network is the Docker default bridge pool ONLY (172.17.0.0/12, exactly one network by code marker — the home-LAN range 192.168.0.0/16 is operator territory: a poisoned resolver answering 192.168.1.1 for an approved name is refused with ZERO dials, the operator declares the ACTUAL subnet from 'docker network inspect scarlix-net' via SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS, explicit/visible/auditable, never implicit), universal routes (0.0.0.0/0, ::/0) are REFUSED fail-closed (a declaration that would nullify the boundary is a configuration error — the audit's hardening note adopted as policy), the probe round's observations commit through HealthTable.ObserveBatch (validate all, monotonicity-check the batch, apply under ONE lock — a stale or invalid member rejects the round WHOLE, a partially applied round is never visible), the commit boundary is CONTEXT-AWARE (cancellation between probe completion and the commit records NOTHING, errors.Is-identifiable, every previous state AND timestamp preserved; cancellation after the commit does not retroactively undo a completed round — the linearization rule), ProbeAllAndObserve commits through the batch never a per-provider loop, the preCommit seam makes the audited window deterministically testable, the regression proofs as tests (LAN refusal by default, mixed declared/LAN refused whole, declared-subnet pin, universal rejection, batch atomicity, boundary cancellation, concurrent monotone rounds, the deterministic window + counterweights), the documented truths (compose subnet derivation + SECURITY_MAP finding-name closures + the IPv6 dual-stack note + the inherent in-subnet lateral residual), README v19.6.5 surface + release notes genre"
 }
 
 # ===========================================================================
@@ -3189,6 +3352,7 @@ SMOKE_CHECKS=(
     check_30_ai_propose_surface
     check_31_ai_transport_boundary
     check_32_ai_dial_pin_probe_cancel
+    check_33_ai_trust_scope_commit_atomicity
 )
 
 run_check() {
