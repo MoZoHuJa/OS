@@ -20,6 +20,16 @@ import (
 // operator's refresh hostage (the adapters carry the long 30s bound).
 const DefaultProbeTimeout = 5 * time.Second
 
+// probeRoundBudget bounds one BACKGROUND loop round (KPK-04, v19.6.4):
+// deliberately 2x the per-probe timeout so the two clocks are never
+// ambiguous — a slow tier is classified by the probe's OWN client timeout
+// (UNAVAILABLE, genuine, parent context live), and only a pathologically
+// stuck round hits the round budget (the round aborts, nothing is
+// recorded, last-known-good health stands). Caller-facing rounds
+// (POST /api/ai/probe) carry the caller's own context — the KPK-04 guard
+// makes a cancelled caller record nothing at all.
+const probeRoundBudget = 2 * DefaultProbeTimeout
+
 // probePath is the health surface per provider, exactly as the stack
 // documents it (SCARLIX_API_MAP.md + the compose healthchecks): the
 // three GPU/CPU servers expose /health; ollama exposes /api/tags (its
@@ -52,17 +62,23 @@ type Prober struct {
 // the endpoint set's hosts; KPK-01, v19.6.3): probes carry no chat
 // transcript, but the local-only contract is a contract — the process
 // must not be steered to a destination outside the declared local
-// endpoint set by anything, a redirect answer included.
-func NewProber(endpoints map[airuntime.Provider]Endpoint, timeout time.Duration) (*Prober, error) {
+// endpoint set by anything, a redirect answer included. v19.6.4
+// (KPK-03): opts declare the trusted dial networks for resolved name
+// destinations (no option → the Docker default pools).
+func NewProber(endpoints map[airuntime.Provider]Endpoint, timeout time.Duration, opts ...DialOption) (*Prober, error) {
 	if err := validateEndpointSet(endpoints); err != nil {
 		return nil, err
 	}
 	if timeout <= 0 {
 		return nil, fmt.Errorf("airt: probe timeout must be > 0 (got %s)", timeout)
 	}
+	trustedCIDRs := resolveDialCIDRs(opts)
+	if err := validateNameEndpointDialTrust(endpoints, trustedCIDRs); err != nil {
+		return nil, err
+	}
 	return &Prober{
 		endpoints: endpoints,
-		client:    newLocalClient(timeout, endpointHostsOf(endpoints)),
+		client:    newLocalClient(timeout, endpointHostsOf(endpoints), trustedCIDRs),
 	}, nil
 }
 
@@ -92,6 +108,15 @@ func (p *Prober) Probe(ctx context.Context, provider airuntime.Provider) (airunt
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
+		// KPK-04 (v19.6.4): a transport failure while the CALLER'S context is
+		// done is not evidence about the tier — the browser closed, the
+		// proxy aborted, the deadline expired at the round level. The
+		// honest answer is an ERROR (no observation), so the health
+		// table's last-known-good stands; a genuine refusal/timeout/
+		// unreachable (the context still live) is UNAVAILABLE below.
+		if cerr := ctx.Err(); cerr != nil {
+			return airuntime.Observation{}, fmt.Errorf("airt: %s: probe aborted — the caller's context is done (%w); a cancelled observation is not evidence about the provider, the last-known-good health stands (KPK-04)", provider, cerr)
+		}
 		// The tier did not answer: dead, not degraded.
 		state = airuntime.HealthUnavailable
 	} else {
@@ -117,6 +142,17 @@ func (p *Prober) Probe(ctx context.Context, provider airuntime.Provider) (airunt
 // deterministic in shape and order. Every provider gets an observation —
 // a dead tier is observed UNAVAILABLE, never omitted (fail-closed, not
 // fail-blind).
+//
+// KPK-04 (v19.6.4): a CANCELLED round is not evidence about the providers.
+// When the caller's context is done at round end (browser closed, reverse
+// proxy aborted, deadline expired), the round is aborted and the context
+// error is returned — NO observations are returned and NOTHING is recorded
+// by ProbeAllAndObserve: the caller cancelled the observation, the providers
+// were not proven unavailable, and the health table's last-known-good
+// stands. Genuine per-provider failures (refused, timed out, unreachable)
+// are preserved exactly when the parent context remains live — the
+// client's own per-probe timeout classifies those, distinct from the
+// caller's cancellation.
 func (p *Prober) ProbeAll(ctx context.Context) ([]airuntime.Observation, error) {
 	providers := airuntime.AllProviders()
 	observations := make([]airuntime.Observation, len(providers))
@@ -129,13 +165,23 @@ func (p *Prober) ProbeAll(ctx context.Context) ([]airuntime.Observation, error) 
 			if err != nil {
 				// Cannot happen for enumerated providers (Probe validates
 				// membership first) — the honest guard: an unprobeable name
-				// becomes UNKNOWN, which never serves.
+				// becomes UNKNOWN, which never serves. A caller-cancellation
+				// abort (KPK-04) lands here too — and the round-end check
+				// below discards the whole round, so no synthetic state
+				// survives it.
 				obs = airuntime.Observation{Provider: provider, State: airuntime.HealthUnknown, At: time.Now().UTC()}
 			}
 			observations[i] = obs
 		}(i, provider)
 	}
 	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		// KPK-04: abort the round — no observations, nothing recorded. A
+		// cancelled caller must not overwrite last-known-good health with
+		// fabricated UNAVAILABLE states; errors.Is(err, context.Canceled /
+		// context.DeadlineExceeded) keeps working through the %w wrap.
+		return nil, fmt.Errorf("airt: probe round aborted — the caller's context is done (%w); a cancelled round is not evidence about the providers, nothing is recorded and the last-known-good health stands (KPK-04)", err)
+	}
 	return observations, nil
 }
 
@@ -143,6 +189,12 @@ func (p *Prober) ProbeAll(ctx context.Context) ([]airuntime.Observation, error) 
 // into the health table (the table's own monotone-time discipline
 // applies — fresh probe times satisfy it). Returns the observations in
 // tier order, as ProbeAll does.
+//
+// KPK-04 (v19.6.4): a CANCELLED round records NOTHING — when ProbeAll
+// aborts (the caller's context done), this function returns the error
+// BEFORE the record loop runs; the table keeps its previous observations
+// and timestamps. Only a fully completed round with a live parent context
+// reaches table.Observe.
 func (p *Prober) ProbeAllAndObserve(ctx context.Context, table *airuntime.HealthTable) ([]airuntime.Observation, error) {
 	if table == nil {
 		return nil, fmt.Errorf("%w: health table is required", ErrNilRuntimeInput)
@@ -184,7 +236,13 @@ func (p *Prober) Start(interval time.Duration, table *airuntime.HealthTable) (st
 				// discipline); the next round tries again. The context is
 				// the loop's own: a probe round must not be cancelled by
 				// whoever stopped the loop MID-round.
-				ctx, cancel := context.WithTimeout(context.Background(), DefaultProbeTimeout)
+				// KPK-04 (v19.6.4): the round deadline carries a MARGIN
+				// beyond the per-probe client timeout (2x) so the two are
+				// never ambiguous — a slow tier is classified by the
+				// probe's OWN timeout (UNAVAILABLE, genuine, parent live),
+				// while the round deadline only aborts a pathologically
+				// stuck round (record nothing, keep last-known-good).
+				ctx, cancel := context.WithTimeout(context.Background(), probeRoundBudget)
 				_, _ = p.ProbeAllAndObserve(ctx, table) //nolint:errcheck — a failed round is retried by the next tick; observations are the record
 				cancel()
 			case <-done:

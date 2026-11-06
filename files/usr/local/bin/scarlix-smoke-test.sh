@@ -2292,16 +2292,17 @@ check_28_ai_runtime_foundation() {
     fi
 
     # --- README surface: the CURRENT-release assertions move with the
-    # release (v19.6.3 now — the check_27 precedent: current surface
+    # release (v19.6.4 now — the check_27 precedent: current surface
     # tracked, historical content stays asserted below); the v19.6.0,
-    # v19.6.1 and v19.6.2 historical surfaces must ALSO stay (the changelog
-    # rows + the What's New sections are the releases' permanent record).
-    if ! grep -q 'ScarLiXoS v19.6.3 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.3-B87333' "$readme"; then
-        fail "README banner/h1/badge must say v19.6.3"
+    # v19.6.1, v19.6.2 and v19.6.3 historical surfaces must ALSO stay (the
+    # changelog rows + the What's New sections are the releases' permanent
+    # record).
+    if ! grep -q 'ScarLiXoS v19.6.4 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.4-B87333' "$readme"; then
+        fail "README banner/h1/badge must say v19.6.4"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.6.3 (Universal AI Runtime — transport hardening: KPK-01/KPK-02 remediation; Phase C)' "$readme"; then
-        fail "README version line must say v19.6.3 (Universal AI Runtime — transport hardening: KPK-01/KPK-02 remediation; Phase C)"
+    if ! grep -q 'Version:\*\* v19.6.4 (Universal AI Runtime — transport hardening II: KPK-03/KPK-04 remediation; Phase C)' "$readme"; then
+        fail "README version line must say v19.6.4 (Universal AI Runtime — transport hardening II: KPK-03/KPK-04 remediation; Phase C)"
         return
     fi
     if ! grep -q '\*\*v19.6.0\*\*' "$readme" || ! grep -q "What's New in v19.6.0" "$readme"; then
@@ -2316,6 +2317,10 @@ check_28_ai_runtime_foundation() {
         fail "README must carry the v19.6.2 changelog row + What's New section (the permanent record)"
         return
     fi
+    if ! grep -q '\*\*v19.6.3\*\*' "$readme" || ! grep -q "What's New in v19.6.3" "$readme"; then
+        fail "README must carry the v19.6.3 changelog row + What's New section (the permanent record)"
+        return
+    fi
     if ! grep -q 'Universal AI Runtime theme (v19.6.x) is OPEN' "$readme"; then
         fail "README theme status must flip to 'Universal AI Runtime theme (v19.6.x) is OPEN'"
         return
@@ -2328,8 +2333,8 @@ check_28_ai_runtime_foundation() {
         fail "README must carry the 'Universal AI Runtime foundation (CF-1) | TESTED (v19.6.0)' roadmap row"
         return
     fi
-    if ! grep -q 'One-command install — v19.6.3 Universal AI Runtime (transport-hardened)' "$readme"; then
-        fail "README install header must be refreshed to v19.6.3 (the current-release surface — it drifted at v19.4.6 once)"
+    if ! grep -q 'One-command install — v19.6.4 Universal AI Runtime (transport-hardened II)' "$readme"; then
+        fail "README install header must be refreshed to v19.6.4 (the current-release surface — it drifted at v19.4.6 once)"
         return
     fi
     # v19.6.3 (KPK-19.6.1-P2-01, the audit finding): the install PARAGRAPH
@@ -2337,8 +2342,8 @@ check_28_ai_runtime_foundation() {
     # one-liner still saying 'clones the current v19.6.0 mainline' at a
     # 19.6.1+ tag. The header alone is not enough; the drift guard is
     # literal and moves with every release.
-    if ! grep -q 'current v19.6.3 mainline' "$readme"; then
-        fail "README install paragraph must say 'clones the current v19.6.3 mainline' (KPK-19.6.1-P2-01: the one-liner drifts when the header is bumped but the paragraph is not)"
+    if ! grep -q 'current v19.6.4 mainline' "$readme"; then
+        fail "README install paragraph must say 'clones the current v19.6.4 mainline' (KPK-19.6.1-P2-01: the one-liner drifts when the header is bumped but the paragraph is not)"
         return
     fi
 
@@ -2354,7 +2359,7 @@ check_28_ai_runtime_foundation() {
         return
     fi
 
-    pass "universal AI runtime CF-1: closed local-stack enumeration (4 providers, v19.0.6-locked failover order encoded once), bounded explicit model registry (no auto-discovery), fail-closed observed health (UNKNOWN never serves, monotone observation time), normalized chat bounds (4096 runes / 32 messages / no error finish), pure deterministic router w/ ErrUnknownModel + ErrNoRoute (never guesses, never executes), network/IO-free by construction — the v19.6.1 evolution: the comment-stripped scan covers the WHOLE package (every .go file, runtime AND tests), cloud-token scan clean over runtime files, charter on one line, design doc + CF-1..CF-5 plan, README current-release surface v19.6.3 (banner/badge/version-line/install header + the v19.6.3 mainline drift guard, KPK-19.6.1-P2-01) + historical v19.6.0/v19.6.1/v19.6.2 surfaces (changelog + What's New + theme OPEN + roadmap TESTED), wiring contract evolved: CF-2 wires THROUGH internal/airt (the transport owns the network, the contract stays pure)"
+    pass "universal AI runtime CF-1: closed local-stack enumeration (4 providers, v19.0.6-locked failover order encoded once), bounded explicit model registry (no auto-discovery), fail-closed observed health (UNKNOWN never serves, monotone observation time), normalized chat bounds (4096 runes / 32 messages / no error finish), pure deterministic router w/ ErrUnknownModel + ErrNoRoute (never guesses, never executes), network/IO-free by construction — the v19.6.1 evolution: the comment-stripped scan covers the WHOLE package (every .go file, runtime AND tests), cloud-token scan clean over runtime files, charter on one line, design doc + CF-1..CF-5 plan, README current-release surface v19.6.4 (banner/badge/version-line/install header + the v19.6.4 mainline drift guard, KPK-19.6.1-P2-01) + historical v19.6.0/v19.6.1/v19.6.2/v19.6.3 surfaces (changelog + What's New + theme OPEN + roadmap TESTED), wiring contract evolved: CF-2 wires THROUGH internal/airt (the transport owns the network, the contract stays pure)"
 }
 
 # ===========================================================================
@@ -2954,6 +2959,198 @@ check_31_ai_transport_boundary() {
 }
 
 # ===========================================================================
+# check_32 — Universal AI Runtime transport hardening II (v19.6.4,
+# KPK-03/KPK-04): the dial guard resolves, validates and PINS — and a
+# cancelled probe round is not evidence about the providers
+# ===========================================================================
+check_32_ai_dial_pin_probe_cancel() {
+    echo "--- [32] Universal AI Runtime transport hardening II (v19.6.4, KPK-03/KPK-04 remediation): the dial guard RESOLVES, VALIDATES and PINS every destination (trusted local networks; the IP that is dialed is the IP that was validated) + a cancelled probe round records NOTHING (last-known-good health stands) ---"
+    local pkg="$REPO_DIR/scarlihq/internal/airt"
+    local transport="$pkg/transport.go"
+    local prober="$pkg/prober.go"
+    local adapter="$pkg/adapter.go"
+    local transport_test="$pkg/transport_test.go"
+    local prober_test="$pkg/prober_test.go"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local compose="$REPO_DIR/scarlihq/docker-compose.yml"
+    local secmap="$REPO_DIR/docs/SCARLIX_SECURITY_MAP.md"
+    local readme="$REPO_DIR/README.md"
+    local notes="$REPO_DIR/docs/RELEASE_NOTES_v19.6.4.md"
+
+    if [[ ! -f "$transport" ]]; then
+        fail "internal/airt/transport.go missing (v19.6.4 — the resolve-validate-pin dial policy, KPK-03)"
+        return
+    fi
+
+    # --- KPK-03: the resolve-validate-pin pipeline, BY MARKER IN CODE
+    # (comment-stripped — prose cannot mask code, the check_28 lesson):
+    # the transport RESOLVES the name itself (LookupIP), validates every
+    # answered address, and PINS the connection to the validated address
+    # (JoinHostPort — the dialer receives an ip:port, never a name).
+    local code_hits
+    code_hits=$(_strip_go_comments "$transport" | grep -c 'LookupIP' || true)
+    if [[ "$code_hits" -eq 0 ]]; then
+        fail "the dial guard must RESOLVE configured names itself (net resolver LookupIP in transport.go CODE — KPK-03: hostname checks passing is not destination trust)"
+        return
+    fi
+    code_hits=$(_strip_go_comments "$transport" | grep -c 'JoinHostPort' || true)
+    if [[ "$code_hits" -eq 0 ]]; then
+        fail "the dial guard must PIN the connection to the validated address (net.JoinHostPort in transport.go CODE — KPK-03: the IP that is dialed is the IP that was validated)"
+        return
+    fi
+    # --- KPK-03: the fail-closed MIXED-answer policy, named in the refusal
+    # (the honest policy text — one foreign address refuses the whole set,
+    # never a filtered guess).
+    if ! grep -q "fail closed on mixed or empty answers" "$transport"; then
+        fail "the dial guard must carry the named fail-closed mixed-answer refusal (KPK-03: a mixed resolution is refused WHOLE, never filtered)"
+        return
+    fi
+    # --- KPK-03: the trusted-network boundary functions (the address-level
+    # truth table + the whole-set approval policy, in CODE).
+    code_hits=$(_strip_go_comments "$transport" | grep -c 'func ipIsTrusted' || true)
+    local approved_hits
+    approved_hits=$(_strip_go_comments "$transport" | grep -c 'func approvedResolvedIPs' || true)
+    if [[ "$code_hits" -eq 0 || "$approved_hits" -eq 0 ]]; then
+        fail "transport.go must define the address-level boundary (ipIsTrusted + approvedResolvedIPs — KPK-03: destination validation, not name validation)"
+        return
+    fi
+    # --- KPK-03: the default trust is the Docker pools — NOT the whole
+    # RFC1918 (10.0.0.0/8 is out until an operator declares it).
+    if ! grep -q '172.17.0.0/12' "$transport" || ! grep -q '192.168.0.0/16' "$transport"; then
+        fail "the default trusted dial networks must be the Docker pools (172.17.0.0/12 + 192.168.0.0/16 in transport.go — KPK-03: no blind RFC1918 trust)"
+        return
+    fi
+    # --- KPK-03: the operator surface + the fail-closed construction (a
+    # service-name endpoint with loopback-only trust never boots).
+    if ! grep -q 'SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS' "$transport"; then
+        fail "transport.go must name the operator surface (SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS — the trusted dial networks declaration, KPK-03)"
+        return
+    fi
+    code_hits=$(_strip_go_comments "$transport" | grep -c 'func validateNameEndpointDialTrust' || true)
+    if [[ "$code_hits" -eq 0 ]]; then
+        fail "the construction-time dial-trust validation must exist (validateNameEndpointDialTrust in transport.go CODE — a service-name endpoint with loopback-only trust fails AT CONSTRUCTION, never per-request)"
+        return
+    fi
+    # --- The constructor surfaces carry the DialOption (adapter + prober
+    # accept the trusted-network declaration; the stack forwards it).
+    code_hits=$(_strip_go_comments "$adapter" | grep -c 'DialOption' || true)
+    local prober_hits
+    prober_hits=$(_strip_go_comments "$prober" | grep -c 'DialOption' || true)
+    if [[ "$code_hits" -eq 0 || "$prober_hits" -eq 0 ]]; then
+        fail "NewLocalAdapter and NewProber must both accept the DialOption (the trusted dial networks flow to EVERY client the package constructs — KPK-03)"
+        return
+    fi
+
+    # --- KPK-04: the cancelled-round guard, BY MARKER IN CODE — the
+    # round-end guard in ProbeAll ('if err := ctx.Err()' — distinct from
+    # the single-probe guard 'if cerr := ctx.Err()') and the named refusal.
+    # Each marker is specific: breaking ONE guard fails ONE marker.
+    code_hits=$(_strip_go_comments "$prober" | grep -c 'if err := ctx.Err()' || true)
+    if [[ "$code_hits" -eq 0 ]]; then
+        fail "ProbeAll must check the caller's context at round end (the 'if err := ctx.Err()' round-end guard in prober.go CODE — KPK-04: a cancelled round aborts, records nothing)"
+        return
+    fi
+    code_hits=$(_strip_go_comments "$prober" | grep -c 'if cerr := ctx.Err()' || true)
+    if [[ "$code_hits" -eq 0 ]]; then
+        fail "a single Probe must refuse to fabricate an observation for a done context (the 'if cerr := ctx.Err()' guard in prober.go CODE — KPK-04: a cancelled observation is not evidence about the provider)"
+        return
+    fi
+    if ! grep -q "a cancelled round is not evidence about the providers" "$prober"; then
+        fail "the probe-round abort must carry its named refusal ('a cancelled round is not evidence about the providers' — KPK-04)"
+        return
+    fi
+    # --- KPK-04: the background loop's round budget carries the 2x margin
+    # (the probe's own timeout classifies a slow tier; the round clock only
+    # aborts a pathologically stuck round).
+    if ! grep -q 'probeRoundBudget' "$prober"; then
+        fail "the background loop must carry the named round budget (probeRoundBudget = 2x the per-probe timeout — KPK-04: the two clocks are never ambiguous)"
+        return
+    fi
+
+    # --- The operator surface is WIRED (main.go parses the env fail-closed
+    # and passes the DialOption; compose documents the variable).
+    code_hits=$(_strip_go_comments "$main_src" | grep -c 'TrustedDialCIDRsFromEnv' || true)
+    local opt_hits
+    opt_hits=$(_strip_go_comments "$main_src" | grep -c 'WithTrustedDialCIDRs' || true)
+    if [[ "$code_hits" -eq 0 || "$opt_hits" -eq 0 ]]; then
+        fail "main.go must wire SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS (TrustedDialCIDRsFromEnv parsed fail-closed + WithTrustedDialCIDRs passed to the stack — KPK-03)"
+        return
+    fi
+    if ! grep -q 'SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS' "$compose"; then
+        fail "the compose env block must document SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS (the operator surface is documented where the operator reads it — KPK-03)"
+        return
+    fi
+
+    # --- The regression PROOFS exist as tests (the proof, not the claim):
+    # the pin, the public-resolution refusal (the audit finding), the
+    # mixed fail-closed, the TOCTOU resolution change, the cancelled round
+    # preserving last-known-good, the genuine-failure counterweight.
+    if ! grep -q 'TestDialGuardResolvesValidatesAndPins' "$transport_test" || ! grep -q 'TestDialGuardRefusesPublicResolution' "$transport_test"; then
+        fail "the KPK-03 regression tests must exist (resolve-validate-pin + the public-resolution refusal — the audit finding closed)"
+        return
+    fi
+    if ! grep -q 'TestDialGuardFailClosedOnMixedResolution' "$transport_test" || ! grep -q 'TestDialGuardTOCTOUResolutionChange' "$transport_test"; then
+        fail "the KPK-03 fail-closed/TOCTOU regression tests must exist (mixed refused whole + a resolver that changes answers cannot bypass the pin)"
+        return
+    fi
+    if ! grep -q 'TestNameEndpointDialTrustConstruction' "$transport_test" || ! grep -q 'TestTrustedDialCIDRsFromEnv' "$transport_test"; then
+        fail "the KPK-03 construction/env regression tests must exist (loopback-only trust fails at construction; the env parses fail-closed)"
+        return
+    fi
+    if ! grep -q 'TestProbeAllCancelledRoundPreservesLastKnownGood' "$prober_test" || ! grep -q 'TestProbeAllGenuineFailureOnlyThatProvider' "$prober_test"; then
+        fail "the KPK-04 regression tests must exist (a cancelled round preserves last-known-good + a genuine failure still records — the counterweight pair)"
+        return
+    fi
+    if ! grep -q 'TestProbeAllDeadlineExpiredRoundAborts' "$prober_test" || ! grep -q 'TestProberLoopSlowTierStaysGenuine' "$prober_test"; then
+        fail "the KPK-04 round-clock tests must exist (deadline-expired aborts + the loop's slow tier stays a genuine UNAVAILABLE)"
+        return
+    fi
+
+    # --- The security map carries the v19.6.4 posture: the address-level
+    # boundary + the cancelled-round truth, by finding name.
+    if ! grep -q 'KPK-03' "$secmap"; then
+        fail "SCARLIX_SECURITY_MAP.md must state the address-level boundary by finding name (KPK-03: resolve-validate-pin over the trusted local networks)"
+        return
+    fi
+    if ! grep -q 'KPK-04' "$secmap"; then
+        fail "SCARLIX_SECURITY_MAP.md must state the cancelled-round truth by finding name (KPK-04: a cancelled probe round records nothing)"
+        return
+    fi
+    if ! grep -q 'SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS' "$secmap"; then
+        fail "SCARLIX_SECURITY_MAP.md must name the trusted-network operator surface (SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS — KPK-03)"
+        return
+    fi
+    if ! grep -q '20 minutes' "$secmap"; then
+        fail "SCARLIX_SECURITY_MAP.md must state the named maximum wall clock (4 x min(CHAT_TIMEOUT, 300s) = 20 minutes — the SK-audit P2-03 documentation residual)"
+        return
+    fi
+
+    # --- README: the release is a release like any other — changelog row,
+    # What's New section, roadmap row, and the release notes document in
+    # the remediation genre (Scope/Changes/Verification status).
+    if ! grep -q "What's New in v19.6.4" "$readme" || ! grep -q '\*\*v19.6.4\*\*' "$readme"; then
+        fail "README must carry the v19.6.4 changelog row + What's New section"
+        return
+    fi
+    if ! grep -q '| AI Runtime transport hardening II (KPK-03/04) | \*\*TESTED\*\* (v19.6.4) |' "$readme"; then
+        fail "README must carry the 'AI Runtime transport hardening II (KPK-03/04) | TESTED (v19.6.4)' roadmap row"
+        return
+    fi
+    if [[ ! -f "$notes" ]]; then
+        fail "docs/RELEASE_NOTES_v19.6.4.md missing (the KpK remediation release notes — the v19.6.3 genre)"
+        return
+    fi
+    for section in '## Scope' '## Changes' '## Verification status'; do
+        if ! grep -q "$section" "$notes"; then
+            fail "the release notes must carry section '$section' (the remediation genre)"
+            return
+        fi
+    done
+
+    pass "universal AI runtime transport hardening II (v19.6.4, the v19.6.3 KpK audit remediation): the dial guard validates DESTINATIONS not just names (a configured name is RESOLVED through the process's own resolver, EVERY answered address validated against the trusted local networks — loopback always, the Docker default pools or the operator's SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS declaration, fail-closed at startup, no blind RFC1918 — and the connection PINNED to a validated address: the IP that is dialed is the IP that was validated, mixed answer sets refused WHOLE, public resolutions ZERO dials/zero prompt bytes, a service-name endpoint with loopback-only trust fails at construction), a cancelled probe round is not evidence about the providers (a caller-closed context aborts the round — the context error returns errors.Is-identifiable, ProbeAllAndObserve records NOTHING, last-known-good states AND timestamps stand; genuine per-provider failures still record with a live parent; the loop's 2x round-budget margin keeps the probe-timeout vs round-clock classification unambiguous), the regression proofs as tests (pin by recording dialer, public/mixed/empty/TOCTOU refusals, construction fail-closed, env parse truth table, cancelled-round preservation + genuine-failure counterweight + the production path through the real resolver), the security map truths (the address-level boundary + the honest resolver residual + the named 20-minute maximum wall clock), README v19.6.4 surface + release notes genre"
+}
+
+# ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
@@ -2991,6 +3188,7 @@ SMOKE_CHECKS=(
     check_29_ai_runtime_adapters
     check_30_ai_propose_surface
     check_31_ai_transport_boundary
+    check_32_ai_dial_pin_probe_cancel
 )
 
 run_check() {

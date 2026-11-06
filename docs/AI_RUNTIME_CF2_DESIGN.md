@@ -349,3 +349,123 @@ Smoke check 31 (`check_31_ai_transport_boundary`) gates all of the
 above at the source level; the acceptance of both findings is the test
 suite, the smoke suite, and the release notes
 (`docs/RELEASE_NOTES_v19.6.3.md`).
+
+## 7. v19.6.4 remediation — KPK-03/KPK-04 (the v19.6.3 KpK audit)
+
+The v19.6.3 audits (EN + SK) accepted the KPK-01/KPK-02 remediation and
+named two new P2 findings. This section records how each is closed; the
+genre is section 6's — the contract, the mechanism, the regression
+proofs. No new user-facing surface.
+
+### KPK-03 — the dial guard validates DESTINATIONS, not just names
+
+**The finding:** the v19.6.3 guard validated the hostname string, then
+`net.Dialer.DialContext` performed the actual resolution. For a
+service-name endpoint (`http://sglang:30000` — a valid, typical compose
+shape) a compromised Docker DNS, poisoned `/etc/hosts` or a hostile
+sidecar could resolve the approved name to a PUBLIC IP, and the POST
+body — the whole normalized conversation, the private prompts — would
+be dialed straight there with every hostname check passing. "Three
+layers" was true for redirects and proxies; the dial layer was not an
+IP-level sandbox.
+
+**The mechanism (transport.go, one dial policy):**
+
+1. **Layer 1, unchanged:** the hostname allowlist (loopback literals +
+   the configured endpoint hosts) — nothing foreign even asks.
+2. **IP literals:** validated directly against the trusted set
+   (loopback always; a foreign literal refused at the dial layer). No
+   resolution, no pinning — the destination IS the address.
+3. **Names (localhost, service names):** RESOLVED through the process's
+   own resolver; EVERY answered address validated against the trusted
+   local networks; the connection PINNED to a validated address. The IP
+   that is dialed is the IP that was validated — no
+   validate-then-resolve TOCTOU gap. Multiple approved answers dial in
+   resolver order until one connects; every dialed address is a member
+   of the validated set.
+4. **Fail-closed on mixed:** an answer set carrying even one unapproved
+   address is refused WHOLE (the documented policy — never filtered,
+   never guessed). Empty and failed resolutions refuse fail-closed.
+
+**The trust model:** loopback (`127.0.0.0/8`, `::1`) is always trusted
+(definitionally local — the bare-metal default endpoints are
+literals). The non-loopback trust defaults to Docker's own address
+pools (`172.17.0.0/12` + `192.168.0.0/16` — where scarlix-net lives)
+and is REPLACED by the operator declaration
+`SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS` (comma-separated CIDRs, parsed
+fail-closed at startup; deliberately NOT the whole RFC1918 —
+`10.0.0.0/8` is out until declared). A service-name endpoint with
+loopback-only trust fails AT CONSTRUCTION (loud, boot-time, naming the
+env surface — never a per-request surprise); `localhost` endpoints
+construct under loopback-only trust (they resolve into the
+always-trusted loopback; a poisoned hosts file is caught at dial time).
+
+**The residual, stated honestly:** the resolver is trusted only to
+ANSWER. A compromised resolver can no longer steer traffic anywhere it
+wants — only into the declared networks or into a refusal. The trust
+moved from "the resolver is honest" to "the answer must land in the
+declared networks."
+
+**Regression proofs:** `TestDialGuardResolvesValidatesAndPins`,
+`TestDialGuardPinsAcrossApprovedAnswers`,
+`TestDialGuardRefusesPublicResolution` (zero dials on a public answer —
+the audit finding, closed), `TestDialGuardFailClosedOnMixedResolution`,
+`TestDialGuardRefusesEmptyAndFailedResolution`,
+`TestDialGuardTOCTOUResolutionChange`,
+`TestDialGuardLoopbackLiteralSkipsResolution`,
+`TestDialGuardForeignLiteralRefusedByTrustedSet`, `TestIPIsTrusted`,
+`TestApprovedResolvedIPs`, `TestDefaultTrustedDialCIDRs`,
+`TestTrustedDialCIDRsFromEnv`, `TestResolveDialCIDRsOptionPrecedence`,
+`TestNameEndpointDialTrustConstruction`, and
+`TestLocalAdapterLocalhostNameThroughRealResolver` (the production
+pipeline end-to-end through the real resolver).
+
+### KPK-04 — a cancelled probe round is not evidence about the providers
+
+**The finding:** `ProbeAll` launched one goroutine per provider; any
+probe error — including `context.Canceled` from the CALLER's context —
+was converted into an UNAVAILABLE observation; `ProbeAllAndObserve`
+recorded all four. An operator closing the browser or a reverse proxy
+aborting the request mid-round could overwrite every provider's
+last-known-good health with fabricated UNAVAILABLE states (false
+no-route for subsequent chats until the next successful round).
+
+**The mechanism (prober.go):**
+
+1. `ProbeAll` checks the caller's context AFTER the round joins: if it
+   is done, the round ABORTS — the context error returns
+   (`errors.Is`-identifiable for `context.Canceled` /
+   `context.DeadlineExceeded`), no observations are returned.
+2. `ProbeAllAndObserve` therefore records NOTHING on an aborted round:
+   last-known-good states AND timestamps stand.
+3. A single `Probe` against a done context returns an ERROR, never an
+   observation; a transport failure WITH a live parent context is still
+   a genuine UNAVAILABLE (the honest matrix is unchanged).
+4. The background loop's round budget is `2 × DefaultProbeTimeout`
+   (`probeRoundBudget`) — beyond the per-probe client timeout, so a
+   slow tier is classified by the probe's OWN timeout (genuine) and
+   only a pathologically stuck round aborts.
+
+**Regression proofs:** `TestProbeCancelledContextRefusesToFabricate`,
+`TestProbeAllCancelledRoundPreservesLastKnownGood` (the audit's
+acceptance path — seeded HEALTHY, mid-round cancel, table unchanged
+including timestamps), `TestProbeAllDeadlineExpiredRoundAborts`,
+`TestProbeAllGenuineFailureOnlyThatProvider` (the counterweight — one
+dead tier with a live parent context is the ONLY tier that goes
+UNAVAILABLE), `TestProberLoopSlowTierStaysGenuine`.
+
+### The documentation residuals
+
+- SECURITY_MAP (p): the address-level boundary (resolve-validate-pin,
+  the trusted CIDR policy, the honest resolver residual) and the named
+  maximum wall clock — `4 × min(CHAT_TIMEOUT, 300s)` = 20 minutes at
+  the widest setting, plus the 10s write margin. Bounded, documented, a
+  CF-4 concurrency item; never a silent default.
+- Compose env block: `SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS` documented
+  where the operator reads it, with the max-wall note on the chat
+  timeout variable.
+
+Smoke check 32 (`check_32_ai_dial_pin_probe_cancel`) gates all of the
+above at the source level; the acceptance of both findings is the test
+suite, the smoke suite, and the release notes
+(`docs/RELEASE_NOTES_v19.6.4.md`).

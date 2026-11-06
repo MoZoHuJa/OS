@@ -333,7 +333,23 @@ func main() {
 			}
 			chatTimeout = d
 		}
-		adapters, prober, err := airt.NewLocalStack(endpoints, chatTimeout)
+		// KPK-03 (v19.6.4): the trusted dial networks for service-name
+		// endpoints — the dial guard RESOLVES a configured name, validates
+		// EVERY answered address against these networks (loopback is always
+		// trusted) and PINNS the connection to a validated address. Unset →
+		// the Docker default pools (172.17.0.0/12 + 192.168.0.0/16); a
+		// declared set REPLACES them (an explicit 10.0.0.0/8 must be
+		// declared — no blind RFC1918 trust). Fail-closed on garbage, like
+		// every env surface.
+		var dialOpts []airt.DialOption
+		if raw := strings.TrimSpace(os.Getenv(airt.TrustedCIDRsEnvVar)); raw != "" {
+			cidrs, err := airt.TrustedDialCIDRsFromEnv(os.Getenv)
+			if err != nil {
+				log.Fatalf("ai runtime trusted dial networks configuration failed: %v (an invalid override is never a silent fall-back — fix the env)", err)
+			}
+			dialOpts = append(dialOpts, airt.WithTrustedDialCIDRs(cidrs))
+		}
+		adapters, prober, err := airt.NewLocalStack(endpoints, chatTimeout, dialOpts...)
 		if err != nil {
 			log.Fatalf("ai runtime transport construction failed: %v", err)
 		}
@@ -381,7 +397,7 @@ func main() {
 		if err := apiHandler.ConfigureAIRuntime(aiRuntime); err != nil {
 			log.Fatalf("ai runtime configuration failed: %v", err)
 		}
-		log.Printf("Universal AI Runtime API enabled (/api/ai/health, /api/ai/models, /api/ai/probe, /api/ai/chat, /api/ai/propose with the fabric's proposal store — Bearer-gated; sglang %s · vllm %s · beellama %s · ollama %s; %d models registered; per-attempt %s, end-to-end budget %s (KPK-02 — the write path extends beyond it); the local-only transport: no redirects, no ambient proxy, dial-guarded (KPK-01); the LLM proposes, policy decides)", endpoints[airuntime.ProviderSGLang], endpoints[airuntime.ProviderVLLM], endpoints[airuntime.ProviderBeeLlama], endpoints[airuntime.ProviderOllama], registry.Len(), chatTimeout, airt.ChatBudget(chatTimeout))
+		log.Printf("Universal AI Runtime API enabled (/api/ai/health, /api/ai/models, /api/ai/probe, /api/ai/chat, /api/ai/propose with the fabric's proposal store — Bearer-gated; sglang %s · vllm %s · beellama %s · ollama %s; %d models registered; per-attempt %s, end-to-end budget %s (KPK-02 — the write path extends beyond it); the local-only transport: no redirects, no ambient proxy, dial-guarded with resolve-validate-pin over the trusted local networks (KPK-01/KPK-03 — unset %s means the Docker default pools; a cancelled probe round records nothing, KPK-04); the LLM proposes, policy decides)", endpoints[airuntime.ProviderSGLang], endpoints[airuntime.ProviderVLLM], endpoints[airuntime.ProviderBeeLlama], endpoints[airuntime.ProviderOllama], registry.Len(), chatTimeout, airt.ChatBudget(chatTimeout), airt.TrustedCIDRsEnvVar)
 	} else {
 		log.Printf("Universal AI Runtime API disabled; set SCARLIHQ_AIRUNTIME_ENABLED=true to enable (/api/ai/* — adapters for the local stack + health probing + failover chat)")
 	}

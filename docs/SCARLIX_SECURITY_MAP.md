@@ -422,7 +422,8 @@ transport's own markers). The security posture:
   runes by the contract), the chat request body bounded to 1 MiB with
   unknown-fields-rejected decode (the full legitimate 32×4096-rune range
   stays reachable).
-- **v19.6.3 (KPK-01) — the local-only client is closed at THREE layers:**
+- **v19.6.3 (KPK-01) + v19.6.4 (KPK-03) — the local-only client is closed at
+  THREE layers, and the dial layer validates DESTINATIONS, not just names:**
   the ONLY `http.Client` this package constructs (`airt/transport.go`,
   asserted by smoke check 31) follows NO redirects (`http.ErrUseLastResponse`
   — a 307/308 is handed back as the response and classified as the failure
@@ -431,10 +432,27 @@ transport's own markers). The security posture:
   inherits NO ambient proxy (`Proxy: nil` — `HTTP_PROXY`/`HTTPS_PROXY` never
   steer local AI traffic; proxy support is not a feature of this transport
   and cannot become one by accident), and DIALS only loopback or the
-  configured endpoint hosts (the dial guard — hostname syntax at the
-  endpoint layer does not prove where a connection actually goes; the dial
-  layer does). Redirect and proxy regression tests assert ZERO requests and
-  ZERO prompt bytes at the external destination.
+  configured endpoint hosts (the hostname allowlist). Redirect and proxy
+  regression tests assert ZERO requests and ZERO prompt bytes at the
+  external destination.
+  **v19.6.4 (KPK-03) closes the hostname-vs-address gap the v19.6.3 audit
+  named:** a configured NAME is RESOLVED through the process's own resolver,
+  EVERY answered address is validated against the trusted local networks,
+  and the connection is PINNED to a validated address — the IP that is
+  dialed is the IP that was validated, no validate-then-resolve TOCTOU gap.
+  A MIXED answer set (one approved + one foreign address) is refused WHOLE
+  (fail-closed, never filtered); an empty or failed resolution is refused
+  fail-closed. Loopback (`127.0.0.0/8`, `::1`) is ALWAYS trusted; the
+  non-loopback trust defaults to Docker's own address pools
+  (`172.17.0.0/12` + `192.168.0.0/16`) and is REPLACED by an operator
+  declaration — `SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS=172.18.0.0/16,10.0.0.0/8`
+  (comma-separated CIDRs, validated fail-closed at startup; deliberately
+  NOT the whole RFC1918 space: `10.0.0.0/8` is out until declared). A
+  service-name endpoint with loopback-only trust fails AT CONSTRUCTION,
+  never per-request. Residual, stated honestly: the resolver itself (Docker
+  DNS / host resolv.conf) is trusted only to ANSWER — a compromised resolver
+  can no longer steer traffic anywhere it wants, only into the declared
+  networks or into a refusal.
 - **v19.6.3 (KPK-02) — one end-to-end timeout contract:** the budget for
   one AI request is per-attempt × the closed four-tier set
   (`airt.ChatBudget` — the complete honest failover walk; sequential
@@ -447,6 +465,29 @@ transport's own markers). The security posture:
   (`http.ResponseController`) so a legitimate slow local generation is
   WRITTEN, never cut by the server's 30s default WriteTimeout (which keeps
   serving every other surface unchanged).
+  **The named maximum wall clock (v19.6.4 documentation, the SK-audit
+  P2-03 follow-up):** one `/api/ai/chat` or `/api/ai/propose` request may
+  occupy its handler for at most `4 × min(SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT,
+  300s)` = **20 minutes** at the widest setting, plus the 10s write margin
+  — bounded, but operationally long: concurrent chat occupancy is bounded
+  by auth (who may call) and the four-slot sequential walk, not by a
+  dedicated concurrency limit; monitor and rate-limit at the operator's
+  discretion (a CF-4 audit-dashboard item).
+- **v19.6.4 (KPK-04) — a cancelled probe round is not evidence about the
+  providers:** the operator closing the browser, a reverse proxy aborting
+  the request, or a round deadline expiring mid-probe used to convert
+  `context.Canceled` into UNAVAILABLE observations and OVERWRITE all four
+  providers' last-known-good health — a caller-controlled act could mark
+  the whole local AI stack dead and force false no-route responses until
+  the next successful round repaired the table. Now: a probe round whose
+  parent context is done ABORTS (the context error is returned,
+  `errors.Is`-identifiable), `ProbeAllAndObserve` records NOTHING, and the
+  health table's last-known-good states AND timestamps stand. Genuine
+  per-provider failures (refused, timed out, unreachable) are recorded
+  exactly when the parent context is live; the background loop's round
+  budget carries a 2x margin over the per-probe timeout so a slow tier is
+  classified by the probe's OWN timeout (UNAVAILABLE, genuine), never
+  ambiguously by the round clock.
 - **AI Runtime REST auth ≠ inference port auth:** the Bearer gate protects
   the ScarliHQ REST surface (8090) ONLY — the inference ports themselves
   (30000/8089/11438/11435) authenticate nobody by design (the documented

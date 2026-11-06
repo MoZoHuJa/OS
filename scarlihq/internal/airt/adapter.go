@@ -65,8 +65,11 @@ type LocalAdapter struct {
 // NewLocalAdapter constructs the transport for one tier. The provider
 // and the endpoint are validated (closed shapes, fail-closed); the
 // timeout bounds every attempt (the end-to-end budget rides the request
-// context on top; both apply, whichever is shorter).
-func NewLocalAdapter(provider airuntime.Provider, endpoint Endpoint, timeout time.Duration) (*LocalAdapter, error) {
+// context on top; both apply, whichever is shorter). v19.6.4 (KPK-03):
+// opts declare the trusted dial networks for resolved name destinations
+// (no option → the Docker default pools; a declared set replaces them —
+// see WithTrustedDialCIDRs and TrustedDialCIDRsFromEnv).
+func NewLocalAdapter(provider airuntime.Provider, endpoint Endpoint, timeout time.Duration, opts ...DialOption) (*LocalAdapter, error) {
 	if err := provider.Validate(); err != nil {
 		return nil, err
 	}
@@ -79,10 +82,14 @@ func NewLocalAdapter(provider airuntime.Provider, endpoint Endpoint, timeout tim
 	if timeout > MaxAdapterTimeout {
 		return nil, fmt.Errorf("airt: adapter timeout must be <= %s (got %s — SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT is bounded, never unbounded)", MaxAdapterTimeout, timeout)
 	}
+	trustedCIDRs := resolveDialCIDRs(opts)
+	if err := validateNameEndpointDialTrust(map[airuntime.Provider]Endpoint{provider: endpoint}, trustedCIDRs); err != nil {
+		return nil, err
+	}
 	return &LocalAdapter{
 		provider: provider,
 		endpoint: endpoint,
-		client:   newLocalClient(timeout, endpointHostSet(endpoint)),
+		client:   newLocalClient(timeout, endpointHostSet(endpoint), trustedCIDRs),
 	}, nil
 }
 
@@ -138,20 +145,21 @@ func (a *LocalAdapter) Chat(ctx context.Context, req airuntime.Request) (airunti
 // LocalAdapter per tier plus the health prober (DefaultProbeTimeout).
 // All four tiers are ALWAYS present — the closed set — because health
 // gates routing, construction must not (a missing tier would be a silent
-// fail-open hole in failover).
-func NewLocalStack(endpoints map[airuntime.Provider]Endpoint, chatTimeout time.Duration) (map[airuntime.Provider]Adapter, *Prober, error) {
+// fail-open hole in failover). v19.6.4 (KPK-03): opts declare the trusted
+// dial networks (no option → the Docker default pools).
+func NewLocalStack(endpoints map[airuntime.Provider]Endpoint, chatTimeout time.Duration, opts ...DialOption) (map[airuntime.Provider]Adapter, *Prober, error) {
 	if err := validateEndpointSet(endpoints); err != nil {
 		return nil, nil, err
 	}
 	adapters := make(map[airuntime.Provider]Adapter, len(airuntime.AllProviders()))
 	for _, p := range airuntime.AllProviders() {
-		adapter, err := NewLocalAdapter(p, endpoints[p], chatTimeout)
+		adapter, err := NewLocalAdapter(p, endpoints[p], chatTimeout, opts...)
 		if err != nil {
 			return nil, nil, err
 		}
 		adapters[p] = adapter
 	}
-	prober, err := NewProber(endpoints, DefaultProbeTimeout)
+	prober, err := NewProber(endpoints, DefaultProbeTimeout, opts...)
 	if err != nil {
 		return nil, nil, err
 	}
