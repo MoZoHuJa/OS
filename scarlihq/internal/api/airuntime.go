@@ -19,11 +19,13 @@ package api
 //     becoming a fabric proposal is CF-3, behind the fabric's approvals.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/airt"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/airuntime"
@@ -34,6 +36,15 @@ import (
 // 32 messages × 4096 runes — the bound leaves the full legitimate range
 // reachable while keeping a runaway body out of memory.
 const MaxChatBodyBytes = 1 << 20
+
+// aiWriteMargin is the serialization/network margin the /api/ai/chat and
+// /api/ai/propose write path keeps BEYOND the chat budget when it extends
+// the per-request write deadline (http.ResponseController, KPK-02,
+// v19.6.3): the runtime must be able to WRITE the answer it is still
+// allowed to wait for. The server's 30s WriteTimeout default keeps
+// serving every other surface unchanged — the AI paths carry their own
+// deliberate, budget-derived deadline instead of conflicting with it.
+const aiWriteMargin = 10 * time.Second
 
 // ConfigureAIRuntime attaches the CF-2 Universal AI Runtime (opt-in from
 // main.go, SCARLIHQ_AIRUNTIME_ENABLED=true). Nil is rejected — there is
@@ -276,6 +287,21 @@ func decodeChatJSON(w http.ResponseWriter, r *http.Request, factory func() any) 
 	return target, true
 }
 
+// aiChatContext imposes the END-TO-END timeout contract on one AI chat
+// request (KPK-02, v19.6.3): the request context carries the runtime's
+// chat budget as its deadline (every adapter attempt and probe operation
+// propagates it — sequential failover steps share the SAME budget, never
+// an independent per-tier allowance), and the HTTP write path is extended
+// beyond the budget with the write margin so a legitimate slow answer is
+// written by the server, never cut by the socket write deadline. Behind a
+// ResponseWriter that cannot set deadlines (httptest's recorder) the
+// extension degrades honestly — the budget itself rides the context
+// regardless.
+func (h *Handler) aiChatContext(r *http.Request) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(r.Context(), h.aiRuntime.ChatBudget())
+	return ctx, cancel
+}
+
 func (h *Handler) aiChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "use POST")
@@ -284,6 +310,11 @@ func (h *Handler) aiChat(w http.ResponseWriter, r *http.Request) {
 	if h.aiRuntimeDisabled(w) {
 		return
 	}
+	// KPK-02 (v19.6.3): the end-to-end budget — context deadline for the
+	// whole failover walk, write deadline beyond it for the answer.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(h.aiRuntime.ChatBudget() + aiWriteMargin)) //nolint:errcheck — a recorder cannot set deadlines; the budget rides the context regardless
+	ctx, cancel := h.aiChatContext(r)
+	defer cancel()
 	request, ok := decodeChatJSON(w, r, func() any { return &aiChatRequest{} })
 	if !ok {
 		return
@@ -293,20 +324,25 @@ func (h *Handler) aiChat(w http.ResponseWriter, r *http.Request) {
 	for _, m := range req.Messages {
 		messages = append(messages, airuntime.Message{Role: airuntime.Role(m.Role), Content: m.Content})
 	}
-	outcome, err := h.aiRuntime.Chat(r.Context(), airuntime.Request{
+	outcome, err := h.aiRuntime.Chat(ctx, airuntime.Request{
 		Model:    airuntime.ModelID(req.Model),
 		Messages: messages,
 	})
 	if err != nil {
 		// The named errors ride their explanations: the skips on no-route,
-		// the attempts on all-failed — fail-closed, not fail-blind. The
-		// status is set BEFORE the body (writeJSONStatus), exactly like
-		// writeJSONError — a body-first write would swallow the status.
+		// the attempts on all-failed, the attempts on budget expiry —
+		// fail-closed, not fail-blind. The status is set BEFORE the body
+		// (writeJSONStatus), exactly like writeJSONError — a body-first
+		// write would swallow the status.
 		switch {
 		case errors.Is(err, airuntime.ErrUnknownModel):
 			writeJSONError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, airuntime.ErrNoRoute):
 			writeJSONStatus(w, http.StatusServiceUnavailable, map[string]interface{}{"error": err.Error(), "skips": skipViews(outcome.Skips)})
+		case errors.Is(err, airt.ErrBudgetExpired):
+			// The deliberate timeout status (KPK-02): the end-to-end budget
+			// expired — 504, the attempts that consumed it riding along.
+			writeJSONStatus(w, http.StatusGatewayTimeout, map[string]interface{}{"error": err.Error(), "attempts": attemptViews(outcome.Attempts)})
 		case errors.Is(err, airt.ErrAllAdaptersFailed):
 			writeJSONStatus(w, http.StatusBadGateway, map[string]interface{}{"error": err.Error(), "attempts": attemptViews(outcome.Attempts)})
 		default:

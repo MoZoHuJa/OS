@@ -198,7 +198,7 @@ func TestLocalAdapterConstruction(t *testing.T) {
 
 func TestNewLocalStack(t *testing.T) {
 	// The full stack: all four tiers, one adapter each, plus the prober.
-	adapters, prober, err := NewLocalStack(DefaultEndpoints())
+	adapters, prober, err := NewLocalStack(DefaultEndpoints(), DefaultAdapterTimeout)
 	if err != nil {
 		t.Fatalf("local stack: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestNewLocalStack(t *testing.T) {
 	// An incomplete endpoint set: fail-closed construction, named tier.
 	partial := DefaultEndpoints()
 	delete(partial, airuntime.ProviderBeeLlama)
-	if _, _, err := NewLocalStack(partial); err == nil || !strings.Contains(err.Error(), "beellama") {
+	if _, _, err := NewLocalStack(partial, DefaultAdapterTimeout); err == nil || !strings.Contains(err.Error(), "beellama") {
 		t.Fatalf("an incomplete stack must fail closed naming the missing tier, got %v", err)
 	}
 }

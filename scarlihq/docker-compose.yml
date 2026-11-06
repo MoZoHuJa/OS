@@ -144,11 +144,20 @@ services:
       #   - SCARLIHQ_AIRUNTIME_OLLAMA_URL=http://ollama-agent:11434
       # Operator bootstrap (provider:model, comma-separated — the registry
       # IS the routing surface; split on the FIRST colon, model ids may
-      # carry their own, e.g. qwen3:4b):
+      # carry their own, e.g. qwen3:4b). NOTE: the registry is NOT durable
+      # until the CF-4/persistence decision — a restart restores it from
+      # this env + operator POSTs, so ALWAYS declare the models here when
+      # enabling the runtime:
       #   - SCARLIHQ_AIRUNTIME_MODELS=sglang:qwen3-14b,ollama:qwen3:4b
       # Optional freshness loop (Go duration; without it POST /api/ai/probe
       # is the operator's refresh — the table never expires on its own):
       #   - SCARLIHQ_AIRUNTIME_PROBE_INTERVAL=30s
+      # v19.6.3 (KPK-02) — optional per-attempt chat timeout (Go duration,
+      # upper bound 300s; default 30s = the stack's timeout_ms precedent).
+      # The END-TO-END budget for one AI request is 4x this value (the
+      # complete failover walk); /api/ai/chat|propose extend their write
+      # deadline beyond it — a slow local generation is written, not cut:
+      #   - SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT=30s
     # v19.3.2 — OPT-IN compute lifecycle mounts (see env notes above).
     #   - /var/lib/scarlix-reservation:/var/lib/scarlix-reservation:rw
     #   - /run/scarlix-workload-bridge/bridge.sock:/run/scarlix-workload-bridge/bridge.sock

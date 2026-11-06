@@ -56,7 +56,7 @@ func proposeStack(t *testing.T, content string) *airt.Runtime {
 		airuntime.ProviderBeeLlama: airt.Endpoint(dead),
 		airuntime.ProviderOllama:   airt.Endpoint(dead),
 	}
-	adapters, prober, err := airt.NewLocalStack(endpoints)
+	adapters, prober, err := airt.NewLocalStack(endpoints, airt.DefaultAdapterTimeout)
 	if err != nil {
 		t.Fatalf("local stack: %v", err)
 	}
@@ -78,7 +78,7 @@ func proposeStack(t *testing.T, content string) *airt.Runtime {
 			t.Fatalf("observe %s: %v", p, err)
 		}
 	}
-	rt, err := airt.NewRuntime(registry, table, prober, adapters)
+	rt, err := airt.NewRuntime(registry, table, prober, adapters, airt.ChatBudget(airt.DefaultAdapterTimeout))
 	if err != nil {
 		t.Fatalf("runtime: %v", err)
 	}

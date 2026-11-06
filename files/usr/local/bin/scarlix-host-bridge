@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# SCARLIX OS v19.2.9 — Host Bridge (privileged ops for ScarliHQ dashboard)
+# SCARLIX OS — Host Bridge (privileged ops for ScarliHQ dashboard)
+# Version: the VERSION file ONLY (/etc/scarlix/VERSION — read at runtime,
+# never a hardcoded release; the stale v19.2.9 header was the
+# KPK-19.6.1-P3-01 finding, v19.6.3).
 #
 # ARCHITECTURE (v18.0.0): ScarliHQ container has NO docker.sock, NO nvidia runtime.
 # It writes ONLY to /var/lib/scarlix/bridge-input/desired-mode (writable by nonroot 65532).

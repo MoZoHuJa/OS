@@ -40,21 +40,29 @@ type ChatOutcome struct {
 // layer. The router stays PURE and decides the plan; this type walks the
 // plan and attributes the answer — the LLM never decides anything here:
 // Chat produces normalized text, nothing else (proposals to the fabric
-// are CF-3, behind its approvals).
+// are CF-3, behind its approvals). The chatBudget is the END-TO-END
+// budget for one AI request (ChatBudget(perAttempt) — KPK-02, v19.6.3):
+// the API layer imposes it as the request context deadline, every
+// adapter attempt propagates it, and the executor reports its expiry as
+// ErrBudgetExpired — a deliberate, named timeout, never a socket write
+// deadline artifact.
 type Runtime struct {
-	registry *airuntime.ModelRegistry
-	health   *airuntime.HealthTable
-	router   airuntime.Router
-	prober   *Prober
-	adapters map[airuntime.Provider]Adapter
+	registry   *airuntime.ModelRegistry
+	health     *airuntime.HealthTable
+	router     airuntime.Router
+	prober     *Prober
+	adapters   map[airuntime.Provider]Adapter
+	chatBudget time.Duration
 }
 
 // NewRuntime constructs the executing runtime. Fail-closed: the
 // registry, the health table and the prober are required (nil rejected
-// by name), and the adapter set must cover EXACTLY the closed
-// four-provider stack — all four tiers always present, health gates
-// routing (a missing tier would be a silent fail-open hole in failover).
-func NewRuntime(registry *airuntime.ModelRegistry, health *airuntime.HealthTable, prober *Prober, adapters map[airuntime.Provider]Adapter) (*Runtime, error) {
+// by name), the adapter set must cover EXACTLY the closed four-provider
+// stack — all four tiers always present, health gates routing (a missing
+// tier would be a silent fail-open hole in failover) — and the chat
+// budget must be a positive duration (the end-to-end request deadline,
+// ChatBudget(perAttempt); KPK-02, v19.6.3).
+func NewRuntime(registry *airuntime.ModelRegistry, health *airuntime.HealthTable, prober *Prober, adapters map[airuntime.Provider]Adapter, chatBudget time.Duration) (*Runtime, error) {
 	if registry == nil {
 		return nil, fmt.Errorf("%w: model registry is required", ErrNilRuntimeInput)
 	}
@@ -66,6 +74,9 @@ func NewRuntime(registry *airuntime.ModelRegistry, health *airuntime.HealthTable
 	}
 	if adapters == nil {
 		return nil, fmt.Errorf("%w: adapters are required", ErrNilRuntimeInput)
+	}
+	if chatBudget <= 0 {
+		return nil, fmt.Errorf("%w: chat budget must be > 0 (got %s — the end-to-end request deadline, ChatBudget(perAttempt))", ErrNilRuntimeInput, chatBudget)
 	}
 	for _, p := range airuntime.AllProviders() {
 		adapter, ok := adapters[p]
@@ -82,11 +93,12 @@ func NewRuntime(registry *airuntime.ModelRegistry, health *airuntime.HealthTable
 		}
 	}
 	return &Runtime{
-		registry: registry,
-		health:   health,
-		router:   airuntime.Router{},
-		prober:   prober,
-		adapters: adapters,
+		registry:   registry,
+		health:     health,
+		router:     airuntime.Router{},
+		prober:     prober,
+		adapters:   adapters,
+		chatBudget: chatBudget,
 	}, nil
 }
 
@@ -111,6 +123,10 @@ func (rt *Runtime) Register(p airuntime.Provider, m airuntime.ModelID) error {
 //	                   why, by named rule (503)
 //	ErrAllAdaptersFailed → every step failed; outcome.Attempts says
 //	                   which tiers and why (502)
+//	ErrBudgetExpired → the end-to-end request deadline expired before
+//	                   a tier answered; outcome.Attempts rides along
+//	                   (504 — a deliberate timeout status, never a
+//	                   socket write deadline artifact; KPK-02, v19.6.3)
 //
 // The plan is replanned per request from LIVE state — a probe recorded
 // between two requests changes the second request's plan (health gates
@@ -118,6 +134,11 @@ func (rt *Runtime) Register(p airuntime.Provider, m airuntime.ModelID) error {
 func (rt *Runtime) Chat(ctx context.Context, req airuntime.Request) (ChatOutcome, error) {
 	if err := req.Validate(); err != nil {
 		return ChatOutcome{}, err
+	}
+	if ctx.Err() != nil {
+		// The budget (or the caller's cancellation) is already spent — no
+		// attempt is made, none is fabricated: the honest immediate report.
+		return ChatOutcome{}, fmt.Errorf("%w: %w", ErrBudgetExpired, ctx.Err())
 	}
 	plan, err := rt.router.Plan(rt.registry, rt.health, req.Model)
 	if err != nil {
@@ -135,12 +156,26 @@ func (rt *Runtime) Chat(ctx context.Context, req airuntime.Request) (ChatOutcome
 				Role:     step.Role,
 				Error:    err.Error(),
 			})
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				// The end-to-end budget expired mid-walk: the remaining steps
+				// would fail instantly anyway — report the expiry BY NAME, with
+				// the attempts that consumed the budget riding along (the
+				// caller maps this to a deliberate 504, KPK-02).
+				return outcome, fmt.Errorf("%w: %w", ErrBudgetExpired, ctxErr)
+			}
 			continue // failover: the plan's next step, in tier order
 		}
 		outcome.Response = resp
 		return outcome, nil
 	}
 	return outcome, fmt.Errorf("%w: model %q — %d steps, all failed", ErrAllAdaptersFailed, req.Model, len(outcome.Attempts))
+}
+
+// ChatBudget returns the end-to-end budget this runtime was constructed
+// with — the number the API layer imposes as the request context
+// deadline and extends the HTTP write path beyond (KPK-02, v19.6.3).
+func (rt *Runtime) ChatBudget() time.Duration {
+	return rt.chatBudget
 }
 
 // ProbeAll triggers one probe round NOW and records it into the health

@@ -91,7 +91,7 @@ func aiStack(t *testing.T, sglangStatus int, ollamaStatus int) *airt.Runtime {
 		airuntime.ProviderBeeLlama: airt.Endpoint(dead),
 		airuntime.ProviderOllama:   airt.Endpoint(ollama.URL),
 	}
-	adapters, prober, err := airt.NewLocalStack(endpoints)
+	adapters, prober, err := airt.NewLocalStack(endpoints, airt.DefaultAdapterTimeout)
 	if err != nil {
 		t.Fatalf("local stack: %v", err)
 	}
@@ -118,7 +118,7 @@ func aiStack(t *testing.T, sglangStatus int, ollamaStatus int) *airt.Runtime {
 			t.Fatalf("observe %s: %v", p, err)
 		}
 	}
-	rt, err := airt.NewRuntime(registry, table, prober, adapters)
+	rt, err := airt.NewRuntime(registry, table, prober, adapters, airt.ChatBudget(airt.DefaultAdapterTimeout))
 	if err != nil {
 		t.Fatalf("runtime: %v", err)
 	}
@@ -394,11 +394,11 @@ func TestAIChatNoRoute(t *testing.T) {
 			t.Fatalf("register: %v", err)
 		}
 	}
-	adapters, prober, err := airt.NewLocalStack(airt.DefaultEndpoints())
+	adapters, prober, err := airt.NewLocalStack(airt.DefaultEndpoints(), airt.DefaultAdapterTimeout)
 	if err != nil {
 		t.Fatalf("stack: %v", err)
 	}
-	rt, err := airt.NewRuntime(registry, airuntime.NewHealthTable(), prober, adapters)
+	rt, err := airt.NewRuntime(registry, airuntime.NewHealthTable(), prober, adapters, airt.ChatBudget(airt.DefaultAdapterTimeout))
 	if err != nil {
 		t.Fatalf("runtime: %v", err)
 	}
@@ -495,4 +495,204 @@ func TestAIChatMethodDiscipline(t *testing.T) {
 func aiChatDo(t *testing.T, mux *http.ServeMux, body string) (int, map[string]interface{}) {
 	t.Helper()
 	return aiRequest(t, mux, http.MethodPost, "/api/ai/chat", body)
+}
+
+// ---------------------------------------------------------------------------
+// KPK-01/KPK-02 (v19.6.3): the transport boundary and the end-to-end
+// timeout contract, asserted through the REAL REST surface (mux + handler,
+// exactly as main.go wires it).
+// ---------------------------------------------------------------------------
+
+// aiTightBudgetStack wires a REAL runtime whose end-to-end budget is a
+// deliberate 150ms over four hanging tiers (per-attempt 10s): the budget,
+// not the per-attempt bound, must expire first — the handler's job is to
+// report it as a deliberate 504, never as a generic 502 and never by the
+// socket write deadline.
+func aiTightBudgetStack(t *testing.T) *airt.Runtime {
+	t.Helper()
+	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A dead-but-listening port: never answers. The body IS drained
+		// (a real HTTP tier parses the request; draining lets the server
+		// side notice the client's deadline-abort and release the conn —
+		// the client closes its side on cancel, verified: no client-side
+		// fd leak), then the handler parks until the request context dies.
+		io.Copy(io.Discard, io.LimitReader(r.Body, 1<<20)) //nolint:errcheck — drain only
+		<-r.Context().Done()
+	}))
+	t.Cleanup(hang.Close)
+	dead := "http://127.0.0.1:1"
+	endpoints := map[airuntime.Provider]airt.Endpoint{
+		airuntime.ProviderSGLang:   airt.Endpoint(hang.URL),
+		airuntime.ProviderVLLM:     airt.Endpoint(dead),
+		airuntime.ProviderBeeLlama: airt.Endpoint(dead),
+		airuntime.ProviderOllama:   airt.Endpoint(hang.URL),
+	}
+	adapters, prober, err := airt.NewLocalStack(endpoints, 10*time.Second)
+	if err != nil {
+		t.Fatalf("local stack: %v", err)
+	}
+	registry, err := airuntime.NewModelRegistry(airuntime.DefaultMaxModels)
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	for _, p := range airuntime.AllProviders() {
+		if err := registry.Register(p, "qwen3-14b"); err != nil {
+			t.Fatalf("register %s: %v", p, err)
+		}
+	}
+	table := airuntime.NewHealthTable()
+	base := time.Now().UTC()
+	for i, p := range airuntime.AllProviders() {
+		if err := table.Observe(airuntime.Observation{Provider: p, State: airuntime.HealthHealthy, At: base.Add(-time.Duration(i+1) * time.Minute)}); err != nil {
+			t.Fatalf("observe %s: %v", p, err)
+		}
+	}
+	rt, err := airt.NewRuntime(registry, table, prober, adapters, 150*time.Millisecond)
+	if err != nil {
+		t.Fatalf("runtime: %v", err)
+	}
+	return rt
+}
+
+// TestAIChatBudgetExpiredReturns504: the end-to-end budget expiring is a
+// DELIBERATE timeout status (KPK-02 acceptance 2): 504 with the attempts
+// that consumed the budget riding along — not a 502, not an empty body,
+// not a socket-write-deadline artifact.
+func TestAIChatBudgetExpiredReturns504(t *testing.T) {
+	mux := newAIRuntimeTestMux(t, func(h *handlerAI) *airt.Runtime {
+		return aiTightBudgetStack(t)
+	})
+	start := time.Now()
+	code, body := aiRequest(t, mux, http.MethodPost, "/api/ai/chat", `{"model":"qwen3-14b","messages":[{"role":"user","content":"hello"}]}`)
+	if code != http.StatusGatewayTimeout {
+		t.Fatalf("budget expiry must answer 504, got %d (%v)", code, body)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("the expiry must be reported at the deadline (the handler must not wait out every hanging tier), took %s", elapsed)
+	}
+	errText, _ := body["error"].(string)
+	if !strings.Contains(errText, "budget expired") {
+		t.Fatalf("the error must name the budget expiry, got %q", errText)
+	}
+	attempts, ok := body["attempts"].([]interface{})
+	if !ok || len(attempts) < 1 {
+		t.Fatalf("the attempts that consumed the budget ride along, got %v", body)
+	}
+	first, _ := attempts[0].(map[string]interface{})
+	if first["provider"] != "sglang" {
+		t.Fatalf("the first attempt must be the primary tier, got %v", first)
+	}
+}
+
+// TestAIChatSlowButLegitAnswerSucceeds: a tier answering slowly but within
+// the budget is an ANSWER (KPK-02 acceptance 3): the handler completes and
+// writes the response — the budget is a budget, not a race.
+func TestAIChatSlowButLegitAnswerSucceeds(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		time.Sleep(120 * time.Millisecond)
+		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"slow but legit"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":2}}`)
+	}))
+	t.Cleanup(slow.Close)
+	dead := "http://127.0.0.1:1"
+	endpoints := map[airuntime.Provider]airt.Endpoint{
+		airuntime.ProviderSGLang:   airt.Endpoint(slow.URL),
+		airuntime.ProviderVLLM:     airt.Endpoint(dead),
+		airuntime.ProviderBeeLlama: airt.Endpoint(dead),
+		airuntime.ProviderOllama:   airt.Endpoint(dead),
+	}
+	adapters, prober, err := airt.NewLocalStack(endpoints, airt.DefaultAdapterTimeout)
+	if err != nil {
+		t.Fatalf("local stack: %v", err)
+	}
+	registry, err := airuntime.NewModelRegistry(airuntime.DefaultMaxModels)
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	if err := registry.Register(airuntime.ProviderSGLang, "qwen3-14b"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	table := airuntime.NewHealthTable()
+	if err := table.Observe(airuntime.Observation{Provider: airuntime.ProviderSGLang, State: airuntime.HealthHealthy, At: time.Now().UTC().Add(-time.Minute)}); err != nil {
+		t.Fatalf("observe: %v", err)
+	}
+	rt, err := airt.NewRuntime(registry, table, prober, adapters, airt.ChatBudget(airt.DefaultAdapterTimeout))
+	if err != nil {
+		t.Fatalf("runtime: %v", err)
+	}
+	mux := newAIRuntimeTestMux(t, func(h *handlerAI) *airt.Runtime {
+		return rt
+	})
+	code, body := aiRequest(t, mux, http.MethodPost, "/api/ai/chat", `{"model":"qwen3-14b","messages":[{"role":"user","content":"hello"}]}`)
+	if code != http.StatusOK {
+		t.Fatalf("a slow-but-within-budget answer must be written, got %d (%v)", code, body)
+	}
+	if body["provider"] != "sglang" {
+		t.Fatalf("attribution must survive the slow answer, got %v", body["provider"])
+	}
+}
+
+// TestAIChatRedirectNeverFollowed: through the WHOLE REST surface — a
+// compromised tier answering 307 toward an external destination must
+// yield a transport failure (502 with attempts over the all-dead stack),
+// and the external destination must receive ZERO requests (KPK-01
+// acceptance 1, end to end through the mux).
+func TestAIChatRedirectNeverFollowed(t *testing.T) {
+	var destHits int64
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		destHits++
+		io.WriteString(w, `{}`)
+	}))
+	t.Cleanup(destination.Close)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(origin.Close)
+	dead := "http://127.0.0.1:1"
+	endpoints := map[airuntime.Provider]airt.Endpoint{
+		airuntime.ProviderSGLang:   airt.Endpoint(origin.URL),
+		airuntime.ProviderVLLM:     airt.Endpoint(dead),
+		airuntime.ProviderBeeLlama: airt.Endpoint(dead),
+		airuntime.ProviderOllama:   airt.Endpoint(dead),
+	}
+	adapters, prober, err := airt.NewLocalStack(endpoints, 2*time.Second)
+	if err != nil {
+		t.Fatalf("local stack: %v", err)
+	}
+	registry, err := airuntime.NewModelRegistry(airuntime.DefaultMaxModels)
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	if err := registry.Register(airuntime.ProviderSGLang, "qwen3-14b"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	table := airuntime.NewHealthTable()
+	if err := table.Observe(airuntime.Observation{Provider: airuntime.ProviderSGLang, State: airuntime.HealthHealthy, At: time.Now().UTC().Add(-time.Minute)}); err != nil {
+		t.Fatalf("observe: %v", err)
+	}
+	rt, err := airt.NewRuntime(registry, table, prober, adapters, airt.ChatBudget(2*time.Second))
+	if err != nil {
+		t.Fatalf("runtime: %v", err)
+	}
+	mux := newAIRuntimeTestMux(t, func(h *handlerAI) *airt.Runtime {
+		return rt
+	})
+	code, body := aiRequest(t, mux, http.MethodPost, "/api/ai/chat", `{"model":"qwen3-14b","messages":[{"role":"user","content":"private prompt"}]}`)
+	if code != http.StatusBadGateway {
+		t.Fatalf("a redirecting tier is a failed attempt like any other — all-dead stack answers 502, got %d (%v)", code, body)
+	}
+	if destHits != 0 {
+		t.Fatalf("the external redirect destination received %d requests — ZERO is the only acceptable number (KPK-01, end to end)", destHits)
+	}
+	attempts, ok := body["attempts"].([]interface{})
+	if !ok || len(attempts) != 1 {
+		t.Fatalf("the redirecting tier must be the recorded attempt, got %v", body)
+	}
+	first, _ := attempts[0].(map[string]interface{})
+	if first["provider"] != "sglang" {
+		t.Fatalf("the attempt must name sglang, got %v", first)
+	}
 }
