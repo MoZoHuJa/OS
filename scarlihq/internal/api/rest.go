@@ -24,7 +24,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.6.5"
+var Version = "19.6.6"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -419,17 +419,48 @@ func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mode := r.URL.Query().Get("set")
-	if mode == "" {
+	profile := r.URL.Query().Get("profile")
+	if r.Header.Get("X-Scarlix-Profile") != "" && profile == "" {
+		profile = r.Header.Get("X-Scarlix-Profile")
+	}
+	if mode == "" || profile == "" {
 		// v18.6 P1: Limit request body size (was: no limit → DoS with large body)
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		var body map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
-			mode = body["mode"]
+			if mode == "" {
+				mode = body["mode"]
+			}
+			if profile == "" {
+				profile = body["profile"]
+			}
 		}
 	}
 	if mode == "" {
 		writeJSONError(w, http.StatusBadRequest, "no mode specified")
 		return
+	}
+	// v19.6.6 (KPK-19.6.5-P1-03): SERVER-SIDE profile policy enforcement at
+	// the action boundary — a declared profile reference (query/body field
+	// or X-Scarlix-Profile header) makes the mode switch DECIDABLE against
+	// the profile's scarlix_mode policy: can_switch=false refuses EVERY
+	// switch (XOX stays in her default mode), a target outside the allowed
+	// set is refused BY NAME. The household Bearer token still gates the
+	// route; the profile selects WHICH policy applies (identity stays the
+	// caller's declaration until per-profile authentication — CF-4+, the
+	// honest residual in the SECURITY_MAP). An invalid/unloadable profile
+	// reference FAILS CLOSED (400): a broken policy file can never become
+	// an unenforced bypass.
+	if profile != "" {
+		p, err := h.profiles.Load(profile)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := p.AllowsMode(mode); err != nil {
+			writeJSONError(w, http.StatusForbidden, err.Error())
+			return
+		}
 	}
 
 	// v18.7.3 P1: Centralized mode request (was: duplicate retrying check + Set()
@@ -479,12 +510,26 @@ func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// listProfiles returns the FULL policy-bearing profile set plus the
+// EXPLICIT issues of invalid profile files (v19.6.6, KPK-19.6.5-P1-03):
+// every profile now serializes its declared policy (permissions,
+// scarlix_mode, token_budget, content_filter), and a file that fails to
+// parse or validate is EXCLUDED from the list and surfaced in "invalid" —
+// never silently converted into a filename-only fallback profile that
+// looked permissively fine. An empty directory is an empty list and an
+// empty issues array (a stable JSON shape, not nulls).
 func (h *Handler) listProfiles(w http.ResponseWriter, r *http.Request) {
-	profs := h.profiles.List()
+	profs, issues := h.profiles.List()
 	if profs == nil {
 		profs = []profiles.Profile{}
 	}
-	writeJSON(w, profs)
+	if issues == nil {
+		issues = []profiles.Issue{}
+	}
+	writeJSON(w, map[string]interface{}{
+		"profiles": profs,
+		"invalid":  issues,
+	})
 }
 
 // issueWSTicket issues a short-lived, single-use ticket for the WS upgrade handshake.

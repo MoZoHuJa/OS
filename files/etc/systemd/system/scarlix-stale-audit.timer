@@ -1,0 +1,13 @@
+[Unit]
+Description=SCARLIX OS v19.6.6 — Weekly stale-tree audit timer
+
+[Timer]
+# Monday 06:30 local — the week starts with the debt NAMED, before the
+# daily work buries it again. Persistent=true: a missed run (host off)
+# fires at the next boot — the audit never silently skips.
+OnCalendar=Mon *-*-* 06:30:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

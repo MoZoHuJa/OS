@@ -9,4 +9,4 @@ scarlix_mode:
 hud_theme: elegant
 token_budget:
   monthly: 50000
-  model: qwen3.6:14b-ollama
+  model: qwen2.5:3b

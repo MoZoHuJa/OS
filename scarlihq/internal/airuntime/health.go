@@ -99,19 +99,25 @@ func (t *HealthTable) Observe(o Observation) error {
 }
 
 // ObserveBatch commits a WHOLE probe round atomically (v19.6.5,
-// KPK-19.6.4-P2-02): every observation is validated, the batch is
-// monotonicity-checked against the current state, and the writes are
-// applied under ONE lock — either the entire round lands or none of it
-// does; a partially applied round is never visible to a concurrent
-// reader. The commit boundary is CONTEXT-AWARE: the caller's context is
-// checked immediately before the writes begin, so a cancellation that
-// arrives after the probes completed but before the commit records
-// NOTHING — the context error returns errors.Is-identifiable and the
-// table's previous observations and timestamps stand.
+// KPK-19.6.4-P2-02; v19.6.6, KPK-19.6.5-P2-02): every observation is
+// validated, the batch is monotonicity-checked against the current state,
+// and the writes are applied under ONE lock — either the entire round
+// lands or none of it does; a partially applied round is never visible to
+// a concurrent reader. The commit boundary is CONTEXT-AWARE and lives
+// UNDER THE LOCK (v19.6.6, KPK-19.6.5-P2-02: the v19.6.5 check ran
+// BEFORE mutex acquisition — a cancellation arriving while ObserveBatch
+// was BLOCKED waiting for a contended lock was never re-checked, and the
+// batch committed anyway; now the caller's context is checked immediately
+// AFTER the lock is acquired, so a cancellation in the waiting window
+// records NOTHING), so a cancellation that arrives after the probes
+// completed but before the commit records NOTHING — the context error
+// returns errors.Is-identifiable and the table's previous observations
+// and timestamps stand.
 //
-// The linearization rule (one sentence, deliberate): cancellation BEFORE
-// the batch commit means ZERO writes; cancellation AFTER the commit does
-// not retroactively undo a completed observation round.
+// The linearization rule (one sentence, deliberate): the successful
+// context check UNDER the lock is the commit acceptance point —
+// cancellation BEFORE that point means ZERO writes; cancellation AFTER it
+// does not retroactively undo a completed observation round.
 //
 // A batch containing an invalid observation (bad shape) or a STALE one
 // (older than what the table already holds for that provider) is
@@ -132,16 +138,21 @@ func (t *HealthTable) ObserveBatch(ctx context.Context, observations []Observati
 			return err
 		}
 	}
-	// The COMMIT BOUNDARY (KPK-19.6.4-P2-02): a done context here means
-	// the caller walked away between probe completion and the commit —
-	// zero writes, the context error returns identifiably, the
-	// last-known-good observations stand. A cancelled commit is not
-	// evidence about the providers.
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("airuntime: observation batch rejected at the commit boundary — the caller's context is done (%w); a cancelled commit records nothing, the previous observations stand (KPK-19.6.4-P2-02)", err)
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// The COMMIT BOUNDARY (KPK-19.6.4-P2-02 + KPK-19.6.5-P2-02): the
+	// context is checked UNDER THE LOCK, immediately after acquisition —
+	// a done context here means the caller walked away (between probe
+	// completion and the commit, OR while this call was blocked waiting
+	// for a contended lock): zero writes, the context error returns
+	// identifiably, the last-known-good observations stand. A cancelled
+	// commit is not evidence about the providers. THIS check is the
+	// linearization point: a cancellation racing the lock hand-off can no
+	// longer slip a write through the waiting window (the v19.6.5 defect —
+	// the check lived before the lock and the waiting gap was unchecked).
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("airuntime: observation batch rejected at the commit boundary (under the health-table lock) — the caller's context is done (%w); a cancelled commit records nothing, the previous observations stand (KPK-19.6.4-P2-02, KPK-19.6.5-P2-02)", err)
+	}
 	// Monotonicity for the WHOLE batch under the lock: any stale member
 	// rejects the batch whole — a concurrent NEWER round that committed
 	// first makes this round stale, and it is discarded completely,

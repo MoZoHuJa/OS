@@ -1,4 +1,8 @@
-# SCARLIX OS v19.2.9 — EndeavourOS Edition — Model-Agnostic Configuration
+# SCARLIX OS — EndeavourOS Edition — Model-Agnostic Configuration
+# (v19.6.6, KPK-19.6.5-P3-06: no hardcoded release identity in this header —
+#  the VERSION file is the single source of truth for the release; a config
+#  header carrying its own version claims drifts, as v19.2.9 did here while
+#  the release was v19.6.5)
 #
 # v17.9.7: flashinfer disabled in SGLang compose (--disable-flashinfer) — Blackwell sm_120 safe.
 #   `flashinfer: false` documents this (compose is the source of truth for the flag).
@@ -74,10 +78,14 @@ beellama:
 
 # === Fallback: Ollama (starter model auto-downloaded by install.sh) ===
 # install.sh pulls qwen2.5:3b (~2GB) so Ollama fallback works immediately.
-# For larger models, run: ollama pull qwen3.6:14b
+# v19.6.6 (KPK-19.6.5-P3-06): qwen2.5:3b is THE canonical Ollama identifier
+# (one id per provider — the old "qwen3.6:14b" guidance was a phantom tag,
+# the same phantom v17.9.5 caught in the GGUF file name). The PRODUCTION
+# tier is SGLang's Qwen3-14B-AWQ (Tier-1 above); for a bigger CPU fallback
+# the operator pulls a REAL tag explicitly and sets ollama.model — the
+# profiles' token_budget.model references this canonical id (qwen2.5:3b).
 ollama:
-  model: "qwen2.5:3b"  # Starter model (auto-downloaded)
-  # For production: model: "qwen3.6:14b"
+  model: "qwen2.5:3b"  # Starter model (auto-downloaded) — the canonical Ollama id
   keep_alive: "15m"
   num_parallel: 2
 

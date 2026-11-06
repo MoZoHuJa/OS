@@ -9,4 +9,4 @@ scarlix_mode:
 hud_theme: gaming
 token_budget:
   monthly: 100000
-  model: qwen3.6:14b-ollama
+  model: qwen2.5:3b

@@ -37,8 +37,12 @@ const localDialTimeout = 5 * time.Second
 // trust: a comma-separated list of CIDRs the resolved addresses of the
 // configured endpoint names must land in (e.g.
 // "172.18.0.0/16,fd00::/8"). Loopback (127.0.0.0/8, ::1) is ALWAYS
-// trusted and never needs declaring. Unset/empty → the Docker DEFAULT
-// bridge address pool (172.17.0.0/12) — v19.6.5 (KPK-19.6.4-P2-01):
+// trusted and never needs declaring. Unset/empty → Docker's documented
+// DEFAULT address pool, enumerated as fifteen canonical /16 networks
+// (172.17.0.0/16 … 172.31.0.0/16 — see dockerDefaultPoolCIDRs) — v19.6.6
+// (KPK-19.6.5-P2-01): the non-canonical "172.17.0.0/12" shorthand is
+// gone, it masked to 172.16.0.0/12 and trusted 172.16.0.0/16 (not a
+// Docker default-pool range) — v19.6.5 (KPK-19.6.4-P2-01) history:
 // deliberately NOT the whole RFC1918 space and deliberately NOT the
 // home-LAN range 192.168.0.0/16 — that range is operator territory
 // (routers, NAS, workstations — unrelated LAN hosts a poisoned resolver
@@ -227,24 +231,92 @@ func approvedResolvedIPs(ips []net.IP, trustedCIDRs []*net.IPNet) []net.IP {
 	return ips
 }
 
+// dockerDefaultPoolCIDRs is the EXPLICIT enumeration of Docker's documented
+// default address pool (172.17.0.0 through 172.31.255.255) as fifteen
+// CANONICAL /16 networks. v19.6.6 (KPK-19.6.5-P2-01): the v19.6.5 default
+// was the string "172.17.0.0/12" — a NON-canonical network address whose
+// /12 mask PARSES (and masks) to 172.16.0.0/12, silently trusting the whole
+// 172.16.0.0–172.31.255.255 range including 172.16.0.0/16, which is NOT
+// part of Docker's default pool (the pool begins at 172.17.0.0) and is
+// commonly corporate-VPN/overlay space. The same class of trust-scope
+// mistake v19.6.5 removed for 192.168.0.0/16, in a different private
+// range. The remediation follows the independent audit's backward-
+// compatibility option: enumerate the exact documented pool CIDRs as
+// SEPARATE entries — each canonical, each justifiable, no supernet that
+// includes unrelated address space. 172.16.0.0/16 is now REJECTED by
+// default (regression-tested by name); every entry below survives
+// net.ParseCIDR unchanged (canonical network == the literal itself), so
+// the trust range stated here is the trust range enforced in code.
+// Loopback is always trusted (ipIsTrusted) and is not listed. A fresh
+// slice every call — no shared mutable state.
+var dockerDefaultPoolCIDRs = []string{
+	"172.17.0.0/16", // Docker default bridge network (the pool's first /16)
+	"172.18.0.0/16", // user-defined networks carved from the default pool
+	"172.19.0.0/16",
+	"172.20.0.0/16",
+	"172.21.0.0/16",
+	"172.22.0.0/16",
+	"172.23.0.0/16",
+	"172.24.0.0/16",
+	"172.25.0.0/16",
+	"172.26.0.0/16",
+	"172.27.0.0/16",
+	"172.28.0.0/16",
+	"172.29.0.0/16",
+	"172.30.0.0/16",
+	"172.31.0.0/16", // the pool's last /16 — 172.32.0.0 and beyond are OUT
+}
+
 // DefaultTrustedDialCIDRs returns the trusted local networks applied when
-// SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS is unset: Docker's own DEFAULT address
-// pool (172.17.0.0/12 — the default bridge networks). v19.6.5
-// (KPK-19.6.4-P2-01): the home-LAN pool 192.168.0.0/16 was REMOVED from
-// the implicit default — it is not a per-deployment Docker boundary, it
-// covers every 192.168.x.x destination including typical home routers,
-// NAS devices and unrelated LAN hosts, and this repository's compose
-// declares scarlix-net as an EXTERNAL network whose subnet is not pinned
-// here, so the code cannot infer that a 192.168.x.x address belongs to
-// this deployment. An operator whose network lives there declares it via
-// SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS (obtain the exact subnet with
+// SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS is unset: Docker's documented DEFAULT
+// address pool, enumerated as fifteen canonical /16 networks
+// (172.17.0.0/16 … 172.31.0.0/16 — see dockerDefaultPoolCIDRs). v19.6.6
+// (KPK-19.6.5-P2-01): the non-canonical "172.17.0.0/12" shorthand is GONE —
+// it masked to 172.16.0.0/12 and trusted 172.16.0.0/16 (not a Docker
+// default-pool range) by accident of CIDR normalization; the enumerated
+// /16s state the ACTUAL trust range and nothing wider. v19.6.5
+// (KPK-19.6.4-P2-01) history: the home-LAN pool 192.168.0.0/16 was removed
+// from the implicit default — it is operator territory, declared, never
+// implicit. 10.0.0.0/8 is likewise out until declared. An operator whose
+// scarlix-net lives outside the default pool (custom address pools,
+// 192.168.x, 10.x) declares the ACTUAL subnet via
+// SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS (obtain it with
 // `docker network inspect scarlix-net`) — explicit, visible, auditable.
-// Deliberately NOT the whole RFC1918 space: 10.0.0.0/8 and 192.168.0.0/16
-// are out until an operator declares them. Loopback is always trusted
-// (ipIsTrusted) and is not listed. A fresh slice every call — no shared
-// mutable state.
+// The operator-facing WARNING for service-name endpoints without a
+// declaration is UndeclaredServiceNameEndpoints (main.go logs it).
 func DefaultTrustedDialCIDRs() []*net.IPNet {
-	return parseCIDRsOrPanic("172.17.0.0/12")
+	return parseCIDRsOrPanic(dockerDefaultPoolCIDRs...)
+}
+
+// UndeclaredServiceNameEndpoints returns the providers whose endpoint host
+// is a service NAME (not "localhost", not an IP literal) — the endpoints
+// whose resolution can only land inside explicitly trusted networks.
+// v19.6.6 (the SK-audit P2-01 guidance): when such endpoints exist while
+// SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS is UNSET, the caller is riding the
+// Docker default pool enumeration; a scarlix-net created OUTSIDE that pool
+// (custom address pools, 192.168.x, 10.x) will fail at DIAL time, not at
+// boot. main.go surfaces this as a loud startup WARNING with the exact
+// derivation command — the operator declares the actual subnet before
+// production, explicit, visible, auditable (the fail-closed construction
+// for loopback-only trust is unchanged and separate).
+func UndeclaredServiceNameEndpoints(endpoints map[airuntime.Provider]Endpoint) []airuntime.Provider {
+	var names []airuntime.Provider
+	for _, p := range airuntime.AllProviders() {
+		e, ok := endpoints[p]
+		if !ok {
+			continue
+		}
+		u, err := url.Parse(string(e))
+		if err != nil || u.Hostname() == "" {
+			continue // the endpoint validator already refuses this shape
+		}
+		host := strings.ToLower(u.Hostname())
+		if host == "localhost" || net.ParseIP(host) != nil {
+			continue // loopback name or an IP literal — resolution lands where the trust already is
+		}
+		names = append(names, p)
+	}
+	return names
 }
 
 // parseCIDRsOrPanic turns literal CIDR strings into networks. The inputs
@@ -317,8 +389,9 @@ func TrustedDialCIDRsFromEnv(getenv func(string) string) ([]*net.IPNet, error) {
 // DialOption carries one constructor-level dial policy choice. Exactly
 // one option exists today: the trusted dial networks (KPK-03). A nil
 // option slice — every pre-v19.6.4 call site — applies
-// DefaultTrustedDialCIDRs() (the Docker default bridge pool, v19.6.5:
-// 172.17.0.0/12 only); WithTrustedDialCIDRs REPLACES the default
+// DefaultTrustedDialCIDRs() (the Docker default address pool, v19.6.6:
+// enumerated canonical /16s 172.17.0.0/16 … 172.31.0.0/16, no
+// non-canonical supernet); WithTrustedDialCIDRs REPLACES the default
 // with the declared set — a nil or EMPTY declared set trusts loopback
 // ONLY, which fails closed at construction for service-name endpoints
 // (use IP literals or declare the networks instead).
@@ -338,8 +411,9 @@ func WithTrustedDialCIDRs(cidrs []*net.IPNet) DialOption {
 
 // resolveDialCIDRs computes the effective trusted network set: the LAST
 // declared option wins (a nil or empty declared set = loopback only); no
-// declaration at all → the Docker default bridge pool (172.17.0.0/12,
-// v19.6.5: no home-LAN range by default).
+// declaration at all → the Docker default address pool (the enumerated
+// canonical /16s, v19.6.6: no 172.16.0.0/16, no home-LAN range by
+// default).
 func resolveDialCIDRs(opts []DialOption) []*net.IPNet {
 	for i := len(opts) - 1; i >= 0; i-- {
 		if opts[i].declaredNetworks {
@@ -385,7 +459,7 @@ func validateNameEndpointDialTrust(endpoints map[airuntime.Provider]Endpoint, tr
 			continue // loopback name or an IP literal — no non-loopback trust needed
 		}
 		if !hasNonLoopbackNetwork(trustedCIDRs) {
-			return fmt.Errorf("airt: endpoint for %s uses the service name %q, but no non-loopback trusted dial network is declared (SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS — the Docker default bridge pool 172.17.0.0/12 applies when unset; an empty declaration trusts loopback only and cannot resolve a name; use an IP literal or declare the network, e.g. the scarlix-net subnet from 'docker network inspect scarlix-net')", p, host)
+			return fmt.Errorf("airt: endpoint for %s uses the service name %q, but no non-loopback trusted dial network is declared (SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS — the Docker default address pool 172.17.0.0/16…172.31.0.0/16 applies when unset; an empty declaration trusts loopback only and cannot resolve a name; use an IP literal or declare the network, e.g. the scarlix-net subnet from 'docker network inspect scarlix-net')", p, host)
 		}
 	}
 	return nil
