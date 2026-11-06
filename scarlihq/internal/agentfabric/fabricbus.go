@@ -61,6 +61,16 @@ const (
 	// deliberately NO withdrawn state: a PENDING request's command is
 	// DECIDED (terminal), so the request stays answerable until decided.
 	SignalApprovalDecided SignalType = "approval.decided"
+	// SignalProposalCaptured: a PENDING proposal was persisted (CF-3 — an
+	// LLM response became a fabric proposal; the operator holds the
+	// accept/dismiss decision). There is deliberately NO withdrawn state
+	// and NO expiry: a PENDING proposal stays answerable until decided.
+	SignalProposalCaptured SignalType = "proposal.captured"
+	// SignalProposalDecided: an operator decision (ACCEPTED / DISMISSED —
+	// the closed two-way terminal) closed a proposal. ACCEPTED references
+	// the captured command (one command per proposal, ever); DISMISSED
+	// never became a command.
+	SignalProposalDecided SignalType = "proposal.decided"
 )
 
 // Signal is one change notification: what changed (Type), which record

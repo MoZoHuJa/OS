@@ -446,6 +446,57 @@ transport's own markers). The security posture:
   bootstrap declaration aborts startup (the runtime never boots on a
   guessed registry). No new files, no new mounts, no new env secrets.
 
+## (q) Universal AI Runtime propose surface (v19.6.2, CF-3 — Phase C, both opt-ins)
+
+CF-3 is the bridge the whole Phase C exists for: an LLM response becomes
+a fabric PROPOSAL — never an auto-submitted command. The security
+posture is the BF-4 genre applied to model-authored intents:
+
+- **The LLM never holds a pen that writes into the fabric.** The propose
+  endpoint (`POST /api/ai/propose`) captures a well-formed proposal block
+  as a PENDING record and NOTHING else — no routing, no kernel decision,
+  no execution, no approval request. The ONLY door from a proposal to a
+  command is the operator's explicit accept; everything after it is the
+  EXISTING fabric flow (the fresh kernel evaluation, the BF-4 approval
+  gate for coding acts, the audit-first ordering — untouched). A
+  dismissal never becomes a command at all.
+- **The parser is fail-closed, never a guess:** exactly ONE fenced
+  `scarlix-proposal` block (column-0 fence — a loose fence would match
+  code samples ABOUT proposals), the closed three-field shape with
+  unknown fields rejected, every field required (no defaults — the
+  parser never fills in a blank agent or guesses a capability), values
+  validated with the BAR'S OWN validators (no second, weaker standard
+  for model-authored intents). Zero blocks → the honest null; TWO
+  blocks → malformed, refused (ambiguity is never resolved by guessing).
+  A malformed block captures NOTHING — 422 with the named reason + the
+  provider/model attribution + the refused content.
+- **The proposal is held to the store discipline:** proposals.json rides
+  the fabric opt-in (default next to commands.json, same 0700 directory,
+  same tamper discipline — 0600/0700 checked at load AND before every
+  persist, fail-closed load, atomic persist + rollback, bounded 256,
+  never deleted — the reviewable history). The operator label is
+  attribution, never a credential (the bearer token remains the only
+  authentication boundary).
+- **The linkage is one-way and one-shot:** the durable `proposal_id`
+  field on the command is additive (`omitempty` — the commands schema
+  stays v1, BF-1..BF-4 files load unchanged); ONE command per proposal,
+  enforced on the mutation side AND at load (a hand-edited duplicate is
+  corruption, not "some proposals work"); accept's reconciliation
+  (GetByProposal) closes the crash window — no intent is captured twice
+  through that door. Accept carries NO params — the accepted thing is
+  the proposed thing (no re-steering; the BF-4 rule, applied at capture).
+- **Both opt-ins, fail-closed:** the propose surface answers 503 without
+  the AI runtime (`SCARLIHQ_AIRUNTIME_ENABLED=true`) AND without the
+  fabric's proposal store (`SCARLIHQ_AGENTFABRIC_ENABLED=true`) — the
+  runtime alone never captures anything; the fabric alone has nothing to
+  parse. All four routes sit behind `h.auth` on the existing
+  Bearer-gated listener; no new ports, no new mounts.
+- **Chat-side bounds carry over unchanged:** the propose request is the
+  chat request shape (1 MiB bound, closed decode); the response content
+  is bounded to 4096 runes by the CF-1 contract before the parser ever
+  sees it; the parse itself is pure text processing — no network, no
+  clock, no randomness in `ParseProposal`.
+
 ## Other security properties
 
 - **REST/MCP/WS auth:** Bearer token only (no `?token=` URL — v18.6 P2 removed the URL fallback that leaked tokens into logs/referrer/proxy). `crypto/subtle.ConstantTimeCompare` (v18.0.0 P1 — was: custom `secureCompare`).

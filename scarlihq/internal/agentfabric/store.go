@@ -162,6 +162,7 @@ func (s *CommandStore) Load() error {
 		return fmt.Errorf("agentfabric: commands file %s carries %d records (bound %d) — archive and rotate the file deliberately", s.path, len(f.Commands), s.maxCommands)
 	}
 	seen := make(map[string]bool, len(f.Commands))
+	seenProposal := make(map[string]bool, len(f.Commands))
 	for i, c := range f.Commands {
 		if err := c.validate(); err != nil {
 			return fmt.Errorf("agentfabric: commands file %s record %d: %w", s.path, i, err)
@@ -170,6 +171,16 @@ func (s *CommandStore) Load() error {
 			return fmt.Errorf("agentfabric: commands file %s record %d: duplicate command id %s", s.path, i, c.ID)
 		}
 		seen[c.ID] = true
+		// CF-3: ONE PROPOSAL REFERENCE PER COMMAND, enforced here too — two
+		// commands claiming the same proposal id means one proposal was
+		// accepted twice (a hand-edited file, or worse). Corruption, never
+		// "some proposals work".
+		if c.ProposalID != "" {
+			if seenProposal[c.ProposalID] {
+				return fmt.Errorf("agentfabric: commands file %s record %d: proposal %s is referenced TWICE — one command per proposal, ever (fail-closed)", s.path, i, c.ProposalID)
+			}
+			seenProposal[c.ProposalID] = true
+		}
 	}
 	// Copy in (defensive: never alias the decoded slice).
 	s.commands = make([]CommandRecord, len(f.Commands))
@@ -316,6 +327,31 @@ func (s *CommandStore) Submit(intent string, agent agentkernel.AgentID, capabili
 // behavior). The label is validated (bounded, no control characters —
 // attribution for the reviewable history, never a credential).
 func (s *CommandStore) SubmitWithSubmitter(intent string, agent agentkernel.AgentID, capability agentkernel.Capability, workspaceID WorkspaceID, submitter string, now time.Time) (CommandRecord, error) {
+	return s.submit(intent, agent, capability, workspaceID, submitter, "", now)
+}
+
+// SubmitWithProposal (CF-3, v19.6.2) is the accept path's capture: the
+// command is born from an accepted proposal — the DURABLE proposal_id
+// linkage rides the record (additive + omitempty, the BF-4 submitter
+// precedent), the submitter label is the ACCEPTING OPERATOR (the human
+// act that captured the intent into the bar; the model attribution rides
+// the proposal record and the composed view). The linkage is validated
+// and required non-empty — this method never submits an unlinked
+// command; that is SubmitWithSubmitter's job. One command per proposal,
+// ever: a duplicate linkage is refused (a re-accepting operator takes
+// the reconciliation path instead — GetByProposal). Proposals are
+// UNSCOPED by design (scoping is an operator topology act at bar
+// submission, not a model freedom).
+func (s *CommandStore) SubmitWithProposal(intent string, agent agentkernel.AgentID, capability agentkernel.Capability, submitter string, proposalID ProposalID, now time.Time) (CommandRecord, error) {
+	if err := proposalID.Validate(); err != nil {
+		return CommandRecord{}, err
+	}
+	return s.submit(intent, agent, capability, "", submitter, string(proposalID), now)
+}
+
+// submit is the shared capture path: validation, RNG, append + persist
+// with rollback (the BF-1 discipline, unchanged).
+func (s *CommandStore) submit(intent string, agent agentkernel.AgentID, capability agentkernel.Capability, workspaceID WorkspaceID, submitter string, proposalID string, now time.Time) (CommandRecord, error) {
 	if err := ValidateIntent(intent); err != nil {
 		return CommandRecord{}, err
 	}
@@ -338,6 +374,11 @@ func (s *CommandStore) SubmitWithSubmitter(intent string, agent agentkernel.Agen
 			return CommandRecord{}, fmt.Errorf("agentfabric: submitter: %v", err)
 		}
 	}
+	if proposalID != "" {
+		if err := ProposalID(proposalID).Validate(); err != nil {
+			return CommandRecord{}, err
+		}
+	}
 	id, err := rngCommandID()
 	if err != nil {
 		return CommandRecord{}, err
@@ -349,6 +390,7 @@ func (s *CommandStore) SubmitWithSubmitter(intent string, agent agentkernel.Agen
 		Capability:  capability,
 		WorkspaceID: string(workspaceID),
 		Submitter:   submitter,
+		ProposalID:  proposalID,
 		State:       CommandSubmitted,
 		SubmittedAt: now.UTC(),
 		UpdatedAt:   now.UTC(),
@@ -368,6 +410,16 @@ func (s *CommandStore) SubmitWithSubmitter(intent string, agent agentkernel.Agen
 	for _, existing := range s.commands {
 		if existing.ID == id {
 			return CommandRecord{}, fmt.Errorf("agentfabric: command id collision (rng reuse) — submission aborted")
+		}
+	}
+	// CF-3: one command per proposal, ever — the duplicate-linkage refusal
+	// on the mutation side (the load side checks the file for the same
+	// thing; a re-accepting operator takes the reconciliation path).
+	if proposalID != "" {
+		for _, existing := range s.commands {
+			if existing.ProposalID == proposalID {
+				return CommandRecord{}, fmt.Errorf("agentfabric: proposal %s already has its command %s — one command per proposal, ever", proposalID, existing.ID)
+			}
 		}
 	}
 	s.commands = append(s.commands, rec)
@@ -469,6 +521,27 @@ func (s *CommandStore) Get(id CommandID) (CommandRecord, bool) {
 	defer s.mu.Unlock()
 	for _, rec := range s.commands {
 		if rec.ID == string(id) {
+			return copyCommandRecord(rec), true
+		}
+	}
+	return CommandRecord{}, false
+}
+
+// GetByProposal (CF-3, v19.6.2) returns the command born from a proposal,
+// when one exists — the DURABLE linkage lookup that makes accept's crash
+// reconciliation deterministic: a crashed accept (command persisted,
+// proposal close not) retries into THIS answer and closes the proposal
+// against the EXISTING command instead of capturing a second intent.
+// Linear scan under the lock (the rare reconciliation path; the hot paths
+// keep their own indexes).
+func (s *CommandStore) GetByProposal(proposalID ProposalID) (CommandRecord, bool) {
+	if err := proposalID.Validate(); err != nil {
+		return CommandRecord{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, rec := range s.commands {
+		if rec.ProposalID == string(proposalID) {
 			return copyCommandRecord(rec), true
 		}
 	}

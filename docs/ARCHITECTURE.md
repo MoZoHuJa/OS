@@ -227,7 +227,7 @@ the allocation id + outcome (`compute.reserve`/`compute.release` lines).
 Enablement is the composition (kernel + registry + compute lifecycle), no
 env of its own. **The v19.4.x line is COMPLETE — Phase A delivered.**
 
-## Universal AI Runtime (v19.6.x, Phase C — CF-1 foundation · CF-2 transport)
+## Universal AI Runtime (v19.6.x, Phase C — CF-1 foundation · CF-2 transport · CF-3 propose surface)
 
 Phase C builds the LLM layer that will PROPOSE to the closed fabric —
 *"LLM navrhuje, politika rozhoduje"*: the LLM proposes, policy decides;
@@ -235,8 +235,10 @@ the fabric + kernel remain the deciding, auditable path. CF-1 (v19.6.0)
 landed the typed foundation; CF-2 (v19.6.1) wires it — the real
 local-stack adapters, the health prober and the auth-gated REST surface
 (opt-in), all BEHIND the pure contract, in a separate package
-(`internal/airt`): the contract decides, the transport serves. The
-routing pipeline, foundation to execution:
+(`internal/airt`): the contract decides, the transport serves. CF-3
+(v19.6.2) bridges the two worlds: an LLM response becomes a fabric
+PROPOSAL — never an auto-submitted command. The routing pipeline,
+foundation to execution:
 
 ```
 Provider (closed enumeration: sglang · vllm · beellama · ollama — the REAL
@@ -315,6 +317,47 @@ first answer wins ──► Response (provider attribution + UTC timestamp —
   nothing on the host; an LLM response becoming a fabric PROPOSAL is
   CF-3, behind the fabric's approvals.
 - Design + verification: `docs/AI_RUNTIME_CF2_DESIGN.md`.
+
+### CF-3 (v19.6.2) — the propose surface: the bridge to the fabric
+
+`internal/agentfabric` (proposal.go/pstore.go) + `internal/api/aipropose.go`
+compose the CF-2 chat with a PURE parser and the fabric's capture path:
+
+```
+POST /api/ai/propose (Bearer-gated; 503 without BOTH opt-ins —
+   │       SCARLIHQ_AIRUNTIME_ENABLED=true AND the fabric's proposal store)
+   ▼
+the unchanged CF-2 failover chat (attribution: provider + model)
+   │
+   ▼
+ParseProposal (PURE, deterministic — internal/agentfabric): scan for
+   │       exactly ONE fenced ```scarlix-proposal block; the closed
+   │       three-field shape {intent, agent_id, capability}; the BAR'S
+   │       OWN validators; zero blocks → the honest null; malformed →
+   │       422, NOTHING captured (never a guess)
+   ▼
+ProposalStore.Capture → PENDING ProposalRecord (proposals.json — the
+   │       astore discipline; TYPED proposer attribution provider/model)
+   ▼
+the operator — and ONLY the operator:
+   ├─ accept ──► SubmitWithProposal (the BF-1 path; the DURABLE additive
+   │              proposal_id linkage; the bar's routing question; the
+   │              kernel decision; BF-4 approvals downstream) + the
+   │              RECONCILIATION for a crashed accept (GetByProposal —
+   │              no intent captured twice)
+   └─ dismiss ─► terminal, no command ever
+```
+
+- **The charter, enforced structurally:** the propose endpoint captures
+  and NOTHING else — no routing, no decision, no execution, no approval
+  request; accept is the operator's explicit yes and everything after it
+  is the EXISTING fabric flow (routeAndDecide, BF-4 gate for coding
+  acts). The model never holds a pen that writes into the fabric.
+- **Surface:** /api/ai/propose · /api/ai/proposals (bounded, closed
+  ?state= filter, counts) · /api/ai/proposals/accept ·
+  /api/ai/proposals/dismiss; the composed additive `proposal` field on
+  command views; bus signals proposal.captured / proposal.decided.
+- Design + verification: `docs/AI_RUNTIME_CF3_DESIGN.md`.
 
 ## GPU Arbitration (scarlix-mode)
 

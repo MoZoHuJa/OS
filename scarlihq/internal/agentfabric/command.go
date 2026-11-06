@@ -180,7 +180,16 @@ type CommandRecord struct {
 	// the bearer token is the only authentication boundary). Additive +
 	// omitempty: the commands schema stays v1 — BF-1/BF-2 binaries and
 	// files are unaffected.
-	Submitter   string                `json:"submitter,omitempty"`
+	Submitter string `json:"submitter,omitempty"`
+	// ProposalID (CF-3, v19.6.2): the DURABLE linkage to the proposal this
+	// command was born from — set exactly once, by SubmitWithProposal (the
+	// operator's accept). Additive + omitempty: the commands schema stays
+	// v1 — BF-1..BF-4 binaries and files are unaffected (the BF-4 submitter
+	// precedent, word for word). The linkage is what makes accept's
+	// crash-window reconciliation deterministic (GetByProposal): a crashed
+	// accept AFTER the command persist closes the proposal against the
+	// EXISTING command on retry — no intent is captured twice.
+	ProposalID  string                `json:"proposal_id,omitempty"`
 	State       CommandState          `json:"state"`
 	Decision    *agentkernel.Decision `json:"decision,omitempty"`
 	SubmittedAt time.Time             `json:"submitted_at"`
@@ -234,6 +243,14 @@ func (r CommandRecord) validate() error {
 	if r.Submitter != "" {
 		if err := ValidatePrincipalLabel(r.Submitter); err != nil {
 			return fmt.Errorf("agentfabric: command %s: submitter: %v", r.ID, err)
+		}
+	}
+	// CF-3: the proposal linkage, when present, is a well-formed proposal
+	// id (one command per proposal, ever — the store's load-side duplicate
+	// check enforces it across the file).
+	if r.ProposalID != "" {
+		if err := ProposalID(r.ProposalID).Validate(); err != nil {
+			return fmt.Errorf("agentfabric: command %s: %v", r.ID, err)
 		}
 	}
 	if r.UpdatedAt.Before(r.SubmittedAt) {

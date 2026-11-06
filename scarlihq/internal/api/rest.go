@@ -24,7 +24,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.6.1"
+var Version = "19.6.2"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -188,6 +188,12 @@ type Handler struct {
 	// fabric opt-in; 503 without it — mutating acts never bypass the
 	// human gate).
 	agentApprovals *agentfabric.ApprovalStore
+	// CF-3 (v19.6.2): Agent Fabric proposal store (proposals.json) —
+	// the LLM propose surface's persisted entity (an LLM response
+	// becomes a fabric PROPOSAL, never an auto-submitted command).
+	// Nil until ConfigureAgentFabricProposals is called (rides the
+	// fabric opt-in; 503 without it).
+	agentProposals *agentfabric.ProposalStore
 	// BF-3 (v19.5.2): Agent Fabric change-signal bus — the /ws/bar push
 	// backbone (bounded 16×16, drop-not-block, no replay). Nil until
 	// ConfigureAgentFabricExecutions is called.
@@ -287,6 +293,19 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/ai/models", h.auth(h.aiModels))
 	mux.HandleFunc("/api/ai/probe", h.auth(h.aiProbe))
 	mux.HandleFunc("/api/ai/chat", h.auth(h.aiChat))
+	// CF-3 (v19.6.2): the propose surface — the bridge between the AI
+	// runtime and the fabric. POST /api/ai/propose runs a chat through
+	// the CF-2 transport and captures a well-formed ```scarlix-proposal
+	// block as a PENDING proposal (pure parser, attribution: provider +
+	// model); the review surface lists them; accept is the ONLY door
+	// from a proposal to a command (the BF-1 capture path + the bar's
+	// routing + the reconciliation for a crashed accept); dismiss is
+	// the operator's unconditional no. 503 until BOTH opt-ins are on
+	// (the runtime AND the fabric's proposal store).
+	mux.HandleFunc("/api/ai/propose", h.auth(h.aiPropose))
+	mux.HandleFunc("/api/ai/proposals", h.auth(h.aiProposals))
+	mux.HandleFunc("/api/ai/proposals/accept", h.auth(h.aiProposalAccept))
+	mux.HandleFunc("/api/ai/proposals/dismiss", h.auth(h.aiProposalDismiss))
 }
 
 // auth middleware: validates Bearer token header only.
