@@ -443,16 +443,46 @@ transport's own markers). The security posture:
   A MIXED answer set (one approved + one foreign address) is refused WHOLE
   (fail-closed, never filtered); an empty or failed resolution is refused
   fail-closed. Loopback (`127.0.0.0/8`, `::1`) is ALWAYS trusted; the
-  non-loopback trust defaults to Docker's own address pools
-  (`172.17.0.0/12` + `192.168.0.0/16`) and is REPLACED by an operator
+  non-loopback trust defaults to Docker's own default bridge pool
+  (`172.17.0.0/12` — v19.6.5 below) and is REPLACED by an operator
   declaration — `SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS=172.18.0.0/16,10.0.0.0/8`
   (comma-separated CIDRs, validated fail-closed at startup; deliberately
-  NOT the whole RFC1918 space: `10.0.0.0/8` is out until declared). A
-  service-name endpoint with loopback-only trust fails AT CONSTRUCTION,
-  never per-request. Residual, stated honestly: the resolver itself (Docker
-  DNS / host resolv.conf) is trusted only to ANSWER — a compromised resolver
-  can no longer steer traffic anywhere it wants, only into the declared
-  networks or into a refusal.
+  NOT the whole RFC1918 space: `10.0.0.0/8` and `192.168.0.0/16` are out
+  until declared). A service-name endpoint with loopback-only trust fails
+  AT CONSTRUCTION, never per-request. Residual, stated honestly: the
+  resolver itself (Docker DNS / host resolv.conf) is trusted only to
+  ANSWER — a compromised resolver can no longer steer traffic anywhere it
+  wants, only into the declared networks or into a refusal.
+  **v19.6.5 (KPK-19.6.4-P2-01) narrows the DEFAULT to what it actually is:**
+  the implicit trust is the Docker default bridge pool `172.17.0.0/12`
+  ONLY — the home-LAN range `192.168.0.0/16` was REMOVED from the default
+  (the independent v19.6.4 audit: it is not a per-deployment Docker
+  boundary, it covers every `192.168.x.x` destination — home routers, NAS
+  devices, workstations — and scarlix-net is an EXTERNAL network whose
+  subnet this repository cannot pin, so the code cannot infer that a
+  `192.168.x.x` address belongs to this deployment; a poisoned resolver
+  mapping an approved name to `192.168.1.1` used to pass the address
+  policy). Default trust now rejects `192.168.1.1`, `192.168.0.1` and
+  every other unrelated LAN destination (regression-tested); an operator
+  whose scarlix-net lives in the LAN range DECLARES it explicitly — obtain
+  the actual subnet with `docker network inspect scarlix-net` and set
+  `SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS=<that subnet>` — explicit, visible,
+  auditable, never implicit. A UNIVERSAL route declaration
+  (`0.0.0.0/0`, `::/0`) is REFUSED at startup — a declaration that would
+  nullify the destination boundary is a configuration error, not a posture
+  (the independent audit's hardening note, adopted as policy). The
+  Dual-stack note (the SK-audit P2-03 residual, documented): a
+  dual-stack service name may answer A + AAAA records; an unapproved
+  IPv6 answer refuses the set WHOLE (fail-closed) — on dual-stack
+  Docker networks declare the IPv6 pool in
+  `SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS` (e.g. `fd00::/64` alongside the
+  IPv4 subnet) or prefer IPv4 literals in the endpoints.
+  Residual, inherent and accepted (documented at tag): lateral movement
+  INSIDE a declared trusted network (a compromised resolver returning a
+  different container/host in the SAME declared subnet still passes) —
+  CIDR trust cannot distinguish hosts within the declared net; the
+  operator narrows the declaration to the smallest actual subnet, and a
+  per-service expected-IP pin remains an optional CF-4+ item.
 - **v19.6.3 (KPK-02) — one end-to-end timeout contract:** the budget for
   one AI request is per-attempt × the closed four-tier set
   (`airt.ChatBudget` — the complete honest failover walk; sequential
@@ -473,21 +503,38 @@ transport's own markers). The security posture:
   by auth (who may call) and the four-slot sequential walk, not by a
   dedicated concurrency limit; monitor and rate-limit at the operator's
   discretion (a CF-4 audit-dashboard item).
-- **v19.6.4 (KPK-04) — a cancelled probe round is not evidence about the
-  providers:** the operator closing the browser, a reverse proxy aborting
-  the request, or a round deadline expiring mid-probe used to convert
-  `context.Canceled` into UNAVAILABLE observations and OVERWRITE all four
-  providers' last-known-good health — a caller-controlled act could mark
-  the whole local AI stack dead and force false no-route responses until
-  the next successful round repaired the table. Now: a probe round whose
-  parent context is done ABORTS (the context error is returned,
-  `errors.Is`-identifiable), `ProbeAllAndObserve` records NOTHING, and the
-  health table's last-known-good states AND timestamps stand. Genuine
+- **v19.6.4 (KPK-04) + v19.6.5 (KPK-19.6.4-P2-02) — a cancelled probe round
+  is not evidence about the providers, and the recording is ATOMIC:** the
+  operator closing the browser, a reverse proxy aborting the request, or a
+  round deadline expiring mid-probe used to convert `context.Canceled` into
+  UNAVAILABLE observations and OVERWRITE all four providers'
+  last-known-good health — a caller-controlled act could mark the whole
+  local AI stack dead and force false no-route responses until the next
+  successful round repaired the table. Now: a probe round whose parent
+  context is done ABORTS (the context error is returned, `errors.Is`
+  identifiable), `ProbeAllAndObserve` records NOTHING, and the health
+  table's last-known-good states AND timestamps stand. Genuine
   per-provider failures (refused, timed out, unreachable) are recorded
   exactly when the parent context is live; the background loop's round
   budget carries a 2x margin over the per-probe timeout so a slow tier is
   classified by the probe's OWN timeout (UNAVAILABLE, genuine), never
   ambiguously by the round clock.
+  **v19.6.5 (KPK-19.6.4-P2-02) closes the check-to-write race the
+  independent v19.6.4 audit found:** the v19.6.4 round-end guard checked
+  the context AFTER the probes but then wrote observations one-by-one
+  (`table.Observe` in a loop) — a cancellation arriving in the gap between
+  `ProbeAll` returning and the first write still landed its observations,
+  and a future mid-loop cancellation could land a PARTIAL round. Now the
+  whole round commits through `HealthTable.ObserveBatch` — every
+  observation validated, the batch monotonicity-checked, and the writes
+  applied under ONE lock; the caller's context is re-checked AT THE COMMIT
+  BOUNDARY immediately before any write. The linearization rule, stated
+  once: cancellation BEFORE the batch commit means ZERO writes; cancellation
+  AFTER the commit does not retroactively undo a completed observation
+  round. A deterministic test seam (`Prober.preCommit`) pins a cancellation
+  into exactly the post-probe/pre-commit window and proves the boundary
+  refuses it; concurrent racing rounds are proven monotone and never
+  partially applied (a stale round is discarded whole).
 - **AI Runtime REST auth ≠ inference port auth:** the Bearer gate protects
   the ScarliHQ REST surface (8090) ONLY — the inference ports themselves
   (30000/8089/11438/11435) authenticate nobody by design (the documented

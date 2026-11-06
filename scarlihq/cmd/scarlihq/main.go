@@ -27,7 +27,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.6.4"
+var Version = "19.6.5"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -333,14 +333,18 @@ func main() {
 			}
 			chatTimeout = d
 		}
-		// KPK-03 (v19.6.4): the trusted dial networks for service-name
-		// endpoints — the dial guard RESOLVES a configured name, validates
-		// EVERY answered address against these networks (loopback is always
-		// trusted) and PINNS the connection to a validated address. Unset →
-		// the Docker default pools (172.17.0.0/12 + 192.168.0.0/16); a
-		// declared set REPLACES them (an explicit 10.0.0.0/8 must be
-		// declared — no blind RFC1918 trust). Fail-closed on garbage, like
-		// every env surface.
+		// KPK-03 (v19.6.4) + KPK-19.6.4-P2-01 (v19.6.5): the trusted dial
+		// networks for service-name endpoints — the dial guard RESOLVES a
+		// configured name, validates EVERY answered address against these
+		// networks (loopback is always trusted) and PINNS the connection to
+		// a validated address. Unset → the Docker default bridge pool
+		// (172.17.0.0/12 — v19.6.5: the home-LAN range 192.168.0.0/16 is
+		// NOT implicit anymore; an operator whose scarlix-net lives there
+		// declares it, e.g. the subnet from 'docker network inspect
+		// scarlix-net'); a declared set REPLACES the default (an explicit
+		// 10.0.0.0/8 must be declared — no blind RFC1918 trust; a UNIVERSAL
+		// route 0.0.0.0/0 / ::/0 is refused — it would nullify the boundary).
+		// Fail-closed on garbage, like every env surface.
 		var dialOpts []airt.DialOption
 		if raw := strings.TrimSpace(os.Getenv(airt.TrustedCIDRsEnvVar)); raw != "" {
 			cidrs, err := airt.TrustedDialCIDRsFromEnv(os.Getenv)

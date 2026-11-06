@@ -160,16 +160,29 @@ services:
       # /api/ai/chat|propose extend their write deadline beyond it — a
       # slow local generation is written, not cut:
       #   - SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT=30s
-      # v19.6.4 (KPK-03) — optional trusted dial networks for the
-      # service-name endpoints above (comma-separated CIDRs). The dial
-      # guard RESOLVES a configured name, validates EVERY answered
-      # address against these networks and PINS the connection to a
-      # validated address — loopback is always trusted and never needs
-      # declaring. Unset → the Docker default pools (172.17.0.0/12 +
-      # 192.168.0.0/16); a declared set REPLACES them (10.0.0.0/8 must be
-      # declared explicitly — no blind RFC1918 trust; a custom compose
-      # network in 172.18.x declares 172.18.0.0/16):
+      # v19.6.4 (KPK-03) + v19.6.5 (KPK-19.6.4-P2-01) — optional trusted
+      # dial networks for the service-name endpoints above
+      # (comma-separated CIDRs). The dial guard RESOLVES a configured
+      # name, validates EVERY answered address against these networks
+      # and PINS the connection to a validated address — loopback is
+      # always trusted and never needs declaring. Unset → the Docker
+      # DEFAULT bridge pool (172.17.0.0/12) — v19.6.5: the home-LAN
+      # range 192.168.0.0/16 is NOT implicit anymore (it is operator
+      # territory: routers, NAS, workstations — a poisoned resolver
+      # answering 192.168.1.1 for an approved name must not pass);
+      # scarlix-net is an EXTERNAL network, so this file cannot pin its
+      # subnet — obtain YOURS and declare it explicitly:
+      #   docker network inspect scarlix-net   # → IPv4Address subnet
       #   - SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS=172.18.0.0/16
+      # A declared set REPLACES the default (10.0.0.0/8 and 192.168.0.0/16
+      # must be declared explicitly — no blind RFC1918 trust). A
+      # UNIVERSAL route (0.0.0.0/0, ::/0) is REFUSED — it would nullify
+      # the destination boundary; declare the ACTUAL networks.
+      # Dual-stack note (KPK-19.6.4-P2-03): a dual-stack service name may
+      # answer A + AAAA records; an unapproved IPv6 answer refuses the
+      # set WHOLE (fail-closed). On dual-stack Docker networks declare
+      # the IPv6 pool too (e.g. fd00::/64 alongside the IPv4 subnet), or
+      # prefer IPv4 literals in the endpoints above.
     # v19.3.2 — OPT-IN compute lifecycle mounts (see env notes above).
     #   - /var/lib/scarlix-reservation:/var/lib/scarlix-reservation:rw
     #   - /run/scarlix-workload-bridge/bridge.sock:/run/scarlix-workload-bridge/bridge.sock

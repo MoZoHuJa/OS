@@ -1,7 +1,10 @@
 package airuntime
 
 import (
+	"context"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -147,5 +150,240 @@ func TestHealthTableNeverExpires(t *testing.T) {
 	}
 	if !table.Serves(ProviderSGLang) {
 		t.Fatal("the table must not expire entries on its own (the CF-2 prober owns freshness)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// KPK-19.6.4-P2-02 (v19.6.5): the ATOMIC, context-aware batch commit.
+// Every test here is a REGRESSION for the independent v19.6.4 audit
+// finding — ProbeAllAndObserve used to write observations one-by-one
+// (table.Observe in a loop), so a cancellation arriving between probe
+// completion and the first write — or mid-write-loop — could land a
+// partial round, violating the "cancelled round records nothing" contract.
+// ---------------------------------------------------------------------------
+
+// TestObserveBatchCommitsWholeRound: a valid batch lands completely —
+// every provider's state AND timestamp, in one atomic commit.
+func TestObserveBatchCommitsWholeRound(t *testing.T) {
+	table := NewHealthTable()
+	t1 := probeT0
+	batch := []Observation{
+		{Provider: ProviderSGLang, State: HealthHealthy, At: t1},
+		{Provider: ProviderVLLM, State: HealthDegraded, At: t1},
+		{Provider: ProviderBeeLlama, State: HealthHealthy, At: t1},
+		{Provider: ProviderOllama, State: HealthUnavailable, At: t1},
+	}
+	if err := table.ObserveBatch(context.Background(), batch); err != nil {
+		t.Fatalf("a valid round must commit whole: %v", err)
+	}
+	want := []struct {
+		p    Provider
+		s    HealthState
+		svcs bool
+	}{
+		{ProviderSGLang, HealthHealthy, true},
+		{ProviderVLLM, HealthDegraded, true},
+		{ProviderBeeLlama, HealthHealthy, true},
+		{ProviderOllama, HealthUnavailable, false},
+	}
+	for _, w := range want {
+		if got := table.Snapshot(w.p); got.State != w.s || !got.At.Equal(t1) {
+			t.Fatalf("%s after the batch = %s @ %v, want %s @ %v", w.p, got.State, got.At, w.s, t1)
+		}
+		if table.Serves(w.p) != w.svcs {
+			t.Fatalf("Serves(%s) = %v, want %v", w.p, table.Serves(w.p), w.svcs)
+		}
+	}
+}
+
+// TestObserveBatchAtomicOnInvalidMember: a batch with ONE invalid member
+// (bad shape) is rejected WHOLE — nothing is applied, the table keeps its
+// previous observations and timestamps (a partially applied round is
+// never visible).
+func TestObserveBatchAtomicOnInvalidMember(t *testing.T) {
+	table := NewHealthTable()
+	seed := probeT0
+	if err := table.Observe(Observation{Provider: ProviderSGLang, State: HealthHealthy, At: seed}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	later := seed.Add(time.Minute)
+	bad := []Observation{
+		{Provider: ProviderVLLM, State: HealthHealthy, At: later},
+		{Provider: ProviderSGLang, State: "starting", At: later}, // unenumerated state
+		{Provider: ProviderBeeLlama, State: HealthHealthy, At: later},
+	}
+	if err := table.ObserveBatch(context.Background(), bad); err == nil {
+		t.Fatal("a batch with an invalid member must be rejected")
+	}
+	// NOTHING applied: the seeded observation stands, the others stay UNKNOWN.
+	if got := table.Snapshot(ProviderSGLang); got.State != HealthHealthy || !got.At.Equal(seed) {
+		t.Fatalf("the seeded observation must survive a rejected batch, got %s @ %v", got.State, got.At)
+	}
+	for _, p := range []Provider{ProviderVLLM, ProviderBeeLlama, ProviderOllama} {
+		if got := table.Snapshot(p); got.State != HealthUnknown {
+			t.Fatalf("%s must stay UNKNOWN after a rejected batch (atomicity — no partial round), got %s", p, got.State)
+		}
+	}
+}
+
+// TestObserveBatchAtomicOnStaleMember: a batch with ONE stale member
+// (older than the table's current observation for that provider) is
+// rejected WHOLE — the monotone discipline is all-or-nothing across the
+// batch, exactly the single-Observe rule carried over.
+func TestObserveBatchAtomicOnStaleMember(t *testing.T) {
+	table := NewHealthTable()
+	now := probeT0
+	if err := table.Observe(Observation{Provider: ProviderSGLang, State: HealthHealthy, At: now}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	older := now.Add(-time.Minute)
+	stale := []Observation{
+		{Provider: ProviderVLLM, State: HealthHealthy, At: older},       // fresh for vllm…
+		{Provider: ProviderSGLang, State: HealthUnavailable, At: older}, // …but stale for sglang
+	}
+	err := table.ObserveBatch(context.Background(), stale)
+	if err == nil {
+		t.Fatal("a batch with a stale member must be rejected whole (monotone, atomic)")
+	}
+	if !strings.Contains(err.Error(), "stale probe rejected by name") {
+		t.Fatalf("the rejection must name the monotone rule, got: %v", err)
+	}
+	if got := table.Snapshot(ProviderSGLang); got.State != HealthHealthy || !got.At.Equal(now) {
+		t.Fatalf("the newer observation must survive the stale batch, got %s @ %v", got.State, got.At)
+	}
+	if got := table.Snapshot(ProviderVLLM); got.State != HealthUnknown {
+		t.Fatalf("the fresh-but-batched member must NOT land when a sibling is stale (atomicity), got %s", got.State)
+	}
+}
+
+// TestObserveBatchCancelledAtCommitBoundary: the audit's exact acceptance
+// — cancel the caller's context BETWEEN probe completion and the commit:
+// the batch records NOTHING, the error is context-identifiable, and every
+// previous state and timestamp is preserved. The counterweight: a LIVE
+// context with the same batch commits normally.
+func TestObserveBatchCancelledAtCommitBoundary(t *testing.T) {
+	table := NewHealthTable()
+	seed := probeT0
+	seeded := []Observation{
+		{Provider: ProviderSGLang, State: HealthHealthy, At: seed},
+		{Provider: ProviderVLLM, State: HealthHealthy, At: seed},
+		{Provider: ProviderBeeLlama, State: HealthHealthy, At: seed},
+		{Provider: ProviderOllama, State: HealthHealthy, At: seed},
+	}
+	if err := table.ObserveBatch(context.Background(), seeded); err != nil {
+		t.Fatalf("seed batch: %v", err)
+	}
+	later := seed.Add(time.Minute)
+	cancelled := []Observation{
+		{Provider: ProviderSGLang, State: HealthUnavailable, At: later},
+		{Provider: ProviderVLLM, State: HealthUnavailable, At: later},
+		{Provider: ProviderBeeLlama, State: HealthUnavailable, At: later},
+		{Provider: ProviderOllama, State: HealthUnavailable, At: later},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	// The caller walks away exactly between the probes and the commit.
+	cancel()
+	err := table.ObserveBatch(ctx, cancelled)
+	if err == nil {
+		t.Fatal("a cancelled context at the commit boundary must reject the batch (KPK-19.6.4-P2-02)")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("the rejection must stay context-identifiable (errors.Is context.Canceled), got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "commit boundary") {
+		t.Fatalf("the rejection must name the commit boundary, got: %v", err)
+	}
+	// Every previous state AND timestamp preserved — zero writes.
+	for _, o := range seeded {
+		if got := table.Snapshot(o.Provider); got.State != HealthHealthy || !got.At.Equal(seed) {
+			t.Fatalf("KPK-19.6.4-P2-02 regression: %s moved (%s @ %v) — a cancelled commit records NOTHING", o.Provider, got.State, got.At)
+		}
+	}
+	// The counterweight: the SAME batch against a LIVE context commits.
+	live := append([]Observation(nil), cancelled...)
+	if err := table.ObserveBatch(context.Background(), live); err != nil {
+		t.Fatalf("the live counterweight must commit: %v", err)
+	}
+	for _, o := range live {
+		if got := table.Snapshot(o.Provider); got.State != HealthUnavailable || !got.At.Equal(later) {
+			t.Fatalf("the live counterweight must land whole, %s = %s @ %v", o.Provider, got.State, got.At)
+		}
+	}
+}
+
+// TestObserveBatchDeadlineAtCommitBoundary: the same boundary under a
+// deadline that expired after the probes — DeadlineExceeded, equally
+// identifiable, equally zero-write.
+func TestObserveBatchDeadlineAtCommitBoundary(t *testing.T) {
+	table := NewHealthTable()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	time.Sleep(20 * time.Millisecond) // the deadline lapses AFTER the (simulated) probes
+	batch := []Observation{{Provider: ProviderSGLang, State: HealthHealthy, At: probeT0}}
+	err := table.ObserveBatch(ctx, batch)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("an expired deadline at the commit boundary must reject the batch identifiably, got: %v", err)
+	}
+	if got := table.Snapshot(ProviderSGLang); got.State != HealthUnknown {
+		t.Fatalf("nothing may land from an expired-deadline commit, got %s", got.State)
+	}
+}
+
+// TestObserveBatchConcurrentRoundsMonotone: two observation rounds racing
+// — the newer round wins per provider, the older round is discarded WHOLE
+// (never partially applied over the newer one), and the table never shows
+// a torn state: every snapshot is either all-old or all-new per provider.
+func TestObserveBatchConcurrentRoundsMonotone(t *testing.T) {
+	table := NewHealthTable()
+	olderAt := probeT0
+	newerAt := olderAt.Add(2 * time.Second)
+	olderRound := []Observation{
+		{Provider: ProviderSGLang, State: HealthDegraded, At: olderAt},
+		{Provider: ProviderVLLM, State: HealthDegraded, At: olderAt},
+		{Provider: ProviderBeeLlama, State: HealthDegraded, At: olderAt},
+		{Provider: ProviderOllama, State: HealthDegraded, At: olderAt},
+	}
+	newerRound := []Observation{
+		{Provider: ProviderSGLang, State: HealthHealthy, At: newerAt},
+		{Provider: ProviderVLLM, State: HealthHealthy, At: newerAt},
+		{Provider: ProviderBeeLlama, State: HealthHealthy, At: newerAt},
+		{Provider: ProviderOllama, State: HealthHealthy, At: newerAt},
+	}
+	var wg sync.WaitGroup
+	rounds := [][]Observation{olderRound, newerRound, olderRound, newerRound}
+	for _, round := range rounds {
+		wg.Add(1)
+		go func(r []Observation) {
+			defer wg.Done()
+			_ = table.ObserveBatch(context.Background(), r) //nolint:errcheck — a stale racing round legitimately rejects
+		}(round)
+	}
+	wg.Wait()
+	// The NEWER round's evidence stands for every provider — an older
+	// racing round cannot partially overwrite it (atomic monotone).
+	for _, o := range newerRound {
+		if got := table.Snapshot(o.Provider); got.State != HealthHealthy || !got.At.Equal(newerAt) {
+			t.Fatalf("concurrent rounds: %s ended as %s @ %v — the newer round must win whole, never torn", o.Provider, got.State, got.At)
+		}
+	}
+}
+
+// TestObserveBatchEdges: the honest edges — a nil table and a nil context
+// are named errors; an EMPTY batch is a no-op success (nothing to commit,
+// nothing to corrupt).
+func TestObserveBatchEdges(t *testing.T) {
+	var nilTable *HealthTable
+	if err := nilTable.ObserveBatch(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "nil health table") {
+		t.Fatalf("a nil table must be a named error, got: %v", err)
+	}
+	table := NewHealthTable()
+	if err := table.ObserveBatch(nil, []Observation{{Provider: ProviderSGLang, State: HealthHealthy, At: probeT0}}); err == nil || !strings.Contains(err.Error(), "nil context") {
+		t.Fatalf("a nil context must be a named error (the commit boundary needs the caller's context), got: %v", err)
+	}
+	if err := table.ObserveBatch(context.Background(), nil); err != nil {
+		t.Fatalf("an empty batch is a no-op success, got: %v", err)
+	}
+	if got := table.Snapshot(ProviderSGLang); got.State != HealthUnknown {
+		t.Fatalf("an empty batch must write nothing, got %s", got.State)
 	}
 }

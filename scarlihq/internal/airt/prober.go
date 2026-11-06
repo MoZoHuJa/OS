@@ -53,6 +53,16 @@ func probePath(p airuntime.Provider) string {
 type Prober struct {
 	endpoints map[airuntime.Provider]Endpoint
 	client    *http.Client
+	// preCommit is the KPK-19.6.4-P2-02 test seam: when non-nil it runs
+	// BETWEEN ProbeAll completion and the health-table batch commit —
+	// exactly the window where a cancellation used to race past the
+	// round-end guard and still land observations. Production leaves it
+	// nil (zero overhead, zero behavior change); the deterministic
+	// regression test sets it to cancel the caller's context inside
+	// that window, proving the commit boundary catches what the
+	// round-end guard cannot. Never read or written concurrently with
+	// a running round (set before the round, like every test field).
+	preCommit func(observations []airuntime.Observation)
 }
 
 // NewProber constructs the prober over a COMPLETE endpoint set (exactly
@@ -186,15 +196,24 @@ func (p *Prober) ProbeAll(ctx context.Context) ([]airuntime.Observation, error) 
 }
 
 // ProbeAllAndObserve probes all providers and records every observation
-// into the health table (the table's own monotone-time discipline
-// applies — fresh probe times satisfy it). Returns the observations in
-// tier order, as ProbeAll does.
+// into the health table, ATOMICALLY (v19.6.5, KPK-19.6.4-P2-02): the whole
+// round commits through HealthTable.ObserveBatch — one lock, one commit
+// boundary — never a per-provider Observe loop that a cancellation could
+// interrupt halfway leaving a partial round visible.
+//
+// The linearization rule, stated once: cancellation BEFORE the batch
+// commit means ZERO writes (the caller walked away — the round is not
+// evidence about the providers, last-known-good states AND timestamps
+// stand); cancellation AFTER the commit does not retroactively undo a
+// completed observation round (the round was live end-to-end — its
+// evidence stands, honestly). A caller cancelling exactly between probe
+// completion and the commit gets the context error back, errors.Is-
+// identifiable, with the table untouched.
 //
 // KPK-04 (v19.6.4): a CANCELLED round records NOTHING — when ProbeAll
-// aborts (the caller's context done), this function returns the error
-// BEFORE the record loop runs; the table keeps its previous observations
-// and timestamps. Only a fully completed round with a live parent context
-// reaches table.Observe.
+// aborts (the caller's context done at round end), this function returns
+// the error BEFORE the record path runs. Only a fully completed round
+// with a live parent context reaches the commit boundary.
 func (p *Prober) ProbeAllAndObserve(ctx context.Context, table *airuntime.HealthTable) ([]airuntime.Observation, error) {
 	if table == nil {
 		return nil, fmt.Errorf("%w: health table is required", ErrNilRuntimeInput)
@@ -203,10 +222,15 @@ func (p *Prober) ProbeAllAndObserve(ctx context.Context, table *airuntime.Health
 	if err != nil {
 		return nil, err
 	}
-	for _, obs := range observations {
-		if err := table.Observe(obs); err != nil {
-			return nil, fmt.Errorf("airt: recording observation for %s failed: %w", obs.Provider, err)
-		}
+	// The KPK-19.6.4-P2-02 window, made deterministic in tests: the seam
+	// runs after the round-end guard has passed and before the commit —
+	// a cancellation here is caught by ObserveBatch's commit boundary,
+	// the one the round-end guard structurally cannot see.
+	if p.preCommit != nil {
+		p.preCommit(observations)
+	}
+	if err := table.ObserveBatch(ctx, observations); err != nil {
+		return nil, fmt.Errorf("airt: committing the probe round's observations failed: %w", err)
 	}
 	return observations, nil
 }

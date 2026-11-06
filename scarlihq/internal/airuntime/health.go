@@ -1,6 +1,7 @@
 package airuntime
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -94,6 +95,65 @@ func (t *HealthTable) Observe(o Observation) error {
 		return fmt.Errorf("airuntime: stale probe rejected by name: %s already observed at %s, refusing older probe at %s (observation time is monotone)", o.Provider, prev.At.UTC().Format(time.RFC3339Nano), o.At.UTC().Format(time.RFC3339Nano))
 	}
 	t.latest[o.Provider] = o
+	return nil
+}
+
+// ObserveBatch commits a WHOLE probe round atomically (v19.6.5,
+// KPK-19.6.4-P2-02): every observation is validated, the batch is
+// monotonicity-checked against the current state, and the writes are
+// applied under ONE lock — either the entire round lands or none of it
+// does; a partially applied round is never visible to a concurrent
+// reader. The commit boundary is CONTEXT-AWARE: the caller's context is
+// checked immediately before the writes begin, so a cancellation that
+// arrives after the probes completed but before the commit records
+// NOTHING — the context error returns errors.Is-identifiable and the
+// table's previous observations and timestamps stand.
+//
+// The linearization rule (one sentence, deliberate): cancellation BEFORE
+// the batch commit means ZERO writes; cancellation AFTER the commit does
+// not retroactively undo a completed observation round.
+//
+// A batch containing an invalid observation (bad shape) or a STALE one
+// (older than what the table already holds for that provider) is
+// rejected WHOLE — atomicity is all-or-nothing, the single-observation
+// Observe discipline carried over unchanged. An empty batch is a no-op
+// success (nothing to commit, nothing to corrupt).
+func (t *HealthTable) ObserveBatch(ctx context.Context, observations []Observation) error {
+	if t == nil {
+		return fmt.Errorf("airuntime: nil health table")
+	}
+	if ctx == nil {
+		return fmt.Errorf("airuntime: nil context — the batch commit boundary needs the caller's context (KPK-19.6.4-P2-02)")
+	}
+	// Validate every observation BEFORE any state change — a shape
+	// error rejects the batch whole (no partial application).
+	for _, o := range observations {
+		if err := o.Validate(); err != nil {
+			return err
+		}
+	}
+	// The COMMIT BOUNDARY (KPK-19.6.4-P2-02): a done context here means
+	// the caller walked away between probe completion and the commit —
+	// zero writes, the context error returns identifiably, the
+	// last-known-good observations stand. A cancelled commit is not
+	// evidence about the providers.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("airuntime: observation batch rejected at the commit boundary — the caller's context is done (%w); a cancelled commit records nothing, the previous observations stand (KPK-19.6.4-P2-02)", err)
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// Monotonicity for the WHOLE batch under the lock: any stale member
+	// rejects the batch whole — a concurrent NEWER round that committed
+	// first makes this round stale, and it is discarded completely,
+	// never partially applied over the newer observations.
+	for _, o := range observations {
+		if prev, ok := t.latest[o.Provider]; ok && prev.At.After(o.At) {
+			return fmt.Errorf("airuntime: stale probe rejected by name: %s already observed at %s, refusing older batch probe at %s (observation time is monotone, batches are atomic)", o.Provider, prev.At.UTC().Format(time.RFC3339Nano), o.At.UTC().Format(time.RFC3339Nano))
+		}
+	}
+	for _, o := range observations {
+		t.latest[o.Provider] = o
+	}
 	return nil
 }
 
