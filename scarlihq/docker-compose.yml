@@ -160,19 +160,25 @@ services:
       # /api/ai/chat|propose extend their write deadline beyond it — a
       # slow local generation is written, not cut:
       #   - SCARLIHQ_AIRUNTIME_CHAT_TIMEOUT=30s
-      # v19.6.4 (KPK-03) + v19.6.5 (KPK-19.6.4-P2-01) — optional trusted
+      # v19.6.4 (KPK-03) + v19.6.5 (KPK-19.6.4-P2-01) + v19.6.6
+      # (KPK-19.6.5-P2-01) — optional trusted
       # dial networks for the service-name endpoints above
       # (comma-separated CIDRs). The dial guard RESOLVES a configured
       # name, validates EVERY answered address against these networks
       # and PINS the connection to a validated address — loopback is
-      # always trusted and never needs declaring. Unset → the Docker
-      # DEFAULT bridge pool (172.17.0.0/12) — v19.6.5: the home-LAN
-      # range 192.168.0.0/16 is NOT implicit anymore (it is operator
+      # always trusted and never needs declaring. Unset → Docker's
+      # DOCUMENTED default address pool, ENUMERATED as fifteen canonical
+      # /16 networks (172.17.0.0/16 … 172.31.0.0/16) — v19.6.6: the old
+      # "172.17.0.0/12" shorthand masked to 172.16.0.0/12 and trusted
+      # 172.16.0.0/16 (NOT a Docker default-pool range) by accident of
+      # CIDR normalization; v19.6.5: the home-LAN
+      # range 192.168.0.0/16 is NOT implicit either (it is operator
       # territory: routers, NAS, workstations — a poisoned resolver
-      # answering 192.168.1.1 for an approved name must not pass);
+      # answering 192.168.1.1 for an approved name must not pass).
       # scarlix-net is an EXTERNAL network, so this file cannot pin its
-      # subnet — obtain YOURS and declare it explicitly:
-      #   docker network inspect scarlix-net   # → IPv4Address subnet
+      # subnet — obtain YOURS and declare it explicitly (service-name
+      # endpoints with this UNSET raise a loud startup warning):
+      #   docker network inspect scarlix-net -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
       #   - SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS=172.18.0.0/16
       # A declared set REPLACES the default (10.0.0.0/8 and 192.168.0.0/16
       # must be declared explicitly — no blind RFC1918 trust). A

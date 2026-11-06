@@ -882,7 +882,7 @@ else
   #   elif branch means the build was skipped/aborted — crit here too for safety.
   log "Installing SCARLIX scripts (CRITICAL)..."
   # v18.8.3 P1 (A-a): Added generate-litellm-config.sh (dynamic LiteLLM config from models.yaml)
-  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge generate-sha256sums.sh generate-litellm-config.sh scarlix-bridge-reader scarlix-gpu scarlix-inventory scarlix-contract scarlix-monitor scarlix-scheduler scarlix-host-workload-bridge scarlix-reservation scarlix scarlix-smoke-test.sh scarlix-gaming-install; do
+  for binfile in scarlix-wizard scarlix-mode model-manager.sh download-models.sh scarlix-doctor scarlix-host-bridge generate-sha256sums.sh generate-litellm-config.sh scarlix-bridge-reader scarlix-gpu scarlix-inventory scarlix-contract scarlix-monitor scarlix-scheduler scarlix-host-workload-bridge scarlix-reservation scarlix scarlix-smoke-test.sh scarlix-gaming-install scarlix-stale-audit.sh; do
     src="$REPO_DIR/files/usr/local/bin/$binfile"
     if [ -f "$src" ]; then
       # v19.1.13 P1: Fix copy loop regression. Was: `cp && chmod && ok || warn && continue`
@@ -924,7 +924,7 @@ else
 
   # Systemd services (model-manager + host-bridge — first-boot removed Q6a)
   log "Installing systemd services..."
-  for f in model-manager.service model-manager.timer generate-env.sh scarlix-host-bridge.service scarlix-host-bridge.timer scarlix-tv-mode.service scarlix-workload-bridge.service scarlix-reservation.service; do
+  for f in model-manager.service model-manager.timer generate-env.sh scarlix-host-bridge.service scarlix-host-bridge.timer scarlix-tv-mode.service scarlix-workload-bridge.service scarlix-reservation.service scarlix-stale-audit.service scarlix-stale-audit.timer; do
     src="$REPO_DIR/files/etc/systemd/system/$f"
     if [ -f "$src" ]; then
       cp "$src" "/etc/systemd/system/$f"
@@ -1326,6 +1326,16 @@ else
       systemctl enable --now "$t" >> "$LOG_FILE" 2>&1 && ok "$t enabled + started" || warn "$t failed (non-critical)"
     fi
   done
+
+  # v19.6.6 (KPK-19.6.5 process remediation): the weekly stale-tree audit
+  # timer — the repo-hygiene automation (classification registry, :latest
+  # detection, missing build contexts, the advisory AI triage). The unit
+  # treats findings (exit 1) as success; a timer failure means the AUDIT
+  # broke, not that debt was found. Reports land in
+  # /var/log/scarlix/stale-audit/.
+  if [ -f /etc/systemd/system/scarlix-stale-audit.timer ]; then
+    systemctl enable --now scarlix-stale-audit.timer >> "$LOG_FILE" 2>&1 && ok "scarlix-stale-audit.timer enabled (weekly Mon 06:30, persistent)" || warn "scarlix-stale-audit.timer failed (non-critical — run scarlix-stale-audit.sh manually)"
+  fi
 
   # v17.9.8: Generate /etc/scarlix/.env (secrets + SCARLIHQ_TOKEN) if not already
   # v18.8.2 P0: Run generate-env.sh ALWAYS (was: only if .env didn't exist → upgrade

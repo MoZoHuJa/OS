@@ -2297,12 +2297,12 @@ check_28_ai_runtime_foundation() {
     # v19.6.1, v19.6.2 and v19.6.3 historical surfaces must ALSO stay (the
     # changelog rows + the What's New sections are the releases' permanent
     # record).
-    if ! grep -q 'ScarLiXoS v19.6.5 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.5-B87333' "$readme"; then
-        fail "README banner/h1/badge must say v19.6.5"
+    if ! grep -q 'ScarLiXoS v19.6.6 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.6-B36B00' "$readme"; then
+        fail "README banner/h1/badge must say v19.6.6"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.6.5 (Universal AI Runtime — trust scope + commit atomicity: KPK-19.6.4-P2-01/P2-02 remediation; Phase C)' "$readme"; then
-        fail "README version line must say v19.6.5 (Universal AI Runtime — trust scope + commit atomicity: KPK-19.6.4-P2-01/P2-02 remediation; Phase C)"
+    if ! grep -q 'Version:\*\* v19.6.6 (Universal AI Runtime — trust scope enumerated + family profiles enforced: KPK-19.6.5-P2-01/P2-02/P1-03 remediation; Phase C)' "$readme"; then
+        fail "README version line must say v19.6.6 (Universal AI Runtime — trust scope enumerated + family profiles enforced: KPK-19.6.5-P2-01/P2-02/P1-03 remediation; Phase C)"
         return
     fi
     if ! grep -q '\*\*v19.6.0\*\*' "$readme" || ! grep -q "What's New in v19.6.0" "$readme"; then
@@ -2333,8 +2333,8 @@ check_28_ai_runtime_foundation() {
         fail "README must carry the 'Universal AI Runtime foundation (CF-1) | TESTED (v19.6.0)' roadmap row"
         return
     fi
-    if ! grep -q 'One-command install — v19.6.5 Universal AI Runtime (trust-scoped, commit-atomic)' "$readme"; then
-        fail "README install header must be refreshed to v19.6.5 (the current-release surface — it drifted at v19.4.6 once)"
+    if ! grep -q 'One-command install — v19.6.6 Universal AI Runtime (enumerated trust, enforced profiles)' "$readme"; then
+        fail "README install header must be refreshed to v19.6.6 (the current-release surface — it drifted at v19.4.6 once)"
         return
     fi
     # v19.6.3 (KPK-19.6.1-P2-01, the audit finding): the install PARAGRAPH
@@ -2342,8 +2342,20 @@ check_28_ai_runtime_foundation() {
     # one-liner still saying 'clones the current v19.6.0 mainline' at a
     # 19.6.1+ tag. The header alone is not enough; the drift guard is
     # literal and moves with every release.
-    if ! grep -q 'current v19.6.5 mainline' "$readme"; then
-        fail "README install paragraph must say 'clones the current v19.6.5 mainline' (KPK-19.6.1-P2-01: the one-liner drifts when the header is bumped but the paragraph is not)"
+    if ! grep -q 'current v19.6.6 mainline' "$readme"; then
+        fail "README install paragraph must say 'clones the current v19.6.6 mainline' (KPK-19.6.1-P2-01: the one-liner drifts when the header is bumped but the paragraph is not)"
+        return
+    fi
+    if ! grep -q "\\*\\*v19.6.4\\*\\*" "$readme" || ! grep -q "What's New in v19.6.4" "$readme"; then
+        fail "README must carry the v19.6.4 changelog row + What's New section (the permanent record)"
+        return
+    fi
+    if ! grep -q "\\*\\*v19.6.5\\*\\*" "$readme" || ! grep -q "What's New in v19.6.5" "$readme"; then
+        fail "README must carry the v19.6.5 changelog row + What's New section (the permanent record)"
+        return
+    fi
+    if ! grep -q "\\*\\*v19.6.6\\*\\*" "$readme" || ! grep -q "What's New in v19.6.6" "$readme"; then
+        fail "README must carry the v19.6.6 changelog row + What's New section (the current release's own record)"
         return
     fi
 
@@ -3014,17 +3026,39 @@ check_32_ai_dial_pin_probe_cancel() {
         fail "transport.go must define the address-level boundary (ipIsTrusted + approvedResolvedIPs — KPK-03: destination validation, not name validation)"
         return
     fi
-    # --- KPK-03 + KPK-19.6.4-P2-01 (v19.6.5 evolution): the default trust is
-    # the Docker DEFAULT BRIDGE POOL — exactly ONE network. The v19.6.4
-    # posture (two pools incl. the home-LAN range) was narrowed by the
-    # independent v19.6.4 audit; the marker is the EXACT one-argument call
-    # (a two-pool default would carry a comma and fail this grep).
-    if ! _strip_go_comments "$transport" | grep -qF 'parseCIDRsOrPanic("172.17.0.0/12")' || _strip_go_comments "$transport" | grep -qF 'parseCIDRsOrPanic("172.17.0.0/12", "192.168.0.0/16")'; then
-        fail "the default trusted dial network must be the Docker default bridge pool ONLY (parseCIDRsOrPanic(\"172.17.0.0/12\") — exactly ONE argument; KPK-19.6.4-P2-01: the home-LAN range is operator territory, declared — never implicit)"
+    # --- KPK-03 + KPK-19.6.4-P2-01 (v19.6.5) + KPK-19.6.5-P2-01 (v19.6.6
+    # evolution): the default trust is Docker's DOCUMENTED default address
+    # pool, ENUMERATED as fifteen canonical /16 networks. The v19.6.5
+    # single-pool marker ("172.17.0.0/12") masked to 172.16.0.0/12 and
+    # trusted 172.16.0.0/16 (not a Docker default-pool range) — the
+    # independent v19.6.5 audit's finding; the marker is now the
+    # enumerated-pool call over dockerDefaultPoolCIDRs (prose cannot mask
+    # code), the pool table must carry 172.17.0.0/16 and 172.31.0.0/16 but
+    # NEVER a 172.16 entry, and the non-canonical /12 shorthand must be
+    # gone from the CODE (its history lives in comments only).
+    local pool_hits shorthand_hits
+    pool_hits=$(_strip_go_comments "$transport" | grep -cF 'parseCIDRsOrPanic(dockerDefaultPoolCIDRs...)' || true)
+    shorthand_hits=$(_strip_go_comments "$transport" | grep -cF 'parseCIDRsOrPanic("172.17.0.0/12")' || true)
+    if [[ "$pool_hits" -eq 0 ]]; then
+        fail "the default trusted dial networks must be the ENUMERATED Docker default pool (parseCIDRsOrPanic(dockerDefaultPoolCIDRs...) — KPK-19.6.5-P2-01: the non-canonical \"172.17.0.0/12\" shorthand masked to 172.16.0.0/12 and trusted unrelated space)"
         return
     fi
-    if ! grep -q '172.17.0.0/12' "$transport" || ! grep -q '192.168.0.0/16' "$transport"; then
-        fail "transport.go must still NAME both ranges (the pool that IS the default + the LAN range that now requires an explicit declaration — the boundary text carries both)"
+    if [[ "$shorthand_hits" -gt 0 ]]; then
+        fail "the v19.6.5 non-canonical single-pool default must be GONE from code (KPK-19.6.5-P2-01 — the shorthand's /12 mask trusted 172.16.0.0/16 by accident of normalization)"
+        return
+    fi
+    if ! grep -q '"172.17.0.0/16"' "$transport" || ! grep -q '"172.31.0.0/16"' "$transport"; then
+        fail "dockerDefaultPoolCIDRs must carry the pool's first and last canonical /16 entries (172.17.0.0/16 … 172.31.0.0/16)"
+        return
+    fi
+    local pool_1716_hits
+    pool_1716_hits=$(_strip_go_comments "$transport" | grep -cF '"172.16.0.0/16"' || true)
+    if [[ "$pool_1716_hits" -gt 0 ]]; then
+        fail "172.16.0.0/16 must NOT be a default trusted network (KPK-19.6.5-P2-01: outside Docker's documented default pool — the audit's exact acceptance; the QUOTED literal in code, not the prose that documents its absence)"
+        return
+    fi
+    if ! grep -q '192.168.0.0/16' "$transport"; then
+        fail "transport.go must still NAME the LAN range that requires an explicit declaration (the boundary text carries the history)"
         return
     fi
     # --- KPK-03: the operator surface + the fail-closed construction (a
@@ -3183,15 +3217,21 @@ check_33_ai_trust_scope_commit_atomicity() {
         return
     fi
 
-    # --- KPK-19.6.4-P2-01: the single-pool default, BY MARKER IN CODE
-    # (comment-stripped — prose cannot mask code): the EXACT one-argument
-    # call; a two-pool default (the v19.6.4 posture) FAILS this marker.
-    if ! _strip_go_comments "$transport" | grep -qF 'parseCIDRsOrPanic("172.17.0.0/12")'; then
-        fail "DefaultTrustedDialCIDRs must call parseCIDRsOrPanic with EXACTLY ONE network — 172.17.0.0/12 (KPK-19.6.4-P2-01: the home-LAN range 192.168.0.0/16 is operator territory, declared via SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS, never implicit)"
+    # --- KPK-19.6.4-P2-01 (v19.6.5) + KPK-19.6.5-P2-01 (v19.6.6
+    # evolution): the default pool is the ENUMERATED canonical /16 set, BY
+    # MARKER IN CODE (comment-stripped — prose cannot mask code): the
+    # dockerDefaultPoolCIDRs call; the non-canonical /12 shorthand (both
+    # its v19.6.4 two-pool AND v19.6.5 single-pool forms) FAILS the marker.
+    local pool_hits33 shorthand_hits33 twopool_hits33
+    pool_hits33=$(_strip_go_comments "$transport" | grep -cF 'parseCIDRsOrPanic(dockerDefaultPoolCIDRs...)' || true)
+    shorthand_hits33=$(_strip_go_comments "$transport" | grep -cF 'parseCIDRsOrPanic("172.17.0.0/12")' || true)
+    twopool_hits33=$(_strip_go_comments "$transport" | grep -cF 'parseCIDRsOrPanic("172.17.0.0/12", "192.168.0.0/16")' || true)
+    if [[ "$pool_hits33" -eq 0 ]]; then
+        fail "DefaultTrustedDialCIDRs must call parseCIDRsOrPanic over dockerDefaultPoolCIDRs — the ENUMERATED canonical /16 pool (KPK-19.6.5-P2-01: the \"172.17.0.0/12\" shorthand masked to 172.16.0.0/12 and trusted 172.16.0.0/16; KPK-19.6.4-P2-01: the home-LAN range is operator territory, declared via SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS, never implicit)"
         return
     fi
-    if _strip_go_comments "$transport" | grep -qF 'parseCIDRsOrPanic("172.17.0.0/12", "192.168.0.0/16")'; then
-        fail "DefaultTrustedDialCIDRs must NOT carry the two-pool v19.6.4 default (172.17.0.0/12 + 192.168.0.0/16) — the home-LAN range was REMOVED by the independent v19.6.4 audit finding"
+    if [[ "$shorthand_hits33" -gt 0 || "$twopool_hits33" -gt 0 ]]; then
+        fail "DefaultTrustedDialCIDRs must NOT carry the non-canonical /12 default (neither the v19.6.5 single-pool nor the v19.6.4 two-pool form) — the shorthand's /12 mask trusted 172.16.0.0/16, the independent v19.6.5 audit's finding"
         return
     fi
     # --- KPK-19.6.4-P2-01 (hardening → policy): the UNIVERSAL-route
@@ -3313,6 +3353,254 @@ check_33_ai_trust_scope_commit_atomicity() {
     pass "universal AI runtime trust scope + commit atomicity (v19.6.5, the v19.6.4 KpK audit remediation): the DEFAULT trusted dial network is the Docker default bridge pool ONLY (172.17.0.0/12, exactly one network by code marker — the home-LAN range 192.168.0.0/16 is operator territory: a poisoned resolver answering 192.168.1.1 for an approved name is refused with ZERO dials, the operator declares the ACTUAL subnet from 'docker network inspect scarlix-net' via SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS, explicit/visible/auditable, never implicit), universal routes (0.0.0.0/0, ::/0) are REFUSED fail-closed (a declaration that would nullify the boundary is a configuration error — the audit's hardening note adopted as policy), the probe round's observations commit through HealthTable.ObserveBatch (validate all, monotonicity-check the batch, apply under ONE lock — a stale or invalid member rejects the round WHOLE, a partially applied round is never visible), the commit boundary is CONTEXT-AWARE (cancellation between probe completion and the commit records NOTHING, errors.Is-identifiable, every previous state AND timestamp preserved; cancellation after the commit does not retroactively undo a completed round — the linearization rule), ProbeAllAndObserve commits through the batch never a per-provider loop, the preCommit seam makes the audited window deterministically testable, the regression proofs as tests (LAN refusal by default, mixed declared/LAN refused whole, declared-subnet pin, universal rejection, batch atomicity, boundary cancellation, concurrent monotone rounds, the deterministic window + counterweights), the documented truths (compose subnet derivation + SECURITY_MAP finding-name closures + the IPv6 dual-stack note + the inherent in-subnet lateral residual), README v19.6.5 surface + release notes genre"
 }
 
+check_34_trust_enumeration_profiles_enforcement_stale_automation() {
+    echo "--- [34] v19.6.6 (the v19.6.5 KpK audit remediation + the process remediation): the ENUMERATED default trust pool (fifteen canonical /16s, no non-canonical supernet, the SK-audit startup warning) + the commit boundary UNDER the mutex + the TYPED/ENFORCED family profiles (the P1) + the real media-tools build context + the generated dependency inventory (drift-guarded) + models.yaml identity + the STALE-TREE AUDIT automation with the advisory local-AI triage ---"
+    # v19.6.6 — the v19.6.5 KpK audit remediation: KPK-19.6.5-P2-01 (the
+    # non-canonical /12 default masked to a wider trust range), KPK-19.6.5-P2-02
+    # (the context check before the mutex), KPK-19.6.5-P1-03 (the family profiles
+    # schema drift + zero enforcement), KPK-19.6.5-P2-04/P2-05/P3-06 (media-tools
+    # build context, stale dependency audit, models.yaml identity) + the process
+    # remediation (the stale-tree audit automation with the advisory local-AI
+    # triage). Code markers are comment-stripped — prose cannot mask code.
+    local transport="$REPO_DIR/scarlihq/internal/airt/transport.go"
+    local transport_test="$REPO_DIR/scarlihq/internal/airt/transport_test.go"
+    local health="$REPO_DIR/scarlihq/internal/airuntime/health.go"
+    local health_test="$REPO_DIR/scarlihq/internal/airuntime/health_test.go"
+    local loader="$REPO_DIR/scarlihq/internal/profiles/loader.go"
+    local loader_test="$REPO_DIR/scarlihq/internal/profiles/loader_test.go"
+    local rest_src="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local airuntime_src="$REPO_DIR/scarlihq/internal/api/airuntime.go"
+    local mcp_src="$REPO_DIR/scarlihq/internal/mcp/server.go"
+    local enforcement_test="$REPO_DIR/scarlihq/internal/api/profiles_enforcement_test.go"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local readme="$REPO_DIR/README.md"
+    local secmap="$REPO_DIR/docs/SCARLIX_SECURITY_MAP.md"
+    local inventory_doc="$REPO_DIR/docs/DEPENDENCY_INVENTORY_2026-11-06.md"
+    local inventory_test="$REPO_DIR/tests/test_dependency_inventory.sh"
+    local historical_audit="$REPO_DIR/docs/DEPENDENCY_AUDIT_2026-10-21.md"
+    local models_yaml="$REPO_DIR/models.yaml"
+    local stale_audit="$REPO_DIR/files/usr/local/bin/scarlix-stale-audit.sh"
+    local stale_service="$REPO_DIR/files/etc/systemd/system/scarlix-stale-audit.service"
+    local stale_timer="$REPO_DIR/files/etc/systemd/system/scarlix-stale-audit.timer"
+    local stale_policy="$REPO_DIR/docs/STALE_TREE_AUDIT.md"
+    local media_dockerfile="$REPO_DIR/media-tools/Dockerfile"
+    local media_server="$REPO_DIR/media-tools/server.py"
+    local notes="$REPO_DIR/docs/RELEASE_NOTES_v19.6.6.md"
+
+    for f in "$transport" "$health" "$loader" "$rest_src" "$airuntime_src" "$mcp_src"; do
+        if [[ ! -f "$f" ]]; then
+            fail "v19.6.6 source missing: $f (the KPK-19.6.5 remediation surface)"
+            return
+        fi
+    done
+
+    # --- KPK-19.6.5-P2-01: the ENUMERATED canonical pool, by code marker.
+    local enum_hits
+    enum_hits=$(_strip_go_comments "$transport" | grep -cF 'parseCIDRsOrPanic(dockerDefaultPoolCIDRs...)' || true)
+    if [[ "$enum_hits" -eq 0 ]]; then
+        fail "DefaultTrustedDialCIDRs must dial over the ENUMERATED pool (parseCIDRsOrPanic(dockerDefaultPoolCIDRs...) — KPK-19.6.5-P2-01: the non-canonical 172.17.0.0/12 masked to 172.16.0.0/12 and trusted unrelated space)"
+        return
+    fi
+    local pool_entries
+    pool_entries=$(grep -cE '"172\.(1[7-9]|2[0-9]|3[01])\.0\.0/16"' "$transport" || true)
+    if [[ "$pool_entries" -lt 15 ]]; then
+        fail "dockerDefaultPoolCIDRs must enumerate all fifteen canonical /16s of Docker's documented default pool (172.17.0.0/16 … 172.31.0.0/16 — found $pool_entries)"
+        return
+    fi
+    if grep -q '"172\.16\.0\.0/16"' "$transport"; then
+        fail "172.16.0.0/16 must NOT be in the default pool (the audit's exact acceptance: outside Docker's documented default pool)"
+        return
+    fi
+    if ! grep -q 'TestDockerDefaultPoolCIDRsCanonical' "$transport_test" || ! grep -q 'TestUndeclaredServiceNameEndpoints' "$transport_test"; then
+        fail "the KPK-19.6.5-P2-01 regression tests must exist (canonicality/contiguity proof + the SK-audit warning helper proof)"
+        return
+    fi
+    # --- SK-audit P2-01: the loud startup warning for undeclared service names.
+    local undeclared_fn_hits undeclared_wiring_hits
+    undeclared_fn_hits=$(_strip_go_comments "$transport" | grep -c 'func UndeclaredServiceNameEndpoints' || true)
+    if [[ "$undeclared_fn_hits" -eq 0 ]]; then
+        fail "transport.go must define UndeclaredServiceNameEndpoints (the SK-audit P2-01 guidance: service-name endpoints + unset env → a loud warning with the derivation command)"
+        return
+    fi
+    undeclared_wiring_hits=$(_strip_go_comments "$main_src" | grep -c 'UndeclaredServiceNameEndpoints' || true)
+    if [[ "$undeclared_wiring_hits" -eq 0 ]]; then
+        fail "main.go must wire the undeclared-service-name WARNING (the operator is asked to declare the scarlix-net subnet BEFORE production)"
+        return
+    fi
+
+    # --- KPK-19.6.5-P2-02: the context check lives UNDER the mutex. The
+    # ORDER is the contract: within ObserveBatch, ctx.Err() must appear
+    # AFTER t.mu.Lock() (line numbers, comment-stripped).
+    local lock_line ctx_line fn_start fn_end
+    fn_start=$(_strip_go_comments "$health" | grep -n 'func (t \*HealthTable) ObserveBatch' | head -1 | cut -d: -f1)
+    fn_end=$(_strip_go_comments "$health" | awk -v s="$fn_start" 'NR>s && /^}/ {print NR; exit}')
+    lock_line=$(_strip_go_comments "$health" | awk -v s="$fn_start" -v e="$fn_end" 'NR>s && NR<e && /t\.mu\.Lock\(\)/ {print NR; exit}')
+    ctx_line=$(_strip_go_comments "$health" | awk -v s="$fn_start" -v e="$fn_end" 'NR>s && NR<e && /ctx\.Err\(\)/ {print NR; exit}')
+    if [[ -z "$fn_start" || -z "$lock_line" || -z "$ctx_line" ]] || (( ctx_line < lock_line )); then
+        fail "ObserveBatch must check ctx.Err() AFTER acquiring t.mu (KPK-19.6.5-P2-02: the v19.6.5 check ran before the lock — a cancellation in the waiting window slipped its batch through)"
+        return
+    fi
+    if ! grep -q 'TestObserveBatchCancelledWhileWaitingForLock' "$health_test" || ! grep -q 'TestObserveBatchDeadlineWhileWaitingForLock' "$health_test"; then
+        fail "the deterministic lock-contention regression tests must exist (cancellation AND deadline while blocked on the mutex — the audit's acceptance list)"
+        return
+    fi
+
+    # --- KPK-19.6.5-P1-03: the typed, strict, enforced family profiles.
+    local budget_hits unmarshal_hits
+    budget_hits=$(_strip_go_comments "$loader" | grep -c 'type TokenBudget struct' || true)
+    unmarshal_hits=$(_strip_go_comments "$loader" | grep -c 'func (b \*TokenBudget) UnmarshalYAML' || true)
+    if [[ "$budget_hits" -eq 0 || "$unmarshal_hits" -eq 0 ]]; then
+        fail "the profile schema must model the dual-shape TokenBudget with its custom unmarshaler (KPK-19.6.5-P1-03: the STRING token_budget failed on the mapping shape and silently fell back)"
+        return
+    fi
+    local marker_hits
+    for marker in 'type ModePolicy struct' 'type ContentFilter struct' 'Permissions'; do
+        marker_hits=$(_strip_go_comments "$loader" | grep -c "$marker" || true)
+        if [[ "$marker_hits" -eq 0 ]]; then
+            fail "the profile schema must model the declared policy ($marker — the audit: the policy fields were represented NOWHERE)"
+            return
+        fi
+    done
+    local strict_hits issue_hits
+    strict_hits=$(_strip_go_comments "$loader" | grep -c 'KnownFields(true)' || true)
+    if [[ "$strict_hits" -eq 0 ]]; then
+        fail "the profile load must be STRICT (yaml KnownFields — unknown keys are errors for policy files, a typo cannot silently drop a permission)"
+        return
+    fi
+    issue_hits=$(_strip_go_comments "$loader" | grep -c 'type Issue struct' || true)
+    if [[ "$issue_hits" -eq 0 ]]; then
+        fail "the loader must surface invalid files as named Issues (never a silent filename-only fallback that looks permissively fine)"
+        return
+    fi
+    for marker in 'func (p \*Profile) AllowsMode' 'func (p \*Profile) RequirePermission' 'func (p \*Profile) ContentBlocked' 'ErrModeSwitchForbidden' 'ErrPermissionDenied' 'ErrContentBlocked'; do
+        marker_hits=$(_strip_go_comments "$loader" | grep -c "$marker" || true)
+        if [[ "$marker_hits" -eq 0 ]]; then
+            fail "the profile policy must be DECIDABLE at the action boundary ($marker — enforcement helpers, not dashboard hiding)"
+            return
+        fi
+    done
+    # enforcement wiring: REST mode switch + chat + MCP
+    local mode_enf_hits forbidden_hits chat_perm_hits chat_filter_hits chat_header_hits mcp_enf_hits
+    mode_enf_hits=$(_strip_go_comments "$rest_src" | grep -c 'p.AllowsMode(mode)' || true)
+    forbidden_hits=$(_strip_go_comments "$rest_src" | grep -c 'StatusForbidden' || true)
+    if [[ "$mode_enf_hits" -eq 0 || "$forbidden_hits" -eq 0 ]]; then
+        fail "the mode-switch handler must enforce the profile policy server-side (AllowsMode + 403 refusals by name — KPK-19.6.5-P1-03)"
+        return
+    fi
+    chat_perm_hits=$(_strip_go_comments "$airuntime_src" | grep -c 'RequirePermission' || true)
+    chat_filter_hits=$(_strip_go_comments "$airuntime_src" | grep -c 'ContentBlocked' || true)
+    chat_header_hits=$(_strip_go_comments "$airuntime_src" | grep -c 'X-Scarlix-Profile' || true)
+    if [[ "$chat_perm_hits" -eq 0 || "$chat_filter_hits" -eq 0 || "$chat_header_hits" -eq 0 ]]; then
+        fail "the chat handler must enforce the profile policy server-side (ai_chat permission + the content filter on the input + the header entry path)"
+        return
+    fi
+    mcp_enf_hits=$(_strip_go_comments "$mcp_src" | grep -c 'AllowsMode' || true)
+    if [[ "$mcp_enf_hits" -eq 0 ]]; then
+        fail "the MCP mode-set tool must enforce the profile policy too (the same action boundary, the same refusals)"
+        return
+    fi
+    if ! grep -q 'TestRepositoryProfilesParseWithoutFallback' "$loader_test" || ! grep -q 'TestNoSilentFallback' "$loader_test" || ! grep -q 'TestValidationNegativeCases' "$loader_test"; then
+        fail "the P1-03 regression tests must exist (all four profiles parse without fallback + no silent fallback + the negative schema matrix)"
+        return
+    fi
+    if ! grep -q 'TestModeSwitchProfilePolicyEnforced' "$enforcement_test" || ! grep -q 'TestChatProfilePolicyEnforced' "$enforcement_test"; then
+        fail "the enforcement matrix must exist as REST tests (mode-switch refusals + chat refusals with the live counterweights)"
+        return
+    fi
+
+    # --- KPK-19.6.5-P2-04: the media-tools build context is REAL.
+    if [[ ! -f "$media_dockerfile" ]] || [[ ! -f "$media_server" ]]; then
+        fail "media-tools must ship the Dockerfile + the service (KPK-19.6.5-P2-04: 'build: .' had no build context — the service could not be built at all)"
+        return
+    fi
+    if ! grep -qE '^FROM python:3\.12-alpine3\.20' "$media_dockerfile"; then
+        fail "the media-tools Dockerfile must pin its base image (python:3.12-alpine3.20 — no :latest base)"
+        return
+    fi
+    if ! grep -q 'HEALTHCHECK' "$media_dockerfile"; then
+        fail "the media-tools service must carry a HEALTHCHECK (the compose contract has a healthcheck-able service)"
+        return
+    fi
+
+    # --- KPK-19.6.5-P2-05: the generated inventory + the drift guard + the
+    # historical banner.
+    if [[ ! -f "$inventory_doc" ]] || [[ ! -f "$inventory_test" ]]; then
+        fail "the dependency inventory + drift test must exist (KPK-19.6.5-P2-05: a generated current inventory, not a stale audit posing as one)"
+        return
+    fi
+    if ! grep -q 'HISTORICAL POINT-IN-TIME SNAPSHOT' "$historical_audit" || ! grep -q 'DEPENDENCY_INVENTORY_2026-11-06' "$historical_audit"; then
+        fail "the 2026-10-21 audit must be bannered as a historical snapshot pointing at the current inventory"
+        return
+    fi
+    if ! grep -q 'mcp/playwright-server:latest' "$inventory_doc" || ! grep -q 'freetoken/serving:latest' "$inventory_doc"; then
+        fail "the inventory must REGISTER the experimental :latest set as named residuals (never silent rides)"
+        return
+    fi
+
+    # --- KPK-19.6.5-P3-06: models.yaml identity reconciliation.
+    if head -n 12 "$models_yaml" | grep -qE '^# SCARLIX OS v[0-9]'; then
+        fail "models.yaml must not carry a release identity in its header (the P3-06 defect was the header claiming 'SCARLIX OS v19.2.9' while the release was v19.6.5 — the VERSION file is the single source of truth)"
+        return
+    fi
+    local phantom_hits
+    phantom_hits=$(sed -E 's/#.*$//' "$models_yaml" | grep -vE '^[[:space:]]*$' | grep -c 'qwen3\.6' || true)
+    phantom_hits=$((phantom_hits + $(cat "$REPO_DIR/profiles/hugo.yaml" "$REPO_DIR/profiles/mon.yaml" "$REPO_DIR/profiles/xox.yaml" 2>/dev/null | grep -c 'qwen3\.6' || true)))
+    if [[ "$phantom_hits" -gt 0 ]]; then
+        fail "the phantom qwen3.6:14b identifier must be gone from ACTIVE config lines (one canonical Ollama id: qwen2.5:3b — what install.sh actually pulls; comments documenting the removal are honest history)"
+        return
+    fi
+
+    # --- The process remediation: the stale-tree audit automation.
+    for f in "$stale_audit" "$stale_service" "$stale_timer" "$stale_policy"; do
+        if [[ ! -f "$f" ]]; then
+            fail "the stale-tree automation must exist ($f — the audits' asymmetry finding gets a schedule, not a memory)"
+            return
+        fi
+    done
+    if ! grep -q 'ai-summary' "$stale_service" || ! grep -q 'noproxy' "$stale_audit" || ! grep -q 'OnCalendar=Mon' "$stale_timer"; then
+        fail "the stale-audit automation must wire the advisory AI triage (loopback, no ambient proxy) on the weekly schedule"
+        return
+    fi
+    if ! grep -q 'LLM navrhuje, politika rozhoduje' "$stale_audit"; then
+        fail "the stale-audit AI triage must state the advisory discipline (the local model proposes, the operator decides — nothing auto-mutates)"
+        return
+    fi
+    if ! grep -q 'scarlix-stale-audit.sh' "$REPO_DIR/install.sh" || ! grep -q 'scarlix-stale-audit.timer' "$REPO_DIR/install.sh"; then
+        fail "install.sh must install and enable the stale-audit automation (script + units + timer)"
+        return
+    fi
+
+    # --- README + SECURITY_MAP + release notes: the release is a release.
+    if ! grep -q "What's New in v19.6.6" "$readme" || ! grep -q '\*\*v19.6.6\*\*' "$readme"; then
+        fail "README must carry the v19.6.6 changelog row + What's New section"
+        return
+    fi
+    if ! grep -q '| AI Runtime trust enumeration + family profile enforcement + stale-tree automation (KPK-19.6.5-P2-01/02, P1-03 + process) | \*\*TESTED\*\* (v19.6.6) |' "$readme"; then
+        fail "README must carry the v19.6.6 roadmap row (trust enumeration + profile enforcement + stale-tree automation — TESTED)"
+        return
+    fi
+    if ! grep -q 'KPK-19.6.5-P2-01' "$secmap" || ! grep -q 'KPK-19.6.5-P2-02' "$secmap" || ! grep -q 'KPK-19.6.5-P1-03' "$secmap"; then
+        fail "SCARLIX_SECURITY_MAP.md must state the v19.6.6 closures by finding name (KPK-19.6.5-P2-01/P2-02/P1-03)"
+        return
+    fi
+    if ! grep -q '## (r) Family profiles' "$secmap" || ! grep -q '## (s) Stale-tree audit' "$secmap"; then
+        fail "SCARLIX_SECURITY_MAP.md must carry the family-profile enforcement section (r) and the stale-tree automation section (s)"
+        return
+    fi
+    if [[ ! -f "$notes" ]]; then
+        fail "docs/RELEASE_NOTES_v19.6.6.md missing (the KpK remediation release notes — the genre)"
+        return
+    fi
+    for section in '## Scope' '## Changes' '## Verification status' '## Known limitation'; do
+        if ! grep -q "$section" "$notes"; then
+            fail "the release notes must carry section '$section' (the remediation genre)"
+            return
+        fi
+    done
+
+    pass "v19.6.6 (the v19.6.5 KpK audit remediation + the process remediation): the DEFAULT trusted dial network is Docker's DOCUMENTED default address pool ENUMERATED as fifteen CANONICAL /16 entries (172.17.0.0/16 … 172.31.0.0/16 — the non-canonical \"172.17.0.0/12\" shorthand masked to 172.16.0.0/12 and trusted 172.16.0.0/16, which is NOT a Docker default-pool range; 172.16.0.1 and 172.32.0.1 rejected by default, regression-tested by name; canonicality + contiguity proven; backward compatible with every user-defined network from the pool), service-name endpoints with unset SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS raise a loud STARTUP WARNING with the exact subnet-derivation command (UndeclaredServiceNameEndpoints, the SK-audit P2-01 guidance), the health-table commit boundary checks the caller's context UNDER THE MUTEX (ObserveBatch acquires t.mu FIRST, ctx.Err() immediately after — the linearization point; the v19.6.5 before-the-lock check let a cancellation in the lock-wait window slip its batch through; deterministic lock-contention cancellation + deadline tests with the live-context counterweight), the family profiles are TYPED/VALIDATED/ENFORCED (the full policy schema with the dual-shape TokenBudget custom unmarshaler and the ContentFilter; strict KnownFields loading with named Issues — never a silent filename fallback; enforcement at the action boundary: mode-switch can_switch/allowed-set 403 refusals by name, chat ai_chat permission + the content-filter blocklist ON THE INPUT, unloadable profiles fail closed; identity stays the caller's declaration until per-profile auth — CF-4+, honestly stated), the media-tools build context is REAL (pinned python:3.12-alpine3.20 + ffmpeg/imagemagick + a stdlib conversion service, non-root, healthchecked, loopback-published), the dependency inventory is GENERATED from the active composes and drift-guarded (44-assertion test; the 2026-10-21 audit bannered as a historical snapshot), models.yaml carries no release identity and one canonical Ollama id (qwen2.5:3b — the phantom qwen3.6:14b is gone from models.yaml AND the profiles), and the process remediation is AUTOMATED (scarlix-stale-audit.sh: the classification registry with thresholds, :latest detection, missing-build-context detection, unclassified-path findings; the weekly systemd timer, persistent; the ADVISORY AI triage over the LOCAL Ollama tier, loopback, no ambient proxy — 'LLM navrhuje, politika rozhoduje', nothing auto-mutates; the policy in STALE_TREE_AUDIT.md; install.sh wires script + units + timer), README v19.6.6 surface (changelog row + What's New + roadmap row) + SECURITY_MAP sections (r)/(s) + release notes in the remediation genre; THREE verified negative controls (reverting the pool to the /12 shorthand FAILs the enumeration marker; moving ctx.Err() above t.mu.Lock() FAILs the order assertion; removing the profile enforcement call from the mode handler FAILs the wiring marker)"
+}
+
 # ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
@@ -3353,6 +3641,7 @@ SMOKE_CHECKS=(
     check_31_ai_transport_boundary
     check_32_ai_dial_pin_probe_cancel
     check_33_ai_trust_scope_commit_atomicity
+    check_34_trust_enumeration_profiles_enforcement_stale_automation
 )
 
 run_check() {

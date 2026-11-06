@@ -1,5 +1,19 @@
 # ScarLiX OS — Dependency Audit: všetky externé programy vs upstream
 
+> ## ⚠️ HISTORICAL POINT-IN-TIME SNAPSHOT — 2026-10-21
+>
+> Tento dokument je **zmrzlený historický audit** (v19.6.4-era). NIE JE
+> aktuálny stav systému — KPK-19.6.5-P2-05: dokument ešte uvádza staršie
+> piny (Ollama 0.5.4, CrowdSec v1.4.0, Coolify 4.0.30, Gitea 1.23,
+> Nextcloud 29, Headscale 0.25.0), ktoré už boli neskôr nahradené
+> remediem z 2026-10-21 (Ollama 0.40.7, CrowdSec v1.8.1, Coolify 4.3.1,
+> Gitea 28.2, Nextcloud 30, Headscale 0.26.0 — vidno v aktívnych compose
+> súboroch). **Aktuálny inventár je generovaný z aktívnych compose súborov:**
+> [`DEPENDENCY_INVENTORY_2026-11-06.md`](DEPENDENCY_INVENTORY_2026-11-06.md)
+> (+ drift test `tests/test_dependency_inventory.sh`, ktorý FAILne keď sa
+> compose piny a inventár rozídu). Tento dokument zostáva ako dôkaz
+> auditnej histórie — neber ho ako popis deploymentu.
+
 **Dátum auditu:** 2026-10-21 (relácia Task 13)
 **Rozsah:** všetky docker image piny (24 compose súborov + 4 Dockerfile FROM), Go moduly
 (scarlihq), Pi-Bolt installer pin, externé URL v install.sh.

@@ -29,6 +29,7 @@ import (
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/airt"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/airuntime"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
 )
 
 // MaxChatBodyBytes bounds the chat request body. The decodeOneJSON 4 KiB
@@ -243,6 +244,11 @@ type aiChatMessage struct {
 type aiChatRequest struct {
 	Model    string          `json:"model"`
 	Messages []aiChatMessage `json:"messages"`
+	// Profile is the OPTIONAL profile reference (v19.6.6, KPK-19.6.5-P1-03):
+	// when set (body field or X-Scarlix-Profile header), the chat is policy
+	// DECIDED server-side — the ai_chat permission and the content-filter
+	// blocklist are enforced HERE, not by a dashboard hiding controls.
+	Profile string `json:"profile,omitempty"`
 }
 
 type aiUsageView struct {
@@ -320,6 +326,40 @@ func (h *Handler) aiChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := request.(*aiChatRequest)
+	// v19.6.6 (KPK-19.6.5-P1-03): the profile reference (body field or the
+	// X-Scarlix-Profile header) makes the chat DECIDABLE against the
+	// declared family policy — SERVER-SIDE, at the action boundary:
+	//   1. the ai_chat permission is REQUIRED (a profile without it never
+	//      reaches a model, whatever the dashboard shows);
+	//   2. an ENABLED content filter blocklist is enforced on the chat input
+	//      (keyword-level, honestly documented — a semantic classifier is a
+	//      CF-4+ item, never a silent claim);
+	//   3. an unloadable profile reference FAILS CLOSED — a broken policy
+	//      file is never an unenforced bypass.
+	// The household Bearer token still gates the route; identity stays the
+	// caller's declaration until per-profile authentication (CF-4+, the
+	// honest residual in the SECURITY_MAP).
+	profileRef := req.Profile
+	if profileRef == "" {
+		profileRef = r.Header.Get("X-Scarlix-Profile")
+	}
+	if profileRef != "" {
+		p, perr := h.profiles.Load(profileRef)
+		if perr != nil {
+			writeJSONError(w, http.StatusBadRequest, perr.Error())
+			return
+		}
+		if perr := p.RequirePermission("ai_chat"); perr != nil {
+			writeJSONError(w, http.StatusForbidden, perr.Error())
+			return
+		}
+		for _, m := range req.Messages {
+			if category, blocked := p.ContentBlocked(m.Content); blocked {
+				writeJSONError(w, http.StatusForbidden, fmt.Sprintf("%v: category %q (profile %s's content filter is enforced server-side on the chat input)", profiles.ErrContentBlocked, category, p.Name))
+				return
+			}
+		}
+	}
 	messages := make([]airuntime.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {
 		messages = append(messages, airuntime.Message{Role: airuntime.Role(m.Role), Content: m.Content})

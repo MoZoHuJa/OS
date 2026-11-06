@@ -333,17 +333,21 @@ func main() {
 			}
 			chatTimeout = d
 		}
-		// KPK-03 (v19.6.4) + KPK-19.6.4-P2-01 (v19.6.5): the trusted dial
-		// networks for service-name endpoints — the dial guard RESOLVES a
-		// configured name, validates EVERY answered address against these
-		// networks (loopback is always trusted) and PINNS the connection to
-		// a validated address. Unset → the Docker default bridge pool
-		// (172.17.0.0/12 — v19.6.5: the home-LAN range 192.168.0.0/16 is
-		// NOT implicit anymore; an operator whose scarlix-net lives there
-		// declares it, e.g. the subnet from 'docker network inspect
-		// scarlix-net'); a declared set REPLACES the default (an explicit
-		// 10.0.0.0/8 must be declared — no blind RFC1918 trust; a UNIVERSAL
-		// route 0.0.0.0/0 / ::/0 is refused — it would nullify the boundary).
+		// KPK-03 (v19.6.4) + KPK-19.6.4-P2-01 (v19.6.5) + KPK-19.6.5-P2-01
+		// (v19.6.6): the trusted dial networks for service-name endpoints —
+		// the dial guard RESOLVES a configured name, validates EVERY
+		// answered address against these networks (loopback is always
+		// trusted) and PINNS the connection to a validated address. Unset →
+		// the Docker default address pool ENUMERATED as fifteen canonical
+		// /16s (172.17.0.0/16 … 172.31.0.0/16 — v19.6.6: the non-canonical
+		// "172.17.0.0/12" shorthand masked to 172.16.0.0/12 and trusted
+		// 172.16.0.0/16 by accident of CIDR normalization; the home-LAN
+		// range 192.168.0.0/16 is NOT implicit either — an operator whose
+		// scarlix-net lives outside the pool declares it, e.g. the subnet
+		// from 'docker network inspect scarlix-net'); a declared set
+		// REPLACES the default (an explicit 10.0.0.0/8 must be declared —
+		// no blind RFC1918 trust; a UNIVERSAL route 0.0.0.0/0 / ::/0 is
+		// refused — it would nullify the boundary).
 		// Fail-closed on garbage, like every env surface.
 		var dialOpts []airt.DialOption
 		if raw := strings.TrimSpace(os.Getenv(airt.TrustedCIDRsEnvVar)); raw != "" {
@@ -352,6 +356,16 @@ func main() {
 				log.Fatalf("ai runtime trusted dial networks configuration failed: %v (an invalid override is never a silent fall-back — fix the env)", err)
 			}
 			dialOpts = append(dialOpts, airt.WithTrustedDialCIDRs(cidrs))
+		} else if names := airt.UndeclaredServiceNameEndpoints(endpoints); len(names) > 0 {
+			// v19.6.6 (the SK-audit P2-01 guidance): service-name endpoints
+			// with NO trusted-network declaration are riding the Docker
+			// default address pool enumeration (172.17.0.0/16 …
+			// 172.31.0.0/16); a scarlix-net created OUTSIDE that pool will
+			// fail at DIAL time, not at boot. A loud startup warning with
+			// the exact derivation command — the operator declares the
+			// ACTUAL subnet before production (explicit, visible,
+			// auditable), and the log line is the evidence it was asked.
+			log.Printf("WARNING: AI runtime endpoints use service names (%v) while %s is UNSET — only Docker's default address pool (172.17.0.0/16…172.31.0.0/16, no 172.16.0.0/16) is trusted by default; if scarlix-net lives elsewhere, derive the ACTUAL subnet with 'docker network inspect scarlix-net -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}'' and declare it in %s (v19.6.6, SK-audit P2-01)", names, airt.TrustedCIDRsEnvVar, airt.TrustedCIDRsEnvVar)
 		}
 		adapters, prober, err := airt.NewLocalStack(endpoints, chatTimeout, dialOpts...)
 		if err != nil {
@@ -401,7 +415,7 @@ func main() {
 		if err := apiHandler.ConfigureAIRuntime(aiRuntime); err != nil {
 			log.Fatalf("ai runtime configuration failed: %v", err)
 		}
-		log.Printf("Universal AI Runtime API enabled (/api/ai/health, /api/ai/models, /api/ai/probe, /api/ai/chat, /api/ai/propose with the fabric's proposal store — Bearer-gated; sglang %s · vllm %s · beellama %s · ollama %s; %d models registered; per-attempt %s, end-to-end budget %s (KPK-02 — the write path extends beyond it); the local-only transport: no redirects, no ambient proxy, dial-guarded with resolve-validate-pin over the trusted local networks (KPK-01/KPK-03 — unset %s means the Docker default pools; a cancelled probe round records nothing, KPK-04); the LLM proposes, policy decides)", endpoints[airuntime.ProviderSGLang], endpoints[airuntime.ProviderVLLM], endpoints[airuntime.ProviderBeeLlama], endpoints[airuntime.ProviderOllama], registry.Len(), chatTimeout, airt.ChatBudget(chatTimeout), airt.TrustedCIDRsEnvVar)
+		log.Printf("Universal AI Runtime API enabled (/api/ai/health, /api/ai/models, /api/ai/probe, /api/ai/chat, /api/ai/propose with the fabric's proposal store — Bearer-gated; sglang %s · vllm %s · beellama %s · ollama %s; %d models registered; per-attempt %s, end-to-end budget %s (KPK-02 — the write path extends beyond it); the local-only transport: no redirects, no ambient proxy, dial-guarded with resolve-validate-pin over the trusted local networks (KPK-01/KPK-03 — unset %s means the Docker default address pool, enumerated canonical /16s 172.17.0.0/16…172.31.0.0/16, no 172.16.0.0/16; a cancelled probe round records nothing, KPK-04); the LLM proposes, policy decides)", endpoints[airuntime.ProviderSGLang], endpoints[airuntime.ProviderVLLM], endpoints[airuntime.ProviderBeeLlama], endpoints[airuntime.ProviderOllama], registry.Len(), chatTimeout, airt.ChatBudget(chatTimeout), airt.TrustedCIDRsEnvVar)
 	} else {
 		log.Printf("Universal AI Runtime API disabled; set SCARLIHQ_AIRUNTIME_ENABLED=true to enable (/api/ai/* — adapters for the local stack + health probing + failover chat)")
 	}

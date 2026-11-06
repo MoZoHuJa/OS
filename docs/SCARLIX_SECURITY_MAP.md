@@ -142,12 +142,23 @@ Note: `ProtectSystem=strict` and `ReadOnlyPaths=/etc` are NOT used because `scar
 
 The **default AI path is tag-pinned** (`sglang`, `vllm`, `ollama`, `llamacpp` compose files reference immutable `:tag` images, not `:latest`; since v19.4.2 `ollama` is additionally **digest-pinned** and all pins fixed in v19.4.2 — coolify, crowdsec, ollama, headscale, sunshine — carry digests, per `docs/DEPENDENCY_AUDIT_2026-10-21.md` §9). The following **experimental-only** services still reference `:latest` and are accepted as a **documented residual risk**:
 
-| Service | Image | Scope | Risk accepted because |
-|---|---|---|---|
-| needle | `ghcr.io/cactus-compute/needle:latest` | `profiles: [experimental]` — never started by the default mode path | experimental opt-in only; NO_ACCESS note in tree (image unverifiable offline) |
-| freetoken | `freetoken/serving:latest` | experimental profile | same |
-| browser-mcp | `mcp/playwright-server:latest` | experimental profile | same |
-| laya | `laya/decision-engine:latest` | experimental profile + single-GPU gate applies (device_ids 1) | same |
+| Service | Image | Scope | Risk accepted because | Last review |
+|---|---|---|---|---|
+| needle | `ghcr.io/cactus-compute/needle:latest` | `profiles: [experimental]` — never started by the default mode path | experimental opt-in only; NO_ACCESS note in tree (image unverifiable offline) | 2026-11-06 (v19.6.6 registry pass) |
+| freetoken | `freetoken/serving:latest` | experimental profile | same | 2026-11-06 (v19.6.6 registry pass) |
+| browser-mcp | `mcp/playwright-server:latest` | experimental profile | same | 2026-11-06 (v19.6.6 registry pass) |
+| laya | `laya/decision-engine:latest` | experimental profile + single-GPU gate applies (device_ids 1) | same | 2026-11-06 (v19.6.6 registry pass) |
+
+**v19.6.6 (the SK-audit §5.1 register + automation):** this table is
+mirrored in `docs/DEPENDENCY_INVENTORY_2026-11-06.md` §3 (the GENERATED
+inventory — drift-guarded by `tests/test_dependency_inventory.sh`) and the
+unpinned `:latest` set is re-detected EVERY WEEK by
+`scarlix-stale-audit.sh` (the stale-tree automation, §r below) — the
+"NOT YET PINNED" comments from v18.8 no longer rely on memory alone. The
+register date column is the review SLA: a new experimental image starts
+its clock on the day it is added, and the weekly audit names every
+unpinned image with its compose path. Pin-or-archive for these four
+remains the next repo-hygiene milestone.
 
 **Rule (enforced by review, not yet by CI):** any NEW service added to the DEFAULT path must be tag- or digest-pinned — `:latest` is permitted only under `profiles: [experimental]`. Digest pinning for the four services above is **deferred** (see README roadmap status table) until their registries can be reached from the release pipeline to record immutable digests. **v19.4.2:** tag EXISTENCE for the pins fixed in v19.4.2 is now CI-enforced — smoke check 07 runs online in CI since v19.4.2 (was `--offline`) and fails on a definitive registry 404 (audit §6.1 P0 detector; network errors stay WARNs); the experimental `:latest` set above is unchanged (unverifiable registries).
 
@@ -443,8 +454,10 @@ transport's own markers). The security posture:
   A MIXED answer set (one approved + one foreign address) is refused WHOLE
   (fail-closed, never filtered); an empty or failed resolution is refused
   fail-closed. Loopback (`127.0.0.0/8`, `::1`) is ALWAYS trusted; the
-  non-loopback trust defaults to Docker's own default bridge pool
-  (`172.17.0.0/12` — v19.6.5 below) and is REPLACED by an operator
+  non-loopback trust defaults to Docker's DOCUMENTED default address pool
+  ENUMERATED as fifteen canonical /16 networks (`172.17.0.0/16` …
+  `172.31.0.0/16`, `dockerDefaultPoolCIDRs` — v19.6.6 below) and is
+  REPLACED by an operator
   declaration — `SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS=172.18.0.0/16,10.0.0.0/8`
   (comma-separated CIDRs, validated fail-closed at startup; deliberately
   NOT the whole RFC1918 space: `10.0.0.0/8` and `192.168.0.0/16` are out
@@ -453,9 +466,25 @@ transport's own markers). The security posture:
   resolver itself (Docker DNS / host resolv.conf) is trusted only to
   ANSWER — a compromised resolver can no longer steer traffic anywhere it
   wants, only into the declared networks or into a refusal.
+  **v19.6.6 (KPK-19.6.5-P2-01) makes the DEFAULT literal-honest:** the
+  v19.6.5 shorthand `172.17.0.0/12` was a NON-canonical network address —
+  parsing it MASKS to `172.16.0.0/12`, which silently trusted
+  `172.16.0.0/16` (not part of Docker's documented default pool, which
+  begins at `172.17.0.0`; commonly corporate-VPN/overlay space) — the same
+  class of trust-scope mistake the home-LAN removal fixed, in a different
+  private range. The default is now the ENUMERATED pool: fifteen CANONICAL
+  /16 entries, each parseable unchanged, the trust range stated IS the
+  trust range enforced; `172.16.0.1` and `172.32.0.1` are rejected by
+  default (regression-tested by name), every user-defined network carved
+  from the default pool still works. The SK-audit P2-01 guidance is wired:
+  service-name endpoints with UNSET `SCARLIHQ_AIRUNTIME_TRUSTED_CIDRS`
+  raise a loud STARTUP WARNING carrying the exact subnet-derivation
+  command — an operator whose scarlix-net lives outside the pool declares
+  it BEFORE production, explicit, visible, auditable.
   **v19.6.5 (KPK-19.6.4-P2-01) narrows the DEFAULT to what it actually is:**
-  the implicit trust is the Docker default bridge pool `172.17.0.0/12`
-  ONLY — the home-LAN range `192.168.0.0/16` was REMOVED from the default
+  the implicit trust is the Docker default bridge pool ONLY (v19.6.6
+  above: the enumerated canonical /16s) — the home-LAN range
+  `192.168.0.0/16` was REMOVED from the default
   (the independent v19.6.4 audit: it is not a per-deployment Docker
   boundary, it covers every `192.168.x.x` destination — home routers, NAS
   devices, workstations — and scarlix-net is an EXTERNAL network whose
@@ -503,8 +532,15 @@ transport's own markers). The security posture:
   by auth (who may call) and the four-slot sequential walk, not by a
   dedicated concurrency limit; monitor and rate-limit at the operator's
   discretion (a CF-4 audit-dashboard item).
-- **v19.6.4 (KPK-04) + v19.6.5 (KPK-19.6.4-P2-02) — a cancelled probe round
-  is not evidence about the providers, and the recording is ATOMIC:** the
+- **v19.6.4 (KPK-04) + v19.6.5 (KPK-19.6.4-P2-02) + v19.6.6
+  (KPK-19.6.5-P2-02) — a cancelled probe round is not evidence about the
+  providers, the recording is ATOMIC, and the context check lives UNDER
+  THE LOCK:** v19.6.6 moved `ctx.Err()` from before `t.mu.Lock()` to
+  immediately after acquiring it — a cancellation arriving while
+  `ObserveBatch` was BLOCKED on a contended lock used to slip its batch
+  through the waiting window; the linearization point is now the successful
+  context check under the lock (deterministic lock-contention cancellation
+  + deadline tests with the live-context counterweight). the
   operator closing the browser, a reverse proxy aborting the request, or a
   round deadline expiring mid-probe used to convert `context.Canceled` into
   UNAVAILABLE observations and OVERWRITE all four providers'
@@ -623,6 +659,109 @@ posture is the BF-4 genre applied to model-authored intents:
   is bounded to 4096 runes by the CF-1 contract before the parser ever
   sees it; the parse itself is pure text processing — no network, no
   clock, no randomness in `ParseProposal`.
+
+## (r) Family profiles — typed schema, strict load, server-side enforcement (v19.6.6, KPK-19.6.5-P1-03)
+
+The repository's four family profiles (`profiles/{hugo,mon,xox,zmor}.yaml`)
+are POLICY-BEARING files: permissions, `scarlix_mode` (default/allowed/
+can_switch), the dual-shape `token_budget` (`unlimited` scalar for the
+admin, `{monthly, model}` mapping for family members) and XOX's
+`content_filter` (enabled + blocklist). The v19.6.5 defect: the Go loader
+modeled a STRING `token_budget` and five display fields — the mapping
+shape FAILED `yaml.Unmarshal` for three of four profiles and the loader
+SILENTLY returned filename-only fallbacks (display name, role, theme and
+every policy field discarded), while the policy fields were represented
+NOWHERE and enforced NOWHERE — "if these profiles are intended to enforce
+user permissions, the current behavior is a security boundary failure,
+not just a display bug" (the audit's words).
+
+The v19.6.6 contract:
+
+- **The schema is typed and total** (`internal/profiles/loader.go`):
+  `Permissions`, `ModePolicy`, `TokenBudget` (custom unmarshaler — the
+  two honest shapes load typed, every other shape is refused BY NAME),
+  `ContentFilter`. Validation is closed: role ∈ {admin, family}; the
+  `all` wildcard is ADMIN-only; `scarlix_mode.default` must be a member
+  of `allowed`; `can_switch=false` allows exactly ONE mode; an enabled
+  content filter requires a non-empty blocklist; duplicate permissions
+  are refused.
+- **The load is STRICT**: `yaml` `KnownFields` — unknown keys are ERRORS
+  for policy files (a typo'd `permissons:` silently dropping a permission
+  is the accident class the audit demanded eliminated). A parse or
+  validation failure is a named `Issue` — the profile is EXCLUDED from
+  `List()` and SURFACED in the API response (`/api/profiles` returns
+  `{"profiles": [...], "invalid": [...]}`); `Load`/`Get` return the
+  error. **Never a silently permissive fallback.**
+- **Enforcement is at the ACTION BOUNDARY, server-side:**
+  - `/api/mode/switch` (query `profile=`, body field, or
+    `X-Scarlix-Profile` header) and MCP `scarlix_mode_set` (the
+    `profile` argument): `can_switch=false` refuses EVERY switch (XOX
+    stays in her default mode — 403/-32005, the refusal names the
+    policy); a target outside the allowed set is refused BY NAME with
+    the allowed set in the message.
+  - `/api/ai/chat` (body field or header): the `ai_chat` permission is
+    REQUIRED (403 with the declared set riding along), and an ENABLED
+    content filter is enforced ON THE CHAT INPUT — a blocklisted
+    category hit refuses the request with the category named
+    (keyword-level, case-insensitive substring; a SEMANTIC classifier
+    is a CF-4+ item with the local model — honestly documented, never a
+    silent claim).
+  - An unloadable profile reference FAILS CLOSED (400): a broken
+    policy file is never an unenforced bypass.
+- **The honest residual (identity until CF-4+):** the household Bearer
+  token remains the only authentication boundary; the profile reference
+  is the CALLER'S DECLARATION selecting which policy applies. A family
+  member declaring "zmor" carries the admin policy — the enforcement is
+  real, the identity is not, and per-profile authentication (profiles
+  bound to credentials) is the CF-4+ roadmap item that closes it. Until
+  then the profiles enforce the FAMILY POLICY CONTRACT against
+  dashboards/agents that declare who they act for — dashboard-hides-the-
+  control was never enforcement, and now it does not have to be.
+
+Regression proofs: `internal/profiles/loader_test.go` (the four
+repository profiles parse WITHOUT fallback — embedded fixtures AND the
+on-disk walk; the dual-shape budget truth table; the negative schema
+matrix; `List` excludes + reports invalid files; the enforcement
+decisions) + `internal/api/profiles_enforcement_test.go` (the REST
+enforcement matrix: 403 refusals with named errors, the 202/200
+counterweights, every entry path, the no-profile-reference compatibility
+case).
+
+## (s) Stale-tree audit — the repo-hygiene automation (v19.6.6, the process remediation)
+
+The v19.6.5 audits' process finding: the repository's attention is
+ASYMMETRIC — the control plane hardens daily while `profiles/` sat 85
+days (where the P1 lived), `media-tools/` carried a broken build context
+for 38, and the experimental `:latest` register relied on v18.8 comments.
+The remediation is AUTOMATION, not memory:
+
+- **`files/usr/local/bin/scarlix-stale-audit.sh`** — the audit: (1)
+  staleness of every REGISTERED path against its classification
+  (ACTIVE/OPTIONAL/EXPERIMENTAL/ARCHIVED) and its max-stale threshold
+  (git last-touch in a checkout, mtime on an installed tree); (2) every
+  `:latest`/tagless image reference in every compose file; (3) every
+  compose `build:` context missing its Dockerfile (the P2-04 class);
+  (4) every UNCLASSIFIED top-level path — the registry IS the audited
+  contract, an unregistered path is unaudited by construction.
+- **`scarlix-stale-audit.timer`** (weekly Mon 06:30, persistent) — the
+  schedule; the service treats findings (exit 1) as SUCCESS so a timer
+  failure means the audit itself broke. Reports land in
+  `/var/log/scarlix/stale-audit/`.
+- **`--ai-summary` — the AI Local Model agent, ADVISORY ONLY:** after the
+  audit, the report is POSTed to the LOCAL Ollama tier (loopback-only,
+  `curl --noproxy '*'` — the airt transport lesson applied to ops
+  tooling; model `qwen2.5:3b`, the canonical starter) for triage —
+  which findings block release integrity, which are hygiene, what order
+  to fix. The triage is saved next to the report and CHANGES NOTHING:
+  "LLM navrhuje, politika rozhoduje". The AI step failing is a WARNING,
+  never an audit failure.
+- **The policy** lives in `docs/STALE_TREE_AUDIT.md`; the drift-guarded
+  image inventory lives in `docs/DEPENDENCY_INVENTORY_2026-11-06.md`
+  (`tests/test_dependency_inventory.sh`).
+
+Exit codes are CI-gate friendly (0 clean / 1 findings / 2 usage); the
+classification registry is edited deliberately, in the script, reviewed
+in code review.
 
 ## Other security properties
 

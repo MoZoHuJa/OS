@@ -1,0 +1,24 @@
+[Unit]
+Description=SCARLIX OS v19.6.6 — Stale-tree audit (repo hygiene, KPK-19.6.5 process remediation)
+Documentation=file:/usr/local/share/scarlix/docs/STALE_TREE_AUDIT.md
+# The v19.6.5 KpK process finding: attention asymmetry — the control plane
+# hardens daily while edge stacks stagnate for months. This unit runs the
+# audit that NAMES the debt automatically, then asks the LOCAL AI tier for
+# an advisory triage ("LLM navrhuje, politika rozhoduje" — nothing auto-mutes).
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# --ai-summary: after the audit, POST the report to the local Ollama tier
+# (loopback-only, --noproxy '*') for the advisory triage saved next to it.
+# Exit 1 (findings) is EXPECTED hygiene output — the unit stays "successful"
+# so a timer failure means the AUDIT ITSELF broke, not that debt was found.
+ExecStart=/bin/sh -c 'exec /usr/local/bin/scarlix-stale-audit.sh --ai-summary || [ $? -eq 1 ]'
+# The report lands in /var/log/scarlix/stale-audit/ (created by the script).
+# Hardening: no new privileges, the report dir only.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/scarlix
+ProtectHome=true

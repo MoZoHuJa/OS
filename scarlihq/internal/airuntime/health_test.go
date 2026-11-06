@@ -329,6 +329,126 @@ func TestObserveBatchDeadlineAtCommitBoundary(t *testing.T) {
 	}
 }
 
+// TestObserveBatchCancelledWhileWaitingForLock: the v19.6.6 regression
+// proof (KPK-19.6.5-P2-02) — the context is checked UNDER THE LOCK. The
+// v19.6.5 defect: ctx.Err() ran BEFORE t.mu.Lock(), so a cancellation
+// arriving while ObserveBatch was BLOCKED on a contended lock was never
+// re-checked and the batch committed anyway. This test reconstructs the
+// EXACT audited window deterministically: another goroutine HOLDS the
+// table mutex, ObserveBatch starts and blocks on the lock, the caller
+// cancels (and separately: a deadline lapses), the mutex is released —
+// and the batch must record NOTHING, the error must stay
+// context-identifiable. The live-context counterweight commits the same
+// batch through the same contended window.
+func TestObserveBatchCancelledWhileWaitingForLock(t *testing.T) {
+	table := NewHealthTable()
+	seeded := []Observation{{Provider: ProviderSGLang, State: HealthHealthy, At: probeT0}}
+	if err := table.ObserveBatch(context.Background(), seeded); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	later := probeT0.Add(time.Minute)
+	batch := []Observation{{Provider: ProviderSGLang, State: HealthUnavailable, At: later}}
+
+	// Hold the table's mutex — ObserveBatch will block on the lock after
+	// passing its (now lock-side) commit-boundary position check.
+	table.mu.Lock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- table.ObserveBatch(ctx, batch) }()
+
+	// Wait until the batch call is BLOCKED on the lock (it cannot have
+	// returned: the mutex is held here). A short poll proves liveness of
+	// the goroutine without timing dependence on its completion.
+	blockDeadline := time.Now().Add(2 * time.Second)
+	for {
+		select {
+		case err := <-done:
+			t.Fatalf("ObserveBatch returned (%v) while the table mutex was still held — it cannot have committed", err)
+		default:
+		}
+		if time.Now().After(blockDeadline) {
+			t.Fatal("ObserveBatch never reached the lock wait — goroutine appears stalled")
+		}
+		time.Sleep(2 * time.Millisecond)
+		break // one liveness sample is enough: it has not returned yet
+	}
+	time.Sleep(20 * time.Millisecond) // let the goroutine park on t.mu.Lock()
+
+	// The caller walks away WHILE ObserveBatch is blocked on the lock.
+	cancel()
+	// Release the mutex — the lock hand-off happens with a done context.
+	table.mu.Unlock()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a cancellation while waiting for the health-table lock must reject the batch (KPK-19.6.5-P2-02: the check lives UNDER the lock)")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("the rejection must stay context-identifiable, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "commit boundary") {
+			t.Fatalf("the rejection must still name the commit boundary, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ObserveBatch did not return after the mutex was released")
+	}
+	// Zero writes: the seeded state AND timestamp stand untouched.
+	if got := table.Snapshot(ProviderSGLang); got.State != HealthHealthy || !got.At.Equal(probeT0) {
+		t.Fatalf("KPK-19.6.5-P2-02 regression: the table moved (%s @ %v) — a cancellation in the lock-wait window records NOTHING", got.State, got.At)
+	}
+
+	// The counterweight: the SAME batch, the SAME contended window, a
+	// LIVE context — the whole batch commits normally.
+	table.mu.Lock()
+	liveDone := make(chan error, 1)
+	go func() { liveDone <- table.ObserveBatch(context.Background(), batch) }()
+	time.Sleep(20 * time.Millisecond) // parked on the lock again
+	table.mu.Unlock()
+	if err := <-liveDone; err != nil {
+		t.Fatalf("the live-context counterweight through the contended window must commit: %v", err)
+	}
+	if got := table.Snapshot(ProviderSGLang); got.State != HealthUnavailable || !got.At.Equal(later) {
+		t.Fatalf("the live counterweight must land whole, got %s @ %v", got.State, got.At)
+	}
+}
+
+// TestObserveBatchDeadlineWhileWaitingForLock: the same waiting-window
+// discipline under a deadline — the deadline lapses while ObserveBatch is
+// blocked on the contended lock; the hand-off must refuse the batch
+// identifiably with zero writes (the audit's acceptance list: cancellation
+// AND deadline expiry while waiting).
+func TestObserveBatchDeadlineWhileWaitingForLock(t *testing.T) {
+	table := NewHealthTable()
+	seeded := []Observation{{Provider: ProviderVLLM, State: HealthDegraded, At: probeT0}}
+	if err := table.ObserveBatch(context.Background(), seeded); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	later := probeT0.Add(time.Minute)
+	batch := []Observation{{Provider: ProviderVLLM, State: HealthUnavailable, At: later}}
+
+	table.mu.Lock()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- table.ObserveBatch(ctx, batch) }()
+	time.Sleep(25 * time.Millisecond) // the deadline lapses WHILE blocked on the lock
+	table.mu.Unlock()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("a deadline expired while waiting for the lock must reject the batch identifiably, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ObserveBatch did not return after the mutex was released")
+	}
+	if got := table.Snapshot(ProviderVLLM); got.State != HealthDegraded || !got.At.Equal(probeT0) {
+		t.Fatalf("an expired-deadline waiting window records NOTHING, got %s @ %v", got.State, got.At)
+	}
+}
+
 // TestObserveBatchConcurrentRoundsMonotone: two observation rounds racing
 // — the newer round wins per provider, the older round is discarded WHOLE
 // (never partially applied over the newer one), and the table never shows

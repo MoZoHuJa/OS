@@ -168,7 +168,7 @@ func (s *Server) tools() []toolDef {
 		{Name: "scarlix_mode_set", Description: "Request scarlix-mode switch (async via host bridge). Params: {mode: string}"},
 		{Name: "scarlix_gpu_status", Description: "Get GPU status from host-status.json (nvidia-smi snapshot)"},
 		{Name: "scarlix_container_list", Description: "List Docker containers from host-status.json"},
-		{Name: "scarlix_profile_list", Description: "List user profiles from /etc/scarlix/profiles/*.yaml"},
+		{Name: "scarlix_profile_list", Description: "List user profiles from /etc/scarlix/profiles (policy-bearing YAML, v19.6.6)"},
 		{Name: "scarlix_full_status", Description: "Full host status (mode, gpus, containers, disk, experimental)"},
 	}
 }
@@ -189,6 +189,23 @@ func (s *Server) handleToolCall(req rpcRequest) rpcResponse {
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]string{"mode": s.mode.Current()}}
 	case "scarlix_mode_set":
 		mode, _ := params.Arguments["mode"].(string)
+		// v19.6.6 (KPK-19.6.5-P1-03): an optional "profile" argument makes the
+		// switch DECIDABLE against the profile's scarlix_mode policy — the SAME
+		// server-side enforcement as the REST boundary (can_switch=false refuses
+		// every switch; a target outside the allowed set is refused by name; an
+		// unloadable profile reference fails closed — a broken policy file is
+		// never an unenforced bypass). Identity stays the caller's declaration
+		// until per-profile authentication (CF-4+, the honest residual).
+		profileRef, _ := params.Arguments["profile"].(string)
+		if profileRef != "" {
+			p, perr := s.profiles.Load(profileRef)
+			if perr != nil {
+				return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: perr.Error()}}
+			}
+			if perr := p.AllowsMode(mode); perr != nil {
+				return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32005, Message: perr.Error()}}
+			}
+		}
 		// v18.7.3 P1: Centralized mode request (was: duplicate retrying check + Set()
 		// here in MCP and again in REST modeHandler). scarlix_mode.Mode.Request() now
 		// does both the transition-state check (from host-status.json) AND the atomic
@@ -210,7 +227,17 @@ func (s *Server) handleToolCall(req rpcRequest) rpcResponse {
 	case "scarlix_container_list":
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"containers": status.ReadOrStale().Containers}}
 	case "scarlix_profile_list":
-		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"profiles": s.profiles.List()}}
+		// v19.6.6 (KPK-19.6.5-P1-03): the FULL policy-bearing set plus the
+		// EXPLICIT issues of invalid files — never the old silent filename-only
+		// fallbacks that discarded every policy field.
+		profs, issues := s.profiles.List()
+		if profs == nil {
+			profs = []profiles.Profile{}
+		}
+		if issues == nil {
+			issues = []profiles.Issue{}
+		}
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"profiles": profs, "invalid": issues}}
 	case "scarlix_full_status":
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: status.ReadOrStale()}
 	default:

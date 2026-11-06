@@ -1,3 +1,8 @@
+# SCARLIX OS v19.6.6 — Media Tools (optional stack)
+# v19.6.6 (KPK-19.6.5-P2-04): the build context is REAL now — this compose
+#   declared 'build: .' while media-tools/ had no Dockerfile (the independent
+#   audit's finding); the Dockerfile + server.py + templates/ ship here.
+#   Loopback-published only (127.0.0.1:8200), scarlix-net internal otherwise.
 services:
   media-tools:
     build: .

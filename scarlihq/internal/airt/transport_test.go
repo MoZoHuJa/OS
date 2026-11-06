@@ -696,8 +696,16 @@ func TestApprovedResolvedIPs(t *testing.T) {
 // them.
 func TestDefaultTrustedDialCIDRs(t *testing.T) {
 	cidrs := DefaultTrustedDialCIDRs()
-	if len(cidrs) != 1 {
-		t.Fatalf("the default is exactly the ONE Docker default bridge pool (v19.6.5, KPK-19.6.4-P2-01: the home-LAN range was removed), got %v", cidrs)
+	if len(cidrs) != len(dockerDefaultPoolCIDRs) {
+		t.Fatalf("the default is the ENUMERATED Docker default address pool (v19.6.6, KPK-19.6.5-P2-01: fifteen canonical /16s, no non-canonical supernet), got %d networks: %v", len(cidrs), cidrs)
+	}
+	// The independent v19.6.5 audit's acceptance: the canonical network
+	// returned by parsing every default CIDR is the literal itself — no
+	// masking surprise, the trust range stated is the trust range enforced.
+	for i, c := range cidrs {
+		if got, want := c.String(), dockerDefaultPoolCIDRs[i]; got != want {
+			t.Fatalf("default CIDR #%d must parse canonically: got network %s, want %s (KPK-19.6.5-P2-01: a non-canonical literal masks to a WIDER network — the v19.6.5 \"172.17.0.0/12\" became 172.16.0.0/12 and trusted 172.16.0.0/16 by accident of normalization)", i, got, want)
+		}
 	}
 	for _, c := range cidrs {
 		if c.IP.IsLoopback() {
@@ -705,7 +713,16 @@ func TestDefaultTrustedDialCIDRs(t *testing.T) {
 		}
 	}
 	if !ipIsTrusted(mustIP(t, "172.17.0.9"), cidrs) || !ipIsTrusted(mustIP(t, "172.31.255.1"), cidrs) {
-		t.Fatal("the 172.17.0.0/12 pool must cover the default bridge range")
+		t.Fatal("the enumerated Docker default pool must cover the default bridge range (172.17.0.0 through 172.31.255.255)")
+	}
+	// The independent v19.6.5 audit's EXACT acceptance test: 172.16.0.1 is
+	// NOT part of Docker's default pool (the pool begins at 172.17.0.0) and
+	// must be REJECTED by default — the v19.6.5 /12 shorthand masked to
+	// 172.16.0.0/12 and trusted it by accident (KPK-19.6.5-P2-01).
+	for _, outside := range []string{"172.16.0.1", "172.16.255.255", "172.32.0.1", "172.33.1.1"} {
+		if ipIsTrusted(mustIP(t, outside), cidrs) {
+			t.Fatalf("%s must NOT be trusted by default (KPK-19.6.5-P2-01: outside Docker's documented default pool — 172.16.0.0/16 is commonly corporate-VPN/overlay space, 172.32.0.0+ is beyond the pool)", outside)
+		}
 	}
 	// The independent v19.6.4 audit's acceptance list: unrelated LAN
 	// destinations are NOT trusted by default.
@@ -719,6 +736,62 @@ func TestDefaultTrustedDialCIDRs(t *testing.T) {
 	}
 	if ipIsTrusted(mustIP(t, "93.184.216.34"), cidrs) {
 		t.Fatal("public addresses are never trusted")
+	}
+}
+
+// TestDockerDefaultPoolCIDRsCanonical: the pool enumeration itself is
+// well-formed — exactly the fifteen canonical /16s of Docker's documented
+// default address pool, contiguous, no supernet entry, no 172.16 (the
+// v19.6.5 defect), all IPv4. Prose in comments cannot drift into a wider
+// range without the CODE marker drifting with it.
+func TestDockerDefaultPoolCIDRsCanonical(t *testing.T) {
+	if len(dockerDefaultPoolCIDRs) != 15 {
+		t.Fatalf("Docker's documented default address pool is fifteen /16 networks (172.17.0.0/16 … 172.31.0.0/16), got %d: %v", len(dockerDefaultPoolCIDRs), dockerDefaultPoolCIDRs)
+	}
+	for i, c := range dockerDefaultPoolCIDRs {
+		_, ipnet, err := net.ParseCIDR(c)
+		if err != nil {
+			t.Fatalf("pool entry %q must parse", c)
+		}
+		if got := ipnet.String(); got != c {
+			t.Fatalf("pool entry %q is NOT canonical — it masks to %s (the KPK-19.6.5-P2-01 defect class: a non-canonical literal masks to a WIDER network)", c, got)
+		}
+		if ones, _ := ipnet.Mask.Size(); ones != 16 {
+			t.Fatalf("pool entry %q must be a /16, got /%d", c, ones)
+		}
+		if i > 0 {
+			prev := dockerDefaultPoolCIDRs[i-1]
+			_, prevNet, _ := net.ParseCIDR(prev)
+			nextIP := append(net.IP(nil), prevNet.IP.To4()...)
+			nextIP[1]++ // the previous /16's SECOND octet + 1 = the next /16's base (172.17.x → 172.18.x)
+			if !ipnet.IP.Equal(nextIP) {
+				t.Fatalf("the pool must be CONTIGUOUS: entry %q must follow %q", c, prev)
+			}
+		}
+	}
+	if dockerDefaultPoolCIDRs[0] != "172.17.0.0/16" || dockerDefaultPoolCIDRs[len(dockerDefaultPoolCIDRs)-1] != "172.31.0.0/16" {
+		t.Fatalf("the pool spans 172.17.0.0/16 through 172.31.0.0/16, got %v", dockerDefaultPoolCIDRs)
+	}
+}
+
+// TestUndeclaredServiceNameEndpoints: the SK-audit P2-01 guidance — the
+// helper that names the endpoints whose resolution can only land inside
+// explicitly trusted networks. Service names are reported; localhost and
+// IP literals are not; a missing provider is not.
+func TestUndeclaredServiceNameEndpoints(t *testing.T) {
+	endpoints := map[airuntime.Provider]Endpoint{
+		airuntime.ProviderSGLang:   Endpoint("http://sglang:30000"),
+		airuntime.ProviderVLLM:     Endpoint("http://127.0.0.1:8089"),
+		airuntime.ProviderBeeLlama: Endpoint("http://localhost:8080"),
+	}
+	got := UndeclaredServiceNameEndpoints(endpoints)
+	if len(got) != 1 || got[0] != airuntime.ProviderSGLang {
+		t.Fatalf("only the service-name endpoint (sglang) is undeclared-by-shape, got %v", got)
+	}
+	if got := UndeclaredServiceNameEndpoints(map[airuntime.Provider]Endpoint{
+		airuntime.ProviderOllama: Endpoint("http://127.0.0.1:11435"),
+	}); len(got) != 0 {
+		t.Fatalf("an all-literal endpoint set reports nothing, got %v", got)
 	}
 }
 
@@ -796,11 +869,12 @@ func TestTrustedDialCIDRsFromEnv(t *testing.T) {
 }
 
 // TestResolveDialCIDRsOptionPrecedence: no option → the Docker default
-// bridge pool (ONE network, v19.6.5); a declared option REPLACES it
-// (empty declaration = loopback only); the LAST declaration wins.
+// address pool (the ENUMERATED fifteen /16s, v19.6.6); a declared option
+// REPLACES it (empty declaration = loopback only); the LAST declaration
+// wins.
 func TestResolveDialCIDRsOptionPrecedence(t *testing.T) {
-	if got := resolveDialCIDRs(nil); len(got) != 1 {
-		t.Fatalf("no option → the Docker default bridge pool (v19.6.5: exactly one network), got %v", got)
+	if got := resolveDialCIDRs(nil); len(got) != len(dockerDefaultPoolCIDRs) {
+		t.Fatalf("no option → the Docker default address pool (v19.6.6: the enumerated fifteen canonical /16s), got %v", got)
 	}
 	declared := []*net.IPNet{mustCIDR(t, "10.0.0.0/8")}
 	got := resolveDialCIDRs([]DialOption{WithTrustedDialCIDRs(declared)})
