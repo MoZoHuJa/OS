@@ -1142,8 +1142,8 @@ check_18_agent_kernel() {
 
     # Session routes must be behind the auth middleware (like every route).
     for route in "/api/agent/sessions" "/api/agent/sessions/transition" "/api/agent/sessions/evaluate"; do
-        if ! grep -q "mux.HandleFunc(\"${route}\", h.auth(h.agent" "$rest_src"; then
-            fail "route ${route} must be registered behind h.auth(...)"
+        if ! grep -q "mux.HandleFunc(\"${route}\", h.authAdmin(h.agent" "$rest_src"; then
+            fail "route ${route} must be registered behind h.authAdmin(...) (v19.6.7 KPK-19.6.6-P1-01: operator surfaces require the ADMIN principal)"
             return
         fi
     done
@@ -1265,8 +1265,8 @@ check_20_agent_kernel_grants() {
 
     # Grant routes behind the auth middleware (like every route).
     for route in "/api/agent/grants" "/api/agent/grants/revoke" "/api/agent/capabilities/disable" "/api/agent/capabilities/enable"; do
-        if ! grep -q "mux.HandleFunc(\"${route}\", h.auth(h.agent" "$rest_src"; then
-            fail "route ${route} must be registered behind h.auth(...)"
+        if ! grep -q "mux.HandleFunc(\"${route}\", h.authAdmin(h.agent" "$rest_src"; then
+            fail "route ${route} must be registered behind h.authAdmin(...) (v19.6.7 KPK-19.6.6-P1-01: operator surfaces require the ADMIN principal)"
             return
         fi
     done
@@ -1361,7 +1361,7 @@ check_21_agent_kernel_audit() {
         return
     fi
     # Audit route behind the auth middleware, read-only.
-    if ! grep -q 'mux.HandleFunc("/api/agent/audit", h.auth(h.agentAuditRoute))' "$rest_src"; then
+    if ! grep -q 'mux.HandleFunc("/api/agent/audit", h.authAdmin(h.agentAuditRoute))' "$rest_src"; then
         fail "route /api/agent/audit must be registered behind h.auth(...)"
         return
     fi
@@ -1447,8 +1447,8 @@ check_22_agent_kernel_compute() {
         return
     fi
     # Route behind the auth middleware.
-    if ! grep -q 'mux.HandleFunc("/api/agent/sessions/compute", h.auth(h.agentCompute))' "$rest_src"; then
-        fail "route /api/agent/sessions/compute must be registered behind h.auth(...)"
+    if ! grep -q 'mux.HandleFunc("/api/agent/sessions/compute", h.authAdmin(h.agentCompute))' "$rest_src"; then
+        fail "route /api/agent/sessions/compute must be registered behind h.authAdmin(...) (v19.6.7 KPK-19.6.6-P1-01)"
         return
     fi
     # Bounded request discipline (the compute-lifecycle contract).
@@ -1532,10 +1532,10 @@ check_23_agent_fabric_commands() {
         return
     fi
     # Routes behind the auth middleware.
-    if ! grep -q 'mux.HandleFunc("/api/bar/commands", h.auth(h.barCommands))' "$rest_src" \
-       || ! grep -q 'mux.HandleFunc("/api/bar/commands/route", h.auth(h.barCommandRoute))' "$rest_src" \
-       || ! grep -q 'mux.HandleFunc("/api/bar/commands/cancel", h.auth(h.barCommandCancel))' "$rest_src"; then
-        fail "routes /api/bar/commands{,/route,/cancel} must be registered behind h.auth(...)"
+    if ! grep -q 'mux.HandleFunc("/api/bar/commands", h.authAdmin(h.barCommands))' "$rest_src" \
+       || ! grep -q 'mux.HandleFunc("/api/bar/commands/route", h.authAdmin(h.barCommandRoute))' "$rest_src" \
+       || ! grep -q 'mux.HandleFunc("/api/bar/commands/cancel", h.authAdmin(h.barCommandCancel))' "$rest_src"; then
+        fail "routes /api/bar/commands{,/route,/cancel} must be registered behind h.authAdmin(...) (v19.6.7 KPK-19.6.6-P1-01: the fabric is an operator surface)"
         return
     fi
     # main.go opt-in: fabric requires the kernel + its own commands file.
@@ -2297,12 +2297,12 @@ check_28_ai_runtime_foundation() {
     # v19.6.1, v19.6.2 and v19.6.3 historical surfaces must ALSO stay (the
     # changelog rows + the What's New sections are the releases' permanent
     # record).
-    if ! grep -q 'ScarLiXoS v19.6.6 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.6-B36B00' "$readme"; then
-        fail "README banner/h1/badge must say v19.6.6"
+    if ! grep -q 'ScarLiXoS v19.6.7 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.7-B36B00' "$readme"; then
+        fail "README banner/h1/badge must say v19.6.7"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.6.6 (Universal AI Runtime — trust scope enumerated + family profiles enforced: KPK-19.6.5-P2-01/P2-02/P1-03 remediation; Phase C)' "$readme"; then
-        fail "README version line must say v19.6.6 (Universal AI Runtime — trust scope enumerated + family profiles enforced: KPK-19.6.5-P2-01/P2-02/P1-03 remediation; Phase C)"
+    if ! grep -q 'Version:\*\* v19.6.7 (Identity-bound family profiles + enforced token budgets + media-tools hardening: KPK-19.6.6-P1-01/P2-02/P2-03/P3-04/P3-05 remediation; Phase C)' "$readme"; then
+        fail "README version line must say v19.6.7 (Identity-bound family profiles + enforced token budgets + media-tools hardening: KPK-19.6.6-P1-01/P2-02/P2-03/P3-04/P3-05 remediation; Phase C)"
         return
     fi
     if ! grep -q '\*\*v19.6.0\*\*' "$readme" || ! grep -q "What's New in v19.6.0" "$readme"; then
@@ -2333,8 +2333,8 @@ check_28_ai_runtime_foundation() {
         fail "README must carry the 'Universal AI Runtime foundation (CF-1) | TESTED (v19.6.0)' roadmap row"
         return
     fi
-    if ! grep -q 'One-command install — v19.6.6 Universal AI Runtime (enumerated trust, enforced profiles)' "$readme"; then
-        fail "README install header must be refreshed to v19.6.6 (the current-release surface — it drifted at v19.4.6 once)"
+    if ! grep -q 'One-command install — v19.6.7 Identity-bound Profiles (per-profile tokens, enforced budgets)' "$readme"; then
+        fail "README install header must be refreshed to v19.6.7 (the current-release surface — it drifted at v19.4.6 once)"
         return
     fi
     # v19.6.3 (KPK-19.6.1-P2-01, the audit finding): the install PARAGRAPH
@@ -2342,8 +2342,8 @@ check_28_ai_runtime_foundation() {
     # one-liner still saying 'clones the current v19.6.0 mainline' at a
     # 19.6.1+ tag. The header alone is not enough; the drift guard is
     # literal and moves with every release.
-    if ! grep -q 'current v19.6.6 mainline' "$readme"; then
-        fail "README install paragraph must say 'clones the current v19.6.6 mainline' (KPK-19.6.1-P2-01: the one-liner drifts when the header is bumped but the paragraph is not)"
+    if ! grep -q 'current v19.6.7 mainline' "$readme"; then
+        fail "README install paragraph must say 'clones the current v19.6.7 mainline' (KPK-19.6.1-P2-01: the one-liner drifts when the header is bumped but the paragraph is not)"
         return
     fi
     if ! grep -q "\\*\\*v19.6.4\\*\\*" "$readme" || ! grep -q "What's New in v19.6.4" "$readme"; then
@@ -2354,8 +2354,12 @@ check_28_ai_runtime_foundation() {
         fail "README must carry the v19.6.5 changelog row + What's New section (the permanent record)"
         return
     fi
+    if ! grep -q "\\*\\*v19.6.7\\*\\*" "$readme" || ! grep -q "What's New in v19.6.7" "$readme"; then
+        fail "README must carry the v19.6.7 changelog row + What's New section (the current release's own record)"
+        return
+    fi
     if ! grep -q "\\*\\*v19.6.6\\*\\*" "$readme" || ! grep -q "What's New in v19.6.6" "$readme"; then
-        fail "README must carry the v19.6.6 changelog row + What's New section (the current release's own record)"
+        fail "README must carry the v19.6.6 changelog row + What's New section (the permanent record)"
         return
     fi
 
@@ -3606,6 +3610,243 @@ check_34_trust_enumeration_profiles_enforcement_stale_automation() {
 }
 
 # ===========================================================================
+# [35] v19.6.7 — the v19.6.6 KpK audit remediation: IDENTITY-BOUND family
+# profiles (the P1: per-profile Bearer tokens, one shared Authorize, no
+# policy-free path) + the ENFORCED monthly token budget (P2-02: reserve,
+# settle, release; durable ledger) + media-tools request boundary (P2-03)
+# + strict nested token_budget keys (P3-04) + stale-audit recursion (P3-05)
+# + the time-bounded pin allowlist (SK P2-03).
+# ===========================================================================
+check_35_identity_budgets_media_tools_stale_recursion() {
+    echo "--- [35] v19.6.7 (the v19.6.6 KpK audit remediation): IDENTITY-BOUND family profiles (the P1: per-profile tokens + the ONE shared Authorize + operator surfaces admin-gated) + the ENFORCED monthly token budget (P2-02) + the media-tools request boundary (P2-03) + strict nested token_budget keys (P3-04) + stale-audit recursion (P3-05) + the time-bounded pin allowlist (SK P2-03) ---"
+    # v19.6.7 — the v19.6.6 KpK audit remediation: KPK-19.6.6-P1-01 (the
+    # caller-declared optional profile bypass), KPK-19.6.6-P2-02 (the parsed
+    # but never-enforced budget), KPK-19.6.6-P2-03 (unbounded unauthenticated
+    # media-tools), KPK-19.6.6-P3-04 (nested key laxity), KPK-19.6.6-P3-05
+    # (directory-mtime approximation) + the SK-audit P2-03 pin-allowlist
+    # guidance. Code markers are comment-stripped — prose cannot mask code.
+    local principals="$REPO_DIR/scarlihq/internal/profiles/principals.go"
+    local principal_test="$REPO_DIR/scarlihq/internal/api/principal_test.go"
+    local budget="$REPO_DIR/scarlihq/internal/profiles/budget.go"
+    local budget_test="$REPO_DIR/scarlihq/internal/profiles/budget_test.go"
+    local api_principal="$REPO_DIR/scarlihq/internal/api/principal.go"
+    local loader="$REPO_DIR/scarlihq/internal/profiles/loader.go"
+    local loader_test="$REPO_DIR/scarlihq/internal/profiles/loader_test.go"
+    local mcp_test="$REPO_DIR/scarlihq/internal/mcp/principal_test.go"
+    local main_src="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local rest_src="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local airuntime_src="$REPO_DIR/scarlihq/internal/api/airuntime.go"
+    local media_server="$REPO_DIR/media-tools/server.py"
+    local media_test="$REPO_DIR/tests/test_media_tools.sh"
+    local media_compose="$REPO_DIR/media-tools/docker-compose.yml"
+    local stale_audit="$REPO_DIR/files/usr/local/bin/scarlix-stale-audit.sh"
+    local pin_allowlist="$REPO_DIR/docker/image-pin-allowlist.conf"
+    local readme="$REPO_DIR/README.md"
+    local secmap="$REPO_DIR/docs/SCARLIX_SECURITY_MAP.md"
+    local notes="$REPO_DIR/docs/RELEASE_NOTES_v19.6.7.md"
+    local zmor_profile="$REPO_DIR/profiles/zmor.yaml"
+    local env_gen="$REPO_DIR/files/etc/systemd/system/generate-env.sh"
+
+    for f in "$principals" "$budget" "$api_principal" "$principal_test" "$budget_test" "$mcp_test"; do
+        if [[ ! -f "$f" ]]; then
+            fail "v19.6.7 source missing: $f (the KPK-19.6.6 remediation surface)"
+            return
+        fi
+    done
+
+    # --- KPK-19.6.6-P1-01: the identity binding (the P1 core).
+    local hits
+    for marker in 'func NewTokenIndex' 'func (t \*TokenIndex) Resolve' 'func LoadTokenIndex' 'func ParseTokenIndex' 'type Authenticator struct' 'func (a \*Authenticator) Authorize' 'ErrProfileMismatch' 'ErrProfileUnavailable' 'func WithPrincipal' 'func PrincipalFromContext'; do
+        hits=$(_strip_go_comments "$principals" | grep -c "$marker" || true)
+        if [[ "$hits" -eq 0 ]]; then
+            fail "the identity binding must exist ($marker — KPK-19.6.6-P1-01: tokens resolve to principals, one shared Authorize)"
+            return
+        fi
+    done
+    # The mismatch refusal is a real sentinel check, and the household token
+    # is the admin principal.
+    if ! grep -q 'errors.Is(decision.Deny, profiles.ErrProfileMismatch)' "$api_principal"; then
+        fail "the REST boundary must map ErrProfileMismatch to its 403 class"
+        return
+    fi
+    if ! grep -q 'ViaHouseholdToken: true' "$principals"; then
+        fail "the household token must resolve to the ADMIN principal (the operator identity)"
+        return
+    fi
+    # The shared Authorize is wired at ALL THREE boundaries (REST mode,
+    # REST chat, MCP) — one authorization function, not optional checks.
+    if ! grep -q 'authorizeProfile(w, r, profile, "mode.switch")' "$rest_src"; then
+        fail "the REST mode boundary must decide through the shared Authorize"
+        return
+    fi
+    if ! grep -q 'authorizeProfile(w, r, profileRef, "ai.chat")' "$airuntime_src"; then
+        fail "the REST chat boundary must decide through the shared Authorize"
+        return
+    fi
+    if ! grep -q 's.authz.Authorize(principal, profileRef, "mcp.mode_set")' "$REPO_DIR/scarlihq/internal/mcp/server.go"; then
+        fail "the MCP mode-set boundary must decide through the SAME shared Authorize"
+        return
+    fi
+    # Operator surfaces behind authAdmin (the admin-principal requirement).
+    hits=$(_strip_go_comments "$rest_src" | grep -c 'h.authAdmin(' || true)
+    if [[ "$hits" -lt 20 ]]; then
+        fail "the operator surfaces must be registered behind h.authAdmin (found $hits — compute, agent sessions/grants/audit, bar commands/workspaces/executions/approvals, ai probe, ai propose/proposals)"
+        return
+    fi
+    # main.go wires the token index (file + inline) and names the modes.
+    if ! grep -q 'SCARLIHQ_PROFILE_TOKENS_FILE' "$main_src" || ! grep -q 'SCARLIHQ_PROFILE_TOKENS' "$main_src" || ! grep -q 'SCARLIHQ_SINGLE_USER' "$main_src"; then
+        fail "main.go must wire the per-profile token sources + the explicit single-user mode"
+        return
+    fi
+    if ! grep -q 'profile-tokens.conf' "$main_src"; then
+        fail "the default token file path must be /etc/scarlix/profile-tokens.conf"
+        return
+    fi
+    # install.sh ships the commented activation template + the budget dir.
+    if ! grep -q 'profile-tokens.conf.template' "$REPO_DIR/install.sh"; then
+        fail "install.sh must ship the commented profile-tokens activation template (single-user is the honest default)"
+        return
+    fi
+    if ! grep -q '/var/lib/scarlihq-budget' "$REPO_DIR/install.sh"; then
+        fail "install.sh must prepare /var/lib/scarlihq-budget (0700, uid 65532 — the ledger's home)"
+        return
+    fi
+    if ! grep -q 'scarlihq-budget' "$REPO_DIR/scarlihq/docker-compose.yml"; then
+        fail "the compose must mount /var/lib/scarlihq-budget rw (the enforced ledger)"
+        return
+    fi
+    # The acceptance matrix exists as tests (REST + MCP).
+    for tname in 'TestFamilyTokenCannotSelectAdminProfile' 'TestOmittedProfileIsDerivedFromPrincipal' 'TestHouseholdTokenActAsOnlyReduces' 'TestBrokenPrincipalProfileFailsClosed' 'TestOperatorSurfacesRefuseFamilyTokens' 'TestSingleUserNoProfilesKeepsLegacyPath'; do
+        if ! grep -q "$tname" "$principal_test"; then
+            fail "the acceptance matrix must exist as REST tests ($tname)"
+            return
+        fi
+    done
+    for tname in 'TestMCPFamilyTokenCannotSelectAdminProfile' 'TestMCPXoxDerivedPolicyRefusesSwitch'; do
+        if ! grep -q "$tname" "$mcp_test"; then
+            fail "the acceptance matrix must exist as MCP tests ($tname)"
+            return
+        fi
+    done
+
+    # --- KPK-19.6.6-P2-02: the enforced monthly budget.
+    for marker in 'type BudgetLedger struct' 'func (l \*BudgetLedger) Reserve' 'ErrQuotaExceeded' 'ErrLedgerUnavailable' 'EstimateChatTokens' 'budgetMonthsRetained'; do
+        hits=$(_strip_go_comments "$budget" | grep -c "$marker" || true)
+        if [[ "$hits" -eq 0 ]]; then
+            fail "the enforced budget must exist ($marker — reserve/settle/release on a durable ledger)"
+            return
+        fi
+    done
+    if ! grep -q 'StatusTooManyRequests' "$api_principal"; then
+        fail "quota exhaustion must be the stable 429 carrying the quota state"
+        return
+    fi
+    if ! grep -q 'reservation.Settle(actual, string(resp.Model), nowUTC())' "$airuntime_src"; then
+        fail "the chat path must SETTLE the provider-reported usage after the response"
+        return
+    fi
+    if ! grep -q 'reservation.Release()' "$airuntime_src"; then
+        fail "failed attempts must RELEASE the reservation whole (not billed)"
+        return
+    fi
+    if ! grep -q 'SCARLIHQ_AIRUNTIME_BUDGET_LEDGER' "$main_src"; then
+        fail "main.go must wire the budget ledger env (explicit fail-closed, default degrades loudly)"
+        return
+    fi
+    for tname in 'TestBudgetQuotaExceeded' 'TestBudgetConcurrentReservationsCannotOverspend' 'TestBudgetMonthWindowIsUTCCalendarMonth' 'TestBudgetLedgerPersistenceRoundTrip' 'TestBudgetLedgerTamperDiscipline' 'TestBudgetQuotaExceededIsStable429' 'TestBudgetSettlesProviderReportedUsage'; do
+        if ! grep -q "$tname" "$budget_test" && ! grep -q "$tname" "$principal_test"; then
+            fail "the budget enforcement tests must exist ($tname)"
+            return
+        fi
+    done
+
+    # --- KPK-19.6.6-P2-03: the media-tools request boundary.
+    if [[ ! -f "$media_server" ]] || [[ ! -f "$media_test" ]]; then
+        fail "media-tools must ship the hardened server + the test suite (KPK-19.6.6-P2-03)"
+        return
+    fi
+    for marker in 'MEDIA_TOOLS_TOKEN' 'hmac.compare_digest' 'BoundedSemaphore' 'MEDIA_TOOLS_MAX_CONCURRENCY' 'output name busy' 'invalid Content-Length' 'must be a JSON object'; do
+        if ! grep -q "$marker" "$media_server"; then
+            fail "the media-tools hardening marker missing: $marker (KPK-19.6.6-P2-03)"
+            return
+        fi
+    done
+    if ! grep -q 'MEDIA_TOOLS_TOKEN' "$media_compose" || ! grep -q 'MEDIA_TOOLS_MAX_CONCURRENCY' "$media_compose"; then
+        fail "the media-tools compose must pass the token + the concurrency bound"
+        return
+    fi
+    if ! grep -q 'MEDIA_TOOLS_TOKEN' "$env_gen"; then
+        fail "generate-env.sh must generate MEDIA_TOOLS_TOKEN (fail-closed without it)"
+        return
+    fi
+
+    # --- KPK-19.6.6-P3-04: strict nested token_budget keys.
+    if ! grep -q 'UNKNOWN key' "$loader" || ! grep -q 'DUPLICATE' "$loader"; then
+        fail "TokenBudget.UnmarshalYAML must reject unknown/duplicate nested keys BY NAME (KPK-19.6.6-P3-04)"
+        return
+    fi
+    if ! grep -q 'TestTokenBudgetNestedStrictValidation' "$loader_test"; then
+        fail "the nested-strictness negative tests must exist"
+        return
+    fi
+
+    # --- KPK-19.6.6-P3-05 + SK P2-03: the stale-audit pass.
+    if ! grep -q '%T@' "$stale_audit" || ! grep -q 'newest-file recursive' "$stale_audit"; then
+        fail "the stale-audit must compute the recursive newest-file mtime for installed trees (KPK-19.6.6-P3-05)"
+        return
+    fi
+    if ! grep -q 'compose.yaml' "$stale_audit" || ! grep -q 'compose.yml' "$stale_audit"; then
+        fail "the stale-audit must discover the compose short forms"
+        return
+    fi
+    if [[ ! -f "$pin_allowlist" ]] || ! grep -q 'review-by' "$pin_allowlist"; then
+        fail "the time-bounded pin allowlist must exist (docker/image-pin-allowlist.conf — SK P2-03)"
+        return
+    fi
+    if ! grep -q 'SCARLIX_STALE_AUDIT_PIN_ALLOWLIST' "$stale_audit"; then
+        fail "the stale-audit must honor the allowlist override env"
+        return
+    fi
+    if ! grep -q 'UNPINNED-ALLOWED' "$stale_audit"; then
+        fail "allowlisted :latest images must be reported as UNPINNED-ALLOWED info (not findings)"
+        return
+    fi
+
+    # --- zmor carries the FULL mode enumeration (the derived admin policy
+    # must not restrict the operator).
+    if ! grep -q 'allowed: \[ai, stop, game, creative, turbo, offline, tv\]' "$zmor_profile"; then
+        fail "profiles/zmor.yaml must allow the FULL mode enumeration (the derived admin policy is the operator's own rights)"
+        return
+    fi
+
+    # --- README + SECURITY_MAP + release notes: the release is a release.
+    if ! grep -q "What's New in v19.6.7" "$readme" || ! grep -q 'version-v19.6.7-B36B00' "$readme"; then
+        fail "README must carry the v19.6.7 surface (What's New + badge)"
+        return
+    fi
+    if ! grep -q 'KPK-19.6.6-P1-01' "$secmap" || ! grep -q 'KPK-19.6.6-P2-02' "$secmap"; then
+        fail "SCARLIX_SECURITY_MAP.md must state the v19.6.7 closures by finding name (KPK-19.6.6-P1-01/P2-02)"
+        return
+    fi
+    if ! grep -q '## (t) Enforced token budgets' "$secmap"; then
+        fail "SCARLIX_SECURITY_MAP.md must carry the enforced-budgets section (t)"
+        return
+    fi
+    if [[ ! -f "$notes" ]]; then
+        fail "docs/RELEASE_NOTES_v19.6.7.md missing (the remediation release notes — the genre)"
+        return
+    fi
+    for section in '## Scope' '## Changes' '## Verification status' '## Known limitation'; do
+        if ! grep -q "$section" "$notes"; then
+            fail "the release notes must carry section '$section' (the remediation genre)"
+            return
+        fi
+    done
+
+    pass "v19.6.7 (the v19.6.6 KpK audit remediation): the family profiles are IDENTITY-BOUND (per-profile Bearer tokens — /etc/scarlix/profile-tokens.conf with the 0400/640 discipline, collisions and household reuse refused at construction; the household SCARLIHQ_TOKEN resolves to the ADMIN principal; the ONE shared profiles.Authenticator.Authorize decides REST /api/mode + /api/ai/chat + MCP scarlix_mode_set — a family token cannot select a foreign profile (403 ErrProfileMismatch, header entry path identical), an OMITTED reference is DERIVED from the principal (no policy-free path in multi-user mode), an admin act-as only REDUCES privileges; operator surfaces behind h.authAdmin refuse family tokens 403; audit events carry principal/profile/action/decision — never tokens; single-user deployments are named as such — explicit SCARLIHQ_SINGLE_USER or the implicit default with the activation pointer; no-profiles deployments keep the legacy path, named), the monthly token budget is ENFORCED (durable ledger 0600/0700 with atomic tmp+rename persist and the grants.json tamper discipline; reserve-before-forward with the runes/4+4096 estimate, settle the provider-reported usage — estimate when the provider reports none, release whole on failure; the UTC calendar-month window with 2-month retention; accounting per profile across models; exhaustion is the stable 429 with the quota state; ledger unavailability fails CLOSED 503; without a writable ledger the budgets degrade to loudly-warned informational metadata — the documented policy), media-tools is AUTHENTICATED AND BOUNDED (MEDIA_TOOLS_TOKEN bearer, hmac.compare_digest, fail-closed 503 without it, /health open; BoundedSemaphore with MEDIA_TOOLS_MAX_CONCURRENCY clamp 1..16 and the 15s queue wait; per-client IP cap; output-name collision 409; invalid Content-Length and non-object JSON root are deliberate 400s), the nested token_budget schema is closed BY HAND (unknown/duplicate keys are named errors), the stale-audit reads the NEWEST FILE mtime recursively for installed trees (caches excluded, plain files keep stat) and discovers the compose short forms, and the experimental :latest rides a TIME-BOUNDED allowlist (image|reason|review-by — expired entries revert to UNPINNED findings, the four images reviewed by 2027-01-31); acceptance: principal_test.go (12 REST) + mcp/principal_test.go (6) + budget_test.go (8) + tests/test_media_tools.sh (42) + loader nested-strictness tests; residual honesty: hardware OPEN, keyword-level content filter, budget = the chat path (propose is admin-gated), IPv6 dual-stack"
+}
+
+# ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
@@ -3646,6 +3887,7 @@ SMOKE_CHECKS=(
     check_32_ai_dial_pin_probe_cancel
     check_33_ai_trust_scope_commit_atomicity
     check_34_trust_enumeration_profiles_enforcement_stale_automation
+    check_35_identity_budgets_media_tools_stale_recursion
 )
 
 run_check() {

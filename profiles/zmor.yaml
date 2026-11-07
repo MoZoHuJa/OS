@@ -4,7 +4,7 @@ role: admin
 permissions: [all]
 scarlix_mode:
   default: ai
-  allowed: [ai, game, turbo, offline]
+  allowed: [ai, stop, game, creative, turbo, offline, tv]
   can_switch: true
 hud_theme: iron-man
 token_budget: unlimited

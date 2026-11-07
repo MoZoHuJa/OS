@@ -340,3 +340,231 @@ func yamlUnmarshalString(s string, out interface{}) error {
 	dec.KnownFields(true)
 	return dec.Decode(out)
 }
+
+// TestTokenBudgetNestedStrictValidation (KPK-19.6.6-P3-04, v19.6.7): the
+// nested token_budget mapping is closed-world BY HAND — unknown keys and
+// duplicate keys are named errors (the outer KnownFields does not
+// propagate into a custom unmarshaler; a "monthly_limit_typo:" must fail,
+// never ride along silently).
+func TestTokenBudgetNestedStrictValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			"unknown nested key",
+			"name: t\ndisplay_name: T\nrole: family\npermissions: [ai_chat]\nscarlix_mode:\n  default: ai\n  allowed: [ai]\n  can_switch: false\nhud_theme: d\ntoken_budget:\n  monthly: 100\n  model: qwen2.5:3b\n  monthly_limit_typo: 5\n",
+			"UNKNOWN key \"monthly_limit_typo\"",
+		},
+		{
+			"duplicate monthly key",
+			"name: t\ndisplay_name: T\nrole: family\npermissions: [ai_chat]\nscarlix_mode:\n  default: ai\n  allowed: [ai]\n  can_switch: false\nhud_theme: d\ntoken_budget:\n  monthly: 100\n  monthly: 200\n  model: qwen2.5:3b\n",
+			"DUPLICATE \"monthly\"",
+		},
+		{
+			"duplicate model key",
+			"name: t\ndisplay_name: T\nrole: family\npermissions: [ai_chat]\nscarlix_mode:\n  default: ai\n  allowed: [ai]\n  can_switch: false\nhud_theme: d\ntoken_budget:\n  monthly: 100\n  model: qwen2.5:3b\n  model: other:1b\n",
+			"DUPLICATE \"model\"",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var p Profile
+			err := yamlUnmarshalString(tc.yaml, &p)
+			if err == nil {
+				t.Fatalf("the nested token_budget schema must reject this by name: %s", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("the error must name %q, got: %v", tc.want, err)
+			}
+		})
+	}
+	// The counterweight: the exact closed shape still parses.
+	var ok Profile
+	if err := yamlUnmarshalString("name: t\ndisplay_name: T\nrole: family\npermissions: [ai_chat]\nscarlix_mode:\n  default: ai\n  allowed: [ai]\n  can_switch: false\nhud_theme: d\ntoken_budget:\n  monthly: 100\n  model: qwen2.5:3b\n", &ok); err != nil {
+		t.Fatalf("the closed nested shape must parse: %v", err)
+	}
+	if ok.TokenBudget.Monthly != 100 || ok.TokenBudget.Model != "qwen2.5:3b" {
+		t.Fatalf("the closed nested shape must carry its values, got %+v", ok.TokenBudget)
+	}
+}
+
+// TestTokenIndexValidation (KPK-19.6.6-P1-01, v19.6.7): the per-profile
+// token index — collisions, the household-token reuse refusal, the
+// closed name shape, constant-time resolution semantics.
+func TestTokenIndexValidation(t *testing.T) {
+	// A token shared by two profiles is refused — one Bearer authenticates
+	// exactly one identity.
+	if _, err := NewTokenIndex(map[string]string{"hugo": "x", "mon": "x"}, "secret"); err == nil || !strings.Contains(err.Error(), "collision") {
+		t.Fatalf("a shared token must be refused by name, got %v", err)
+	}
+	// A profile token equal to the household token is refused (one Bearer,
+	// one identity — the admin token cannot also be a family token).
+	if _, err := NewTokenIndex(map[string]string{"hugo": "secret"}, "secret"); err == nil || !strings.Contains(err.Error(), "SCARLIHQ_TOKEN") {
+		t.Fatalf("household-token reuse must be refused by name, got %v", err)
+	}
+	// An empty index is refused (declare pairs or omit the index entirely).
+	if _, err := NewTokenIndex(map[string]string{}, "secret"); err == nil {
+		t.Fatal("an empty token index must be refused")
+	}
+	// Resolution: the right profile, constant-time path.
+	idx, err := NewTokenIndex(map[string]string{"hugo": "hugo-tok", "xox": "xox-tok"}, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name, ok := idx.Resolve("xox-tok"); !ok || name != "xox" {
+		t.Fatalf("resolution must map the token to its profile, got %q ok=%v", name, ok)
+	}
+	if _, ok := idx.Resolve("nobody-tok"); ok {
+		t.Fatal("an unknown token resolves to nobody")
+	}
+	if _, ok := idx.Resolve(""); ok {
+		t.Fatal("an empty token resolves to nobody")
+	}
+}
+
+// TestTokenIndexFileDiscipline (KPK-19.6.6-P1-01): the tokens file — the
+// line shape, comments, the permission discipline (group/world-readable
+// secrets are refused).
+func TestTokenIndexFileDiscipline(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "tokens.conf")
+	body := "# the family identities\nhugo: hugo-tok\nmon:mon-tok\n\nxox: xox-tok\n"
+	if err := os.WriteFile(good, []byte(body), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	idx, err := LoadTokenIndex(good, "secret")
+	if err != nil {
+		t.Fatalf("the good tokens file must load: %v", err)
+	}
+	if idx.Len() != 3 {
+		t.Fatalf("three identities must be indexed, got %d", idx.Len())
+	}
+	// A world-readable tokens file is refused — secrets are not ambient.
+	loose := filepath.Join(dir, "loose.conf")
+	if err := os.WriteFile(loose, []byte("hugo: hugo-tok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadTokenIndex(loose, "secret"); err == nil || !strings.Contains(err.Error(), "group/world-accessible") {
+		t.Fatalf("a loose tokens file must be refused, got %v", err)
+	}
+}
+
+// TestAuthenticatorIdentityBinding (KPK-19.6.6-P1-01): the ONE shared
+// authorization function — the mismatch refusal, the admin act-as, the
+// derived policy, the single-user legacy contract.
+func TestAuthenticatorIdentityBinding(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"hugo": "name: hugo\ndisplay_name: H\nrole: family\npermissions: [ai_chat]\nscarlix_mode:\n  default: game\n  allowed: [game, ai]\n  can_switch: true\nhud_theme: g\ntoken_budget:\n  monthly: 100000\n  model: qwen2.5:3b\n",
+		"zmor": "name: zmor\ndisplay_name: Z\nrole: admin\npermissions: [all]\nscarlix_mode:\n  default: ai\n  allowed: [ai, stop, game, creative, turbo, offline, tv]\n  can_switch: true\nhud_theme: i\ntoken_budget: unlimited\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name+".yaml"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := New(dir)
+	index, err := NewTokenIndex(map[string]string{"hugo": "hugo-tok", "zmor": "zmor-tok"}, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authz, err := NewAuthenticator(index, "secret", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hugo := authz.ResolveToken("hugo-tok")
+	if hugo == nil || hugo.Name != "hugo" || hugo.IsAdmin {
+		t.Fatalf("hugo's token must resolve to the hugo principal (family, not admin), got %+v", hugo)
+	}
+	zmor := authz.ResolveToken("zmor-tok")
+	if zmor == nil || !zmor.IsAdmin {
+		t.Fatalf("zmor's token must resolve to an admin principal (role: admin), got %+v", zmor)
+	}
+	household := authz.ResolveToken("secret")
+	if household == nil || !household.IsAdmin || !household.ViaHouseholdToken {
+		t.Fatalf("the household token must resolve to the admin principal, got %+v", household)
+	}
+	if authz.ResolveToken("garbage") != nil {
+		t.Fatal("a garbage token resolves to nobody")
+	}
+
+	// Hugo CANNOT select zmor — the named mismatch refusal.
+	_, decision := authz.Authorize(hugo, "zmor", "test")
+	if decision.Deny == nil || !errors.Is(decision.Deny, ErrProfileMismatch) {
+		t.Fatalf("hugo selecting zmor must be the named mismatch refusal, got %+v", decision)
+	}
+	// Hugo's own reference is allowed; his OMITTED reference derives his policy.
+	p, decision := authz.Authorize(hugo, "hugo", "test")
+	if decision.Deny != nil || p == nil || p.Name != "hugo" {
+		t.Fatalf("hugo selecting himself must be allowed, got %+v", decision)
+	}
+	p, decision = authz.Authorize(hugo, "", "test")
+	if decision.Deny != nil || p == nil || p.Name != "hugo" {
+		t.Fatalf("hugo's omitted reference must DERIVE his policy, got %+v", decision)
+	}
+	// The admin (household) act-as hugo is allowed — a reduction only.
+	p, decision = authz.Authorize(household, "hugo", "test")
+	if decision.Deny != nil || p == nil || p.Name != "hugo" {
+		t.Fatalf("the household act-as hugo must be allowed (reduction), got %+v", decision)
+	}
+	// The household's omitted reference derives the role:admin profile.
+	p, decision = authz.Authorize(household, "", "test")
+	if decision.Deny != nil || p == nil || p.Name != "zmor" {
+		t.Fatalf("the household's omitted reference must derive the admin profile, got %+v", decision)
+	}
+	// zmor's omitted reference derives HIS profile (admin).
+	p, decision = authz.Authorize(zmor, "", "test")
+	if decision.Deny != nil || p == nil || p.Name != "zmor" {
+		t.Fatalf("zmor's omitted reference must derive his own profile, got %+v", decision)
+	}
+
+	// A broken declared reference fails closed (the 400 class carries the
+	// load error, NOT the mismatch sentinel — the HTTP layer maps by it).
+	_, decision = authz.Authorize(hugo, "ghost", "test")
+	if decision.Deny == nil || errors.Is(decision.Deny, ErrProfileMismatch) {
+		t.Fatalf("an unloadable declared profile is a load failure, not a mismatch: %+v", decision)
+	}
+}
+
+// TestAuthenticatorSingleUserLegacyContract: without a token index the
+// deployment is single-user — the household token is the admin identity;
+// a declared reference enforces that profile's policy (the v19.6.6
+// behavior, preserved); NO admin profile at all keeps the legacy
+// unrestricted path — as an EXPLICIT nil-profile outcome.
+func TestAuthenticatorSingleUserLegacyContract(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "zmor.yaml"), []byte("name: zmor\ndisplay_name: Z\nrole: admin\npermissions: [all]\nscarlix_mode:\n  default: ai\n  allowed: [ai, stop, game, creative, turbo, offline, tv]\n  can_switch: true\nhud_theme: i\ntoken_budget: unlimited\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	authz, err := NewAuthenticator(nil, "secret", New(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authz.MultiUser() {
+		t.Fatal("no token index is single-user mode")
+	}
+	household := authz.ResolveToken("secret")
+	if household == nil || !household.IsAdmin || household.MultiUser {
+		t.Fatalf("single-user: the household token is the admin identity, got %+v", household)
+	}
+	// The omitted reference derives the admin profile.
+	p, decision := authz.Authorize(household, "", "test")
+	if decision.Deny != nil || p == nil || p.Name != "zmor" {
+		t.Fatalf("single-user derivation must find the admin profile, got %+v", decision)
+	}
+	// A declared family-ish profile (none here) would be enforced as itself.
+
+	// NO profiles at all: the legacy unrestricted path — the explicit
+	// nil-profile outcome, not a silent bypass.
+	empty := New(t.TempDir())
+	authz2, err := NewAuthenticator(nil, "secret", empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, decision = authz2.Authorize(household, "", "test")
+	if decision.Deny != nil || p != nil {
+		t.Fatalf("no profiles at all: the explicit legacy contract (nil profile, no error), got %+v %p", decision, p)
+	}
+}

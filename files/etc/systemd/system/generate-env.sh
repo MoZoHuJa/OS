@@ -107,6 +107,10 @@ gen_if_missing "STORAGE_ENCRYPTION_KEY" "$(openssl rand -hex 32)" >> "$SECRETS_T
 gen_if_missing "STEAM_PASSWORD" "$(openssl rand -base64 24)" >> "$SECRETS_TMP"
 gen_if_missing "SCARLIHQ_TOKEN" "$(openssl rand -hex 32)" >> "$SECRETS_TMP"
 gen_if_missing "LITELLM_MASTER_KEY" "sk-scarlix-$(openssl rand -hex 32)" >> "$SECRETS_TMP"
+# v19.6.7 (KPK-19.6.6-P2-03): the media-tools conversion surface's OWN
+# bearer token — fail-closed server-side (without it /convert answers
+# 503 and stays closed). Generated like every other secret, never printed.
+gen_if_missing "MEDIA_TOOLS_TOKEN" "$(openssl rand -hex 32)" >> "$SECRETS_TMP"
 gen_if_missing "SCARLIX_DEFAULT_PROFILE" "zmor" >> "$SECRETS_TMP"
 gen_if_missing "SCARLIX_DEFAULT_MODE" "ai" >> "$SECRETS_TMP"
 gen_if_missing "SCARLIX_VERSION" "$SCARLIX_VER_FILE" >> "$SECRETS_TMP"

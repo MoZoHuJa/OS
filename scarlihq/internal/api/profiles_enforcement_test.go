@@ -97,9 +97,19 @@ func newEnforcementMux(t *testing.T, withRuntime bool) *http.ServeMux {
 	dir := writeEnforcementProfiles(t)
 	// The desired-mode bridge points INSIDE the temp dir (no /var/lib writes).
 	mode := scarlix_mode.NewForTest(filepath.Join(dir, "desired-mode"))
-	h := NewHandler(guard.New(), mode, profiles.New(dir), "secret", "19.6.6")
+	h := NewHandler(guard.New(), mode, profiles.New(dir), "secret", "19.6.7")
 	if withRuntime {
 		if err := h.ConfigureAIRuntime(aiStack(t, http.StatusOK, http.StatusOK)); err != nil {
+			t.Fatal(err)
+		}
+		// v19.6.7 (KPK-19.6.6-P2-02): the enforcement tests run with the
+		// budget ledger CONFIGURED — the declared monthly budgets are the
+		// ENFORCED quotas on these chats, not informational metadata.
+		ledger, err := profiles.NewBudgetLedger("") // memory-only
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := h.ConfigureBudgetLedger(ledger); err != nil {
 			t.Fatal(err)
 		}
 	}

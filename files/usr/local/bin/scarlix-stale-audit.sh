@@ -1,5 +1,15 @@
 #!/usr/bin/env bash
-# SCARLIX OS v19.6.6 — Stale-tree audit (the repo-hygiene automation)
+# SCARLIX OS v19.6.7 — Stale-tree audit (the repo-hygiene automation)
+#
+# v19.6.7: (a) installed-tree staleness now reads the NEWEST file mtime
+#   RECURSIVELY under a registered directory (KPK-19.6.6-P3-05 — a directory's
+#   own mtime never moves when an inner file is EDITED, so healthy trees read
+#   STALE); (b) compose discovery broadened beyond docker-compose*.yml to
+#   docker-compose*.yaml + compose.yml/compose.yaml (same unpinned-image and
+#   build-context analysis everywhere); (c) experimental images riding :latest
+#   may carry a TIME-BOUNDED allowlist entry (docker/image-pin-allowlist.conf,
+#   SK-audit P2-03) — reason + review-by date required; an expired entry
+#   reverts to a finding (the default is debt, exceptions are borrowed).
 #
 # WHY (the v19.6.5 KpK audits' process finding): the repository's attention
 # is ASYMMETRIC — scarlihq/ + docs/ harden daily while profiles/ sat 85 days,
@@ -9,7 +19,7 @@
 #
 #   1. STALENESS — every registered path is checked against its
 #      classification and its maximum-stale threshold (git last-touch date
-#      in a checkout, file mtime on an installed tree);
+#      in a checkout, newest-file mtime recursively on an installed tree);
 #   2. UNPINNED IMAGES — every compose file's image references are checked
 #      for :latest / missing tags (the experimental-supply-chain residual);
 #   3. MISSING BUILD CONTEXTS — every compose `build:` is checked for an
@@ -29,7 +39,7 @@
 
 set -euo pipefail
 
-VERSION_MARKER="v19.6.6"
+VERSION_MARKER="v19.6.7"
 SCRIPT_NAME="$(basename "$0")"
 
 usage() {
@@ -47,6 +57,11 @@ Environment:
   SCARLIX_STALE_AUDIT_LOG_DIR        default /var/log/scarlix/stale-audit
   SCARLIX_STALE_AUDIT_OLLAMA_URL     default http://127.0.0.1:11435
   SCARLIX_STALE_AUDIT_OLLAMA_MODEL   default qwen2.5:3b
+  SCARLIX_STALE_AUDIT_PIN_ALLOWLIST  default <root>/docker/image-pin-allowlist.conf
+                                     — the :latest exception registry
+                                     (image|reason|review-by YYYY-MM-DD);
+                                     entries past their review-by date
+                                     revert to findings
 EOF
 }
 
@@ -135,15 +150,68 @@ last_touch() { # → YYYY-MM-DD (empty when undeterminable)
   local path="$1"
   if [ "$IN_GIT" -eq 1 ]; then
     git -C "$ROOT" log -1 --format=%cd --date=short -- "$path" 2>/dev/null || true
+  elif [ -d "$ROOT/$path" ]; then
+    # KPK-19.6.6-P3-05: a DIRECTORY's own mtime only moves on create/delete
+    # inside it — EDITING an existing file never touches the parent, so the
+    # old one-level stat read healthy installed trees as STALE. Take the
+    # NEWEST mtime among regular files RECURSIVELY under the path, skipping
+    # caches and generated trees (they churn without content change: .git,
+    # node_modules, __pycache__, .venv, *.pyc). Empty recursion (an empty
+    # dir, or everything pruned) → the dir's own mtime as the fallback.
+    local newest
+    newest="$(find "$ROOT/$path" \
+                \( -name .git -o -name node_modules -o -name __pycache__ \
+                   -o -name .venv -o -name '*.pyc' \) -prune \
+                -o -type f -printf '%T@\n' 2>/dev/null \
+              | sort -rn | head -1 || true)"
+    if [ -n "$newest" ]; then
+      date -d "@${newest%%.*}" +%F 2>/dev/null || true
+    else
+      stat -c %y "$ROOT/$path" 2>/dev/null | cut -d' ' -f1 || true
+    fi
   else
-    stat -c %y "$path" 2>/dev/null | cut -d' ' -f1 || true
+    stat -c %y "$ROOT/$path" 2>/dev/null | cut -d' ' -f1 || true
   fi
 }
 
 today_epoch() { date +%s; }
 date_epoch() { date -d "$1" +%s 2>/dev/null || echo 0; }
 
+# ---------------------------------------------------------------------------
+# The pin allowlist (SK-audit P2-03) — experimental images still riding
+# :latest are named, TIME-BOUNDED exceptions, never silent passes. Digest
+# pinning needs network pulls this OFFLINE audit cannot do, so the honest
+# mechanism is a REVIEW-BY-DATED registry (image|reason|review-by):
+# today <= review-by → UNPINNED-ALLOWED (INFO, no finding, no exit-code
+# effect); past that date the entry EXPIRES and the image reverts to a
+# normal UNPINNED finding. No allowlist file → behavior unchanged (every
+# :latest is a finding). An explicit override that does not exist is NAMED
+# on stderr and audited as if no allowlist existed — never silently ignored.
+# ---------------------------------------------------------------------------
+PIN_ALLOWLIST="${SCARLIX_STALE_AUDIT_PIN_ALLOWLIST:-$ROOT/docker/image-pin-allowlist.conf}"
+PIN_ALLOWLIST_LOADED=0
+if [ -n "${SCARLIX_STALE_AUDIT_PIN_ALLOWLIST:-}" ] && [ ! -f "$PIN_ALLOWLIST" ]; then
+  printf '%s: pin allowlist override %s not found — auditing with NO allowlist (every :latest is a finding)\n' "$SCRIPT_NAME" "$PIN_ALLOWLIST" >&2
+fi
+if [ -f "$PIN_ALLOWLIST" ]; then
+  PIN_ALLOWLIST_LOADED=1
+fi
+
+pin_allow_lookup() { # $1 image ref → "reason|review-by" (empty when unlisted)
+  [ "$PIN_ALLOWLIST_LOADED" -eq 1 ] || return 0
+  local want="$1" img reason review
+  while IFS='|' read -r img reason review; do
+    case "$img" in ''|'#'*) continue ;; esac  # blank + comment lines
+    if [ "$img" = "$want" ]; then
+      printf '%s|%s\n' "$reason" "$review"
+      return 0
+    fi
+  done < "$PIN_ALLOWLIST"
+  return 0
+}
+
 FINDINGS=0
+ALLOWED_COUNT=0
 REPORT_TMP="$(mktemp)"
 trap 'rm -f "$REPORT_TMP"' EXIT
 
@@ -152,7 +220,7 @@ HOSTN="$(hostname 2>/dev/null || echo unknown)"
 {
   echo "# SCARLIX OS stale-tree audit — $NOW"
   echo
-  echo "- root: \`$ROOT\` ($([ "$IN_GIT" -eq 1 ] && echo 'git history' || echo 'mtimes (installed tree — approximate)'))"
+  echo "- root: \`$ROOT\` ($([ "$IN_GIT" -eq 1 ] && echo 'git history' || echo 'mtimes (installed tree — newest-file recursive, approximate)'))"
   echo "- marker: $VERSION_MARKER, host: $HOSTN"
   echo
   echo "## Findings"
@@ -160,6 +228,13 @@ HOSTN="$(hostname 2>/dev/null || echo unknown)"
 
 add_finding() { # severity|class|path|detail
   FINDINGS=$((FINDINGS + 1))
+  printf -- '- **[%s|%s]** `%s` — %s\n' "$1" "$2" "$3" "$4" >> "$REPORT_TMP"
+}
+
+add_info() { # severity|class|path|detail — a report line that is NOT a finding
+  # (the pin-allowlist class: visible debt with a bounded excuse — reported,
+  # never counted; FINDINGS and the exit code stay untouched)
+  ALLOWED_COUNT=$((ALLOWED_COUNT + 1))
   printf -- '- **[%s|%s]** `%s` — %s\n' "$1" "$2" "$3" "$4" >> "$REPORT_TMP"
 }
 
@@ -207,6 +282,10 @@ done < <(find "$ROOT" -maxdepth 1 -mindepth 1 | sort)
 
 # ---------------------------------------------------------------------------
 # 3. Unpinned images + missing build contexts (all compose files)
+#    v19.6.7: discovery broadened — docker-compose*.yml AND *.yaml plus the
+#    modern compose.yml/compose.yaml short forms (.git still excluded); a
+#    stack named the new way was previously invisible to this analysis by
+#    construction (the compose-discovery residual).
 # ---------------------------------------------------------------------------
 while IFS= read -r compose; do
   rel="${compose#"$ROOT"/}"
@@ -214,7 +293,27 @@ while IFS= read -r compose; do
   while IFS= read -r image; do
     [ -z "$image" ] && continue
     case "$image" in
-      *:latest) add_finding "UNPINNED" "-" "$rel" "image \`$image\` rides :latest (KPK supply-chain residual) — pin a tag/digest or archive the stack" ;;
+      *:latest)
+        # SK-audit P2-03: an allowlisted :latest with a live review-by date
+        # is named, bounded debt (INFO — no finding, no exit-code effect); an
+        # EXPIRED entry reverts to a finding with the expiry NAMED; unlisted
+        # images keep the classic finding. The allowlist is an exception
+        # registry, never a permanent exemption.
+        if [ "$PIN_ALLOWLIST_LOADED" -eq 1 ]; then
+          entry="$(pin_allow_lookup "$image")"
+          if [ -n "$entry" ]; then
+            entry_reason="${entry%%|*}"
+            entry_review="${entry#*|}"
+            if [ "$(date_epoch "$entry_review")" -ge "$(today_epoch)" ]; then
+              add_info "UNPINNED-ALLOWED" "-" "$rel" "image \`$image\` rides :latest — allowlisted: $entry_reason (review-by $entry_review; pin-a-digest or archive the stack stays the real fix)"
+              continue
+            fi
+            add_finding "UNPINNED" "-" "$rel" "image \`$image\` rides :latest — allowlist entry EXPIRED (was allowed until $entry_review) — re-justify with a new review-by date, or pin a tag/digest / archive the stack"
+            continue
+          fi
+        fi
+        add_finding "UNPINNED" "-" "$rel" "image \`$image\` rides :latest (KPK supply-chain residual) — pin a tag/digest or archive the stack"
+        ;;
       *:*) : ;;
       *) add_finding "UNPINNED" "-" "$rel" "image \`$image\` carries NO tag — pin one (a floating repo default is :latest in disguise)" ;;
     esac
@@ -233,10 +332,17 @@ $(grep -A1 -E '^[[:space:]]*build:$' "$compose" | grep -E 'context:[[:space:]]*\
       add_finding "NO-BUILD-CTX" "-" "$rel" "build context \`$ctx\` has NO Dockerfile (the KPK-19.6.5-P2-04 class) — add the context or replace build: with a pinned image"
     fi
   done <<< "$(printf '%s\n' "$ctx_dirs" | sort -u)"
-done < <(find "$ROOT" -name 'docker-compose*.yml' -not -path '*/.git/*' | sort)
+done < <(find "$ROOT" \
+            \( -name 'docker-compose*.yml' -o -name 'docker-compose*.yaml' \
+               -o -name 'compose.yml' -o -name 'compose.yaml' \) \
+            -not -path '*/.git/*' | sort)
 
-if [ "$FINDINGS" -eq 0 ]; then
+if [ "$FINDINGS" -eq 0 ] && [ "$ALLOWED_COUNT" -eq 0 ]; then
   echo "- none — every registered path within threshold, every image pinned, every build context present, every top-level path classified" >> "$REPORT_TMP"
+elif [ "$FINDINGS" -eq 0 ]; then
+  # allowlisted :latest lines are INFO, not findings — the clean-summary
+  # wording must not claim "every image pinned" while exceptions are listed
+  echo "- no findings beyond the allowlisted :latest exceptions above (each a named, review-by-dated exception — bounded debt, not a pass)" >> "$REPORT_TMP"
 fi
 
 {

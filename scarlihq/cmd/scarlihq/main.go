@@ -27,7 +27,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.6.6"
+var Version = "19.6.7"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -412,6 +412,34 @@ func main() {
 			}
 			log.Printf("Universal AI Runtime probe loop started (interval %s — every tier probed and recorded each round)", interval)
 		}
+		// v19.6.7 (KPK-19.6.6-P2-02): the ENFORCED monthly token budget —
+		// the durable usage ledger (reserve-before-forward, settle the
+		// provider-reported usage after; atomic tmp+rename persist; the
+		// grants.json tamper discipline). Default path:
+		// /var/lib/scarlihq-budget/token-budget.json (mount it rw in the
+		// compose — see the v19.6.7 note there). An EXPLICIT
+		// SCARLIHQ_AIRUNTIME_BUDGET_LEDGER that fails to load/validate
+		// ABORTS STARTUP (never run on a tampered ledger); a failed DEFAULT
+		// path degrades the budgets to loudly-warned informational metadata
+		// (the documented degraded policy — an unaccountable budget is not
+		// a budget, so the runtime says so instead of pretending).
+		budgetPath := strings.TrimSpace(os.Getenv("SCARLIHQ_AIRUNTIME_BUDGET_LEDGER"))
+		budgetExplicit := budgetPath != ""
+		if budgetPath == "" {
+			budgetPath = "/var/lib/scarlihq-budget/token-budget.json"
+		}
+		budgetLedger, budgetErr := profiles.NewBudgetLedger(budgetPath)
+		if budgetErr != nil {
+			if budgetExplicit {
+				log.Fatalf("token budget ledger initialization failed: %v (fix the file or archive it deliberately — never run on a tampered usage ledger)", budgetErr)
+			}
+			log.Printf("WARNING: token budget enforcement UNAVAILABLE (%v) — declared monthly budgets degrade to INFORMATIONAL metadata until %s is writable; mount /var/lib/scarlihq-budget rw (see scarlihq/docker-compose.yml) or set SCARLIHQ_AIRUNTIME_BUDGET_LEDGER (KPK-19.6.6-P2-02)", budgetErr, budgetPath)
+		} else {
+			if err := apiHandler.ConfigureBudgetLedger(budgetLedger); err != nil {
+				log.Fatalf("token budget ledger configuration failed: %v", err)
+			}
+			log.Printf("Token budget enforcement ENABLED (ledger: %s) — monthly budgets are enforced on /api/ai/chat: reserve-before-forward, settle the provider-reported usage, failed attempts not billed, the monthly window is a UTC calendar month, exhaustion is a stable 429 (KPK-19.6.6-P2-02)", budgetPath)
+		}
 		if err := apiHandler.ConfigureAIRuntime(aiRuntime); err != nil {
 			log.Fatalf("ai runtime configuration failed: %v", err)
 		}
@@ -420,9 +448,57 @@ func main() {
 		log.Printf("Universal AI Runtime API disabled; set SCARLIHQ_AIRUNTIME_ENABLED=true to enable (/api/ai/* — adapters for the local stack + health probing + failover chat)")
 	}
 
+	// v19.6.7 (KPK-19.6.6-P1-01): PER-PROFILE AUTHENTICATION — the family
+	// profiles become identity-bound. A per-profile token index (one
+	// profile:token per line in the tokens file, or the inline env form)
+	// activates MULTI-USER mode: every token resolves to exactly one
+	// principal, the profile reference is checked against it (a family
+	// token cannot select the zmor admin profile or skip its own policy),
+	// and an omitted reference is DERIVED from the principal — there is
+	// no policy-free path. The household SCARLIHQ_TOKEN remains the ADMIN
+	// identity (the operator); ROTATE it when enabling multi-user mode if
+	// it was ever shared. Without an index the deployment is SINGLE-USER
+	// (one token, one identity, the admin) — named explicitly, never
+	// mistaken for household isolation.
+	var profileTokenIndex *profiles.TokenIndex
+	if raw := strings.TrimSpace(os.Getenv("SCARLIHQ_PROFILE_TOKENS")); raw != "" {
+		idx, err := profiles.ParseTokenIndex(raw, authToken)
+		if err != nil {
+			log.Fatalf("per-profile token configuration failed: %v (an invalid identity source is never a silent fall-back — fix the env)", err)
+		}
+		profileTokenIndex = idx
+	} else {
+		tokensFile := strings.TrimSpace(os.Getenv("SCARLIHQ_PROFILE_TOKENS_FILE"))
+		if tokensFile == "" {
+			tokensFile = "/etc/scarlix/profile-tokens.conf"
+		}
+		if _, err := os.Stat(tokensFile); err == nil {
+			idx, err := profiles.LoadTokenIndex(tokensFile, authToken)
+			if err != nil {
+				log.Fatalf("per-profile token configuration failed: %v (a broken identity source is never a silent fall-back — fix the file)", err)
+			}
+			profileTokenIndex = idx
+		}
+	}
+	if profileTokenIndex != nil {
+		if err := apiHandler.ConfigureProfileAuthz(profileTokenIndex); err != nil {
+			log.Fatalf("per-profile authentication wiring failed: %v", err)
+		}
+		log.Printf("Per-profile authentication ENABLED (multi-user): %d profile identities bound to their own Bearer tokens — profile references are checked against the authenticated principal and omissions are DERIVED from it (REST + MCP, one shared authorization function); the household token remains the ADMIN identity — rotate it if it was ever shared (KPK-19.6.6-P1-01)", profileTokenIndex.Len())
+	} else if strings.EqualFold(strings.TrimSpace(os.Getenv("SCARLIHQ_SINGLE_USER")), "true") {
+		log.Printf("Profile authentication: SINGLE-USER mode (SCARLIHQ_SINGLE_USER=true, explicit) — the household token is the ONE identity (the admin); profile references select policy contexts, they do not isolate users (KPK-19.6.6-P1-01)")
+	} else {
+		log.Printf("Profile authentication: single-user (implicit — no per-profile tokens configured and SCARLIHQ_SINGLE_USER is unset): the household token is the ONE identity. For household isolation create /etc/scarlix/profile-tokens.conf (profile:token per line, chmod 400) or set SCARLIHQ_PROFILE_TOKENS=name:token,... — see docs/SCARLIX_SECURITY_MAP.md (KPK-19.6.6-P1-01)")
+	}
+
 	apiHandler.RegisterRoutes(mux)
 
 	mcpServer := mcp.NewServer(g, mode, pf, authToken, Version)
+	if profileTokenIndex != nil {
+		if err := mcpServer.ConfigureProfileAuthz(profileTokenIndex); err != nil {
+			log.Fatalf("per-profile authentication wiring (MCP) failed: %v", err)
+		}
+	}
 	mcpServer.RegisterRoutes(mux)
 
 	webui.RegisterWS(mux, authToken, mode, pf)

@@ -24,7 +24,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.6.6"
+var Version = "19.6.7"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -202,15 +202,38 @@ type Handler struct {
 	// (adapters + probing + failover chat behind the CF-1 contract).
 	// Nil until ConfigureAIRuntime is called (opt-in; 503 without it).
 	aiRuntime *airt.Runtime
+	// v19.6.7 (KPK-19.6.6-P1-01): the shared authenticator — Bearer
+	// tokens resolve to identity-bound principals (per-profile token
+	// index + the household admin token); every policy-aware boundary
+	// decides through the ONE profiles.Authenticator.Authorize.
+	authz *profiles.Authenticator
+	// v19.6.7 (KPK-19.6.6-P2-02): the enforced monthly token budget
+	// ledger — nil (informational budgets) until ConfigureBudgetLedger
+	// is called; when set, /api/ai/chat reserves before forwarding and
+	// settles the provider-reported usage after.
+	budget         *profiles.BudgetLedger
+	budgetEnforced bool
 }
 
 // NewHandler creates a new API handler.
 // v18.2 P1: version param added (was: separate const — ldflags couldn't override).
+// v19.6.7 (KPK-19.6.6-P1-01): the shared authenticator is constructed here
+// (single-user: the household token is the admin identity); the per-profile
+// token index is attached later via ConfigureProfileAuthz (multi-user).
 func NewHandler(g *guard.Guard, m *scarlix_mode.Mode, p *profiles.Manager, authToken, version string) *Handler {
 	if version == "" {
 		version = Version // fallback to package var
 	}
-	return &Handler{guard: g, mode: m, profiles: p, authToken: authToken, version: version}
+	h := &Handler{guard: g, mode: m, profiles: p, authToken: authToken, version: version}
+	if authToken != "" && p != nil {
+		authz, err := profiles.NewAuthenticator(nil, authToken, p)
+		if err == nil {
+			h.authz = authz
+		}
+		// A nil authz (no profiles manager) leaves the legacy 503/401
+		// behavior — never an unauthenticated open surface.
+	}
+	return h
 }
 
 // RegisterRoutes registers all REST API routes (all behind auth middleware).
@@ -228,61 +251,64 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// install, no arbitrary command surface is added here.
 	mux.HandleFunc("/api/gaming", h.auth(h.gamingInventory))
 	mux.HandleFunc("/api/ws-ticket", h.auth(h.issueWSTicket))
-	mux.HandleFunc("/api/compute/start", h.auth(h.computeStart))
-	mux.HandleFunc("/api/compute/stop", h.auth(h.computeStop))
+	// v19.6.7 (KPK-19.6.6-P1-01): operator surfaces require the ADMIN
+	// principal — a per-profile family token is refused here (403), identity
+	// is bound at the auth boundary, not self-declared at the action.
+	mux.HandleFunc("/api/compute/start", h.authAdmin(h.computeStart))
+	mux.HandleFunc("/api/compute/stop", h.authAdmin(h.computeStop))
 	// AK-2 (v19.4.1): Agent Kernel session surface — auth-gated like every
 	// other route; responds 503 until ConfigureAgentKernel has been called
 	// (opt-in wiring from main.go, same contract as compute lifecycle).
-	mux.HandleFunc("/api/agent/sessions", h.auth(h.agentSessions))
-	mux.HandleFunc("/api/agent/sessions/transition", h.auth(h.agentSessionTransition))
-	mux.HandleFunc("/api/agent/sessions/evaluate", h.auth(h.agentSessionEvaluate))
+	mux.HandleFunc("/api/agent/sessions", h.authAdmin(h.agentSessions))
+	mux.HandleFunc("/api/agent/sessions/transition", h.authAdmin(h.agentSessionTransition))
+	mux.HandleFunc("/api/agent/sessions/evaluate", h.authAdmin(h.agentSessionEvaluate))
 	// AK-5 (v19.4.6): compute intake — agent sessions reserve/release
 	// compute allocations through the kernel decision + the workload
 	// bridge (per-agent-owner principal; registry required).
-	mux.HandleFunc("/api/agent/sessions/compute", h.auth(h.agentCompute))
+	mux.HandleFunc("/api/agent/sessions/compute", h.authAdmin(h.agentCompute))
 	// AK-3 (v19.4.4): persisted, admin-owned grant registry — grant /
 	// revoke / disable / enable are separate reviewed admin acts, gated
 	// behind the same Bearer auth as everything else and 503 until
 	// ConfigureAgentGrants has been called (own opt-in).
-	mux.HandleFunc("/api/agent/grants", h.auth(h.agentGrantsRoute))
-	mux.HandleFunc("/api/agent/grants/revoke", h.auth(h.agentGrantRevoke))
-	mux.HandleFunc("/api/agent/capabilities/disable", h.auth(h.agentCapabilityDisable))
-	mux.HandleFunc("/api/agent/capabilities/enable", h.auth(h.agentCapabilityEnable))
+	mux.HandleFunc("/api/agent/grants", h.authAdmin(h.agentGrantsRoute))
+	mux.HandleFunc("/api/agent/grants/revoke", h.authAdmin(h.agentGrantRevoke))
+	mux.HandleFunc("/api/agent/capabilities/disable", h.authAdmin(h.agentCapabilityDisable))
+	mux.HandleFunc("/api/agent/capabilities/enable", h.authAdmin(h.agentCapabilityEnable))
 	// AK-4 (v19.4.5): append-only audit sink read surface — bounded
 	// (last N lines, newest first), read-only, 503 until the sink is
 	// configured (own opt-in: SCARLIHQ_AGENT_AUDIT_FILE).
-	mux.HandleFunc("/api/agent/audit", h.auth(h.agentAuditRoute))
+	mux.HandleFunc("/api/agent/audit", h.authAdmin(h.agentAuditRoute))
 
 	// BF-1 (v19.5.0): Agent Fabric / ScarliBar command surface — intent
 	// capture + user-visible command status (P4 ownership). All behind
 	// the standard Bearer auth; 503 until the fabric is configured.
-	mux.HandleFunc("/api/bar/commands", h.auth(h.barCommands))
-	mux.HandleFunc("/api/bar/commands/route", h.auth(h.barCommandRoute))
-	mux.HandleFunc("/api/bar/commands/cancel", h.auth(h.barCommandCancel))
+	mux.HandleFunc("/api/bar/commands", h.authAdmin(h.barCommands))
+	mux.HandleFunc("/api/bar/commands/route", h.authAdmin(h.barCommandRoute))
+	mux.HandleFunc("/api/bar/commands/cancel", h.authAdmin(h.barCommandCancel))
 	// BF-2 (v19.5.1): Agent Fabric workspace surface — named isolation
 	// contexts for agent sessions and commands. Same auth gate; 503 until
 	// the workspace store is configured (it is wired whenever the fabric
 	// is enabled — no extra opt-in beyond the fabric itself).
-	mux.HandleFunc("/api/bar/workspaces", h.auth(h.barWorkspaces))
-	mux.HandleFunc("/api/bar/workspaces/archive", h.auth(h.barWorkspaceArchive))
-	mux.HandleFunc("/api/bar/workspaces/sessions", h.auth(h.barWorkspaceJoin))
-	mux.HandleFunc("/api/bar/workspaces/sessions/leave", h.auth(h.barWorkspaceLeave))
+	mux.HandleFunc("/api/bar/workspaces", h.authAdmin(h.barWorkspaces))
+	mux.HandleFunc("/api/bar/workspaces/archive", h.authAdmin(h.barWorkspaceArchive))
+	mux.HandleFunc("/api/bar/workspaces/sessions", h.authAdmin(h.barWorkspaceJoin))
+	mux.HandleFunc("/api/bar/workspaces/sessions/leave", h.authAdmin(h.barWorkspaceLeave))
 	// BF-3 (v19.5.2): Agent Fabric execution surface — coding/research
 	// agent runtimes. Same auth gate; 503 until the execution store is
 	// configured (rides the fabric opt-in with its own persisted
 	// executions file). Execute runs a FRESH kernel evaluation (the
 	// stale-allow guard) before the act; executions are terminal records.
-	mux.HandleFunc("/api/bar/commands/execute", h.auth(h.barCommandExecute))
-	mux.HandleFunc("/api/bar/executions", h.auth(h.barExecutions))
+	mux.HandleFunc("/api/bar/commands/execute", h.authAdmin(h.barCommandExecute))
+	mux.HandleFunc("/api/bar/executions", h.authAdmin(h.barExecutions))
 	// BF-4 (v19.5.3): Agent Fabric operator-approval surface — the human
 	// gate for mutating (coding) acts. Same auth gate; 503 until the
 	// approval store is configured (rides the fabric opt-in). Execute on
 	// a coding capability creates the PENDING request (202); approve runs
 	// the act (the full BF-3 flow + the operator's yes); reject is
 	// terminal. One request per command, ever.
-	mux.HandleFunc("/api/bar/approvals", h.auth(h.barApprovals))
-	mux.HandleFunc("/api/bar/approvals/approve", h.auth(h.barApprovalApprove))
-	mux.HandleFunc("/api/bar/approvals/reject", h.auth(h.barApprovalReject))
+	mux.HandleFunc("/api/bar/approvals", h.authAdmin(h.barApprovals))
+	mux.HandleFunc("/api/bar/approvals/approve", h.authAdmin(h.barApprovalApprove))
+	mux.HandleFunc("/api/bar/approvals/reject", h.authAdmin(h.barApprovalReject))
 	// CF-2 (v19.6.1): Universal AI Runtime surface — the normalized LLM
 	// layer (adapters for the documented local stack, health probing,
 	// failover chat). Same Bearer auth gate; 503 until the runtime is
@@ -291,7 +317,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// becoming a fabric PROPOSAL is CF-3, behind the fabric's approvals.
 	mux.HandleFunc("/api/ai/health", h.auth(h.aiHealth))
 	mux.HandleFunc("/api/ai/models", h.auth(h.aiModels))
-	mux.HandleFunc("/api/ai/probe", h.auth(h.aiProbe))
+	// v19.6.7 (KPK-19.6.6-P1-01): the probe round is an operator act —
+	// the ADMIN principal is required (family tokens are read-only on the
+	// AI surface; /api/ai/chat is the family boundary, policy-decided).
+	mux.HandleFunc("/api/ai/probe", h.authAdmin(h.aiProbe))
 	mux.HandleFunc("/api/ai/chat", h.auth(h.aiChat))
 	// CF-3 (v19.6.2): the propose surface — the bridge between the AI
 	// runtime and the fabric. POST /api/ai/propose runs a chat through
@@ -302,16 +331,33 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// routing + the reconciliation for a crashed accept); dismiss is
 	// the operator's unconditional no. 503 until BOTH opt-ins are on
 	// (the runtime AND the fabric's proposal store).
-	mux.HandleFunc("/api/ai/propose", h.auth(h.aiPropose))
-	mux.HandleFunc("/api/ai/proposals", h.auth(h.aiProposals))
-	mux.HandleFunc("/api/ai/proposals/accept", h.auth(h.aiProposalAccept))
-	mux.HandleFunc("/api/ai/proposals/dismiss", h.auth(h.aiProposalDismiss))
+	mux.HandleFunc("/api/ai/propose", h.authAdmin(h.aiPropose))
+	mux.HandleFunc("/api/ai/proposals", h.authAdmin(h.aiProposals))
+	mux.HandleFunc("/api/ai/proposals/accept", h.authAdmin(h.aiProposalAccept))
+	mux.HandleFunc("/api/ai/proposals/dismiss", h.authAdmin(h.aiProposalDismiss))
 }
 
-// auth middleware: validates Bearer token header only.
+// auth middleware: validates the Bearer token header only.
 // v18.0.0 P1: uses crypto/subtle.ConstantTimeCompare (was: custom secureCompare).
 // v18.6 P2: removed ?token= query fallback (was: token leaked in URLs/logs/history).
+// v19.6.7 (KPK-19.6.6-P1-01): the token now RESOLVES to an identity-bound
+// principal (per-profile token index first — constant-time per entry; the
+// household token = the ADMIN identity) which rides the request context to
+// the policy-aware boundaries. The 401/503 semantics for the household
+// token are byte-for-byte the legacy contract.
 func (h *Handler) auth(next http.HandlerFunc) http.HandlerFunc {
+	return h.authGate(next, false)
+}
+
+// authAdmin is the auth middleware for OPERATOR surfaces: the request
+// additionally requires the ADMIN principal (the household token or a
+// role:admin profile's own token). A family member's per-profile token is
+// refused 403 there — identity is bound, not self-declared.
+func (h *Handler) authAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return h.authGate(next, true)
+}
+
+func (h *Handler) authGate(next http.HandlerFunc, requireAdmin bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if h.authToken == "" {
 			writeJSONError(w, http.StatusServiceUnavailable, "SCARLIHQ_TOKEN not configured on server")
@@ -325,12 +371,26 @@ func (h *Handler) auth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSONError(w, http.StatusUnauthorized, "invalid or missing token (use Authorization: Bearer)")
 			return
 		}
-		// v18.0.0 P1: crypto/subtle.ConstantTimeCompare (standard library, constant-time)
-		if subtle.ConstantTimeCompare([]byte(token), []byte(h.authToken)) != 1 {
+		if h.authz == nil {
+			// No authenticator (no profile manager): the legacy constant-time
+			// household-token check stands on its own.
+			if subtle.ConstantTimeCompare([]byte(token), []byte(h.authToken)) != 1 {
+				writeJSONError(w, http.StatusUnauthorized, "invalid or missing token")
+				return
+			}
+			next(w, r)
+			return
+		}
+		principal := h.authz.ResolveToken(token)
+		if principal == nil {
 			writeJSONError(w, http.StatusUnauthorized, "invalid or missing token")
 			return
 		}
-		next(w, r)
+		if requireAdmin && !principal.IsAdmin {
+			writeJSONError(w, http.StatusForbidden, "this surface requires the household (admin) token — a per-profile family token is refused here (KPK-19.6.6-P1-01)")
+			return
+		}
+		next(w, r.WithContext(profiles.WithPrincipal(r.Context(), principal)))
 	}
 }
 
@@ -440,23 +500,22 @@ func (h *Handler) modeHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "no mode specified")
 		return
 	}
-	// v19.6.6 (KPK-19.6.5-P1-03): SERVER-SIDE profile policy enforcement at
-	// the action boundary — a declared profile reference (query/body field
-	// or X-Scarlix-Profile header) makes the mode switch DECIDABLE against
-	// the profile's scarlix_mode policy: can_switch=false refuses EVERY
-	// switch (XOX stays in her default mode), a target outside the allowed
-	// set is refused BY NAME. The household Bearer token still gates the
-	// route; the profile selects WHICH policy applies (identity stays the
-	// caller's declaration until per-profile authentication — CF-4+, the
-	// honest residual in the SECURITY_MAP). An invalid/unloadable profile
+	// v19.6.7 (KPK-19.6.6-P1-01): SERVER-SIDE profile policy enforcement
+	// at the action boundary, now IDENTITY-BOUND — the profile reference
+	// (query/body field or X-Scarlix-Profile header) is checked against
+	// the AUTHENTICATED principal through the ONE shared
+	// profiles.Authenticator.Authorize: a family token cannot select a
+	// foreign profile (an admin act-as can only REDUCE privileges); an
+	// omitted reference is DERIVED from the principal (their own policy;
+	// the household token derives the role:admin profile) — there is no
+	// policy-free path in multi-user mode. An invalid/unloadable profile
 	// reference FAILS CLOSED (400): a broken policy file can never become
-	// an unenforced bypass.
-	if profile != "" {
-		p, err := h.profiles.Load(profile)
-		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+	// an unenforced bypass (the v19.6.6 contract, preserved).
+	p, ok := h.authorizeProfile(w, r, profile, "mode.switch")
+	if !ok {
+		return
+	}
+	if p != nil {
 		if err := p.AllowsMode(mode); err != nil {
 			writeJSONError(w, http.StatusForbidden, err.Error())
 			return

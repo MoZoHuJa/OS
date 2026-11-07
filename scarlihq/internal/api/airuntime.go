@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -155,6 +156,14 @@ func (h *Handler) aiModelsList(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) aiModelsRegister(w http.ResponseWriter, r *http.Request) {
 	if h.aiRuntimeDisabled(w) {
+		return
+	}
+	// v19.6.7 (KPK-19.6.6-P1-01): model registration is an OPERATOR act —
+	// the registry is the routing surface. The GET list stays family-readable
+	// (the dashboard view); the POST requires the ADMIN principal (a
+	// per-profile family token is refused here, identity is bound).
+	if principal := profiles.PrincipalFromContext(r.Context()); principal != nil && !principal.IsAdmin {
+		writeJSONError(w, http.StatusForbidden, "model registration requires the household (admin) token — a per-profile family token is refused here (KPK-19.6.6-P1-01)")
 		return
 	}
 	request, ok := decodeOneJSON(w, r, func() any { return &aiModelRegisterRequest{} })
@@ -326,29 +335,34 @@ func (h *Handler) aiChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := request.(*aiChatRequest)
-	// v19.6.6 (KPK-19.6.5-P1-03): the profile reference (body field or the
-	// X-Scarlix-Profile header) makes the chat DECIDABLE against the
-	// declared family policy — SERVER-SIDE, at the action boundary:
-	//   1. the ai_chat permission is REQUIRED (a profile without it never
+	// v19.6.7 (KPK-19.6.6-P1-01): the chat boundary is IDENTITY-BOUND —
+	// the profile reference (body field or X-Scarlix-Profile header) is
+	// decided against the AUTHENTICATED principal through the ONE shared
+	// profiles.Authenticator.Authorize (the same function that decides
+	// /api/mode and MCP scarlix_mode_set):
+	//   1. a family token cannot select a foreign profile; an omitted
+	//      reference is DERIVED from the principal — there is no
+	//      policy-free path in multi-user mode (the v19.6.6 bypass);
+	//   2. the ai_chat permission is REQUIRED (a profile without it never
 	//      reaches a model, whatever the dashboard shows);
-	//   2. an ENABLED content filter blocklist is enforced on the chat input
+	//   3. an ENABLED content filter blocklist is enforced on the chat input
 	//      (keyword-level, honestly documented — a semantic classifier is a
 	//      CF-4+ item, never a silent claim);
-	//   3. an unloadable profile reference FAILS CLOSED — a broken policy
+	//   4. an unloadable profile reference FAILS CLOSED — a broken policy
 	//      file is never an unenforced bypass.
-	// The household Bearer token still gates the route; identity stays the
-	// caller's declaration until per-profile authentication (CF-4+, the
-	// honest residual in the SECURITY_MAP).
+	// v19.6.7 (KPK-19.6.6-P2-02): a monthly token budget is an ENFORCED
+	// quota — reserve-before-forward, settle the provider-reported usage
+	// after; exhaustion is a stable 429 carrying the quota state.
 	profileRef := req.Profile
 	if profileRef == "" {
 		profileRef = r.Header.Get("X-Scarlix-Profile")
 	}
-	if profileRef != "" {
-		p, perr := h.profiles.Load(profileRef)
-		if perr != nil {
-			writeJSONError(w, http.StatusBadRequest, perr.Error())
-			return
-		}
+	p, ok := h.authorizeProfile(w, r, profileRef, "ai.chat")
+	if !ok {
+		return
+	}
+	contents := make([]string, 0, len(req.Messages))
+	if p != nil {
 		if perr := p.RequirePermission("ai_chat"); perr != nil {
 			writeJSONError(w, http.StatusForbidden, perr.Error())
 			return
@@ -358,7 +372,17 @@ func (h *Handler) aiChat(w http.ResponseWriter, r *http.Request) {
 				writeJSONError(w, http.StatusForbidden, fmt.Sprintf("%v: category %q (profile %s's content filter is enforced server-side on the chat input)", profiles.ErrContentBlocked, category, p.Name))
 				return
 			}
+			contents = append(contents, m.Content)
 		}
+	}
+	// KPK-19.6.6-P2-02: the budget reservation happens BEFORE the model
+	// is called (concurrent requests cannot collectively overspend the
+	// month); a failed attempt releases it whole — failover attempts are
+	// not billed. A refused reservation (429 quota / 503 fail-closed) is
+	// already written to the response — the chat stops there.
+	reservation, refused := h.budgetReserve(w, p, contents)
+	if refused {
+		return
 	}
 	messages := make([]airuntime.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {
@@ -369,6 +393,12 @@ func (h *Handler) aiChat(w http.ResponseWriter, r *http.Request) {
 		Messages: messages,
 	})
 	if err != nil {
+		// A failed attempt is NOT billed: the reservation is
+		// released whole (failover attempts, refusals, transport
+		// errors — the documented accounting semantics).
+		if rerr := reservation.Release(); rerr != nil && p != nil {
+			log.Printf("ERROR: budget reservation release failed for profile %s: %v (the hold stands — accounting errs toward restriction)", p.Name, rerr)
+		}
 		// The named errors ride their explanations: the skips on no-route,
 		// the attempts on all-failed, the attempts on budget expiry —
 		// fail-closed, not fail-blind. The status is set BEFORE the body
@@ -393,6 +423,21 @@ func (h *Handler) aiChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := outcome.Response
+	// KPK-19.6.6-P2-02: settle the ACTUAL usage — provider-reported
+	// input + output tokens; when the provider reported none, the
+	// estimate stands (the documented fallback). Accounting is per
+	// profile across models (routing a chat through another model must
+	// not escape the budget); the per-model split is recorded for the
+	// report.
+	if reservation != nil {
+		actual := int64(resp.Usage.InputTokens) + int64(resp.Usage.OutputTokens)
+		if actual <= 0 {
+			actual = profiles.EstimateChatTokens(contents)
+		}
+		if serr := reservation.Settle(actual, string(resp.Model), nowUTC()); serr != nil {
+			log.Printf("ERROR: budget usage settlement failed for profile %s: %v (the reservation hold stands — accounting errs toward restriction, never toward overspend)", p.Name, serr)
+		}
+	}
 	attempts := attemptViews(outcome.Attempts)
 	if attempts == nil {
 		attempts = []aiAttemptView{} // a stable JSON shape, not a null

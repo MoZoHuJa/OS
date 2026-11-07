@@ -13,7 +13,7 @@ All `/api/*` routes are registered in `scarlihq/internal/api/rest.go::RegisterRo
 | GET | `/api/gpu` | Bearer | — | `{"gpus":[...],"timestamp":"..."}` or `{"gpus":[],"stale":true,"message":"host-status.json not found..."}` | `rest.go::gpuStatus` |
 | GET | `/api/containers` | Bearer | — | `{"containers":[{name,status,ports}],"timestamp":"..."}` | `rest.go::listContainers` |
 | GET | `/api/mode` | Bearer | — | `{"mode":"<current>","status":"ok","requested_mode":"...","transition_state":"none\|applied\|retrying\|failed\|rejected","retry_count":N,"last_error":"...","last_timestamp":"..."}` | `rest.go::modeHandler` |
-| POST | `/api/mode?set=<mode>` | Bearer | `?set=ai\|stop\|game\|creative\|turbo\|offline\|tv` OR JSON body `{"mode":"ai"}` (max 4096 bytes) | Reserve mode switch via `Mode.Request()` (checks transition state, then atomic `O_EXCL` write to `desired-mode`). Returns 202 `{"mode":"...","status":"accepted","message":"mode switch requested — host bridge will apply within 5s"}`. Returns 409 if a transition is pending/in-progress, 400 if invalid mode, 503 on FS error. | `rest.go::modeHandler` |
+| POST | `/api/mode?set=<mode>` | Bearer (v19.6.7: profile-checked against the authenticated principal — see Authentication & identity below) | `?set=ai\|stop\|game\|creative\|turbo\|offline\|tv` OR JSON body `{"mode":"ai"}` (max 4096 bytes) | Reserve mode switch via `Mode.Request()` (checks transition state, then atomic `O_EXCL` write to `desired-mode`). Returns 202 `{"mode":"...","status":"accepted","message":"mode switch requested — host bridge will apply within 5s"}`. Returns 409 if a transition is pending/in-progress, 400 if invalid mode, 503 on FS error. v19.6.7: a `profile` reference (query/body/header) that does not match the authenticated principal → 403 `ErrProfileMismatch`; `can_switch`/allowed-set policy enforced on the resolved profile. | `rest.go::modeHandler` |
 | GET | `/api/profiles` | Bearer | — | `[{name,display_name,role,...}]` from `/etc/scarlix/profiles/*.yaml` | `rest.go::listProfiles` |
 | GET | `/api/status` | Bearer | — | Full `host-status.json` (timestamp, version, scarlix_version, mode, experimental, mode_transition{...}, gpus[], containers[], disk{models_free_mb, models_total_mb}) | `rest.go::fullStatus` |
 | POST | `/api/ws-ticket` | Bearer | — | `{"ticket":"<64 hex>","expires_in":30}`. Issues a 30s single-use WS ticket. Returns 503 if `maxWSTickets=1024` reached (rate limit), 500 on RNG failure (`ErrTicketRNG` — fail-closed, never issues predictable all-zeros ticket). | `rest.go::issueWSTicket` |
@@ -24,6 +24,16 @@ All `/api/*` routes are registered in `scarlihq/internal/api/rest.go::RegisterRo
 - If `Authorization: Bearer <token>` header is missing or doesn't start with `Bearer ` → 401 `"invalid or missing token (use Authorization: Bearer)"`.
 - `crypto/subtle.ConstantTimeCompare([]byte(token), []byte(h.authToken)) != 1` → 401 `"invalid or missing token"`.
 - No `?token=` URL fallback (v18.6 P2 removed — was leaking tokens into logs/referrer/proxy).
+
+### Authentication & identity (v19.6.7 — KPK-19.6.6-P1-01)
+
+The Bearer token now RESOLVES to an identity-bound principal (the 401/503 semantics above are unchanged for the household token):
+
+- The token may be a PER-PROFILE token (`/etc/scarlix/profile-tokens.conf`, `profile:token` per line, or `SCARLIHQ_PROFILE_TOKENS=name:token,...`) — it resolves to exactly that profile's principal. The household `SCARLIHQ_TOKEN` resolves to the ADMIN principal (the operator); a `role:admin` profile's own token is admin too. An unknown token → 401 as before.
+- Profile references (body field, `?profile=` query, or `X-Scarlix-Profile` header) are CHECKED against the authenticated principal: a family token declaring a foreign profile (`profile=zmor` or another member's) → 403 `ErrProfileMismatch`; the header cannot override the principal. An OMITTED reference is DERIVED from the principal (their own policy — no policy-free path in multi-user mode). One shared `profiles.Authenticator.Authorize` decides `/api/mode` (GET state unaffected; POST switches), `/api/ai/chat`, and MCP `scarlix_mode_set`.
+- Operator surfaces require the ADMIN principal (403 for family tokens): `/api/compute/start|stop`, `/api/agent/*`, `/api/bar/*`, `/api/ai/probe`, `/api/ai/propose|proposals*`, and POST model registration on `/api/ai/models` (GET stays family-readable).
+- `/api/ai/chat` additionally enforces the profile's monthly token budget (KPK-19.6.6-P2-02): quota exhaustion → HTTP 429 with a `quota` object `{profile, month, monthly, used, reserved, remaining}`; ledger unavailability → 503 (fail closed).
+- Without a per-profile token index the deployment is SINGLE-USER: the household token is the one admin identity (`SCARLIHQ_SINGLE_USER=true` names the mode explicitly). Details: `docs/SCARLIX_SECURITY_MAP.md` §r/§t.
 
 ## ScarliHQ WebSocket (`ws://127.0.0.1:8090/ws`)
 

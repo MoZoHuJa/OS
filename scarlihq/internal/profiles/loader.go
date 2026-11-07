@@ -70,6 +70,12 @@ type TokenBudget struct {
 }
 
 // UnmarshalYAML implements the dual-shape contract above.
+// v19.6.7 (KPK-19.6.6-P3-04): the MAPPING branch validates its keys
+// EXPLICITLY — only "monthly" and "model" are accepted, duplicates and
+// unknown keys are named errors. The outer decoder's KnownFields(true)
+// does NOT propagate into a custom unmarshaler's node.Decode, so the
+// nested shape needs its own closed-world check (a "monthly_limit_typo:"
+// key must never ride along silently next to a valid "monthly:").
 func (b *TokenBudget) UnmarshalYAML(node *yaml.Node) error {
 	switch node.Kind {
 	case yaml.ScalarNode:
@@ -86,27 +92,57 @@ func (b *TokenBudget) UnmarshalYAML(node *yaml.Node) error {
 		}
 		return fmt.Errorf("profiles: token_budget scalar must be \"unlimited\" (got %q); a numeric budget is declared as {monthly: N, model: name}", s)
 	case yaml.MappingNode:
-		var raw struct {
-			Monthly *int64 `yaml:"monthly"`
-			Model   string `yaml:"model"`
+		// KPK-19.6.6-P3-04: explicit key validation — the nested decode is
+		// strict BY HAND: unknown keys and duplicate keys are errors, the
+		// schema is closed at EVERY level, not just the outer one.
+		if len(node.Content)%2 != 0 {
+			return fmt.Errorf("profiles: token_budget mapping is malformed (odd key/value count)")
 		}
-		if err := node.Decode(&raw); err != nil {
-			return fmt.Errorf("profiles: token_budget mapping must be {monthly: N, model: name}: %v", err)
+		var (
+			monthly     *int64
+			monthlySeen bool
+			model       string
+			modelSeen   bool
+		)
+		for i := 0; i < len(node.Content); i += 2 {
+			keyNode, valNode := node.Content[i], node.Content[i+1]
+			switch keyNode.Value {
+			case "monthly":
+				if monthlySeen {
+					return fmt.Errorf("profiles: token_budget carries a DUPLICATE %q key — a budget with two ceilings is a typo, not a policy", keyNode.Value)
+				}
+				monthlySeen = true
+				var v int64
+				if err := valNode.Decode(&v); err != nil {
+					return fmt.Errorf("profiles: token_budget.monthly must be a positive number: %v", err)
+				}
+				monthly = &v
+			case "model":
+				if modelSeen {
+					return fmt.Errorf("profiles: token_budget carries a DUPLICATE %q key — a budget with two models is a typo, not a policy", keyNode.Value)
+				}
+				modelSeen = true
+				if err := valNode.Decode(&model); err != nil {
+					return fmt.Errorf("profiles: token_budget.model must be a model reference string: %v", err)
+				}
+			default:
+				return fmt.Errorf("profiles: token_budget carries the UNKNOWN key %q — the closed schema is {monthly: N, model: name} (a typo here must fail, not ride along silently — KPK-19.6.6-P3-04)", keyNode.Value)
+			}
 		}
-		if raw.Monthly == nil {
+		if !monthlySeen {
 			return fmt.Errorf("profiles: token_budget mapping requires a monthly field ({monthly: N, model: name})")
 		}
-		if *raw.Monthly <= 0 {
-			return fmt.Errorf("profiles: token_budget.monthly must be a positive number, got %d", *raw.Monthly)
+		if *monthly <= 0 {
+			return fmt.Errorf("profiles: token_budget.monthly must be a positive number, got %d", *monthly)
 		}
-		model := strings.TrimSpace(raw.Model)
-		if model == "" {
+		model = strings.TrimSpace(model)
+		if !modelSeen || model == "" {
 			return fmt.Errorf("profiles: token_budget.mapping requires a model field ({monthly: N, model: name}) — the budget is per-model")
 		}
 		if !validModelRef(model) {
 			return fmt.Errorf("profiles: token_budget.model %q is not a model reference shape (registry id like qwen2.5:3b)", model)
 		}
-		*b = TokenBudget{Monthly: *raw.Monthly, Model: model}
+		*b = TokenBudget{Monthly: *monthly, Model: model}
 		return nil
 	}
 	return fmt.Errorf("profiles: token_budget must be \"unlimited\" or {monthly: N, model: name} (got a %s node)", node.Tag)

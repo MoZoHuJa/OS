@@ -35,12 +35,40 @@ services:
       # is in bridge-state/ (root:root 700 — NOT mounted writable to ScarliHQ).
       # Was (v17.9.9): single bridge/ dir = symlink attack surface.
       - /var/lib/scarlix/bridge-input:/var/lib/scarlix/bridge-input:rw
-      # READ-ONLY: scarlix config + profiles + VERSION
+      # v19.6.7 (KPK-19.6.6-P2-02): WRITABLE — the enforced monthly token
+      # budget's durable ledger (token-budget.json, atomic tmp+rename,
+      # 0600/0700 discipline; uid 65532 — install.sh prepares the dir).
+      # Without it the declared budgets degrade to loudly-warned
+      # INFORMATIONAL metadata (the documented degraded policy).
+      - /var/lib/scarlihq-budget:/var/lib/scarlihq-budget:rw
+      # READ-ONLY: scarlix config + profiles + VERSION (+ the per-profile
+      # token file when the operator activates household isolation — see
+      # /etc/scarlix/profile-tokens.conf.template, KPK-19.6.6-P1-01)
       - /etc/scarlix:/etc/scarlix:ro
     environment:
       - SCARLIHQ_PORT=8090
       - SCARLIHQ_TOKEN=${SCARLIHQ_TOKEN}
       - TZ=Europe/Bratislava
+      # v19.6.7 (KPK-19.6.6-P1-01): PER-PROFILE AUTHENTICATION — the file
+      # path is read INSIDE the container (/etc/scarlix is mounted above).
+      # Default: /etc/scarlix/profile-tokens.conf — ABSENT by default (the
+      # deployment is single-user: the household token is the one admin
+      # identity). ACTIVATION: create the file (one profile:token per line,
+      # chown 65532:65532 + chmod 400 — see the .template install.sh ships),
+      # restart. One token = one identity; a family token can NEVER select
+      # a foreign profile or skip its own policy; the household token stays
+      # the ADMIN identity (rotate it if it was ever shared).
+      #   - SCARLIHQ_PROFILE_TOKENS=hugo:token,mon:token (inline form)
+      #   - SCARLIHQ_PROFILE_TOKENS_FILE=/etc/scarlix/profile-tokens.conf
+      # SCARLIHQ_SINGLE_USER=true logs the single-user mode EXPLICITLY
+      # (the implicit default logs the same pointer anyway).
+      #   - SCARLIHQ_SINGLE_USER=true
+      # v19.6.7 (KPK-19.6.6-P2-02): the enforced monthly token budget's
+      # ledger. Default path /var/lib/scarlihq-budget/token-budget.json
+      # (the rw mount above); an EXPLICIT path that fails to load ABORTS
+      # STARTUP (tamper discipline), an unwritable DEFAULT degrades the
+      # budgets to loudly-warned informational metadata.
+      #   - SCARLIHQ_AIRUNTIME_BUDGET_LEDGER=/var/lib/scarlihq-budget/token-budget.json
       # v19.3.2 — OPT-IN compute lifecycle (F-04 closure). Uncomment BOTH the
       # two volumes below AND these env vars to enable /api/compute/start|stop.
       # Prerequisites (in order):

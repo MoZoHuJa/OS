@@ -9,6 +9,8 @@
 > **v19.4.2 update:** dependency pin hygiene per `docs/DEPENDENCY_AUDIT_2026-10-21.md` — P0 (pruned upstream tags: coolify, sunshine, buzz/minio) and P1 (stale security pins: crowdsec, ollama, gitea, nextcloud, headscale) fixed; 5 pins now digest-pinned; smoke check 07 existence-checks all fixed pins in CI (section h extended).
 >
 > **v19.4.3 update (KpK review 2026-10-22 remediation):** check_07 now uses the explicit classification VERIFIED_EXISTS / MISSING / UNVERIFIED (transport errors, 401/403/429/5xx and malformed auth never count as existing; only a definitive 404 fails CI) with a deterministic mock-tested suite (`tests/test_registry_classification.sh`, in CI); probes are digest-aware and cover every digest pin in active compose files (14 probes). The buzz workspace is **formally disabled** (KPK-03: minio/minio dead upstream — all channels, source archived; profile renamed `.disabled`, quarantined pin out of every deploy path, guarded by smoke check_19). Registry evidence classes are separated in `docs/RELEASE_GATE_v19.4.3.md` — CI green is never claimed as hardware acceptance (KPK-06 protocol: `docs/HARDWARE_ACCEPTANCE_PROTOCOL.md`).
+>
+> **v19.6.7 update (the v19.6.6 KpK audit remediation):** section (r) is updated to the IDENTITY-BOUND family-profile contract (KPK-19.6.6-P1-01 CLOSED: per-profile Bearer tokens, one shared `profiles.Authenticator.Authorize`, derivation of omitted references, admin-only operator surfaces — the caller-declaration residual is gone); new section (t) — the ENFORCED monthly token budget (KPK-19.6.6-P2-02 CLOSED: durable ledger, reserve-before-forward, settle/release semantics, stable 429, fail-closed unavailability, the documented degraded policy); section (s) is updated (recursive newest-file mtime, broadened compose discovery, the time-bounded pin allowlist — KPK-19.6.6-P3-05 + SK-audit P2-03); new section (u) — the media-tools request boundary (KPK-19.6.6-P2-03 CLOSED: bearer auth, bounded concurrency, deliberate error answers). Residuals updated: hardware acceptance stays OPEN, the content filter stays keyword-level, the budget covers the chat path only (the propose path is admin-gated), the IPv6 dual-stack note stands.
 
 ## (a) Host-Bridge privilege separation
 
@@ -153,12 +155,17 @@ The **default AI path is tag-pinned** (`sglang`, `vllm`, `ollama`, `llamacpp` co
 mirrored in `docs/DEPENDENCY_INVENTORY_2026-11-06.md` §3 (the GENERATED
 inventory — drift-guarded by `tests/test_dependency_inventory.sh`) and the
 unpinned `:latest` set is re-detected EVERY WEEK by
-`scarlix-stale-audit.sh` (the stale-tree automation, §r below) — the
+`scarlix-stale-audit.sh` (the stale-tree automation, §s below) — the
 "NOT YET PINNED" comments from v18.8 no longer rely on memory alone. The
 register date column is the review SLA: a new experimental image starts
 its clock on the day it is added, and the weekly audit names every
-unpinned image with its compose path. Pin-or-archive for these four
-remains the next repo-hygiene milestone.
+unpinned image with its compose path. **v19.6.7 (SK-audit P2-03):** the
+four entries below are now ALLOWLISTED with reasons and a review-by date
+(`docker/image-pin-allowlist.conf`, §s) — the weekly audit reports them
+as `UNPINNED-ALLOWED` (visible debt, not a finding) until **2027-01-31**,
+after which an unextended entry reverts to a normal UNPINNED finding.
+Pin-or-archive remains the real fix; the allowlist makes the debt
+time-bounded instead of evergreen.
 
 **Rule (enforced by review, not yet by CI):** any NEW service added to the DEFAULT path must be tag- or digest-pinned — `:latest` is permitted only under `profiles: [experimental]`. Digest pinning for the four services above is **deferred** (see README roadmap status table) until their registries can be reached from the release pipeline to record immutable digests. **v19.4.2:** tag EXISTENCE for the pins fixed in v19.4.2 is now CI-enforced — smoke check 07 runs online in CI since v19.4.2 (was `--offline`) and fails on a definitive registry 404 (audit §6.1 P0 detector; network errors stay WARNs); the experimental `:latest` set above is unchanged (unverifiable registries).
 
@@ -660,7 +667,7 @@ posture is the BF-4 genre applied to model-authored intents:
   sees it; the parse itself is pure text processing — no network, no
   clock, no randomness in `ParseProposal`.
 
-## (r) Family profiles — typed schema, strict load, server-side enforcement (v19.6.6, KPK-19.6.5-P1-03)
+## (r) Family profiles — typed schema, strict load, identity-bound enforcement (v19.6.7, KPK-19.6.5-P1-03 + KPK-19.6.6-P1-01)
 
 The repository's four family profiles (`profiles/{hugo,mon,xox,zmor}.yaml`)
 are POLICY-BEARING files: permissions, `scarlix_mode` (default/allowed/
@@ -675,16 +682,17 @@ NOWHERE and enforced NOWHERE — "if these profiles are intended to enforce
 user permissions, the current behavior is a security boundary failure,
 not just a display bug" (the audit's words).
 
-The v19.6.6 contract:
+The v19.6.6 contract (schema + strict load — unchanged, the foundation):
 
 - **The schema is typed and total** (`internal/profiles/loader.go`):
   `Permissions`, `ModePolicy`, `TokenBudget` (custom unmarshaler — the
-  two honest shapes load typed, every other shape is refused BY NAME),
-  `ContentFilter`. Validation is closed: role ∈ {admin, family}; the
-  `all` wildcard is ADMIN-only; `scarlix_mode.default` must be a member
-  of `allowed`; `can_switch=false` allows exactly ONE mode; an enabled
-  content filter requires a non-empty blocklist; duplicate permissions
-  are refused.
+  two honest shapes load typed, every other shape is refused BY NAME;
+  the NESTED keys are validated by hand — unknown/duplicate nested keys
+  are named errors, KPK-19.6.6-P3-04 closed in v19.6.7), `ContentFilter`.
+  Validation is closed: role ∈ {admin, family}; the `all` wildcard is
+  ADMIN-only; `scarlix_mode.default` must be a member of `allowed`;
+  `can_switch=false` allows exactly ONE mode; an enabled content filter
+  requires a non-empty blocklist; duplicate permissions are refused.
 - **The load is STRICT**: `yaml` `KnownFields` — unknown keys are ERRORS
   for policy files (a typo'd `permissons:` silently dropping a permission
   is the accident class the audit demanded eliminated). A parse or
@@ -692,42 +700,132 @@ The v19.6.6 contract:
   `List()` and SURFACED in the API response (`/api/profiles` returns
   `{"profiles": [...], "invalid": [...]}`); `Load`/`Get` return the
   error. **Never a silently permissive fallback.**
-- **Enforcement is at the ACTION BOUNDARY, server-side:**
-  - `/api/mode/switch` (query `profile=`, body field, or
-    `X-Scarlix-Profile` header) and MCP `scarlix_mode_set` (the
-    `profile` argument): `can_switch=false` refuses EVERY switch (XOX
-    stays in her default mode — 403/-32005, the refusal names the
-    policy); a target outside the allowed set is refused BY NAME with
-    the allowed set in the message.
-  - `/api/ai/chat` (body field or header): the `ai_chat` permission is
-    REQUIRED (403 with the declared set riding along), and an ENABLED
-    content filter is enforced ON THE CHAT INPUT — a blocklisted
-    category hit refuses the request with the category named
-    (keyword-level, case-insensitive substring; a SEMANTIC classifier
-    is a CF-4+ item with the local model — honestly documented, never a
-    silent claim).
-  - An unloadable profile reference FAILS CLOSED (400): a broken
-    policy file is never an unenforced bypass.
-- **The honest residual (identity until CF-4+):** the household Bearer
-  token remains the only authentication boundary; the profile reference
-  is the CALLER'S DECLARATION selecting which policy applies. A family
-  member declaring "zmor" carries the admin policy — the enforcement is
-  real, the identity is not, and per-profile authentication (profiles
-  bound to credentials) is the CF-4+ roadmap item that closes it. Until
-  then the profiles enforce the FAMILY POLICY CONTRACT against
-  dashboards/agents that declare who they act for — dashboard-hides-the-
-  control was never enforcement, and now it does not have to be.
+
+The v19.6.7 contract (KPK-19.6.6-P1-01 CLOSED — identity is bound to
+authentication; `internal/profiles/principals.go` +
+`internal/api/principal.go`):
+
+- **Per-profile Bearer tokens.** Every profile MAY carry its own token —
+  the index loads from `/etc/scarlix/profile-tokens.conf` (one
+  `profile:token` per line) or inline
+  `SCARLIHQ_PROFILE_TOKENS=name:token,...`. Load is fail-closed: a
+  group/world-readable file is refused (secrets are not ambient — 0640
+  or tighter), a malformed line is refused with its line number, token
+  COLLISIONS between profiles are refused (one Bearer authenticates
+  exactly one identity), and a profile token equal to the household
+  `SCARLIHQ_TOKEN` is refused by name. Resolution is constant-time per
+  entry (`crypto/subtle`), entries iterated sorted. **The household
+  `SCARLIHQ_TOKEN` resolves to the ADMIN principal** — the operator's
+  own identity, never a family member's; a `role:admin` profile's own
+  token is admin too.
+- **ONE shared authorization function.** REST `/api/mode`,
+  `/api/ai/chat` AND MCP `scarlix_mode_set` all decide through exactly
+  `profiles.Authenticator.Authorize(principal, declared, action)` — one
+  decision function, not independent optional checks (the audit's
+  requirement 4). The auth middleware (REST and MCP) resolves EVERY
+  request's principal from the presented Bearer and stores it in the
+  request context; the 401/503 semantics for the household token are
+  byte-for-byte the legacy contract.
+- **A DECLARED reference must match the principal.** In multi-user mode
+  a client profile reference that is not the principal's own profile is
+  refused 403 `ErrProfileMismatch` ("principal %q cannot select profile
+  %q") — a family token cannot select `zmor`, nor another family
+  member's profile; the `X-Scarlix-Profile` header is checked
+  identically to the body field (no entry path overrides the
+  authenticated principal). An unloadable DECLARED file stays the
+  400-class fail-closed (the v19.6.6 contract, preserved).
+- **An OMITTED reference is DERIVED from the principal** — there is NO
+  policy-free path in multi-user mode: the family member gets HER
+  policy (permissions, mode policy, content filter, budget), the
+  household token derives the `role:admin` profile (a decidable admin
+  path — no admin profile in multi-user mode is a named configuration
+  defect, refused 403 `ErrProfileUnavailable`; a principal whose OWN
+  file is broken is refused 403 identically — never unrestricted).
+- **An admin act-as only REDUCES privileges.** The household (or zmor)
+  token may declare a family profile — and the TARGET profile's policy
+  still applies in full (the audit's requirement 5: admin access is
+  restricted to the admin principal; a family principal never
+  self-selects admin).
+- **Operator surfaces require the ADMIN principal** (`authAdmin` in
+  `rest.go`): compute start/stop, agent sessions/grants/audit (and the
+  agent compute intake), bar commands/workspaces/executions/approvals,
+  ai probe, ai propose/proposals/accept/dismiss, and the POST model
+  registration on `/api/ai/models` (the GET list stays family-readable).
+  A family member's per-profile token is refused 403 there — "identity
+  is bound, not self-declared." Read-only surfaces (health, gpu,
+  containers, status, profiles, ws-ticket, ai health/models-list, MCP
+  read-only tools) serve family tokens.
+- **Audit events, never tokens** (the audit's requirement 6): every
+  authorization decision is logged — `AUDIT authz principal=…
+  profile=… declared=… action=… decision=ALLOW|DENY reason=…` —
+  principal, resolved profile, declared reference, action, decision,
+  reason; NEVER a Bearer token.
+- **Single-user deployments are named, not mistaken for isolation**
+  (the audit's requirement 7). Without a token index the household
+  token is the ONE admin identity: `SCARLIHQ_SINGLE_USER=true` logs the
+  explicit single-user mode; the implicit default logs the same truth
+  with a pointer to the isolation guide (create
+  `/etc/scarlix/profile-tokens.conf`). When an admin profile exists its
+  policy applies (equivalent privileges, but decidable and auditable);
+  deployments with NO profiles at all keep the legacy unrestricted path
+  — named exactly as that in the audit event, never silently.
+- **Policy enforcement stays at the ACTION BOUNDARY, now decided
+  against the AUTHENTICATED profile** (the v19.6.6 contract carried
+  over): mode switching (`/api/mode` + MCP `scarlix_mode_set`)
+  enforces `can_switch=false` (XOX cannot switch AT ALL — 403 REST /
+  JSON-RPC −32005, the refusal names the policy) and the allowed-set
+  membership (refused BY NAME with the allowed set in the message); an
+  identity mismatch refuses 403 REST / −32006 MCP (`ErrProfileMismatch`).
+  `/api/ai/chat` enforces
+  the `ai_chat` permission (403 with the declared set riding along)
+  and an ENABLED content filter ON THE CHAT INPUT — a blocklisted
+  category hit refuses the request with the category named
+  (keyword-level, case-insensitive substring; a SEMANTIC classifier is
+  a CF-4+ item with the local model — honestly documented, never a
+  silent claim).
+- **The derived admin policy must not restrict the operator**:
+  `profiles/zmor.yaml` `scarlix_mode.allowed` now carries the FULL
+  enumeration (`ai, stop, game, creative, turbo, offline, tv` — was 4).
+
+The v19.6.6 residual — "the household Bearer token remains the only
+authentication boundary; the profile reference is the CALLER'S
+DECLARATION" — is CLOSED: the declaration is now CHECKED against the
+authenticated principal, and the omitted-reference path is DERIVED, not
+unrestricted. What remains honest: the content filter is keyword-level
+(a semantic classifier is a CF-4+ item with the local model), hardware
+acceptance stays OPEN (KPK-06), and the profile policy governs the
+surfaces that decide through `Authorize` (mode, chat, the read-only
+views) — the token budget covers the chat path only (§t; the propose
+path is admin-gated above).
+
+Acceptance matrix — the v19.6.6 audit's own list, now executable proofs
+(`internal/api/principal_test.go`, 12 REST tests;
+`internal/mcp/principal_test.go`, 6 MCP tests):
+
+| Request | Result |
+|---|---|
+| hugo token + `profile=zmor` (body or `X-Scarlix-Profile` header) | **403** `ErrProfileMismatch` — the header cannot override the principal |
+| xox token + `profile=zmor` | **403** |
+| hugo token + `profile=mon` / `profile=xox` | **403** — family identities mutually isolated |
+| zmor token + `profile=zmor` | **allowed** (its own policy) |
+| family token, reference OMITTED | **derived** — HER filter/mode policy/budget still refuse (xox: blocked category 403, `can_switch=false` 403) |
+| household token act-as a family profile | **allowed, policy-bound** — the target's policy applies (reduction only) |
+| broken own profile file | **403** `ErrProfileUnavailable` — fail closed, never unrestricted |
+| invalid/unknown token | **401** |
+| family token on an operator surface (probe, model POST registration) | **403** — admin principal required |
+| same matrix through MCP `scarlix_mode_set` | **identical** — one shared `Authorize` |
 
 Regression proofs: `internal/profiles/loader_test.go` (the four
-repository profiles parse WITHOUT fallback — embedded fixtures AND the
-on-disk walk; the dual-shape budget truth table; the negative schema
-matrix; `List` excludes + reports invalid files; the enforcement
-decisions) + `internal/api/profiles_enforcement_test.go` (the REST
-enforcement matrix: 403 refusals with named errors, the 202/200
-counterweights, every entry path, the no-profile-reference compatibility
-case).
+repository profiles parse WITHOUT fallback; the dual-shape budget truth
+table; the NESTED strict-validation truth table; the negative schema
+matrix; `List` excludes + reports invalid files; the token-index
+validation/file discipline; the authenticator identity binding + the
+single-user legacy contract) + `internal/api/profiles_enforcement_test.go`
+(the v19.6.6 REST enforcement matrix) + `internal/api/principal_test.go`
+(the identity matrix above, 12 tests) + `internal/mcp/principal_test.go`
+(the MCP half, 6 tests).
 
-## (s) Stale-tree audit — the repo-hygiene automation (v19.6.6, the process remediation)
+## (s) Stale-tree audit — the repo-hygiene automation (v19.6.6, the process remediation; v19.6.7 hardened)
 
 The v19.6.5 audits' process finding: the repository's attention is
 ASYMMETRIC — the control plane hardens daily while `profiles/` sat 85
@@ -738,11 +836,35 @@ The remediation is AUTOMATION, not memory:
 - **`files/usr/local/bin/scarlix-stale-audit.sh`** — the audit: (1)
   staleness of every REGISTERED path against its classification
   (ACTIVE/OPTIONAL/EXPERIMENTAL/ARCHIVED) and its max-stale threshold
-  (git last-touch in a checkout, mtime on an installed tree); (2) every
-  `:latest`/tagless image reference in every compose file; (3) every
-  compose `build:` context missing its Dockerfile (the P2-04 class);
-  (4) every UNCLASSIFIED top-level path — the registry IS the audited
-  contract, an unregistered path is unaudited by construction.
+  (git last-touch in a checkout; **v19.6.7, KPK-19.6.6-P3-05 CLOSED:**
+  on an installed tree a registered DIRECTORY's last-touch is the NEWEST
+  file mtime found RECURSIVELY under it — caches/generated data excluded
+  by the find, plain files keep the direct stat — editing an existing
+  file inside `profiles/` no longer reads as stale, and the report
+  states which mode produced the age); (2) every `:latest`/tagless image
+  reference in every compose file — **v19.6.7: discovery broadened to
+  `docker-compose*.yml` AND `docker-compose*.yaml` plus the modern
+  `compose.yml`/`compose.yaml` short forms** (`.git` still excluded), so
+  future compose files are scanned by construction; (3) every compose
+  `build:` context missing its Dockerfile (the P2-04 class); (4) every
+  UNCLASSIFIED top-level path — the registry IS the audited contract, an
+  unregistered path is unaudited by construction.
+- **The time-bounded pin allowlist (v19.6.7, SK-audit P2-03):**
+  `docker/image-pin-allowlist.conf` (`image|reason|review-by` per line,
+  override via `SCARLIX_STALE_AUDIT_PIN_ALLOWLIST` — a MISSING explicit
+  override is named on stderr and audited as if no allowlist existed,
+  never silently ignored). An experimental image may ride `:latest` ONLY
+  with a documented reason AND a review-by date: while today ≤ review-by
+  the weekly audit reports it as `UNPINNED-ALLOWED` (an INFO line —
+  visible debt, NOT a finding, no exit-code effect); the day after, the
+  entry EXPIRES and the image reverts to a normal UNPINNED finding that
+  names the expiry. The four known experimental images
+  (`mcp/playwright-server:latest`, `freetoken/serving:latest`,
+  `laya/decision-engine:latest`, `ghcr.io/cactus-compute/needle:latest`
+  — all NO_ACCESS registries, unverifiable offline) are allowlisted
+  until **2027-01-31**. "The default is debt, exceptions are borrowed" —
+  pin-a-digest or archive the stack stays the real fix; an evergreen
+  allowlist would be a policy hole, which is why every entry is dated.
 - **`scarlix-stale-audit.timer`** (weekly Mon 06:30, persistent) — the
   schedule; the service treats findings (exit 1) as SUCCESS so a timer
   failure means the audit itself broke. Reports land in
@@ -761,11 +883,111 @@ The remediation is AUTOMATION, not memory:
 
 Exit codes are CI-gate friendly (0 clean / 1 findings / 2 usage); the
 classification registry is edited deliberately, in the script, reviewed
-in code review.
+in code review — and the allowlist is edited just as deliberately, few
+entries, dated, reviewed.
+
+## (t) Enforced token budgets — the monthly usage quota (v19.6.7, KPK-19.6.6-P2-02 CLOSED)
+
+The v19.6.6 defect: the profile schema parsed and VALIDATED
+`token_budget {monthly: N, model: m}` — and nothing in the runtime ever
+read it. The budget was descriptive metadata displayed to the family
+while actual usage was unbounded. v19.6.7 makes it an ENFORCED quota on
+the `/api/ai/chat` path (`internal/profiles/budget.go` +
+`internal/api/principal.go`):
+
+- **The ledger is durable and tamper-disciplined** (the grants.json
+  discipline): default path
+  `/var/lib/scarlihq-budget/token-budget.json` — 0600 file / 0700
+  directory, atomic tmp+rename persist, `schema_version 1`, and a
+  fail-closed load: corrupt JSON, a foreign schema version, or loose
+  permissions abort ("never run on a tampered ledger"). Mount
+  `/var/lib/scarlihq-budget` rw in the scarlihq compose, or set
+  `SCARLIHQ_AIRUNTIME_BUDGET_LEDGER` to a writable path.
+- **RESERVE-BEFORE-FORWARD:** the request's estimate (input runes / 4
+  per message + the fixed 4096-token output reserve) is held against the
+  profile's `monthly` budget BEFORE the model is called — concurrent
+  requests cannot collectively overspend the month (the mutex-guarded
+  check counts used + already-reserved + this estimate). A Reserve whose
+  persist fails is rolled back — the hold is NOT granted when it cannot
+  be recorded.
+- **SETTLE-AFTER-RESPONSE:** the reservation is replaced by the
+  provider-reported usage (input + output; per-model usage recorded for
+  the report). When the provider reports none, the estimate stands —
+  the documented fallback. **FAILED attempts are RELEASED whole** — not
+  billed (transport errors, refusals, failover attempts that never
+  answered; an error path releases the reservation, and a settlement
+  failure leaves the hold standing — accounting errs toward
+  restriction, never toward overspend).
+- **The window is a UTC calendar-month key** (`2006-01` — explicit, no
+  local-time ambiguity), older months pruned to a 2-month rolling
+  window, and accounting is per profile ACROSS models — routing a chat
+  through a different model must not escape the budget (the declared
+  model is the expected/default; the per-model split is report-only).
+- **Quota exhaustion is a STABLE 429** carrying the quota state
+  `{profile, month, monthly, used, reserved, remaining}`; **ledger
+  unavailability fails CLOSED (503)** when a budget applies — an
+  unaccountable budget is not a budget (`ErrLedgerUnavailable`).
+- **The degraded policy is documented, not silent:** without a ledger
+  (an unwritable DEFAULT path) the declared budgets degrade to
+  loudly-warned INFORMATIONAL metadata — one startup warning + one
+  request-stream warning say exactly that. An EXPLICIT
+  `SCARLIHQ_AIRUNTIME_BUDGET_LEDGER` that fails to load/validate
+  ABORTS STARTUP instead — the explicit path is fail-closed, the
+  default path degrades loudly.
+- **Honest scope:** the budget covers the `/api/ai/chat` path only (the
+  provider-facing family surface). The propose path is admin-gated
+  (§r) — a family principal cannot reach it at all; `unlimited`
+  budgets (the admin) and profiles without a monthly budget are not
+  accounted.
+- Regression proofs: `internal/profiles/budget_test.go` (8 tests —
+  reserve/settle accounting, release-not-billed, the quota refusal, the
+  11-way CONCURRENT reservation race (cannot overspend), the UTC month
+  window + pruning, the persistence round-trip, the tamper discipline,
+  the estimate) + the REST proofs in `principal_test.go`
+  (`TestBudgetQuotaExceededIsStable429` — the 429 shape;
+  `TestBudgetSettlesProviderReportedUsage` — the settle path).
+
+## (u) Media-tools request boundary (v19.6.7, KPK-19.6.6-P2-03 CLOSED)
+
+The v19.6.6 posture (fixed argv, no shell, filename shape validation,
+64 KiB body limit, 600 s subprocess bound, non-root container,
+loopback-published port) left the request plane unauthenticated and
+unbounded — every accepted conversion could spawn an ffmpeg/ImageMagick
+process for up to 600 s with no cap, no queue bound, no per-client
+limit, and a malformed `Content-Length` raised outside the JSON error
+handling. v19.6.7 (`media-tools/server.py`):
+
+- **`MEDIA_TOOLS_TOKEN` Bearer authentication** — `hmac.compare_digest`
+  (the answer does not leak match timing). WITHOUT the token the
+  conversion surface fails CLOSED: `/convert` and `/templates` answer
+  503 with a body that says the surface is closed; `/health` stays OPEN
+  (liveness — no token, ever). With a token set:
+  missing/wrong/non-Bearer Authorization → 401.
+- **Bounded concurrency:** a `threading.BoundedSemaphore` sized by
+  `MEDIA_TOOLS_MAX_CONCURRENCY` (default 2, clamped 1..16); a request
+  that cannot acquire a slot within the 15 s queue wait gets a
+  deliberate 503 (the queue is bounded, not infinite). A per-client-IP
+  cap of 2 concurrent conversions → 429 beyond.
+- **Collision and malformed-input discipline:** an output-name collision
+  lock — two parallel conversions writing the SAME output name → one
+  200, one 409 "output name busy" (the loser never clobbers the
+  winner's file); an invalid `Content-Length` → 400 (a deliberate
+  answer, not a `ValueError` traceback); a non-object JSON root
+  (`[1,2,3]`, `42`) → 400 (not a 500); a 30 s read timeout.
+- Regression proofs: `tests/test_media_tools.sh` — 42 assertions
+  against REAL server instances on a random loopback port (env seams:
+  `MEDIA_TOOLS_PORT`, `MEDIA_TOOLS_INPUT_DIR`/`_OUTPUT_DIR`/
+  `_TEMPLATES_DIR`): the fail-closed/401 matrix, malformed-header and
+  non-object-root 400s, a REAL ffmpeg conversion (wav → mp3), the
+  saturation storm (5 truly-parallel conversions at
+  `MAX_CONCURRENCY=1`: exactly one 200, one 503 queue-full, three 429s,
+  and the server SURVIVES — `/health` still 200, no 5xx), and the
+  output-name collision twin (200/409). 42 run, 0 failed, 0 skipped at
+  tag.
 
 ## Other security properties
 
-- **REST/MCP/WS auth:** Bearer token only (no `?token=` URL — v18.6 P2 removed the URL fallback that leaked tokens into logs/referrer/proxy). `crypto/subtle.ConstantTimeCompare` (v18.0.0 P1 — was: custom `secureCompare`).
+- **REST/MCP/WS auth:** Bearer token only (no `?token=` URL — v18.6 P2 removed the URL fallback that leaked tokens into logs/referrer/proxy). `crypto/subtle.ConstantTimeCompare` (v18.0.0 P1 — was: custom `secureCompare`). **v19.6.7:** the presented Bearer RESOLVES to an identity-bound principal (per-profile token index first, the household token = the admin principal — §r); operator surfaces additionally require the admin principal (`authAdmin`); the 401/503 semantics for the household token are unchanged.
 - **WS ticket:** 30s single-use, 32-byte `crypto/rand` hex, fail-closed on RNG failure (v18.7.4 P0 — was: ignored RNG failure → predictable all-zeros ticket). `ReserveWSTicket` atomically deletes before `upgrader.Upgrade()` (v18.7.5 P0 — was: `PeekWSTicket` didn't delete → two concurrent WS connects with same ticket both upgraded). No `ReleaseWSTicket` on failure (v18.7.6 P0 — was: re-added with fresh 30s TTL → attacker-renewable lifetime). Max 1024 outstanding tickets (v18.7.7 P1 rate limit).
 - **HTTP server timeouts:** `ReadHeaderTimeout 5s`, `ReadTimeout 15s`, `WriteTimeout 30s`, `IdleTimeout 60s`, `MaxHeaderBytes 64KB` (v18.6 P1 / v18.7.6 P1).
 - **WS origin check:** `net.IPNet.Contains` against `127.0.0.1/32`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` (v17.9.9 P1 — was: `strings.HasPrefix`; v18.7.5 P1 — was: manual string ops broke IPv6 `http://[::1]:8090`).

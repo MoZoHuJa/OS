@@ -1,4 +1,4 @@
-# SCARLIX OS v19.6.6 — Media Tools (optional stack, loopback-published)
+# SCARLIX OS v19.6.7 — Media Tools (optional stack, loopback-published)
 # v19.6.6 (KPK-19.6.5-P2-04): this build context was MISSING — the compose
 #   file declared `build: .` while media-tools/ carried no Dockerfile and no
 #   build sources, so `docker compose build` could not build the service at

@@ -1,8 +1,10 @@
 package mcp
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,11 +31,34 @@ type Server struct {
 	profiles  *profiles.Manager
 	authToken string
 	version   string
+	// v19.6.7 (KPK-19.6.6-P1-01): the SAME shared authenticator as the REST
+	// surface — one authorization function decides both boundaries, not
+	// independent optional checks. Nil until the household token + profile
+	// manager exist (the legacy token-only behavior stands then).
+	authz *profiles.Authenticator
 }
 
 // NewServer creates a new JSON-RPC server.
 func NewServer(g *guard.Guard, m *scarlix_mode.Mode, p *profiles.Manager, authToken, version string) *Server {
-	return &Server{guard: g, mode: m, profiles: p, authToken: authToken, version: version}
+	s := &Server{guard: g, mode: m, profiles: p, authToken: authToken, version: version}
+	if authToken != "" && p != nil {
+		if authz, err := profiles.NewAuthenticator(nil, authToken, p); err == nil {
+			s.authz = authz
+		}
+	}
+	return s
+}
+
+// ConfigureProfileAuthz binds the per-profile token index — the SAME
+// multi-user identity binding as the REST surface (one call, one source).
+func (s *Server) ConfigureProfileAuthz(index *profiles.TokenIndex) error {
+	if index == nil {
+		return fmt.Errorf("mcp: the profile token index is required")
+	}
+	if s.authz == nil {
+		return fmt.Errorf("mcp: the household token is not configured — per-profile auth cannot bind to it")
+	}
+	return s.authz.SetTokenIndex(index)
 }
 
 // JSON-RPC 2.0 types
@@ -87,12 +112,27 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			writeRPCError(w, http.StatusUnauthorized, nil, -32001, "invalid or missing token (use Authorization: Bearer)")
 			return
 		}
-		// v18.0.0 P1: crypto/subtle.ConstantTimeCompare (was: custom secureCompare with !=)
-		if subtle.ConstantTimeCompare([]byte(token), []byte(s.authToken)) != 1 {
+		// v19.6.7 (KPK-19.6.6-P1-01): the token RESOLVES to an identity-bound
+		// principal (per-profile index first — constant-time per entry; the
+		// household token = the ADMIN identity) which rides the request
+		// context; the SAME shared Authorize decides the MCP tools as the
+		// REST boundaries.
+		if s.authz == nil {
+			// No authenticator (no profile manager): the legacy constant-time
+			// household-token check stands on its own.
+			if subtle.ConstantTimeCompare([]byte(token), []byte(s.authToken)) != 1 {
+				writeRPCError(w, http.StatusUnauthorized, nil, -32001, "invalid or missing token")
+				return
+			}
+			next(w, r)
+			return
+		}
+		principal := s.authz.ResolveToken(token)
+		if principal == nil {
 			writeRPCError(w, http.StatusUnauthorized, nil, -32001, "invalid or missing token")
 			return
 		}
-		next(w, r)
+		next(w, r.WithContext(profiles.WithPrincipal(r.Context(), principal)))
 	}
 }
 
@@ -152,7 +192,7 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 	case "tools/list":
 		resp.Result = map[string]any{"tools": s.tools()}
 	case "tools/call":
-		resp = s.handleToolCall(req)
+		resp = s.handleToolCall(r.Context(), req)
 	case "ping":
 		resp.Result = map[string]any{}
 	default:
@@ -178,7 +218,7 @@ type toolCallParams struct {
 	Arguments map[string]any `json:"arguments,omitempty"`
 }
 
-func (s *Server) handleToolCall(req rpcRequest) rpcResponse {
+func (s *Server) handleToolCall(ctx context.Context, req rpcRequest) rpcResponse {
 	var params toolCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: "invalid params"}}
@@ -189,15 +229,37 @@ func (s *Server) handleToolCall(req rpcRequest) rpcResponse {
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]string{"mode": s.mode.Current()}}
 	case "scarlix_mode_set":
 		mode, _ := params.Arguments["mode"].(string)
-		// v19.6.6 (KPK-19.6.5-P1-03): an optional "profile" argument makes the
-		// switch DECIDABLE against the profile's scarlix_mode policy — the SAME
-		// server-side enforcement as the REST boundary (can_switch=false refuses
-		// every switch; a target outside the allowed set is refused by name; an
-		// unloadable profile reference fails closed — a broken policy file is
-		// never an unenforced bypass). Identity stays the caller's declaration
-		// until per-profile authentication (CF-4+, the honest residual).
+		// v19.6.7 (KPK-19.6.6-P1-01): the mode-set boundary is IDENTITY-BOUND —
+		// the optional "profile" argument is decided against the AUTHENTICATED
+		// principal through the SAME shared profiles.Authenticator.Authorize as
+		// the REST boundary (one authorization function, not an independent
+		// optional check): a family token cannot select a foreign profile; an
+		// omitted reference is DERIVED from the principal; an unloadable profile
+		// reference fails closed — a broken policy file is never an unenforced
+		// bypass. The mode policy itself (can_switch, allowed set) then refuses
+		// by name exactly as in REST.
 		profileRef, _ := params.Arguments["profile"].(string)
-		if profileRef != "" {
+		if s.authz != nil {
+			principal := profiles.PrincipalFromContext(ctx)
+			if principal == nil {
+				return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32006, Message: "no authenticated principal on the tools/call boundary — refused (KPK-19.6.6-P1-01)"}}
+			}
+			p, decision := s.authz.Authorize(principal, profileRef, "mcp.mode_set")
+			if decision.Deny != nil {
+				code := -32602 // invalid params: a broken/unloadable declared profile
+				if errors.Is(decision.Deny, profiles.ErrProfileMismatch) || errors.Is(decision.Deny, profiles.ErrProfileUnavailable) {
+					code = -32006 // authorization refusal: identity mismatch / unavailable policy
+				}
+				return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: code, Message: decision.Deny.Error()}}
+			}
+			if p != nil {
+				if perr := p.AllowsMode(mode); perr != nil {
+					return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32005, Message: perr.Error()}}
+				}
+			}
+		} else if profileRef != "" {
+			// Legacy token-only server (no profile manager): the declared
+			// reference still enforces the policy directly.
 			p, perr := s.profiles.Load(profileRef)
 			if perr != nil {
 				return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: perr.Error()}}

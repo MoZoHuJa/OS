@@ -19,7 +19,7 @@ set -euo pipefail
 # Or run the one-line command documented in README.md.
 # ============================================================================
 
-VERSION="19.6.6"
+VERSION="19.6.7"
 LOG_DIR="/var/log/scarlix"
 LOG_FILE="$LOG_DIR/install.log"
 CHECKPOINT_DIR="/var/lib/scarlix"
@@ -1316,6 +1316,41 @@ else
     chown root:root /var/lib/scarlix/bridge-state 2>/dev/null || crit "Cannot chown root:root /var/lib/scarlix/bridge-state"
     chmod 700 /var/lib/scarlix/bridge-state 2>/dev/null || crit "Cannot chmod 700 /var/lib/scarlix/bridge-state"
     ok "bridge-input/ (uid 65532, 700) + bridge-state/ (root, 700) — symlink attack prevented"
+
+    # v19.6.7 (KPK-19.6.6-P2-02): the enforced monthly token budget's
+    # durable ledger — /var/lib/scarlihq-budget (0700, uid 65532: the
+    # container writes token-budget.json atomically; grants.json
+    # discipline). Without the writable mount the budgets degrade to
+    # loudly-warned informational metadata — the directory is the
+    # enforcement's home.
+    mkdir -p /var/lib/scarlihq-budget
+    chown 65532:65532 /var/lib/scarlihq-budget 2>/dev/null || crit "Cannot chown scarlihq-budget to UID 65532"
+    chmod 700 /var/lib/scarlihq-budget 2>/dev/null || crit "Cannot chmod 700 /var/lib/scarlihq-budget"
+    ok "scarlihq-budget/ (uid 65532, 700) — the enforced token-budget ledger's home (KPK-19.6.6-P2-02)"
+
+    # v19.6.7 (KPK-19.6.6-P1-01): the per-profile token file — created
+    # ABSENT by default (single-user stays the honest default); household
+    # isolation is a DELIBERATE operator act. The commented template lands
+    # next to the profiles so the activation is one deliberate edit away.
+    if [ ! -f /etc/scarlix/profile-tokens.conf ]; then
+      cat > /etc/scarlix/profile-tokens.conf.template <<'TOKENS_EOF'
+# SCARLIX OS v19.6.7 — per-profile Bearer tokens (KPK-19.6.6-P1-01).
+# ACTIVATION: uncomment, put ONE token per profile (openssl rand -hex 32),
+# then: chown 65532:65532 /etc/scarlix/profile-tokens.conf && \
+#       chmod 400 /etc/scarlix/profile-tokens.conf && docker restart scarlihq
+# (the ScarliHQ container reads it as uid 65532; the loader refuses
+# group/world-readable token files — secrets are not ambient.)
+# One token = one identity; a token must NOT equal SCARLIHQ_TOKEN (the
+# household admin token — rotate it if it was ever shared).
+#
+#hugo: <openssl rand -hex 32>
+#mon: <openssl rand -hex 32>
+#xox: <openssl rand -hex 32>
+#zmor: <openssl rand -hex 32>
+TOKENS_EOF
+      chmod 644 /etc/scarlix/profile-tokens.conf.template 2>/dev/null || true
+      ok "profile-tokens.conf.template installed (COMMENTED — single-user is the default; uncomment + chmod 400 to activate household isolation, KPK-19.6.6-P1-01)"
+    fi
   fi
 
   # v19.1.16 P2-4: Enable telemetry timers (record every 5 min, prune daily)
