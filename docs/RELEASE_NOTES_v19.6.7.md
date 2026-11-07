@@ -1,7 +1,7 @@
 # ScarLiX OS v19.6.7 — Identity-Bound Family Profiles + Enforced Token Budgets + Media-Tools Hardening
 
 **Release:** v19.6.7
-**Commit:** pending (recorded at packaging/tag)
+**Commit:** [`8a783cf221f5e9c346474e4dd308aec0e17e21c1`](https://github.com/MoZoHuJa/OS/commit/8a783cf221f5e9c346474e4dd308aec0e17e21c1) — recorded at packaging (the release-notes genre: the hash lands with the tag)
 **Date:** 2026-11-07
 **Remediated findings:** KPK-19.6.6-P1-01 · KPK-19.6.6-P2-02 ·
 KPK-19.6.6-P2-03 · KPK-19.6.6-P3-04 · KPK-19.6.6-P3-05 (the v19.6.6 KpK
