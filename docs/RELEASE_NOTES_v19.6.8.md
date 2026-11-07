@@ -1,6 +1,7 @@
 # ScarLiX OS v19.6.8 — Compute Fabric Phase 0: Lifecycle Vocabulary + Additive State Machine + Canonical Architecture
 
 **Release:** v19.6.8
+**Commit:** [`b09011ad4ad1c56927681cbd5fc86fc2545d873c`](https://github.com/MoZoHuJa/OS/commit/b09011ad4ad1c56927681cbd5fc86fc2545d873c) — recorded at packaging (the release-notes genre: the hash lands with the tag)
 **Baseline commit (pre-change):** `292b3d877b4f1f0b727f6286b7972096b07af512`
 **Date:** 2026-11-07
 **Scope:** Compute Fabric **Phase 0 — Stabilize and establish a trusted
