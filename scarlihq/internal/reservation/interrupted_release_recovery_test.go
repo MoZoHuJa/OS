@@ -644,7 +644,6 @@ func TestListReleasingAllocations_IncludesFailedCancelled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAllocationReservationAdapter: %v", err)
 	}
-
 	prepare := func(id string, steps ...allocation.State) {
 		t.Helper()
 		walkToReserved(t, store, id)
@@ -663,6 +662,13 @@ func TestListReleasingAllocations_IncludesFailedCancelled(t *testing.T) {
 	prepare("alloc-cancelled", allocation.StateCancelled)
 	prepare("alloc-reserved")                            // stays RESERVED
 	prepare("alloc-released", allocation.StateReleasing) // → RELEASED below
+	// v19.6.8: the ambiguous-outcome state IS release-lifecycle work (the
+	// reconciler must decide and drive it to RELEASING/RELEASED); the
+	// transient stop-request marker is NOT (the workload stop is still in
+	// flight — release comes after the verified stop).
+	prepare("alloc-reconcile", allocation.StateReleasing, allocation.StateReconcileRequired)
+	prepare("alloc-stopreq", allocation.StateStarting, allocation.StateReady,
+		allocation.StateRunning, allocation.StateStopRequested)
 
 	// RELEASING → RELEASED requires CleanupVerified before the terminal jump.
 	if err := store.Update("alloc-released", func(record *allocation.Allocation) error {
@@ -681,12 +687,12 @@ func TestListReleasingAllocations_IncludesFailedCancelled(t *testing.T) {
 	for _, id := range ids {
 		got[id] = true
 	}
-	for _, want := range []string{"alloc-releasing", "alloc-cleanup", "alloc-failed", "alloc-cancelled"} {
+	for _, want := range []string{"alloc-releasing", "alloc-cleanup", "alloc-failed", "alloc-cancelled", "alloc-reconcile"} {
 		if !got[want] {
 			t.Errorf("ListReleasingAllocations missing %s (got %v) — interrupted-release discovery must cover every legal source state", want, ids)
 		}
 	}
-	for _, notWant := range []string{"alloc-reserved", "alloc-released"} {
+	for _, notWant := range []string{"alloc-reserved", "alloc-released", "alloc-stopreq"} {
 		if got[notWant] {
 			t.Errorf("ListReleasingAllocations must not include %s (got %v)", notWant, ids)
 		}

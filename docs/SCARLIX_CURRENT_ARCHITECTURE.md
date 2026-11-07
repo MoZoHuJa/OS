@@ -1,5 +1,13 @@
 # SCARLIX OS v19.2.9 — Current Architecture
 
+> ⚠️ **Historical snapshot — last valid for v19.2.9.** This document
+> describes the v19.0.6/v19.2.9 system and predates the Compute Fabric
+> lifecycle packages, the Universal AI Runtime (airt), the identity-bound
+> family profiles and the v19.6.8 lifecycle vocabulary. The canonical
+> current architecture is
+> [`docs/architecture/SCARLIXOS_CURRENT_ARCHITECTURE.md`](architecture/SCARLIXOS_CURRENT_ARCHITECTURE.md)
+> (kept here per the v19.6.8 documentation reconciliation, roadmap §4.2).
+
 > Purpose: One-page reference for the live v19.0.6 system architecture — the 5-layer model, the Secure Host-Bridge privilege pattern, the 4-tier inference failover, and the LiteLLM/SMG gateway tier. Derived from the actual repo on branch `fix-v19.0.6` (commit c731b48 + this task's doc additions).
 
 ## Install model (v19+, frozen since v19.0.0)

@@ -69,6 +69,13 @@ const (
 	AuditTypeEnable         AuditLineType = "enable"
 	AuditTypeComputeReserve AuditLineType = "compute.reserve"
 	AuditTypeComputeRelease AuditLineType = "compute.release"
+	// AuditTypeComputeStart (v19.6.8): the agent compute intake's start
+	// action — added with the lifecycle-vocabulary correction (roadmap
+	// §4.3): the surface formerly mislabeled its workload-start operation
+	// as "reserve". New lines carry the honest name; historical
+	// "compute.reserve" lines in existing audit files keep their type and
+	// stay valid (the audit contract is append-only, never rewritten).
+	AuditTypeComputeStart AuditLineType = "compute.start"
 )
 
 // AuditLine is one append-only JSONL record. One struct for all event
@@ -230,7 +237,7 @@ func (l AuditLine) validate() error {
 		if l.Admin == "" {
 			return fmt.Errorf("%w: %s line without admin", ErrAuditEvent, l.Type)
 		}
-	case AuditTypeComputeReserve, AuditTypeComputeRelease:
+	case AuditTypeComputeReserve, AuditTypeComputeRelease, AuditTypeComputeStart:
 		if l.SessionID == "" {
 			return fmt.Errorf("%w: %s line without session id", ErrAuditEvent, l.Type)
 		}

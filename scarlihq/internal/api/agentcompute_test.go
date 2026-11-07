@@ -7,6 +7,10 @@ package api
 // bridge executing the workload) is integration-level: these tests cover
 // the intake contract with the bridge error path (socket absent → the same
 // error mapping as the direct lifecycle surface).
+//
+// v19.6.8: the action vocabulary is start/release (the lifecycle-vocabulary
+// correction — roadmap §4.3); the legacy "reserve" spelling is rejected by
+// name (TestAgentComputeReserveActionRejectedByName).
 
 import (
 	"net/http"
@@ -87,7 +91,7 @@ func TestAgentComputeDisabledSurfaces(t *testing.T) {
 	h := NewHandler(guard.New(), scarlix_mode.New(), profiles.New(t.TempDir()), "secret", "19.4.6")
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
-	code, body := agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"x","action":"reserve","allocation_id":"a1"}`)
+	code, body := agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"x","action":"start","allocation_id":"a1"}`)
 	if code != http.StatusServiceUnavailable {
 		t.Fatalf("no kernel: expected 503, got %d (%v)", code, body)
 	}
@@ -103,7 +107,7 @@ func TestAgentComputeDisabledSurfaces(t *testing.T) {
 	}
 	mux2 := http.NewServeMux()
 	h2.RegisterRoutes(mux2)
-	code, body = agentRequest(t, mux2, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"x","action":"reserve","allocation_id":"a1"}`)
+	code, body = agentRequest(t, mux2, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"x","action":"start","allocation_id":"a1"}`)
 	if code != http.StatusServiceUnavailable {
 		t.Fatalf("no compute: expected 503, got %d (%v)", code, body)
 	}
@@ -131,7 +135,7 @@ func TestAgentComputeRegistryRequired(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
-	code, body := agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"x","action":"reserve","allocation_id":"a1"}`)
+	code, body := agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"x","action":"start","allocation_id":"a1"}`)
 	if code != http.StatusBadRequest {
 		t.Fatalf("legacy mode: expected 400 (registry required), got %d (%v)", code, body)
 	}
@@ -156,9 +160,9 @@ func TestAgentComputeValidationAndDenials(t *testing.T) {
 		want int
 	}{
 		{"bad action", `{"session_id":"` + sid + `","action":"nuke","allocation_id":"a1"}`, 400},
-		{"missing allocation", `{"session_id":"` + sid + `","action":"reserve","allocation_id":""}`, 400},
-		{"unknown session", `{"session_id":"aks-nope","action":"reserve","allocation_id":"a1"}`, 404},
-		{"unknown field", `{"session_id":"` + sid + `","action":"reserve","allocation_id":"a1","principal":"forged"}`, 400},
+		{"missing allocation", `{"session_id":"` + sid + `","action":"start","allocation_id":""}`, 400},
+		{"unknown session", `{"session_id":"aks-nope","action":"start","allocation_id":"a1"}`, 404},
+		{"unknown field", `{"session_id":"` + sid + `","action":"start","allocation_id":"a1","principal":"forged"}`, 400},
 		{"malformed", `{`, 400},
 	} {
 		code, body := agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", tc.body)
@@ -173,7 +177,7 @@ func TestAgentComputeValidationAndDenials(t *testing.T) {
 	}
 
 	// Denial-is-200: the session holds status.read, not compute.reserve.
-	code, body = agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"`+sid+`","action":"reserve","allocation_id":"alloc-42"}`)
+	code, body = agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"`+sid+`","action":"start","allocation_id":"alloc-42"}`)
 	if code != http.StatusOK {
 		t.Fatalf("denied intake: expected 200 (denial-is-200), got %d (%v)", code, body)
 	}
@@ -191,12 +195,12 @@ func TestAgentComputeValidationAndDenials(t *testing.T) {
 	}
 	found := false
 	for _, l := range lines {
-		if l.Type == agentkernel.AuditTypeComputeReserve && l.AllocationID == "alloc-42" && l.Allow != nil && !*l.Allow {
+		if l.Type == agentkernel.AuditTypeComputeStart && l.AllocationID == "alloc-42" && l.Allow != nil && !*l.Allow {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("compute.reserve denial must be audited with allocation id: %+v", lines)
+		t.Fatalf("compute.start denial must be audited with allocation id: %+v", lines)
 	}
 	_ = reg
 }
@@ -215,7 +219,7 @@ func TestAgentComputeAllowThenBridgeRejection(t *testing.T) {
 
 	// Allowed by the kernel; the bridge (socket absent) rejects → 409 with
 	// the same mapping as the direct lifecycle surface.
-	code, body = agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"`+sid+`","action":"reserve","allocation_id":"alloc-42"}`)
+	code, body = agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"`+sid+`","action":"start","allocation_id":"alloc-42"}`)
 	if code != http.StatusConflict {
 		t.Fatalf("bridge-rejected intake: expected 409, got %d (%v)", code, body)
 	}
@@ -227,7 +231,7 @@ func TestAgentComputeAllowThenBridgeRejection(t *testing.T) {
 	}
 	found := false
 	for _, l := range lines {
-		if l.Type == agentkernel.AuditTypeComputeReserve && l.AllocationID == "alloc-42" {
+		if l.Type == agentkernel.AuditTypeComputeStart && l.AllocationID == "alloc-42" {
 			if l.Allow != nil && *l.Allow && containsSubstr(l.Detail, "rejected") {
 				found = true
 			}
@@ -242,7 +246,7 @@ func TestAgentComputeAllowThenBridgeRejection(t *testing.T) {
 	if _, err := reg.Disable(agentkernel.CapabilityComputeReserve, "admin.zmor", "incident drill", time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
-	code, body = agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"`+sid+`","action":"reserve","allocation_id":"alloc-43"}`)
+	code, body = agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"`+sid+`","action":"start","allocation_id":"alloc-43"}`)
 	if code != http.StatusOK || body["allow"] != false {
 		t.Fatalf("disabled capability intake: expected 200/deny, got %d (%v)", code, body)
 	}
@@ -265,10 +269,46 @@ func TestAgentComputeReleaseCapabilityFlow(t *testing.T) {
 	if code != http.StatusConflict {
 		t.Fatalf("release intake: expected 409 (bridge rejection), got %d", code)
 	}
-	// reserve → denied by the kernel (200, allow=false).
-	code, body = agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"`+sid+`","action":"reserve","allocation_id":"alloc-42"}`)
+	// start (the compute-lifecycle capability is not granted) → denied by
+	// the kernel (200, allow=false).
+	code, body = agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"`+sid+`","action":"start","allocation_id":"alloc-42"}`)
 	if code != http.StatusOK || body["allow"] != false {
-		t.Fatalf("reserve without grant: expected 200/deny, got %d (%v)", code, body)
+		t.Fatalf("start without grant: expected 200/deny, got %d (%v)", code, body)
+	}
+}
+
+// v19.6.8 (roadmap §4.3 — the lifecycle-vocabulary correction): the legacy
+// "reserve" action spelling is REJECTED BY NAME — it never reserved anything
+// at this boundary (it started a workload the reservation service had
+// already reserved). The refusal names where reservations are created and
+// which action to use, and it happens BEFORE the kernel evaluation (no
+// session, no grant, no audit line — a vocabulary error, not a decision).
+func TestAgentComputeReserveActionRejectedByName(t *testing.T) {
+	mux, _, _ := newAgentComputeTestServer(t)
+	// Grant the compute-lifecycle capability + an ACTIVE session, so the
+	// ONLY thing the rejection can depend on is the action vocabulary.
+	agentRequest(t, mux, http.MethodPost, "/api/agent/grants", `{"agent_id":"coder.agent-one","capability":"compute.reserve","owner":"zmor","granted_by":"admin.zmor"}`)
+	code, body := agentRequest(t, mux, http.MethodPost, "/api/agent/sessions", `{"agent_id":"coder.agent-one"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("create: %d", code)
+	}
+	sid, _ := body["session_id"].(string)
+	agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/transition", `{"session_id":"`+sid+`","to":"ACTIVE"}`)
+
+	code, body = agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"`+sid+`","action":"reserve","allocation_id":"alloc-42"}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("reserve action: expected 400 (rejected by name), got %d (%v)", code, body)
+	}
+	msg, _ := body["message"].(string)
+	if msg == "" || !containsSubstr(msg, "not available at this boundary") || !containsSubstr(msg, "scarlix-reservation") {
+		t.Fatalf("the refusal must name the boundary and where reservations are created: %q", msg)
+	}
+
+	// The same session CAN start through the honest action — the rejection
+	// is a vocabulary correction, not a capability denial.
+	code, _ = agentRequest(t, mux, http.MethodPost, "/api/agent/sessions/compute", `{"session_id":"`+sid+`","action":"start","allocation_id":"alloc-42"}`)
+	if code != http.StatusConflict {
+		t.Fatalf("start action on the same session: expected 409 (bridge rejection — the socket is absent), got %d", code)
 	}
 }
 

@@ -386,11 +386,18 @@ func (a *AllocationReservationAdapter) MarkAllocationCleanupRequired(id, reason 
 
 // ListReleasingAllocations returns allocation IDs whose release lifecycle
 // must be completed or kept blocked by the recovery scan: RELEASING,
-// CLEANUP_REQUIRED, and — KPK-19.2.13-P1-02 — FAILED and CANCELLED.
+// CLEANUP_REQUIRED, and — KPK-19.2.13-P1-02 — FAILED and CANCELLED, and —
+// v19.6.8 (roadmap §4.3/§4.4) — RECONCILE_REQUIRED.
 // A FAILED/CANCELLED allocation that still has a reservation bundle with
 // release progress is an interrupted release in a legal source state of the
 // frozen release lifecycle; without this scan it could never converge
-// (ListReservedAllocations only covers RESERVED).
+// (ListReservedAllocations only covers RESERVED). A RECONCILE_REQUIRED
+// allocation (an ambiguous workload-stop outcome recorded by the workload
+// manager) is exactly the release-lifecycle work the reconciler exists
+// for: its outcome must be decided and driven to RELEASING/RELEASED —
+// leaving it out of the scan would strand it forever, the failure mode
+// the roadmap's "never blindly retry or release" vocabulary exists to
+// prevent.
 // KPK-19.2.12-P1-01: ReconcileAllPending only enumerated RESERVING
 // allocations, so an allocation interrupted mid-release could never be
 // discovered again.
@@ -408,7 +415,8 @@ func (a *AllocationReservationAdapter) ListReleasingAllocations() ([]string, err
 			continue
 		}
 		switch record.State {
-		case allocation.StateReleasing, allocation.StateCleanupRequired, allocation.StateFailed, allocation.StateCancelled:
+		case allocation.StateReleasing, allocation.StateCleanupRequired, allocation.StateFailed,
+			allocation.StateCancelled, allocation.StateReconcileRequired:
 			if record.AllocationID != "" {
 				ids = append(ids, record.AllocationID)
 			}

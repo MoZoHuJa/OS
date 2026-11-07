@@ -1,5 +1,12 @@
 # SCARLIX OS v19.2.9 — GPU Map
 
+> ⚠️ **Historical snapshot — last valid for v19.2.9** (values cited from
+> branch `fix-v19.0.6`). The GPU topology reference remains useful, but
+> runtime binding truth lives in the compose files and the canonical
+> architecture is
+> [`docs/architecture/SCARLIXOS_CURRENT_ARCHITECTURE.md`](architecture/SCARLIXOS_CURRENT_ARCHITECTURE.md)
+> (kept here per the v19.6.8 documentation reconciliation, roadmap §4.2).
+
 > Purpose: The dual-NVIDIA GPU architecture, the `nvidia-smi` query patterns used across host scripts, VRAM allocation per `scarlix-mode`, and the `--disable-flashinfer` rationale for Blackwell sm_120. All values cited from files on branch `fix-v19.0.6`.
 
 ## Physical GPU layout (target hardware)

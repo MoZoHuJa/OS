@@ -20,6 +20,12 @@ type fakeDriver struct {
 	stopCalls   int
 	lastStart   StartRequest
 	lastStop    StopRequest
+
+	// v19.6.8: store + stateAtStop capture the durable allocation state
+	// observed DURING the driver stop call — the ordering proof that the
+	// STOP_REQUESTED record is durable before the driver is invoked.
+	store       *allocation.Store
+	stateAtStop allocation.State
 }
 
 func (f *fakeDriver) Start(_ context.Context, request StartRequest) (StartResult, error) {
@@ -31,6 +37,11 @@ func (f *fakeDriver) Start(_ context.Context, request StartRequest) (StartResult
 func (f *fakeDriver) Stop(_ context.Context, request StopRequest) (StopResult, error) {
 	f.stopCalls++
 	f.lastStop = request
+	if f.store != nil {
+		if record, err := f.store.Get(request.AllocationID); err == nil {
+			f.stateAtStop = record.State
+		}
+	}
 	return f.stopResult, f.stopErr
 }
 
@@ -72,6 +83,13 @@ func newReservedAllocation(t *testing.T, state allocation.State) (*allocation.St
 		states = append(states, allocation.StateStarting, allocation.StateReady)
 	case allocation.StateRunning:
 		states = append(states, allocation.StateStarting, allocation.StateReady, allocation.StateRunning)
+	case allocation.StateStopRequested:
+		// v19.6.8: the durable stop-request marker (a crash between the
+		// request and the verified outcome leaves the allocation here).
+		states = append(states, allocation.StateStarting, allocation.StateReady, allocation.StateRunning, allocation.StateStopRequested)
+	case allocation.StateReconcileRequired:
+		// v19.6.8: the ambiguous-outcome marker.
+		states = append(states, allocation.StateStarting, allocation.StateReady, allocation.StateRunning, allocation.StateStopRequested, allocation.StateReconcileRequired)
 	case allocation.StateFailed:
 		states = append(states, allocation.StateFailed)
 	case allocation.StateCancelled:
@@ -342,5 +360,128 @@ func TestStartSurfacesFailureToPersistUncertainOutcome(t *testing.T) {
 	}
 	if record.State != allocation.StateStarting {
 		t.Fatalf("state = %s, want STARTING because simulated persistence failed", record.State)
+	}
+}
+
+// v19.6.8 (roadmap §4.3 — the lifecycle vocabulary): the stop REQUEST for a
+// live workload is durably recorded as STOP_REQUESTED BEFORE the driver is
+// called — a crash between the request and the outcome leaves an honest
+// marker, and the driver-call ordering is observable proof.
+func TestStopRecordsStopRequestedBeforeDriverCall(t *testing.T) {
+	store, id := newReservedAllocation(t, allocation.StateRunning)
+	if err := store.Update(id, func(record *allocation.Allocation) error {
+		record.WorkloadRef = "container:scarlix-test"
+		record.WorkloadOwned = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	driver := &fakeDriver{stopResult: StopResult{Verified: true}, store: store}
+	manager, err := NewManager(store, driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Stop(context.Background(), id, "agent.test"); err != nil {
+		t.Fatal(err)
+	}
+	if driver.stateAtStop != allocation.StateStopRequested {
+		t.Fatalf("allocation state observed during driver stop = %s, want STOP_REQUESTED (the request must be durable before the driver call)", driver.stateAtStop)
+	}
+}
+
+// v19.6.8 (roadmap §4.3): an AMBIGUOUS stop outcome — the driver answered
+// but could not verify — becomes RECONCILE_REQUIRED, not CLEANUP_REQUIRED:
+// a reconciler must decide, never a blind retry. Cleanup stays pending, the
+// KPK-01 gate stays closed.
+func TestStopAmbiguousOutcomeBecomesReconcileRequired(t *testing.T) {
+	store, id := newReservedAllocation(t, allocation.StateRunning)
+	if err := store.Update(id, func(record *allocation.Allocation) error {
+		record.WorkloadRef = "container:scarlix-test"
+		record.WorkloadOwned = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The driver answers without an error but cannot verify the stop —
+	// exactly the ambiguous outcome the roadmap's vocabulary exists for.
+	driver := &fakeDriver{stopResult: StopResult{Verified: false}}
+	manager, err := NewManager(store, driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.Stop(context.Background(), id, "agent.test")
+	if !errors.Is(err, ErrReconciliationRequired) {
+		t.Fatalf("Stop() error = %v, want reconciliation required", err)
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("Stop() error = %v, want the ambiguity named", err)
+	}
+	record, err := store.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != allocation.StateReconcileRequired {
+		t.Fatalf("state = %s, want RECONCILE_REQUIRED", record.State)
+	}
+	if record.CleanupVerified || record.CleanupStatus != "pending" {
+		t.Fatalf("ambiguous stop must stay pending and unverified: %+v", record)
+	}
+}
+
+// v19.6.8: the retry path accepts STOP_REQUESTED — an allocation left at
+// the durable stop-request marker (crash between request and outcome)
+// resumes and completes through the verified-stop path.
+func TestStopRetryFromStopRequestedCompletes(t *testing.T) {
+	store, id := newReservedAllocation(t, allocation.StateStopRequested)
+	if err := store.Update(id, func(record *allocation.Allocation) error {
+		record.WorkloadRef = "container:scarlix-test"
+		record.WorkloadOwned = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	driver := &fakeDriver{stopResult: StopResult{Verified: true}}
+	manager, err := NewManager(store, driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := manager.Stop(context.Background(), id, "agent.test")
+	if err != nil {
+		t.Fatalf("Stop() retry error = %v", err)
+	}
+	if result.State != allocation.StateReleasing {
+		t.Fatalf("state = %s, want RELEASING (retry completes the verified stop)", result.State)
+	}
+	record, err := store.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !record.CleanupVerified || record.CleanupStatus != "verified" {
+		t.Fatalf("verified cleanup not persisted on retry: %+v", record)
+	}
+}
+
+// v19.6.8: the already-down entry path (FAILED/CANCELLED/CLEANUP_REQUIRED)
+// keeps the pre-v19.6.8 direct RELEASING mapping — no stop request is
+// recorded for a workload that was never running.
+func TestStopFromFailedGoesDirectlyToReleasing(t *testing.T) {
+	store, id := newReservedAllocation(t, allocation.StateFailed)
+	if err := store.Update(id, func(record *allocation.Allocation) error {
+		record.WorkloadRef = "container:scarlix-test"
+		record.WorkloadOwned = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	driver := &fakeDriver{stopResult: StopResult{Verified: true}, store: store}
+	manager, err := NewManager(store, driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Stop(context.Background(), id, "agent.test"); err != nil {
+		t.Fatal(err)
+	}
+	if driver.stateAtStop != allocation.StateReleasing {
+		t.Fatalf("allocation state observed during driver stop = %s, want RELEASING (already-down path skips STOP_REQUESTED)", driver.stateAtStop)
 	}
 }

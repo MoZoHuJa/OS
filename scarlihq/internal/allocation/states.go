@@ -1,10 +1,12 @@
 // Package allocation defines the Compute Fabric allocation lifecycle — the
 // canonical state machine for resource allocation requests.
 //
-// Phase 2 (v19.2.2) implements ONLY the domain model: states, transitions,
-// the Allocation record type, and JSONL persistence. No real side effects
-// (GPU reservation, runtime startup, workload termination) are performed.
-// Those belong to Phase 3+.
+// The domain model (states, transitions, the Allocation record type, JSONL
+// persistence) landed in Phase 2 (v19.2.2); the reservation (Phase 3),
+// workload-execution (Phase 5) and release/reconciliation (Phase 6) paths
+// now drive it through their own packages — allocation remains the single
+// lifecycle authority they all transition through (the v19.6.8 canonical
+// architecture docs under docs/architecture/ describe the wiring).
 //
 // Stability contract:
 //   - State names are FROZEN in v19.2.2. Future versions may ADD states but
@@ -54,6 +56,28 @@ const (
 	StateFailed          State = "FAILED"
 	StateCancelled       State = "CANCELLED"
 	StateCleanupRequired State = "CLEANUP_REQUIRED"
+
+	// Phase: stop-request / ambiguous-outcome vocabulary (v19.6.8 — the
+	// Compute Fabric Phase 0 lifecycle reconciliation, roadmap §4.3/§4.4).
+	//
+	// STOP_REQUESTED: a stop has been REQUESTED for a live workload
+	// (READY/RUNNING/STARTING) but the driver stop has not yet been
+	// verified. The stop request is recorded durably BEFORE the driver
+	// call, so a crash between the request and the verified outcome leaves
+	// an honest marker the retry path accepts idempotently. STOP requests
+	// cleanup; it does not release capacity by itself (the reservation
+	// bundle is released only by the trusted reconciliation path).
+	//
+	// RECONCILE_REQUIRED: an operation's outcome is AMBIGUOUS (e.g. the
+	// driver answered but could not verify the stop) — a reconciler must
+	// decide, never a blind retry. Distinct from CLEANUP_REQUIRED, which
+	// means cleanup is affirmatively needed (an explicit stop failure or
+	// an uncertain start: a workload may exist externally and must be
+	// removed). The frozen-contract amendment is ADDITIVE: existing state
+	// names and transitions are untouched; old persisted records remain
+	// valid.
+	StateStopRequested     State = "STOP_REQUESTED"
+	StateReconcileRequired State = "RECONCILE_REQUIRED"
 )
 
 // AllStates returns every known allocation state.
@@ -68,11 +92,13 @@ func AllStates() []State {
 		StateStarting,
 		StateReady,
 		StateRunning,
+		StateStopRequested,
 		StateReleasing,
 		StateReleased,
 		StateFailed,
 		StateCancelled,
 		StateCleanupRequired,
+		StateReconcileRequired,
 	}
 }
 

@@ -123,6 +123,20 @@ func (m *Manager) Start(ctx context.Context, allocationID, principal string) (Re
 // Stop asks the driver to stop only an allocation-owned workload. Shared/pre-existing
 // runtimes must not be terminated by this operation. A verified stop remains RELEASING;
 // Phase 6 owns reservation release and the final RELEASED transition.
+//
+// v19.6.8 (roadmap §4.3 — the lifecycle vocabulary): a stop REQUEST for a
+// live workload (READY/RUNNING/STARTING) is recorded durably as
+// STOP_REQUESTED BEFORE the driver call — a crash between the request and
+// the outcome leaves an honest marker the retry path accepts idempotently,
+// and "STOP requests cleanup; it does not release capacity by itself"
+// holds: even a verified stop lands in RELEASING, and the reservation
+// bundle is released only by the trusted reconciliation path. The driver
+// outcome mapping: verified → RELEASING (cleanup verified), explicit stop
+// failure → CLEANUP_REQUIRED (the workload may still exist), ambiguous
+// outcome (the driver answered but could not verify) → RECONCILE_REQUIRED
+// (a reconciler must decide — never a blind retry). Already-down
+// allocations (FAILED/CANCELLED/CLEANUP_REQUIRED) skip STOP_REQUESTED and
+// enter the release path directly, as before.
 func (m *Manager) Stop(ctx context.Context, allocationID, principal string) (Result, error) {
 	var request StopRequest
 	err := m.store.Update(allocationID, func(record *allocation.Allocation) error {
@@ -130,12 +144,17 @@ func (m *Manager) Stop(ctx context.Context, allocationID, principal string) (Res
 			return err
 		}
 		switch record.State {
-		case allocation.StateReady, allocation.StateRunning, allocation.StateStarting,
-			allocation.StateFailed, allocation.StateCancelled, allocation.StateCleanupRequired:
+		case allocation.StateReady, allocation.StateRunning, allocation.StateStarting:
+			if _, err := record.Transition(allocation.StateStopRequested, "workload stop requested"); err != nil {
+				return err
+			}
+		case allocation.StateFailed, allocation.StateCancelled, allocation.StateCleanupRequired:
+			// Already-down allocations: no live workload stop request —
+			// straight into the release path (the pre-v19.6.8 behavior).
 			if _, err := record.Transition(allocation.StateReleasing, "workload stop requested"); err != nil {
 				return err
 			}
-		case allocation.StateReleasing:
+		case allocation.StateStopRequested, allocation.StateReleasing:
 			// Idempotent retry after a crash or uncertain response.
 		default:
 			return fmt.Errorf("%w: Stop does not accept state %s", ErrInvalidState, record.State)
@@ -163,20 +182,48 @@ func (m *Manager) Stop(ctx context.Context, allocationID, principal string) (Res
 		stopped, stopErr = m.driver.Stop(ctx, request)
 	}
 	if stopErr != nil || !stopped.Verified {
+		// v19.6.8 outcome mapping (roadmap §4.3): an explicit stop failure
+		// means the workload may still exist — cleanup is affirmatively
+		// REQUIRED; an ambiguous outcome (the driver answered but could not
+		// verify) means a reconciler must decide — RECONCILE_REQUIRED, the
+		// state the reservation release scanner picks up (a RECONCILE_
+		// REQUIRED allocation is release-lifecycle work). The already-down
+		// entry path (RELEASING) keeps the pre-v19.6.8 CLEANUP_REQUIRED
+		// mapping: its cleanup could not be verified, so cleanup stays
+		// required — nothing is ambiguous about a stop of an allocation
+		// that was never running.
+		ambiguous := stopErr == nil
 		if err := m.store.Update(allocationID, func(record *allocation.Allocation) error {
 			if err := verifyOwner(record, principal); err != nil {
 				return err
 			}
-			if record.State != allocation.StateReleasing {
-				return fmt.Errorf("%w: expected RELEASING while recording cleanup failure, got %s", ErrInvalidState, record.State)
+			switch record.State {
+			case allocation.StateStopRequested:
+				record.CleanupVerified = false
+				if ambiguous {
+					record.CleanupStatus = "pending"
+					record.LastError = "workload stop outcome ambiguous; reconciliation required"
+					_, transitionErr := record.Transition(allocation.StateReconcileRequired, "workload stop outcome ambiguous")
+					return transitionErr
+				}
+				record.CleanupStatus = "failed"
+				record.LastError = "workload stop failed; cleanup required"
+				_, transitionErr := record.Transition(allocation.StateCleanupRequired, "workload stop failed")
+				return transitionErr
+			case allocation.StateReleasing:
+				record.CleanupStatus = "failed"
+				record.CleanupVerified = false
+				record.LastError = "workload stop not verified; reconciliation required"
+				_, transitionErr := record.Transition(allocation.StateCleanupRequired, "workload cleanup could not be verified")
+				return transitionErr
+			default:
+				return fmt.Errorf("%w: expected STOP_REQUESTED or RELEASING while recording stop failure, got %s", ErrInvalidState, record.State)
 			}
-			record.CleanupStatus = "failed"
-			record.CleanupVerified = false
-			record.LastError = "workload stop not verified; reconciliation required"
-			_, transitionErr := record.Transition(allocation.StateCleanupRequired, "workload cleanup could not be verified")
-			return transitionErr
 		}); err != nil {
 			return Result{}, fmt.Errorf("%w: stop failed and cleanup state could not be persisted", ErrReconciliationRequired)
+		}
+		if ambiguous {
+			return Result{}, fmt.Errorf("%w: workload stop outcome is ambiguous (reconciliation required)", ErrReconciliationRequired)
 		}
 		return Result{}, fmt.Errorf("%w: workload stop was not verified", ErrReconciliationRequired)
 	}
@@ -192,13 +239,26 @@ func (m *Manager) Stop(ctx context.Context, allocationID, principal string) (Res
 		if err := verifyOwner(current, principal); err != nil {
 			return err
 		}
-		if current.State != allocation.StateReleasing {
-			return fmt.Errorf("%w: expected RELEASING after verified stop, got %s", ErrInvalidState, current.State)
+		switch current.State {
+		case allocation.StateStopRequested:
+			// v19.6.8: the verified stop of a live workload completes the
+			// stop request — STOP_REQUESTED → RELEASING with cleanup
+			// verified. The reservation bundle is NOT released here.
+			current.CleanupStatus = "verified"
+			current.CleanupVerified = true
+			current.LastError = ""
+			_, transitionErr := current.Transition(allocation.StateReleasing, "workload stop verified")
+			return transitionErr
+		case allocation.StateReleasing:
+			// The pre-v19.6.8 path (already-down entry or a retry that
+			// already reached RELEASING): cleanup verified, state stands.
+			current.CleanupStatus = "verified"
+			current.CleanupVerified = true
+			current.LastError = ""
+			return nil
+		default:
+			return fmt.Errorf("%w: expected STOP_REQUESTED or RELEASING after verified stop, got %s", ErrInvalidState, current.State)
 		}
-		current.CleanupStatus = "verified"
-		current.CleanupVerified = true
-		current.LastError = ""
-		return nil
 	}); err != nil {
 		return Result{}, fmt.Errorf("%w: verified stop could not be persisted", ErrReconciliationRequired)
 	}

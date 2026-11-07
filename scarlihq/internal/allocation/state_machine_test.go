@@ -5,10 +5,12 @@ import (
 )
 
 // TestAllStates_KnownCount verifies that the state list has the expected
-// 13 states from the Phase 2 guide §4.
+// count: the 13 Phase 2 guide §4 states + the v19.6.8 additive states
+// STOP_REQUESTED and RECONCILE_REQUIRED (roadmap §4.4 — the frozen
+// contract permits additions; this count is the drift guard).
 func TestAllStates_KnownCount(t *testing.T) {
 	states := AllStates()
-	expected := 13
+	expected := 15
 	if len(states) != expected {
 		t.Errorf("AllStates() returned %d states, want %d", len(states), expected)
 	}
@@ -20,7 +22,7 @@ func TestState_IsValid(t *testing.T) {
 		StateRequested, StateValidating, StatePlanned, StateReserving,
 		StateReserved, StateStarting, StateReady, StateRunning,
 		StateReleasing, StateReleased, StateFailed, StateCancelled,
-		StateCleanupRequired,
+		StateCleanupRequired, StateStopRequested, StateReconcileRequired,
 	}
 	for _, s := range valid {
 		if !s.IsValid() {
@@ -46,6 +48,7 @@ func TestState_IsTerminal(t *testing.T) {
 		StateRequested, StateValidating, StatePlanned, StateReserving,
 		StateReserved, StateStarting, StateReady, StateRunning,
 		StateReleasing, StateFailed, StateCancelled, StateCleanupRequired,
+		StateStopRequested, StateReconcileRequired,
 	}
 	for _, s := range nonTerminal {
 		if s.IsTerminal() {
@@ -88,19 +91,25 @@ func TestCanTransition_LegalTransitions(t *testing.T) {
 		{StateStarting, StateCancelled},
 		{StateStarting, StateReleasing},
 		{StateStarting, StateCleanupRequired},
+		// STARTING → the v19.6.8 additive in-edges
+		{StateStarting, StateStopRequested},
+		{StateStarting, StateReconcileRequired},
 		// READY
 		{StateReady, StateRunning},
 		{StateReady, StateReleasing},
 		{StateReady, StateFailed},
 		{StateReady, StateCancelled},
+		{StateReady, StateStopRequested}, // v19.6.8
 		// RUNNING
 		{StateRunning, StateReleasing},
 		{StateRunning, StateFailed},
 		{StateRunning, StateCancelled},
+		{StateRunning, StateStopRequested}, // v19.6.8
 		// RELEASING
 		{StateReleasing, StateReleased},
 		{StateReleasing, StateCleanupRequired},
 		{StateReleasing, StateFailed},
+		{StateReleasing, StateReconcileRequired}, // v19.6.8
 		// FAILED
 		{StateFailed, StateReleasing},
 		{StateFailed, StateCleanupRequired},
@@ -110,6 +119,17 @@ func TestCanTransition_LegalTransitions(t *testing.T) {
 		// CLEANUP_REQUIRED
 		{StateCleanupRequired, StateReleasing},
 		{StateCleanupRequired, StateReleased},
+		// STOP_REQUESTED (v19.6.8)
+		{StateStopRequested, StateReleasing},
+		{StateStopRequested, StateCleanupRequired},
+		{StateStopRequested, StateReconcileRequired},
+		{StateStopRequested, StateFailed},
+		{StateStopRequested, StateCancelled},
+		// RECONCILE_REQUIRED (v19.6.8)
+		{StateReconcileRequired, StateReleasing},
+		{StateReconcileRequired, StateCleanupRequired},
+		{StateReconcileRequired, StateFailed},
+		{StateReconcileRequired, StateCancelled},
 	}
 
 	for _, tt := range legal {
@@ -152,6 +172,20 @@ func TestCanTransition_IllegalTransitions(t *testing.T) {
 		{StateFailed, StateRunning},
 		{StateCancelled, StateRunning},
 		{StateCleanupRequired, StateRunning},
+		// v19.6.8 additive-state guards: no resume from the
+		// stop-request/reconcile vocabulary (a reconciler decides,
+		// an operator re-requests — the state machine never forgets)
+		{StateStopRequested, StateRunning},
+		{StateStopRequested, StateReady},
+		{StateStopRequested, StateStarting},
+		{StateStopRequested, StateReserved},
+		{StateStopRequested, StateReleased}, // no terminal shortcut
+		{StateReconcileRequired, StateRunning},
+		{StateReconcileRequired, StateReady},
+		{StateReconcileRequired, StateStarting},
+		{StateReconcileRequired, StateReserved},
+		{StateReconcileRequired, StateReleased},      // only via RELEASING + CleanupVerified
+		{StateReconcileRequired, StateStopRequested}, // no ping-pong ambiguity
 	}
 
 	for _, tt := range illegal {
@@ -392,7 +426,9 @@ func TestAllowedTransitions_ReturnsValidSet(t *testing.T) {
 		expectedSet []State
 	}{
 		{StateRequested, []State{StateValidating, StateCancelled, StateFailed}},
-		{StateRunning, []State{StateReleasing, StateFailed, StateCancelled}},
+		{StateRunning, []State{StateReleasing, StateFailed, StateCancelled, StateStopRequested}},
+		{StateStopRequested, []State{StateReleasing, StateCleanupRequired, StateReconcileRequired, StateFailed, StateCancelled}},
+		{StateReconcileRequired, []State{StateReleasing, StateCleanupRequired, StateFailed, StateCancelled}},
 		{StateReleased, []State{}}, // terminal
 	}
 	for _, tt := range cases {

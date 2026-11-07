@@ -15,6 +15,16 @@ import (
 //   - RUNNING cannot be reached via an invalid shortcut
 //     (must come from READY only).
 //
+// v19.6.8 additive amendment (the Compute Fabric Phase 0 lifecycle
+// reconciliation, roadmap §4.4 — an ADDITION, which the frozen contract
+// explicitly permits: "Additions require a new state or an explicit
+// documented amendment"; this is both): the states STOP_REQUESTED and
+// RECONCILE_REQUIRED join the table, and the IN-edges RUNNING/READY/
+// STARTING → STOP_REQUESTED, STARTING → RECONCILE_REQUIRED and RELEASING
+// → RECONCILE_REQUIRED join with them. No existing state name, and no
+// pre-v19.6.8 transition, was renamed, removed or redirected — old
+// persisted records and old readers stay valid.
+//
 // Do NOT mutate this map at runtime. It is a package-level constant.
 var legalTransitions = map[State]map[State]bool{
 	StateRequested: {
@@ -45,27 +55,32 @@ var legalTransitions = map[State]map[State]bool{
 		StateCancelled: true,
 	},
 	StateStarting: {
-		StateReady:           true,
-		StateFailed:          true,
-		StateCancelled:       true,
-		StateReleasing:       true,
-		StateCleanupRequired: true,
+		StateReady:             true,
+		StateFailed:            true,
+		StateCancelled:         true,
+		StateReleasing:         true,
+		StateCleanupRequired:   true,
+		StateStopRequested:     true, // v19.6.8: stop requested while starting
+		StateReconcileRequired: true, // v19.6.8: ambiguous start outcome (reconciler-marked)
 	},
 	StateReady: {
-		StateRunning:   true,
-		StateReleasing: true,
-		StateFailed:    true,
-		StateCancelled: true,
+		StateRunning:       true,
+		StateReleasing:     true,
+		StateFailed:        true,
+		StateCancelled:     true,
+		StateStopRequested: true, // v19.6.8: stop requested while ready
 	},
 	StateRunning: {
-		StateReleasing: true,
-		StateFailed:    true,
-		StateCancelled: true,
+		StateReleasing:     true,
+		StateFailed:        true,
+		StateCancelled:     true,
+		StateStopRequested: true, // v19.6.8: the stop-request vocabulary
 	},
 	StateReleasing: {
-		StateReleased:        true,
-		StateCleanupRequired: true,
-		StateFailed:          true,
+		StateReleased:          true,
+		StateCleanupRequired:   true,
+		StateFailed:            true,
+		StateReconcileRequired: true, // v19.6.8: ambiguous release outcome (reconciler-marked)
 	},
 	StateFailed: {
 		StateReleasing:       true,
@@ -78,6 +93,34 @@ var legalTransitions = map[State]map[State]bool{
 	StateCleanupRequired: {
 		StateReleasing: true,
 		StateReleased:  true, // only after cleanup is positively verified
+	},
+	// v19.6.8 additive states (roadmap §4.3/§4.4):
+	//
+	// STOP_REQUESTED — a stop was requested for a live workload and the
+	// outcome is not yet decided. OUT-edges: RELEASING (the driver verified
+	// the stop — cleanup verified, release may proceed), CLEANUP_REQUIRED
+	// (the stop failed explicitly — the workload may still exist and must be
+	// cleaned up), RECONCILE_REQUIRED (the outcome is ambiguous — a
+	// reconciler must decide), FAILED/CANCELLED (terminal-ish side exits
+	// for operator/reconciler decisions).
+	StateStopRequested: {
+		StateReleasing:         true,
+		StateCleanupRequired:   true,
+		StateReconcileRequired: true,
+		StateFailed:            true,
+		StateCancelled:         true,
+	},
+	// RECONCILE_REQUIRED — an operation's outcome is ambiguous; NEVER a
+	// blind retry, always a reconciler decision. OUT-edges: RELEASING (the
+	// reconciler verified cleanup — release may proceed), CLEANUP_REQUIRED
+	// (the reconciler found a live workload — cleanup needed), FAILED/
+	// CANCELLED (terminal-ish side exits). RELEASED stays reachable only
+	// through RELEASING (the KPK-01 cleanup-verified guard is unchanged).
+	StateReconcileRequired: {
+		StateReleasing:       true,
+		StateCleanupRequired: true,
+		StateFailed:          true,
+		StateCancelled:       true,
 	},
 	StateReleased: {}, // terminal — no transitions
 }

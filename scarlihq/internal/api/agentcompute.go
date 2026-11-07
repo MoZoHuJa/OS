@@ -2,11 +2,11 @@ package api
 
 // AK-5 (v19.4.6): compute intake meets agent sessions — the closing step of
 // the Agent Kernel v19.4.x line (Phase A). POST /api/agent/sessions/compute
-// lets an ACTIVE agent session reserve or release a compute allocation,
+// lets an ACTIVE agent session start or release a compute allocation,
 // with the kernel deciding and the workload bridge enforcing:
 //
 //   1. Kernel evaluation (deterministic, no LLM): the session must be
-//      ACTIVE and hold compute.reserve / compute.release (registry grants
+//      ACTIVE and hold the compute-lifecycle capability (registry grants
 //      when a registry is configured — admin-owned acts; legacy-mode
 //      request-supplied grants otherwise). A denial is a 200 response with
 //      allow=false (the denial-is-200 contract) — auditable, not an error.
@@ -19,6 +19,21 @@ package api
 //      allocations the principal does not own (ErrOwnerMismatch → 403) —
 //      the same single-principal discipline as /api/compute/start|stop,
 //      now per-agent-owner instead of per-server-config.
+//
+// v19.6.8 — the lifecycle-vocabulary correction (roadmap §4.3, the
+// documented semantic gap §1.3-8): this surface's "reserve" action never
+// reserved anything — it called computeManager.Start on an allocation the
+// RESERVATION service had already reserved. The action vocabulary is now
+// honest: "start" (start an existing RESERVED allocation through the
+// workload lifecycle) and "release" (request the verified stop path), and
+// the legacy "reserve" spelling is REJECTED BY NAME with an explanation
+// instead of silently starting a workload under a reservation label. The
+// kernel capability compute.reserve (grants.json compatibility) still
+// gates the start action — the capability NAME is historical, the action
+// is what it always was: a workload start. Reservations are created by
+// the reservation service (cmd/scarlix-reservation), a separate
+// operation with its own intake — see
+// docs/architecture/COMPUTE_FABRIC_CONTRACT.md.
 //
 // Every attempt (allow AND deny, success AND bridge rejection) is audited
 // to the AK-4 sink with the allocation id — compute intake is the most
@@ -78,12 +93,23 @@ func (h *Handler) agentCompute(w http.ResponseWriter, r *http.Request) {
 
 	var capability agentkernel.Capability
 	switch action {
-	case "reserve":
+	case "start":
+		// The capability NAME compute.reserve is historical (grants.json
+		// compatibility — renaming a capability would break every existing
+		// grant record); the action is what it always was: a workload START.
 		capability = agentkernel.CapabilityComputeReserve
 	case "release":
 		capability = agentkernel.CapabilityComputeRelease
+	case "reserve":
+		// v19.6.8 (roadmap §4.3): rejected BY NAME — this action never
+		// reserved anything here; carrying the label would perpetuate the
+		// documented semantic ambiguity (the roadmap's "do not retain a
+		// misleading API action name"). The named refusal tells the caller
+		// exactly where reservations are created.
+		writeJSONError(w, http.StatusBadRequest, "action \"reserve\" is not available at this boundary: this surface starts an existing RESERVED allocation (use action \"start\") or releases one (action \"release\") — reservations are created by the reservation service (scarlix-reservation); see docs/architecture/COMPUTE_FABRIC_CONTRACT.md")
+		return
 	default:
-		writeJSONError(w, http.StatusBadRequest, "action must be reserve or release")
+		writeJSONError(w, http.StatusBadRequest, "action must be start or release")
 		return
 	}
 	if allocationID == "" || len(allocationID) > 128 {
@@ -145,7 +171,7 @@ func (h *Handler) agentCompute(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
 	var result workload.Result
-	if action == "reserve" {
+	if action == "start" {
 		result, err = h.computeManager.Start(ctx, allocationID, owner)
 	} else {
 		result, err = h.computeManager.Stop(ctx, allocationID, owner)
@@ -198,7 +224,10 @@ func (h *Handler) agentCompute(w http.ResponseWriter, r *http.Request) {
 
 // computeAuditLine builds the AK-4 audit line for a compute-intake attempt.
 func computeAuditLine(event agentkernel.AuditEvent, decision agentkernel.Decision, action, allocationID, outcome string) agentkernel.AuditLine {
-	t := agentkernel.AuditTypeComputeReserve
+	// v19.6.8: the start action carries its own honest audit type; the
+	// release type is unchanged. (The legacy "reserve" spelling never
+	// reaches this point — it is rejected before the kernel evaluation.)
+	t := agentkernel.AuditTypeComputeStart
 	if action == "release" {
 		t = agentkernel.AuditTypeComputeRelease
 	}

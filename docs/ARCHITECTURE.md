@@ -1,5 +1,12 @@
 # SCARLIX OS v19 — Architecture
 
+> ⚠️ **Historical snapshot — the 5-layer reference written at v19.0.2.**
+> The layer model is still a useful orientation, but this document
+> predates the Compute Fabric control packages, the Universal AI Runtime
+> and the identity model. The canonical current architecture is
+> [`docs/architecture/SCARLIXOS_CURRENT_ARCHITECTURE.md`](architecture/SCARLIXOS_CURRENT_ARCHITECTURE.md)
+> (kept here per the v19.6.8 documentation reconciliation, roadmap §4.2).
+
 > **v19.0.2 note:** This document was previously stale (described the abandoned
 > v12 Ubuntu-ISO workflow). It has been rewritten to reflect the actual v19
 > EndeavourOS/Arch `git clone + bash install.sh` architecture. For the

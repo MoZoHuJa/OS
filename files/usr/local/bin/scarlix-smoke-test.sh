@@ -2297,12 +2297,12 @@ check_28_ai_runtime_foundation() {
     # v19.6.1, v19.6.2 and v19.6.3 historical surfaces must ALSO stay (the
     # changelog rows + the What's New sections are the releases' permanent
     # record).
-    if ! grep -q 'ScarLiXoS v19.6.7 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.7-B36B00' "$readme"; then
-        fail "README banner/h1/badge must say v19.6.7"
+    if ! grep -q 'ScarLiXoS v19.6.8 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.8-B36B00' "$readme"; then
+        fail "README banner/h1/badge must say v19.6.8"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.6.7 (Identity-bound family profiles + enforced token budgets + media-tools hardening: KPK-19.6.6-P1-01/P2-02/P2-03/P3-04/P3-05 remediation; Phase C)' "$readme"; then
-        fail "README version line must say v19.6.7 (Identity-bound family profiles + enforced token budgets + media-tools hardening: KPK-19.6.6-P1-01/P2-02/P2-03/P3-04/P3-05 remediation; Phase C)"
+    if ! grep -q 'Version:\*\* v19.6.8 (Compute Fabric Phase 0 — lifecycle vocabulary + additive state machine + canonical architecture; the v19.6.6/v19.6.7 KpK remediations stand; Phase C)' "$readme"; then
+        fail "README version line must say v19.6.8 (Compute Fabric Phase 0 — lifecycle vocabulary + additive state machine + canonical architecture)"
         return
     fi
     if ! grep -q '\*\*v19.6.0\*\*' "$readme" || ! grep -q "What's New in v19.6.0" "$readme"; then
@@ -2333,8 +2333,8 @@ check_28_ai_runtime_foundation() {
         fail "README must carry the 'Universal AI Runtime foundation (CF-1) | TESTED (v19.6.0)' roadmap row"
         return
     fi
-    if ! grep -q 'One-command install — v19.6.7 Identity-bound Profiles (per-profile tokens, enforced budgets)' "$readme"; then
-        fail "README install header must be refreshed to v19.6.7 (the current-release surface — it drifted at v19.4.6 once)"
+    if ! grep -q 'One-command install — v19.6.8 Compute Fabric Phase 0 (lifecycle vocabulary, canonical architecture)' "$readme"; then
+        fail "README install header must be refreshed to v19.6.8 (the current-release surface — it drifted at v19.4.6 once)"
         return
     fi
     # v19.6.3 (KPK-19.6.1-P2-01, the audit finding): the install PARAGRAPH
@@ -2342,8 +2342,8 @@ check_28_ai_runtime_foundation() {
     # one-liner still saying 'clones the current v19.6.0 mainline' at a
     # 19.6.1+ tag. The header alone is not enough; the drift guard is
     # literal and moves with every release.
-    if ! grep -q 'current v19.6.7 mainline' "$readme"; then
-        fail "README install paragraph must say 'clones the current v19.6.7 mainline' (KPK-19.6.1-P2-01: the one-liner drifts when the header is bumped but the paragraph is not)"
+    if ! grep -q 'current v19.6.8 mainline' "$readme"; then
+        fail "README install paragraph must say 'clones the current v19.6.8 mainline' (KPK-19.6.1-P2-01: the one-liner drifts when the header is bumped but the paragraph is not)"
         return
     fi
     if ! grep -q "\\*\\*v19.6.4\\*\\*" "$readme" || ! grep -q "What's New in v19.6.4" "$readme"; then
@@ -2355,7 +2355,11 @@ check_28_ai_runtime_foundation() {
         return
     fi
     if ! grep -q "\\*\\*v19.6.7\\*\\*" "$readme" || ! grep -q "What's New in v19.6.7" "$readme"; then
-        fail "README must carry the v19.6.7 changelog row + What's New section (the current release's own record)"
+        fail "README must carry the v19.6.7 changelog row + What's New section (the permanent record)"
+        return
+    fi
+    if ! grep -q "\\*\\*v19.6.8\\*\\*" "$readme" || ! grep -q "What's New in v19.6.8" "$readme"; then
+        fail "README must carry the v19.6.8 changelog row + What's New section (the current release's own record)"
         return
     fi
     if ! grep -q "\\*\\*v19.6.6\\*\\*" "$readme" || ! grep -q "What's New in v19.6.6" "$readme"; then
@@ -3820,8 +3824,11 @@ check_35_identity_budgets_media_tools_stale_recursion() {
     fi
 
     # --- README + SECURITY_MAP + release notes: the release is a release.
-    if ! grep -q "What's New in v19.6.7" "$readme" || ! grep -q 'version-v19.6.7-B36B00' "$readme"; then
-        fail "README must carry the v19.6.7 surface (What's New + badge)"
+    # (v19.6.8 evolution: the badge is the CURRENT release's surface —
+    # asserted by check_28; here the v19.6.7 What's New section stays as the
+    # permanent record.)
+    if ! grep -q "What's New in v19.6.7" "$readme"; then
+        fail "README must carry the v19.6.7 What's New section (the permanent record)"
         return
     fi
     if ! grep -q 'KPK-19.6.6-P1-01' "$secmap" || ! grep -q 'KPK-19.6.6-P2-02' "$secmap"; then
@@ -3844,6 +3851,218 @@ check_35_identity_budgets_media_tools_stale_recursion() {
     done
 
     pass "v19.6.7 (the v19.6.6 KpK audit remediation): the family profiles are IDENTITY-BOUND (per-profile Bearer tokens — /etc/scarlix/profile-tokens.conf with the 0400/640 discipline, collisions and household reuse refused at construction; the household SCARLIHQ_TOKEN resolves to the ADMIN principal; the ONE shared profiles.Authenticator.Authorize decides REST /api/mode + /api/ai/chat + MCP scarlix_mode_set — a family token cannot select a foreign profile (403 ErrProfileMismatch, header entry path identical), an OMITTED reference is DERIVED from the principal (no policy-free path in multi-user mode), an admin act-as only REDUCES privileges; operator surfaces behind h.authAdmin refuse family tokens 403; audit events carry principal/profile/action/decision — never tokens; single-user deployments are named as such — explicit SCARLIHQ_SINGLE_USER or the implicit default with the activation pointer; no-profiles deployments keep the legacy path, named), the monthly token budget is ENFORCED (durable ledger 0600/0700 with atomic tmp+rename persist and the grants.json tamper discipline; reserve-before-forward with the runes/4+4096 estimate, settle the provider-reported usage — estimate when the provider reports none, release whole on failure; the UTC calendar-month window with 2-month retention; accounting per profile across models; exhaustion is the stable 429 with the quota state; ledger unavailability fails CLOSED 503; without a writable ledger the budgets degrade to loudly-warned informational metadata — the documented policy), media-tools is AUTHENTICATED AND BOUNDED (MEDIA_TOOLS_TOKEN bearer, hmac.compare_digest, fail-closed 503 without it, /health open; BoundedSemaphore with MEDIA_TOOLS_MAX_CONCURRENCY clamp 1..16 and the 15s queue wait; per-client IP cap; output-name collision 409; invalid Content-Length and non-object JSON root are deliberate 400s), the nested token_budget schema is closed BY HAND (unknown/duplicate keys are named errors), the stale-audit reads the NEWEST FILE mtime recursively for installed trees (caches excluded, plain files keep stat) and discovers the compose short forms, and the experimental :latest rides a TIME-BOUNDED allowlist (image|reason|review-by — expired entries revert to UNPINNED findings, the four images reviewed by 2027-01-31); acceptance: principal_test.go (12 REST) + mcp/principal_test.go (6) + budget_test.go (8) + tests/test_media_tools.sh (42) + loader nested-strictness tests; residual honesty: hardware OPEN, keyword-level content filter, budget = the chat path (propose is admin-gated), IPv6 dual-stack"
+}
+
+# ===========================================================================
+# [36] v19.6.8 — Compute Fabric Phase 0 (the stabilization roadmap §4):
+# the lifecycle-vocabulary correction (the agent compute intake's actions
+# are start/release; the legacy "reserve" spelling is rejected BY NAME) +
+# the additive state machine (STOP_REQUESTED + RECONCILE_REQUIRED, the
+# frozen contract's permitted addition) + the canonical architecture docs
+# + the frozen baseline record. Code markers are comment-stripped — prose
+# cannot mask code. Negative controls (each break FAILs the check):
+#   (a) reverting the action vocabulary — making "reserve" discriminate
+#       the workload-start call again — trips the action=="reserve"
+#       absence assertion;
+#   (b) removing the RECONCILE_REQUIRED wiring from the stop path or the
+#       release scanner — trips the ambiguity/scanner markers;
+#   (c) removing a canonical architecture doc or the historical banners —
+#       trips the documentation reconciliation markers.
+# ===========================================================================
+check_36_compute_fabric_phase0_lifecycle() {
+    echo "--- [36] v19.6.8 (Compute Fabric Phase 0 — the stabilization roadmap §4): the lifecycle-vocabulary correction (agent compute intake start/release, 'reserve' rejected by name) + the additive state machine (STOP_REQUESTED + RECONCILE_REQUIRED) + the reservation release scanner coverage + the canonical architecture docs + the frozen baseline ---"
+    local agentcompute="$REPO_DIR/scarlihq/internal/api/agentcompute.go"
+    local agentcompute_test="$REPO_DIR/scarlihq/internal/api/agentcompute_test.go"
+    local states="$REPO_DIR/scarlihq/internal/allocation/states.go"
+    local transitions="$REPO_DIR/scarlihq/internal/allocation/transitions.go"
+    local state_test="$REPO_DIR/scarlihq/internal/allocation/state_machine_test.go"
+    local manager="$REPO_DIR/scarlihq/internal/workload/manager.go"
+    local manager_test="$REPO_DIR/scarlihq/internal/workload/manager_test.go"
+    local scanner="$REPO_DIR/scarlihq/internal/reservation/allocation_adapter.go"
+    local scanner_test="$REPO_DIR/scarlihq/internal/reservation/interrupted_release_recovery_test.go"
+    local audit="$REPO_DIR/scarlihq/internal/agentkernel/audit.go"
+    local arch_canon="$REPO_DIR/docs/architecture/SCARLIXOS_CURRENT_ARCHITECTURE.md"
+    local arch_cf="$REPO_DIR/docs/architecture/COMPUTE_FABRIC_CONTRACT.md"
+    local arch_air="$REPO_DIR/docs/architecture/AI_RUNTIME_CONTRACT.md"
+    local baseline="$REPO_DIR/docs/releases/v19.6.8/BASELINE.md"
+    local roadmap="$REPO_DIR/docs/roadmaps/SCARLIXOS_UNIFIED_COMPUTE_FABRIC_IMPLEMENTATION_ROADMAP.md"
+    local notes="$REPO_DIR/docs/RELEASE_NOTES_v19.6.8.md"
+    local hist_arch="$REPO_DIR/docs/SCARLIX_CURRENT_ARCHITECTURE.md"
+    local hist_old="$REPO_DIR/docs/ARCHITECTURE.md"
+    local hist_gpu="$REPO_DIR/docs/SCARLIX_GPU_MAP.md"
+    local hist_runtime="$REPO_DIR/docs/SCARLIX_RUNTIME_MAP.md"
+
+    for f in "$agentcompute" "$agentcompute_test" "$states" "$transitions" "$state_test" \
+        "$manager" "$manager_test" "$scanner" "$scanner_test" "$audit"; do
+        if [[ ! -f "$f" ]]; then
+            fail "v19.6.8 source missing: $f (the Compute Fabric Phase 0 surface)"
+            return
+        fi
+    done
+
+    # --- The lifecycle-vocabulary correction (roadmap §4.3, the §1.3-8
+    # semantic gap): the actions are start/release; "reserve" is rejected
+    # BY NAME. Negative control (a): the pre-v19.6.8 shape — "reserve"
+    # discriminating the workload-start call — must be GONE.
+    local stripped36
+    stripped36=$(_strip_go_comments "$agentcompute")
+    if ! printf '%s\n' "$stripped36" | grep -q 'case "start":'; then
+        fail "the agent compute intake must carry the honest start action (roadmap §4.3: do not retain a misleading API action name)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped36" | grep -q 'case "reserve":'; then
+        fail "the legacy reserve spelling must be REJECTED BY NAME at the intake (a named 400, never a silent alias)"
+        return
+    fi
+    if printf '%s\n' "$stripped36" | grep -q 'action == "reserve"'; then
+        fail "the reserve action must NOT discriminate the workload-start call anymore (the v19.6.8 correction — negative control (a): this exact regression)"
+        return
+    fi
+    if ! grep -q 'not available at this boundary' "$agentcompute" || ! grep -q 'scarlix-reservation' "$agentcompute"; then
+        fail "the reserve refusal must name the boundary AND where reservations are created (the reservation service)"
+        return
+    fi
+    if ! grep -q 'TestAgentComputeReserveActionRejectedByName' "$agentcompute_test"; then
+        fail "the named-refusal regression test must exist (agentcompute_test.go)"
+        return
+    fi
+    # The start action carries its own honest audit type; the release type
+    # is unchanged; the legacy compute.reserve type stays VALID (append-only
+    # audit history).
+    if ! grep -q 'AuditTypeComputeStart AuditLineType = "compute.start"' "$audit"; then
+        fail "the audit contract must carry the honest compute.start type (v19.6.8)"
+        return
+    fi
+    local audit_hits36
+    audit_hits36=$(_strip_go_comments "$audit" | grep -c 'AuditTypeComputeReserve, AuditTypeComputeRelease, AuditTypeComputeStart' || true)
+    if [[ "$audit_hits36" -eq 0 ]]; then
+        fail "the audit validation must gate compute.start identically to the compute lifecycle types"
+        return
+    fi
+
+    # --- The additive state machine (roadmap §4.4): STOP_REQUESTED +
+    # RECONCILE_REQUIRED join the FROZEN table (an addition, never a
+    # rename/removal).
+    if ! grep -q 'StateStopRequested     State = "STOP_REQUESTED"' "$states" && ! grep -qE 'StateStopRequested +State = "STOP_REQUESTED"' "$states"; then
+        fail "the STOP_REQUESTED state must exist in the frozen enumeration (the v19.6.8 additive amendment)"
+        return
+    fi
+    if ! grep -q 'StateReconcileRequired State = "RECONCILE_REQUIRED"' "$states" && ! grep -qE 'StateReconcileRequired +State = "RECONCILE_REQUIRED"' "$states"; then
+        fail "the RECONCILE_REQUIRED state must exist in the frozen enumeration (the v19.6.8 additive amendment)"
+        return
+    fi
+    local state_count36
+    state_count36=$(_strip_go_comments "$states" | grep -c 'State = "' || true)
+    if [[ "$state_count36" -ne 15 ]]; then
+        fail "the state enumeration must count exactly 15 states (13 frozen + 2 additive; got $state_count36 — the drift guard)"
+        return
+    fi
+    # The transition table carries the new states with their OUT-edges.
+    local trans_stop36 trans_recon36
+    trans_stop36=$(_strip_go_comments "$transitions" | grep -c 'StateStopRequested: {' || true)
+    trans_recon36=$(_strip_go_comments "$transitions" | grep -c 'StateReconcileRequired: {' || true)
+    if [[ "$trans_stop36" -eq 0 || "$trans_recon36" -eq 0 ]]; then
+        fail "the transition table must carry the two additive states"
+        return
+    fi
+    # STOP_REQUESTED never jumps to RELEASED (no terminal shortcut — the
+    # KPK-01 discipline extends to the new vocabulary).
+    local stopreq_block36
+    stopreq_block36=$(awk '/StateStopRequested: \{/,/\},$/' "$transitions")
+    if printf '%s\n' "$stopreq_block36" | grep -q 'StateReleased'; then
+        fail "STOP_REQUESTED must not transition to RELEASED directly (release only through RELEASING + verified cleanup)"
+        return
+    fi
+    # RECONCILE_REQUIRED never jumps to RELEASED either.
+    local reconcile_block36
+    reconcile_block36=$(awk '/StateReconcileRequired: \{/,/\},$/' "$transitions")
+    if printf '%s\n' "$reconcile_block36" | grep -q 'StateReleased'; then
+        fail "RECONCILE_REQUIRED must not transition to RELEASED directly (a reconciler decides, then RELEASING + verified cleanup)"
+        return
+    fi
+    if ! grep -q 'expected := 15' "$state_test"; then
+        fail "the state-machine test must pin the 15-state count"
+        return
+    fi
+
+    # --- The workload manager wiring (negative control (b)): the stop
+    # request is durable BEFORE the driver call; the ambiguous outcome
+    # becomes RECONCILE_REQUIRED; the retry path accepts STOP_REQUESTED.
+    if ! grep -q 'allocation.StateStopRequested, "workload stop requested"' "$manager"; then
+        fail "Manager.Stop must record STOP_REQUESTED durably before the driver call"
+        return
+    fi
+    if ! grep -q 'StateReconcileRequired, "workload stop outcome ambiguous"' "$manager"; then
+        fail "Manager.Stop must map the ambiguous outcome to RECONCILE_REQUIRED (roadmap §4.3: a reconciler decides, never a blind retry)"
+        return
+    fi
+    if ! grep -q 'ambiguous := stopErr == nil' "$manager"; then
+        fail "the ambiguity discriminator must exist in the stop failure branch (stopErr == nil with an unverified result)"
+        return
+    fi
+    if ! grep -q 'case allocation.StateStopRequested, allocation.StateReleasing:' "$manager"; then
+        fail "the idempotent retry path must accept STOP_REQUESTED (a crash between the request and the outcome resumes)"
+        return
+    fi
+    if ! grep -q 'TestStopRecordsStopRequestedBeforeDriverCall' "$manager_test" || ! grep -q 'TestStopAmbiguousOutcomeBecomesReconcileRequired' "$manager_test" || ! grep -q 'TestStopRetryFromStopRequestedCompletes' "$manager_test"; then
+        fail "the v19.6.8 stop-path regression tests must exist (ordering + ambiguity + retry)"
+        return
+    fi
+
+    # --- The reservation release scanner covers RECONCILE_REQUIRED (the
+    # ambiguous allocation is release-lifecycle work — it must never
+    # strand) but NOT the transient STOP_REQUESTED.
+    local scan_recon36 scan_stop36
+    scan_recon36=$(_strip_go_comments "$scanner" | grep -c 'StateReconcileRequired' || true)
+    scan_stop36=$(_strip_go_comments "$scanner" | grep -c 'StateStopRequested' || true)
+    if [[ "$scan_recon36" -eq 0 ]]; then
+        fail "ListReleasingAllocations must scan RECONCILE_REQUIRED allocations (negative control (b): removing this strands ambiguous outcomes forever)"
+        return
+    fi
+    if [[ "$scan_stop36" -gt 0 ]]; then
+        fail "ListReleasingAllocations must NOT scan STOP_REQUESTED (the stop is still in flight — release comes after the verified stop)"
+        return
+    fi
+    if ! grep -q 'alloc-reconcile' "$scanner_test"; then
+        fail "the release-scan test must cover the RECONCILE_REQUIRED source state"
+        return
+    fi
+
+    # --- The documentation reconciliation (roadmap §4.2, negative control
+    # (c)): the canonical trio + the historical banners + the baseline +
+    # the in-repo roadmap.
+    for f in "$arch_canon" "$arch_cf" "$arch_air" "$baseline" "$roadmap" "$notes"; do
+        if [[ ! -f "$f" ]]; then
+            fail "v19.6.8 documentation missing: $f (the Phase 0 documentation reconciliation)"
+            return
+        fi
+    done
+    if ! grep -q 'CANONICAL' "$arch_canon" || ! grep -q 'CANONICAL' "$arch_cf" || ! grep -q 'CANONICAL' "$arch_air"; then
+        fail "the architecture trio must carry the CANONICAL status banner"
+        return
+    fi
+    if ! grep -q 'start.*release' "$arch_cf" || ! grep -q 'rejected by name' "$arch_cf"; then
+        fail "COMPUTE_FABRIC_CONTRACT.md must state the start/release vocabulary and the named reserve refusal"
+        return
+    fi
+    for f in "$hist_arch" "$hist_old" "$hist_gpu" "$hist_runtime"; do
+        if ! grep -q 'Historical snapshot' "$f"; then
+            fail "$f must carry the Historical snapshot banner (stale architecture docs are marked, roadmap §4.2)"
+            return
+        fi
+    done
+    if ! grep -q '292b3d877b4f1f0b727f6286b7972096b07af512' "$baseline"; then
+        fail "the v19.6.8 baseline record must freeze the pre-change repository SHA (roadmap §4.1)"
+        return
+    fi
+    for section in '## Scope' '## Changes' '## Verification status'; do
+        if ! grep -q "$section" "$notes"; then
+            fail "the v19.6.8 release notes must carry section '$section' (the release genre)"
+            return
+        fi
+    done
+
+    pass "v19.6.8 (Compute Fabric Phase 0 — the stabilization roadmap §4): the lifecycle vocabulary is HONEST (the agent compute intake's actions are start/release; the legacy \"reserve\" spelling is rejected BY NAME with the boundary and the reservation service named — it never reserved anything there, it started a workload the reservation service had already reserved; the kernel capability name compute.reserve stays for grants.json compatibility, the audit type is the honest compute.start), the state machine gains the ADDITIVE states STOP_REQUESTED + RECONCILE_REQUIRED (15 states, the frozen contract's permitted addition — no rename, no removal, no redirect: STOP_REQUESTED records the stop request durably BEFORE the driver call and never releases capacity itself; RECONCILE_REQUIRED marks the ambiguous outcome — a reconciler decides, never a blind retry; neither jumps to RELEASED — the KPK-01 verified-cleanup gate is unchanged), Manager.Stop maps verified → RELEASING / explicit failure → CLEANUP_REQUIRED / ambiguous → RECONCILE_REQUIRED with the idempotent retry accepting STOP_REQUESTED, the reservation release scanner covers RECONCILE_REQUIRED (never strands) but not the transient STOP_REQUESTED, and the documentation is RECONCILED (the canonical docs/architecture/ trio + historical-snapshot banners on the four stale architecture docs + the frozen baseline record + the in-repo roadmap to v20); acceptance: the named-refusal + ordering + ambiguity + retry regression tests, the 15-state count guard, the scanner source-state test; residual honesty: hardware acceptance stays OPEN (KPK-06), the workload bridge stays disabled until the P5.1 target-host matrix passes, aggregate admission stays conservative (one allocation per GPU/port) until v19.7.1"
 }
 
 # ===========================================================================
@@ -3888,6 +4107,7 @@ SMOKE_CHECKS=(
     check_33_ai_trust_scope_commit_atomicity
     check_34_trust_enumeration_profiles_enforcement_stale_automation
     check_35_identity_budgets_media_tools_stale_recursion
+    check_36_compute_fabric_phase0_lifecycle
 )
 
 run_check() {

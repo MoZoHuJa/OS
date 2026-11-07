@@ -1,5 +1,11 @@
 # SCARLIX OS v19.2.9 — Runtime Map
 
+> ⚠️ **Historical snapshot — last valid for v19.2.9** (frozen reference of
+> the v19.0.6 tree; the compose files remain the source of truth for
+> current values). The canonical runtime/provider contract is
+> [`docs/architecture/AI_RUNTIME_CONTRACT.md`](architecture/AI_RUNTIME_CONTRACT.md)
+> (kept here per the v19.6.8 documentation reconciliation, roadmap §4.2).
+
 > Purpose: Frozen reference of every inference + gateway runtime in the v19.0.6 tree — image tag, port, GPU binding, config source, healthcheck, and start command. All values cited from the actual `ai/*/docker-compose.yml` files on branch `fix-v19.0.6`.
 >
 > **v19.2.13 note (KpK audit P3-04):** the GPU bindings below are the **base compose** values.
