@@ -1,7 +1,7 @@
 # ScarLiX OS v19.7.0 — Compute Fabric Phase 1: Unified Resource Inventory + Model Execution Metadata
 
 **Release:** v19.7.0
-**Commit:** `TBD` — recorded at packaging (the release-notes genre: the hash lands with the tag)
+**Commit:** [`0b59be6134cfa6d68d014854493698738cf39268`](https://github.com/MoZoHuJa/OS/commit/0b59be6134cfa6d68d014854493698738cf39268) — recorded at packaging (the release-notes genre: the hash lands with the tag)
 **Baseline commit (pre-change):** `b37ef93` (v19.6.8 release-notes hash record)
 **Date:** 2026-11-08
 **Scope:** Compute Fabric **Phase 1 — Unified Resource Inventory and Model
