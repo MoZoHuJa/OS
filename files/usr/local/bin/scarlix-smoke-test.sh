@@ -2297,12 +2297,12 @@ check_28_ai_runtime_foundation() {
     # v19.6.1, v19.6.2 and v19.6.3 historical surfaces must ALSO stay (the
     # changelog rows + the What's New sections are the releases' permanent
     # record).
-    if ! grep -q 'ScarLiXoS v19.6.8 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.6.8-B36B00' "$readme"; then
-        fail "README banner/h1/badge must say v19.6.8"
+    if ! grep -q 'ScarLiXoS v19.7.0 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.7.0-B36B00' "$readme"; then
+        fail "README banner/h1/badge must say v19.7.0"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.6.8 (Compute Fabric Phase 0 — lifecycle vocabulary + additive state machine + canonical architecture; the v19.6.6/v19.6.7 KpK remediations stand; Phase C)' "$readme"; then
-        fail "README version line must say v19.6.8 (Compute Fabric Phase 0 — lifecycle vocabulary + additive state machine + canonical architecture)"
+    if ! grep -q 'Version:\*\* v19.7.0 (Compute Fabric Phase 1 — unified resource inventory + storage inventory + model execution metadata; Phase 0 stands)' "$readme"; then
+        fail "README version line must say v19.7.0 (Compute Fabric Phase 1 — unified resource inventory + storage inventory + model execution metadata)"
         return
     fi
     if ! grep -q '\*\*v19.6.0\*\*' "$readme" || ! grep -q "What's New in v19.6.0" "$readme"; then
@@ -4065,6 +4065,248 @@ check_36_compute_fabric_phase0_lifecycle() {
     pass "v19.6.8 (Compute Fabric Phase 0 — the stabilization roadmap §4): the lifecycle vocabulary is HONEST (the agent compute intake's actions are start/release; the legacy \"reserve\" spelling is rejected BY NAME with the boundary and the reservation service named — it never reserved anything there, it started a workload the reservation service had already reserved; the kernel capability name compute.reserve stays for grants.json compatibility, the audit type is the honest compute.start), the state machine gains the ADDITIVE states STOP_REQUESTED + RECONCILE_REQUIRED (15 states, the frozen contract's permitted addition — no rename, no removal, no redirect: STOP_REQUESTED records the stop request durably BEFORE the driver call and never releases capacity itself; RECONCILE_REQUIRED marks the ambiguous outcome — a reconciler decides, never a blind retry; neither jumps to RELEASED — the KPK-01 verified-cleanup gate is unchanged), Manager.Stop maps verified → RELEASING / explicit failure → CLEANUP_REQUIRED / ambiguous → RECONCILE_REQUIRED with the idempotent retry accepting STOP_REQUESTED, the reservation release scanner covers RECONCILE_REQUIRED (never strands) but not the transient STOP_REQUESTED, and the documentation is RECONCILED (the canonical docs/architecture/ trio + historical-snapshot banners on the four stale architecture docs + the frozen baseline record + the in-repo roadmap to v20); acceptance: the named-refusal + ordering + ambiguity + retry regression tests, the 15-state count guard, the scanner source-state test; residual honesty: hardware acceptance stays OPEN (KPK-06), the workload bridge stays disabled until the P5.1 target-host matrix passes, aggregate admission stays conservative (one allocation per GPU/port) until v19.7.1"
 }
 
+
+# check_37 — Unified resource inventory + model execution metadata
+# (v19.7.0, Compute Fabric Phase 1, roadmap §5 of
+# docs/roadmaps/SCARLIXOS_UNIFIED_COMPUTE_FABRIC_IMPLEMENTATION_ROADMAP.md):
+# the storage inventory package + the modelmeta manifest contract + the v2
+# snapshot envelope (freshness + provenance) + the read-only API/CLI
+# surface. The release's must-not-do — "do not schedule from unverified
+# estimates" — is enforced by the placement gate's existence.
+check_37_unified_inventory_v2() {
+    echo "--- [37] v19.7.0 (Compute Fabric Phase 1 — the roadmap §5 unified resource inventory): the storage package (read-only discovery, opt-in bounded benchmark) + the modelmeta manifest contract (fail-closed validation + the placement gate) + the v2 snapshot (freshness + provenance) + the read-only API/CLI surface ---"
+    local storage_types="$REPO_DIR/scarlihq/internal/storage/storage.go"
+    local storage_disc="$REPO_DIR/scarlihq/internal/storage/discovery.go"
+    local storage_bench="$REPO_DIR/scarlihq/internal/storage/benchmark.go"
+    local storage_disc_test="$REPO_DIR/scarlihq/internal/storage/discovery_test.go"
+    local storage_bench_test="$REPO_DIR/scarlihq/internal/storage/benchmark_test.go"
+    local modelmeta_types="$REPO_DIR/scarlihq/internal/modelmeta/modelmeta.go"
+    local modelmeta_manifest="$REPO_DIR/scarlihq/internal/modelmeta/manifest.go"
+    local modelmeta_test="$REPO_DIR/scarlihq/internal/modelmeta/manifest_test.go"
+    local inv_v2="$REPO_DIR/scarlihq/internal/inventory/v2.go"
+    local inv_v2_test="$REPO_DIR/scarlihq/internal/inventory/v2_test.go"
+    local inv_types="$REPO_DIR/scarlihq/internal/inventory/types.go"
+    local api_v2="$REPO_DIR/scarlihq/internal/api/inventoryv2.go"
+    local api_v2_test="$REPO_DIR/scarlihq/internal/api/inventoryv2_test.go"
+    local api_rest="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local cli_inv="$REPO_DIR/scarlihq/cmd/scarlix-inventory/main.go"
+    local inv_contract="$REPO_DIR/docs/INVENTORY_V2_CONTRACT.md"
+    local rel_notes="$REPO_DIR/docs/RELEASE_NOTES_v19.7.0.md"
+    local example_manifest="$REPO_DIR/models.d/example-moe-model.manifest.yaml"
+    local version_file="$REPO_DIR/VERSION"
+    local readme="$REPO_DIR/README.md"
+
+    for f in "$storage_types" "$storage_disc" "$storage_bench" "$storage_disc_test" "$storage_bench_test" \
+        "$modelmeta_types" "$modelmeta_manifest" "$modelmeta_test" "$inv_v2" "$inv_v2_test" \
+        "$api_v2" "$api_v2_test" "$cli_inv" "$inv_contract" "$rel_notes" "$example_manifest"; do
+        if [[ ! -f "$f" ]]; then
+            fail "v19.7.0 source missing: $f (the Compute Fabric Phase 1 surface)"
+            return
+        fi
+    done
+
+    # --- The READ-ONLY charter (negative control (a)): discovery must
+    # never fork. Comment-stripped — prose cannot mask code.
+    local stripped_disc
+    stripped_disc=$(_strip_go_comments "$storage_disc")
+    if printf '%s\n' "$stripped_disc" | grep -q 'os/exec'; then
+        fail "storage discovery must not import os/exec — the read-only charter (no forks, no writes, no benchmarks on the discovery path)"
+        return
+    fi
+    if printf '%s\n' "$stripped_disc" | grep -qE 'RunReadBenchmark|BenchmarkOptions'; then
+        fail "discovery must never reference the benchmark — the benchmark is opt-in only (roadmap §5.2 rule 2)"
+        return
+    fi
+    # The ONLY in-repo caller of RunReadBenchmark outside the storage
+    # package is the CLI's --storage-benchmark door (negative control
+    # (b): an automatic benchmark caller would be a charter break).
+    local bench_callers
+    bench_callers=$(grep -rl 'RunReadBenchmark' "$REPO_DIR/scarlihq" --include='*.go' | grep -v '_test.go' | grep -v 'internal/storage/' || true)
+    if [[ -n "$bench_callers" && "$bench_callers" != "$cli_inv" ]]; then
+        fail "RunReadBenchmark has callers beyond the CLI diagnostic door: $bench_callers (the benchmark must be operator-opt-in only)"
+        return
+    fi
+    if ! grep -q 'storage-benchmark' "$cli_inv"; then
+        fail "the CLI must carry the explicit --storage-benchmark door (the operator diagnostic)"
+        return
+    fi
+
+    # --- The benchmark bounds are FAIL-CLOSED (roadmap §5.2 rule 3):
+    # named errors, never silent clamps; required options have no defaults.
+    local stripped_bench
+    stripped_bench=$(_strip_go_comments "$storage_bench")
+    if ! printf '%s\n' "$stripped_bench" | grep -q 'MinBenchmarkDuration'; then
+        fail "the benchmark must define the duration bounds (roadmap §5.2 rule 3: bounded duration)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_bench" | grep -q 'MaxBenchmarkFileSize'; then
+        fail "the benchmark must define the file-size bounds (roadmap §5.2 rule 3: bounded test file size)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_bench" | grep -q 'errBound'; then
+        fail "the benchmark bounds must fail CLOSED with named errors (never a silent clamp)"
+        return
+    fi
+    if ! grep -q 'TestBenchmarkOptionBounds' "$storage_bench_test" || ! grep -q 'TestBenchmarkRunAndCleanup' "$storage_bench_test" || ! grep -q 'TestBenchmarkSeamIsolation' "$storage_bench_test"; then
+        fail "the benchmark regression tests must exist (bounds + run/cleanup + seam isolation)"
+        return
+    fi
+
+    # --- Identity without serials (roadmap §5.2 rule 5): StableID is a
+    # digest; the Device struct carries NO raw serial field.
+    if ! printf '%s\n' "$stripped_disc" | grep -q 'func stableDeviceID'; then
+        fail "the pseudonymous stable identity function must exist (stable hardware identity where available)"
+        return
+    fi
+    if grep -qE 'Serial[[:space:]]+string[[:space:]]+`json:"serial' "$storage_types"; then
+        fail "the Device struct must NOT expose a raw serial field (roadmap §5.2 rule 5 — serials stay out of inventory responses)"
+        return
+    fi
+    # Unknown ≠ zero: temperature is a POINTER (nil = not measured).
+    if ! grep -q 'TemperatureC[[:space:]]*\*float64' "$storage_types"; then
+        fail "device temperature must be a pointer — nil = NOT MEASURED (unknown ≠ zero, roadmap §5.2 rule 6)"
+        return
+    fi
+
+    # --- The modelmeta fail-closed contract: the versioned schema, the
+    # named refusals, the placement gate (the release's must-not-do:
+    # unknown required values never become automatic placement).
+    if ! grep -q 'SchemaVersionV2 = "scarlix.model/v2"' "$modelmeta_manifest"; then
+        fail "the manifest schema must be versioned scarlix.model/v2"
+        return
+    fi
+    local stripped_mm
+    stripped_mm=$(_strip_go_comments "$modelmeta_manifest")
+    if ! printf '%s\n' "$stripped_mm" | grep -q 'is not a 64-hex-char'; then
+        fail "the checkpoint fingerprint validation must refuse non-64-hex values BY NAME"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_mm" | grep -q 'expert_count > 0'; then
+        fail "MoE manifests must require expert geometry (unknown geometry blocks placement)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_mm" | grep -q 'func PlacementEligible'; then
+        fail "the placement-eligibility gate must exist (roadmap §5.5: required unknown values must not be used for automatic placement)"
+        return
+    fi
+    if ! grep -q 'TestValidateManifestFailClosed' "$modelmeta_test" || ! grep -q 'TestPlacementEligible' "$modelmeta_test"; then
+        fail "the modelmeta regression tests must exist (validation truth table + eligibility matrix)"
+        return
+    fi
+    # The example manifest is DELIBERATELY invalid (placeholders) — it
+    # must carry the honesty note so it can never be mistaken for metadata.
+    if ! grep -q 'DELIBERATELY INVALID' "$example_manifest"; then
+        fail "the example manifest must declare its deliberate invalidity (placeholder values are documentation, never metadata)"
+        return
+    fi
+
+    # --- The v2 snapshot envelope: schema version + snapshot ID +
+    # observed_at + the freshness contract + per-source provenance.
+    local stripped_v2
+    stripped_v2=$(_strip_go_comments "$inv_v2")
+    if ! printf '%s\n' "$stripped_v2" | grep -q 'SchemaVersionV2 = "scarlix.inventory/v2"'; then
+        fail "the v2 snapshot schema must be versioned scarlix.inventory/v2"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_v2" | grep -q 'func (s \*InventorySnapshotV2) FreshWithin'; then
+        fail "the freshness policy hook must exist (roadmap §5.6: planners reject or downgrade stale data)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_v2" | grep -q 'if maxAge <= 0'; then
+        fail "a non-positive freshness policy must be always-stale (fail-closed: an unset policy must not bless data)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_v2" | grep -q 'func BuildSnapshotV2'; then
+        fail "the snapshot composer must exist"
+        return
+    fi
+    if ! grep -q 'TestV1FrozenContractIntact' "$inv_v2_test" || ! grep -q 'TestFreshnessMath' "$inv_v2_test"; then
+        fail "the v2 regression tests must exist (v1 frozen-key re-pin + freshness math)"
+        return
+    fi
+
+    # --- The read-only API surface (negative control (c)): three GET
+    # routes behind the standard read gate; non-GET is 405 BY NAME; there
+    # is NO write surface (no benchmark trigger, no reservation).
+    if ! grep -q 'mux.HandleFunc("/api/inventory/v2", h.auth(h.inventoryV2Full))' "$api_rest"; then
+        fail "GET /api/inventory/v2 must be registered behind the standard Bearer read gate"
+        return
+    fi
+    if ! grep -q 'mux.HandleFunc("/api/inventory/v2/storage", h.auth(h.inventoryV2Storage))' "$api_rest"; then
+        fail "GET /api/inventory/v2/storage must be registered (the storage section)"
+        return
+    fi
+    if ! grep -q 'mux.HandleFunc("/api/inventory/v2/models", h.auth(h.inventoryV2Models))' "$api_rest"; then
+        fail "GET /api/inventory/v2/models must be registered (the model execution views)"
+        return
+    fi
+    local stripped_api
+    stripped_api=$(_strip_go_comments "$api_v2")
+    local method_guards
+    method_guards=$(printf '%s\n' "$stripped_api" | grep -c 'r.Method != http.MethodGet' || true)
+    if [[ "$method_guards" -lt 3 ]]; then
+        fail "all THREE inventory endpoints must guard non-GET with 405 (got $method_guards guards — the read-only negative control)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_api" | grep -q 'inventory is read-only'; then
+        fail "the 405 refusal must be BY NAME (the gaming-inventory precedent)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_api" | grep -q 'SCARLIHQ_INVENTORY_MAX_AGE'; then
+        fail "the freshness policy knob must exist (SCARLIHQ_INVENTORY_MAX_AGE)"
+        return
+    fi
+    if ! grep -q 'TestInventoryV2RejectsNonGET' "$api_v2_test" || ! grep -q 'TestInventoryV2StaleMarking' "$api_v2_test"; then
+        fail "the API regression tests must exist (the 405 negative control + stale marking)"
+        return
+    fi
+    # The CLI mirrors must exist.
+    if ! grep -q 'v2-storage' "$cli_inv" || ! grep -q 'v2-models' "$cli_inv"; then
+        fail "the CLI mirrors (--v2-storage/--v2-models) must exist"
+        return
+    fi
+
+    # --- The v1 frozen contract is UNTOUCHED (negative control (d)):
+    # the frozen types file still carries the FROZEN banner + the
+    # internal-UUID exclusion, and the v19.0.7 keys stand.
+    if ! grep -q 'FROZEN in v19.0.7' "$inv_types"; then
+        fail "the v1 types file must carry the frozen-contract banner (v2 is additive; v1 keys never renamed)"
+        return
+    fi
+    if ! grep -q 'deliberately excluded from frozen public inventory JSON' "$inv_types"; then
+        fail "the internal GPU UUID must stay excluded from public inventory JSON"
+        return
+    fi
+
+    # --- The version bump + the release documentation.
+    if [[ "$(cat "$version_file" | tr -d '[:space:]')" != "19.7.0" ]]; then
+        fail "VERSION must be 19.7.0"
+        return
+    fi
+    for f in "$REPO_DIR/install.sh" "$REPO_DIR/scarlihq/Dockerfile" "$REPO_DIR/scarlihq/cmd/scarlihq/main.go" "$api_rest"; do
+        if ! grep -q '19\.7\.0' "$f"; then
+            fail "version fallback missing in $f (the five-place bump discipline)"
+            return
+        fi
+    done
+    for section in '## Scope' '## Changes' '## Verification' '## Known limitations'; do
+        if ! grep -q "$section" "$rel_notes"; then
+            fail "the v19.7.0 release notes must carry section '$section' (the release genre)"
+            return
+        fi
+    done
+    if ! grep -q "What's New in v19.7.0" "$readme" || ! grep -q '| \*\*v19.7.0\*\*' "$readme"; then
+        fail "the README must carry the v19.7.0 What's New section + changelog row"
+        return
+    fi
+    if ! grep -q 'scarlix.inventory/v2' "$inv_contract"; then
+        fail "the INVENTORY_V2_CONTRACT must document the v2 schema identity"
+        return
+    fi
+
+    pass "v19.7.0 (Compute Fabric Phase 1 — the roadmap §5 unified resource inventory): the storage package is READ-ONLY (discovery from /proc/self/mounts + /sys/block + statfs: no exec, no writes, no benchmarks — the charter asserted comment-stripped at the source level; the ONLY benchmark door is the CLI's --storage-benchmark with FAIL-CLOSED bounds — duration 1s..30s, size 32MiB..1GiB, block 4KiB..8MiB, named errors, never silent clamps; discovery never references it), identity carries NO raw serials (StableID is a SHA-256 digest of identity material), unknown stays unknown (temperature is a pointer — null = not measured), unmounted devices report RAW capacity with available=0 (an LVM PV can never be mistaken for admission capacity), swap is REPORTED never ADMITTED; the modelmeta package carries the versioned scarlix.model/v2 manifest contract (fail-closed validation with named reasons: schema refusal BY NAME, 64-hex checkpoint fingerprints, MoE geometry requirements, an OPEN backend-slug set — declaring the future infer_ssd is legal, the planner intersects with live runtimes — and expert packs bound to ONE compatible backend) plus the PLACEMENT GATE (the release's must-not-do honored in code: unknown required values NEVER become automatic placement — MoE with unknown expert/shared bytes is ineligible BY NAME; the example manifest is DELIBERATELY invalid documentation); the v2 snapshot envelope (scarlix.inventory/v2) carries schema version + snapshot ID + observed_at + host/storage/GPU/runtime/model views + per-source provenance (ok|partial|empty|unavailable — silence is never an answer) + the SERVE-TIME freshness marker (a non-positive policy is always-stale — fail-closed; consumers must reject/downgrade stale data, never reuse old capacity values); the API surface is three GET-only routes behind the standard Bearer read gate with 405-BY-NAME refusals (no write surface, no benchmark trigger, no reservation — the route set enforces the roadmap's inventory boundary) and the CLI mirrors; the v1 contracts are FROZEN and untouched (the frozen banner + the internal-UUID exclusion stand; the v1 tests pass unmodified); acceptance: the storage/modelmeta/inventory/api regression suites (the read-only charter source assertion, the benchmark bounds fail-closed table + cleanup + seam isolation, the 17-case validation truth table, the eligibility matrix, the freshness math, the v1 frozen-key re-pin, the 401/405 negative controls, stale marking, the real-collector end-to-end); residual honesty: hardware acceptance stays OPEN (KPK-06), no verified manifests ship for the real models yet (manifest_status: none + placement-ineligible — the honest default), LVM transport reports unknown, the v19.7.1 resource vector + v19.7.2 planner are the next milestones"
+}
+
 # ===========================================================================
 # Check inventory (v19.4.3, KPK-04)
 # ===========================================================================
@@ -4108,6 +4350,7 @@ SMOKE_CHECKS=(
     check_34_trust_enumeration_profiles_enforcement_stale_automation
     check_35_identity_budgets_media_tools_stale_recursion
     check_36_compute_fabric_phase0_lifecycle
+    check_37_unified_inventory_v2
 )
 
 run_check() {

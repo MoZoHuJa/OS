@@ -16,6 +16,7 @@ import (
 	"github.com/MoZoHuJa/OS/scarlihq/internal/airt"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/gaming"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/status"
@@ -24,7 +25,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.6.8"
+var Version = "19.7.0"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -213,6 +214,10 @@ type Handler struct {
 	// settles the provider-reported usage after.
 	budget         *profiles.BudgetLedger
 	budgetEnforced bool
+	// v19.7.0 (Phase 1): inventory v2 snapshot collector seam — nil
+	// means the real read-only collector (inventory.BuildSnapshotV2);
+	// tests inject a fixed snapshot. The surface is GET-only.
+	inventoryV2 func() (*inventory.InventorySnapshotV2, error)
 }
 
 // NewHandler creates a new API handler.
@@ -246,6 +251,15 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mode", h.auth(h.modeHandler))
 	mux.HandleFunc("/api/profiles", h.auth(h.listProfiles))
 	mux.HandleFunc("/api/status", h.auth(h.fullStatus))
+	// v19.7.0 (Compute Fabric Phase 1, roadmap §5.6): the unified
+	// read-only resource inventory — the full snapshot, the storage
+	// section, and the model execution views, each with the serve-time
+	// freshness evaluation. Same read gate as /api/status: any
+	// authenticated principal may OBSERVE; observation grants no
+	// control, and there is no write surface (non-GET is 405 by name).
+	mux.HandleFunc("/api/inventory/v2", h.auth(h.inventoryV2Full))
+	mux.HandleFunc("/api/inventory/v2/storage", h.auth(h.inventoryV2Storage))
+	mux.HandleFunc("/api/inventory/v2/models", h.auth(h.inventoryV2Models))
 	// v19.3.1: read-only gaming-stack inventory (Gaming Stack Integration Plan,
 	// Phase 4). Serves the host-bridge-detected entries only — no launch, no
 	// install, no arbitrary command surface is added here.

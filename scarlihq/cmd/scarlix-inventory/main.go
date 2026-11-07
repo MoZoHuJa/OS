@@ -15,6 +15,17 @@
 //	scarlix-inventory --runtimes    # print {"runtimes":[...],"health":[...]}
 //	scarlix-inventory --models      # print []Model
 //
+// v19.7.0 (Compute Fabric Phase 1) adds the unified read-only v2 views
+// and the EXPLICIT, bounded storage benchmark:
+//
+//	scarlix-inventory --v2              # the full InventorySnapshotV2 + freshness
+//	scarlix-inventory --v2-storage      # the storage + host section + freshness
+//	scarlix-inventory --v2-models       # the model execution views + freshness
+//	scarlix-inventory --storage-benchmark <dir> --duration 5s --size 256MiB
+//	                                    # the OPT-IN bounded sequential-read
+//	                                    # diagnostic (writes+removes ONE temp
+//	                                    # file in <dir>; never run by discovery)
+//
 // The default (no-flag) form emits the SystemStatus root object with
 // version (from /etc/scarlix/VERSION), mode (from /var/lib/scarlix/
 // current-mode), GPUs, runtimes, models, and health. Services is left
@@ -37,6 +48,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -46,6 +58,7 @@ import (
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/registry"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/storage"
 )
 
 func main() {
@@ -57,16 +70,26 @@ func main() {
 	runtimeStatus := flag.String("runtime-status", "", "print single runtime Health JSON by ID")
 	modelInspect := flag.String("model-inspect", "", "print single Model JSON by ID")
 	modelHealth := flag.String("model-health", "", "print single model Health JSON by ID")
+	// v19.7.0 (Phase 1): the unified read-only v2 views + the opt-in
+	// bounded benchmark. --storage-benchmark is the ONLY benchmark door —
+	// an operator diagnostic, never a discovery side effect.
+	v2Flag := flag.Bool("v2", false, "print the unified InventorySnapshotV2 + freshness")
+	v2StorageFlag := flag.Bool("v2-storage", false, "print the storage + host section + freshness")
+	v2ModelsFlag := flag.Bool("v2-models", false, "print the model execution views + freshness")
+	benchTarget := flag.String("storage-benchmark", "", "run the OPT-IN bounded sequential-read benchmark on this directory (operator diagnostic; writes+removes one temp file)")
+	benchDuration := flag.Duration("duration", 0, "benchmark read window (required with --storage-benchmark; 1s..30s)")
+	benchSize := flag.Int64("size", 0, "benchmark temp file size in bytes (required with --storage-benchmark; 32MiB..1GiB)")
+	benchBlock := flag.Int("block", 0, "benchmark read block size in bytes (optional with --storage-benchmark; 4KiB..8MiB; default 1MiB)")
 	flag.Parse()
 
 	// Reject conflicting flags (only one mode at a time).
 	flagsSet := 0
-	for _, b := range []*bool{gpusFlag, runtimesFlag, modelsFlag} {
+	for _, b := range []*bool{gpusFlag, runtimesFlag, modelsFlag, v2Flag, v2StorageFlag, v2ModelsFlag} {
 		if *b {
 			flagsSet++
 		}
 	}
-	for _, s := range []*string{runtimeInspect, runtimeStatus, modelInspect, modelHealth} {
+	for _, s := range []*string{runtimeInspect, runtimeStatus, modelInspect, modelHealth, benchTarget} {
 		if *s != "" {
 			flagsSet++
 		}
@@ -75,6 +98,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, "scarlix-inventory: at most one mode flag may be set")
 		flag.Usage()
 		os.Exit(2)
+	}
+	// The benchmark's bounds parameters are only meaningful together
+	// with --storage-benchmark (flag.Usage explains each).
+	if *benchDuration != 0 || *benchSize != 0 || *benchBlock != 0 {
+		if *benchTarget == "" {
+			fmt.Fprintln(os.Stderr, "scarlix-inventory: --duration/--size/--block require --storage-benchmark")
+			flag.Usage()
+			os.Exit(2)
+		}
 	}
 
 	enc := json.NewEncoder(os.Stdout)
@@ -139,6 +171,55 @@ func main() {
 		}
 	case *modelsFlag:
 		payload = inventory.CollectModels()
+	case *benchTarget != "":
+		// The OPT-IN bounded benchmark — the ONLY caller of
+		// storage.RunReadBenchmark in the repository. Bounds are
+		// enforced fail-closed inside the library (named errors);
+		// the exit code carries the failure.
+		res, benchErr := storage.RunReadBenchmark(context.Background(), storage.BenchmarkOptions{
+			TargetPath: *benchTarget,
+			Duration:   *benchDuration,
+			FileSize:   *benchSize,
+			BlockSize:  *benchBlock,
+		})
+		if benchErr != nil {
+			fmt.Fprintf(os.Stderr, "scarlix-inventory: storage benchmark failed: %v\n", benchErr)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "scarlix-inventory: benchmark detail: %s\n", res.Detail)
+		payload = res
+	case *v2Flag:
+		snap, snapErr := inventory.BuildSnapshotV2()
+		if snapErr != nil {
+			fmt.Fprintf(os.Stderr, "scarlix-inventory: v2 snapshot unavailable: %v\n", snapErr)
+			os.Exit(1)
+		}
+		payload = snap.Response(60 * time.Second)
+	case *v2StorageFlag:
+		snap, snapErr := inventory.BuildSnapshotV2()
+		if snapErr != nil {
+			fmt.Fprintf(os.Stderr, "scarlix-inventory: v2 snapshot unavailable: %v\n", snapErr)
+			os.Exit(1)
+		}
+		resp := snap.Response(60 * time.Second)
+		payload = map[string]interface{}{
+			"freshness": resp.Freshness,
+			"host":      snap.Host,
+			"storage":   snap.Storage,
+			"sources":   filterSourcesCLI(snap.Sources, "storage", "storage.host"),
+		}
+	case *v2ModelsFlag:
+		snap, snapErr := inventory.BuildSnapshotV2()
+		if snapErr != nil {
+			fmt.Fprintf(os.Stderr, "scarlix-inventory: v2 snapshot unavailable: %v\n", snapErr)
+			os.Exit(1)
+		}
+		resp := snap.Response(60 * time.Second)
+		payload = map[string]interface{}{
+			"freshness": resp.Freshness,
+			"models":    snap.Models,
+			"sources":   filterSourcesCLI(snap.Sources, "models", "models.manifests"),
+		}
 	default:
 		payload = collectSystemStatus()
 	}
@@ -186,6 +267,23 @@ func collectSystemStatus() inventory.SystemStatus {
 		Services:      []inventory.Service{}, // no collector in v19.0.9
 		Health:        allHealth,
 	}
+}
+
+// filterSourcesCLI keeps the source statuses whose Component matches one
+// of the wanted components (never nil — the []-not-null contract). The
+// CLI mirror of the API's filterSources.
+func filterSourcesCLI(srcs []storage.SourceStatus, want ...string) []storage.SourceStatus {
+	set := make(map[string]bool, len(want))
+	for _, w := range want {
+		set[w] = true
+	}
+	out := make([]storage.SourceStatus, 0, len(srcs))
+	for _, s := range srcs {
+		if set[s.Component] {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // readVersion reads the SCARLIX OS version from /etc/scarlix/VERSION (the

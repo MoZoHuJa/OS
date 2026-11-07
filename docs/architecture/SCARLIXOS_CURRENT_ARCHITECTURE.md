@@ -1,13 +1,13 @@
-# ScarLiX OS — Canonical Current Architecture (v19.6.8)
+# ScarLiX OS — Canonical Current Architecture (v19.7.0)
 
-> **Status:** CANONICAL — this is the one source of truth for the v19.6.8
+> **Status:** CANONICAL — this is the one source of truth for the v19.7.0
 > architecture. Older architecture documents in this repository carry a
 > `Historical snapshot` banner and describe the version named in their
 > header, not the current system.
-> **Code truth:** verified against the v19.6.8 working tree (the repository
+> **Code truth:** verified against the v19.7.0 working tree (the repository
 > is the source of truth; where an older document conflicts with this one,
 > this one and the code win).
-> **Roadmap:** the target architecture (Compute Fabric v19.7.0 → v20.0.0)
+> **Roadmap:** the target architecture (Compute Fabric v19.7.1 → v20.0.0)
 > is specified in
 > [`docs/roadmaps/SCARLIXOS_UNIFIED_COMPUTE_FABRIC_IMPLEMENTATION_ROADMAP.md`](../roadmaps/SCARLIXOS_UNIFIED_COMPUTE_FABRIC_IMPLEMENTATION_ROADMAP.md).
 > This document describes what EXISTS; the roadmap describes what is
@@ -56,7 +56,7 @@ bridges:
    (see `docs/SCARLIX_COMPUTE_FABRIC_P5_1_HOST_ACCEPTANCE.md` — status
    OPEN). ScarliHQ never mounts the Docker socket.
 
-## 4. ScarliHQ package map (code truth, v19.6.8)
+## 4. ScarliHQ package map (code truth, v19.7.0)
 
 ``` text
 scarlihq/internal/
@@ -73,6 +73,19 @@ scarlihq/internal/
                  #   bounded failover chat, probe rounds, ObserveBatch
                  #   atomic health commits, enforced token budgets
   inventory/     # normalized GPU/runtime/model/service/health inventory
+                 #   + the v2 unified snapshot (v19.7.0, Phase 1):
+                 #   InventorySnapshotV2 — host/storage/GPU/runtime/model
+                 #   + model execution views + per-source provenance +
+                 #   serve-time freshness (docs/INVENTORY_V2_CONTRACT.md)
+  storage/       # v19.7.0 (Phase 1): READ-ONLY storage discovery
+                 #   (mounts/sysfs/statfs; no exec, no writes), host
+                 #   resources, and the OPT-IN bounded read benchmark
+                 #   (the only benchmark door is the CLI's
+                 #   --storage-benchmark — never discovery)
+  modelmeta/     # v19.7.0 (Phase 1): model execution metadata + the
+                 #   verified manifest contract (scarlix.model/v2,
+                 #   fail-closed validation, the placement-eligibility
+                 #   gate — unknown required values block placement)
   reservation/   # canonical resource IDs, atomic bundles, leases/TTL,
                  #   owner identity, idempotency fingerprints,
                  #   reconciliation, release recovery scan
@@ -157,8 +170,12 @@ Rules (enforced by code, see
 - Host executor is conservatively one-active-allocation per logical GPU
   and per host port (safe, limits concurrency — aggregate admission is
   v19.7.1 work per the roadmap).
-- No unified storage inventory yet (v19.7.0 work per the roadmap); no
-  model execution metadata/MoE manifests yet (v19.7.0).
+- The v19.7.0 unified inventory OBSERVES but does not PLAN: the resource
+  vector/aggregate admission is v19.7.1 work, the deterministic planner
+  v19.7.2 (roadmap Phase 2/3). Storage transport for LVM/device-mapper
+  mounts reports `unknown` (honest); no verified manifests ship for the
+  real models yet (every model: `manifest_status: "none"`,
+  placement-ineligible — the honest default).
 - The content filter is keyword-level; the in-subnet lateral residual is
   inherent (documented since v19.6.5); the four experimental `:latest`
   images are time-bounded allowlisted until 2027-01-31.

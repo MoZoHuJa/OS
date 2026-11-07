@@ -1,0 +1,53 @@
+# Example model execution manifest (scarlix.model/v2) — v19.7.0.
+#
+# This file documents the manifest SHAPE for operators (roadmap §5.5).
+# It is a DELIBERATELY INVALID example: the placeholder values (the
+# XXB labels, the zero geometry, the REPLACE_WITH... hash) fail
+# modelmeta validation BY DESIGN — a manifest with unknown required
+# values must never be usable for automatic placement. The loader
+# reports it as an invalid entry with the named reasons; the v2 models
+# view shows it as declared-but-untrusted.
+#
+# To make a real manifest: replace every placeholder with VERIFIED
+# values (the checkpoint SHA-256 from your own sha256sum of the model
+# files, the real architecture geometry from the model card / config),
+# then place it in /etc/scarlix/models.d/ (or SCARLIX_MODELS_D).
+schema_version: "scarlix.model/v2"
+id: "example-moe-model"
+revision: "hf-revision-or-local-build-id"
+
+checkpoint:
+  format: "safetensors"
+  quantization: "awq"
+  sha256: "REPLACE_WITH_VERIFIED_CHECKPOINT_HASH"
+
+architecture:
+  kind: "moe"
+  total_parameters: "XXB"        # total = checkpoint STORAGE size label
+  active_parameters: "XB"        # active = per-token COMPUTE label (NOT interchangeable with total)
+  expert_count: 0                # required > 0 for moe placement
+  experts_per_token: 0           # required > 0 for moe placement
+  expert_bytes: 0                # per-expert storage (0 = unknown → placement blocked)
+  shared_bytes: 0                # resident dense footprint (0 = unknown → placement blocked)
+
+runtime:
+  context_limit: 32768
+  kv_cache:
+    precision: "runtime-defined" # runtimes size the KV cache; the estimate below is optional
+    bytes_per_token_estimate: 0  # 0 = unknown (does NOT block placement; Phase 2 names its own unknown)
+  supported_backends:
+    - "sglang"
+    - "infer_ssd"                # future backends may be DECLARED before they exist; the planner intersects with live runtimes
+
+artifacts:
+  expert_pack:                   # SGLang Expert Pack: an artifact mode, NOT a fifth provider
+    enabled: false               # enabled=true requires sha256 + compatible_backend + version
+    format: ""
+    version: ""
+    sha256: ""
+    compatible_backend: ""       # ONE backend — cross-engine compatibility is never claimed
+
+storage:
+  model_path: "/var/lib/scarlix/models/example-moe-model"
+  expert_path: ""
+  preferred_device_id: ""        # optional hint; admission validates against live inventory
