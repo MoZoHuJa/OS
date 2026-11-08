@@ -29,11 +29,9 @@
 package inventory
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -181,30 +179,8 @@ func ConfiguredRuntimeIDs() []string {
 func CollectRuntimes() []Runtime {
 	out := make([]Runtime, 0, len(runtimeMetadata))
 	for _, m := range runtimeMetadata {
-		gpuIDs := make([]string, 0, 1)
-		if m.GPUIndex >= 0 {
-			gpuIDs = append(gpuIDs, fmt.Sprintf("gpu.nvidia.%d", m.GPUIndex))
-		}
-		// Capabilities is a []string — always non-nil so JSON marshals as
-		// [...] not null. Build a fresh copy so the caller can mutate freely.
-		caps := make([]string, len(m.Capabilities))
-		copy(caps, m.Capabilities)
-
-		runningStatus, _ := dockerInspect(m.Container)
-		running := runningStatus == "running"
-
-		out = append(out, Runtime{
-			ID:           m.ID,
-			Version:      imageTag(m.Image),
-			Enabled:      true,
-			Running:      running,
-			Healthy:      false, // refined by CollectRuntimeHealth
-			Protocol:     m.Protocol,
-			Port:         m.Port,
-			GPUIDs:       gpuIDs,
-			Image:        m.Image,
-			Capabilities: caps,
-		})
+		status, _ := dockerInspectEx(m.Container)
+		out = append(out, buildRuntimeRecord(m, status == "running"))
 	}
 	return out
 }
@@ -265,50 +241,17 @@ func CollectRuntimeHealth(runtimes []Runtime) []Health {
 }
 
 // dockerInspect runs `docker ps --filter name=<container> --format {{.Status}}`
-// and returns true iff the output starts with "Up". Returns (false, nil) when:
-//   - docker is not on PATH (no error — graceful degradation)
-//   - docker exits non-zero (no error — graceful degradation)
-//   - docker returns empty output (container doesn't exist)
-//   - docker times out (5s context deadline)
-//   - docker returns a Status that doesn't start with "Up" (e.g. "Exited",
-//     "Restarting", "Created") → container exists but isn't running
+// and returns "running" iff the output starts with "Up". Returns ("", nil)
+// when docker is not on PATH, docker exits non-zero, docker returns empty
+// output (container doesn't exist), docker times out (5s context deadline),
+// or docker returns a Status that doesn't start with "Up" (e.g. "Exited",
+// "Restarting", "Created") — the container exists but isn't running.
 //
-// The error return is non-nil only for unexpected internal failures (currently
-// never used by callers but kept on the signature for future expansion and to
-// match the task spec's `dockerInspect(...) (status string, err error)` shape).
+// FROZEN v1 internal (every failure collapses to "not running", no error):
+// the v2 provenance lives in dockerInspectEx (provenance.go).
 func dockerInspect(containerName string) (status string, err error) {
-	binary, lookErr := exec.LookPath("docker")
-	if lookErr != nil {
-		// docker not installed — common in CI / dev sandboxes. Graceful
-		// degradation: return "" so caller treats as "not running".
-		return "", nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), dockerTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, binary,
-		"ps", "--filter", "name="+containerName,
-		"--format", "{{.Status}}",
-	)
-	out, runErr := cmd.Output()
-	if runErr != nil {
-		// Covers: non-zero exit (dockerd broken), context deadline (hang),
-		// signal. In all cases, "not running" is the safe answer.
-		return "", nil
-	}
-
-	line := strings.TrimSpace(string(out))
-	if line == "" {
-		// No container matched the name filter — not running.
-		return "", nil
-	}
-	if strings.HasPrefix(line, "Up") {
-		return "running", nil
-	}
-	// "Exited", "Restarting", "Created", "Paused", "Removing", "Dead" —
-	// the container exists but isn't serving traffic. Treat as not running.
-	return "down", nil
+	st, _ := dockerInspectEx(containerName)
+	return st, nil
 }
 
 // ----- internal helpers ----------------------------------------------------

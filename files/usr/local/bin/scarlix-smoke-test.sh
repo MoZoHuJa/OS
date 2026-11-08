@@ -2297,12 +2297,16 @@ check_28_ai_runtime_foundation() {
     # v19.6.1, v19.6.2 and v19.6.3 historical surfaces must ALSO stay (the
     # changelog rows + the What's New sections are the releases' permanent
     # record).
-    if ! grep -q 'ScarLiXoS v19.7.0 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.7.0-B36B00' "$readme"; then
-        fail "README banner/h1/badge must say v19.7.0"
+    if ! grep -q 'ScarLiXoS v19.7.1 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.7.1-B36B00' "$readme"; then
+        fail "README banner/h1/badge must say v19.7.1"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.7.0 (Compute Fabric Phase 1 — unified resource inventory + storage inventory + model execution metadata; Phase 0 stands)' "$readme"; then
-        fail "README version line must say v19.7.0 (Compute Fabric Phase 1 — unified resource inventory + storage inventory + model execution metadata)"
+    if ! grep -q 'Version:\*\* v19.7.1 (Compute Fabric Phase 2 — resource vector + aggregate admission + reservation; Phase 1 stands)' "$readme"; then
+        fail "README version line must say v19.7.1 (Compute Fabric Phase 2 — resource vector + aggregate admission + reservation)"
+        return
+    fi
+    if ! grep -q "\\*\\*v19.7.1\\*\\*" "$readme" || ! grep -q "What's New in v19.7.1" "$readme"; then
+        fail "README must carry the v19.7.1 changelog row + What's New section (the current release's own record)"
         return
     fi
     if ! grep -q '\*\*v19.6.0\*\*' "$readme" || ! grep -q "What's New in v19.6.0" "$readme"; then
@@ -4278,13 +4282,15 @@ check_37_unified_inventory_v2() {
         return
     fi
 
-    # --- The version bump + the release documentation.
-    if [[ "$(cat "$version_file" | tr -d '[:space:]')" != "19.7.0" ]]; then
-        fail "VERSION must be 19.7.0"
+    # --- The version bump + the release documentation (v19.7.1 evolution:
+    # the current-release guard moved with the release — the v19.7.0
+    # record assertions below stay as history).
+    if [[ "$(cat "$version_file" | tr -d '[:space:]')" != "19.7.1" ]]; then
+        fail "VERSION must be 19.7.1"
         return
     fi
     for f in "$REPO_DIR/install.sh" "$REPO_DIR/scarlihq/Dockerfile" "$REPO_DIR/scarlihq/cmd/scarlihq/main.go" "$api_rest"; do
-        if ! grep -q '19\.7\.0' "$f"; then
+        if ! grep -q '19\.7\.1' "$f"; then
             fail "version fallback missing in $f (the five-place bump discipline)"
             return
         fi
@@ -4308,7 +4314,226 @@ check_37_unified_inventory_v2() {
 }
 
 # ===========================================================================
-# Check inventory (v19.4.3, KPK-04)
+# check_38 — v19.7.1 (Compute Fabric Phase 2): the aggregate admission
+# gate (resource vector + atomic reserve + durable ledger) + the
+# KPK-19.7.0 audit remediations (P2-01..P2-05, P3-05) + the budget
+# crash-safe reservations (KPK-19.6.7-carry-forward-P2-06)
+# ===========================================================================
+check_38_aggregate_admission_v19_7_1() {
+    echo "--- [38] v19.7.1 (Compute Fabric Phase 2 — roadmap §6): the resource vector + the aggregate admission gate (decide + atomically reserve, durable ledger, lease + boot reconciliation) + the KPK-19.7.0 remediations (storage identity, GPU empty-vs-unavailable, benchmark hardening, manifest collision, remount-ro) + the crash-safe budget reservations ---"
+    local adm_vector="$REPO_DIR/scarlihq/internal/admission/vector.go"
+    local adm_manager="$REPO_DIR/scarlihq/internal/admission/manager.go"
+    local adm_ledger="$REPO_DIR/scarlihq/internal/admission/ledger.go"
+    local adm_contract="$REPO_DIR/scarlihq/internal/admission/admission.go"
+    local adm_prod="$REPO_DIR/scarlihq/internal/admission/production.go"
+    local adm_tests="$REPO_DIR/scarlihq/internal/admission/manager_test.go"
+    local api_admission="$REPO_DIR/scarlihq/internal/api/admission.go"
+    local api_admission_test="$REPO_DIR/scarlihq/internal/api/admission_test.go"
+    local api_rest="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local main_go="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local storage_disc="$REPO_DIR/scarlihq/internal/storage/discovery.go"
+    local storage_bench="$REPO_DIR/scarlihq/internal/storage/benchmark.go"
+    local inv_gpu="$REPO_DIR/scarlihq/internal/inventory/gpu.go"
+    local inv_prov="$REPO_DIR/scarlihq/internal/inventory/provenance.go"
+    local mm_manifest="$REPO_DIR/scarlihq/internal/modelmeta/manifest.go"
+    local budget_go="$REPO_DIR/scarlihq/internal/profiles/budget.go"
+    local budget_recovery_test="$REPO_DIR/scarlihq/internal/profiles/budget_recovery_test.go"
+    local rel_notes="$REPO_DIR/docs/RELEASE_NOTES_v19.7.1.md"
+    local readme="$REPO_DIR/README.md"
+
+    for f in "$adm_vector" "$adm_manager" "$adm_ledger" "$adm_contract" "$adm_prod" "$adm_tests" \
+        "$api_admission" "$api_admission_test" "$api_rest" "$main_go" "$storage_disc" "$storage_bench" \
+        "$inv_gpu" "$inv_prov" "$mm_manifest" "$budget_go" "$budget_recovery_test" "$rel_notes"; do
+        if [[ ! -f "$f" ]]; then
+            fail "v19.7.1 source missing: $f (the Compute Fabric Phase 2 surface)"
+            return
+        fi
+    done
+
+    # --- The resource VECTOR is multi-dimensional (roadmap §6.1: "Do not
+    # model the whole machine as one scalar score") — the three types.
+    if ! grep -q 'type ResourceVector struct' "$adm_vector" || ! grep -q 'type GPURequest struct' "$adm_vector" || ! grep -q 'type StorageRequest struct' "$adm_vector"; then
+        fail "the resource vector types must exist (ResourceVector + GPURequest + StorageRequest — roadmap §6.2's shape)"
+        return
+    fi
+    # GPU VRAM is per-UUID — no aggregate VRAM arithmetic.
+    if ! grep -q 'GPUUUID' "$adm_vector"; then
+        fail "GPU requests must be per-UUID (roadmap §6.3: compute capacity per physical GPU UUID, never aggregate)"
+        return
+    fi
+
+    # --- The admission charter markers (comment-stripped — prose cannot
+    # mask code).
+    local stripped_mgr
+    stripped_mgr=$(_strip_go_comments "$adm_manager")
+    if ! printf '%s\n' "$stripped_mgr" | grep -q 'EXCLUSIVE GPU assignment only'; then
+        fail "admission must admit EXCLUSIVE GPU assignment only in v19.7.1 (roadmap §6: exclusive mode remains the safe default — sharing without compute-share enforcement is a phantom capability)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_mgr" | grep -q 'ReasonSnapshotStale'; then
+        fail "a STALE snapshot must be HARD-REFUSED with the named reason (KPK-19.7.0-P2-01: admission odmietne freshness.stale=true — never reuse an old free-VRAM value as current capacity)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_mgr" | grep -q 'ReasonModelUnverified'; then
+        fail "an UNVERIFIED artifact must be refused with the named reason (KPK-19.7.0-P2-04: the gate consumes VERIFICATION records, not declared digests)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_mgr" | grep -q 'stale verification is absent verification'; then
+        fail "a STALE verification must be refused as absent verification (KPK-19.7.0-P2-04: the age policy is enforced, not documented)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_mgr" | grep -q 'ReasonStorageNoReadProfile'; then
+        fail "a measured-performance floor without a measurement must be refused (the release's must-not-do: never schedule from unverified estimates — ENFORCED at the gate)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_mgr" | grep -q 'ReasonLedgerUnavailable'; then
+        fail "a ledger persistence failure must reserve NOTHING (fail closed: an unpersisted reservation is not a reservation)"
+        return
+    fi
+    # The deterministic-order marker (roadmap §6.4: deterministic for
+    # identical inputs — candidate GPUs iterate in UUID order).
+    if ! printf '%s\n' "$stripped_mgr" | grep -q 'sort\.'; then
+        fail "candidate iteration must be SORTED (deterministic admission — never map-ordered)"
+        return
+    fi
+
+    # --- The durable ledger: fail-closed construction + boot
+    # reconciliation + lease expiry (roadmap §6.6).
+    local stripped_ledger
+    stripped_ledger=$(_strip_go_comments "$adm_ledger")
+    if ! printf '%s\n' "$stripped_ledger" | grep -q 'group/world-accessible'; then
+        fail "the ledger must refuse group/world-accessible files (capacity accounting is not ambient — 0600 enforced at construction)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_ledger" | grep -q 'SchemaVersion != LedgerSchemaVersion'; then
+        fail "the ledger must refuse a foreign schema_version BY NAME (a future migration, never a silent reinterpretation)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_ledger" | grep -q 'sweepExpired'; then
+        fail "the ledger must sweep EXPIRED leases (roadmap §6.6: expiry triggers reconciliation, not blind release)"
+        return
+    fi
+
+    # --- The regression proofs (roadmap §6.7's admission test list).
+    for t in TestAdmitStaleSnapshotHardRefused TestAdmitConcurrentCannotOverspend TestLedgerCrashRecovery TestAdmissionDeterministic TestAdmitFailureReservesNothing TestAdmitIdempotentReplay TestLeaseExpiryReconciliation; do
+        if ! grep -q "func $t" "$adm_tests"; then
+            fail "the admission regression test $t must exist (roadmap §6.7's checklist)"
+            return
+        fi
+    done
+    for t in TestAdmissionRoutesDisabledByDefault TestAdmissionRefusalIsData TestAdmissionIdempotencyReplay TestAdmissionReleaseFlow; do
+        if ! grep -q "func $t" "$api_admission_test"; then
+            fail "the admission HTTP regression test $t must exist (the surface's own proofs)"
+            return
+        fi
+    done
+
+    # --- The API surface: ADMIN-gated (negative control (a): reserving
+    # capacity is strictly stronger than reading the inventory — the
+    # routes must sit behind authAdmin, never the read gate).
+    if ! grep -q 'h.authAdmin(h.admissionRoute)' "$api_rest" || ! grep -q 'h.authAdmin(h.admissionRelease)' "$api_rest"; then
+        fail "the admission routes must be ADMIN-gated (authAdmin — a reservation is a mutating act, not an observation)"
+        return
+    fi
+    # Negative control (b): the principal is stamped SERVER-SIDE from the
+    # resolved token identity — a caller cannot attribute its hold to
+    # someone else (comment-stripped: the stamp call, not the comment).
+    local stripped_api_adm
+    stripped_api_adm=$(_strip_go_comments "$api_admission")
+    if ! printf '%s\n' "$stripped_api_adm" | grep -q 'PrincipalFromContext'; then
+        fail "the admission principal must be stamped server-side (PrincipalFromContext — never caller-supplied)"
+        return
+    fi
+    if printf '%s\n' "$stripped_api_adm" | grep -q 'DisallowUnknownFields'; then
+        :
+    else
+        fail "the admission request decode must DisallowUnknownFields (a typo'd dimension is a refusal, not a silent default)"
+        return
+    fi
+
+    # --- The main.go opt-in wiring (negative control (c): the surface
+    # stays OFF until the operator turns it on — fail-closed env contract).
+    if ! grep -q 'SCARLIHQ_ADMISSION_ENABLED' "$main_go" || ! grep -q 'SCARLIHQ_ADMISSION_LEDGER' "$main_go"; then
+        fail "main.go must carry the admission opt-in env contract (SCARLIHQ_ADMISSION_ENABLED + SCARLIHQ_ADMISSION_LEDGER)"
+        return
+    fi
+    if ! grep -q 'NewProductionManager' "$main_go"; then
+        fail "main.go must construct the production admission manager (the durable-ledger wiring)"
+        return
+    fi
+
+    # --- The KPK-19.7.0 remediations stand:
+    # P2-01 — per-device filesystem collection (the first mount no longer
+    # stands in for the whole disk).
+    if ! grep -q 'func collectDeviceFilesystems' "$storage_disc"; then
+        fail "KPK-19.7.0-P2-01: filesystems must be collected PER DEVICE (a multi-partition disk's mounts never collapse into the first)"
+        return
+    fi
+    # P3-05 — remount-ro is an exact-token comparison, never a substring.
+    if ! grep -q 'mountIsReadOnly' "$storage_disc"; then
+        fail "KPK-19.7.0-P3-05: read-only detection must be the exact-token comparator (errors=remount-ro is not 'ro')"
+        return
+    fi
+    # P2-03 — EXCLUSIVE temp-file creation + the cleanup error reported.
+    local stripped_bench
+    stripped_bench=$(_strip_go_comments "$storage_bench")
+    if ! printf '%s\n' "$stripped_bench" | grep -q 'os.O_CREATE|os.O_EXCL|os.O_WRONLY'; then
+        fail "KPK-19.7.0-P2-03: the benchmark temp file must be created EXCLUSIVELY (O_CREATE|O_EXCL — a same-name stale file is an error)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_bench" | grep -q 'cleanup failed'; then
+        fail "KPK-19.7.0-P2-03: a failed cleanup must be reported to the caller (never swallowed)"
+        return
+    fi
+    # P2-05 — the well-known model-store roots are refused.
+    if ! printf '%s\n' "$stripped_bench" | grep -q 'ErrBenchmarkTargetDenied'; then
+        fail "KPK-19.7.0-P2-05: benchmarking a well-known production model store must be DENIED by default (the named error + the explicit override)"
+        return
+    fi
+    # P2-02 — empty ≠ unavailable: the collectors report SourceStatus.
+    if ! grep -q 'func CollectGPUsWithStatus' "$inv_gpu" && ! grep -q 'func CollectGPUsWithStatus' "$inv_prov"; then
+        fail "KPK-19.7.0-P2-02: the GPU collector must carry the SourceStatus seam (empty and unavailable are different facts)"
+        return
+    fi
+    if ! grep -q 'type BackendPresence struct' "$inv_prov"; then
+        fail "KPK-19.7.0-P2-02: the declared-vs-running backend presence join must exist (the placement × runtime view)"
+        return
+    fi
+    # P2-04 — duplicate model IDs are rejected as a GROUP + the declared
+    # digest is renamed in every EMITTED provenance.
+    if ! grep -q 'ALL conflicting manifests are invalid' "$mm_manifest"; then
+        fail "KPK-19.7.0-P2-04: duplicate model IDs must be rejected as a GROUP (no deterministic file-order winner)"
+        return
+    fi
+    if ! grep -q 'json:"declared_sha256"' "$mm_manifest"; then
+        fail "KPK-19.7.0-P2-04: the emitted digest must be declared_sha256 (declared ≠ verified — every consumer sees the distinction)"
+        return
+    fi
+    # The crash-safe budget reservations (KPK-19.6.7-carry-forward-P2-06).
+    if ! grep -q 'budgetLedgerSchemaV2' "$budget_go" || ! grep -q 'BootID' "$budget_go"; then
+        fail "KPK-19.6.7-carry-forward-P2-06: budget reservations must be durable RECORDS with boot identity (crash-safe, never anonymous aggregates)"
+        return
+    fi
+    if ! grep -q 'func TestBudgetCrashRecoveryReleasesOrphanedHold' "$budget_recovery_test" || ! grep -q 'func TestBudgetV1LedgerMigration' "$budget_recovery_test"; then
+        fail "the budget crash-recovery regression tests must exist (orphaned hold release + the v1 migration)"
+        return
+    fi
+
+    # --- The release documentation genre + the README record.
+    for section in '## Scope' '## Changes' '## Verification' '## Known limitations'; do
+        if ! grep -q "$section" "$rel_notes"; then
+            fail "the v19.7.1 release notes must carry section '$section' (the release genre)"
+            return
+        fi
+    done
+    if ! grep -q "What's New in v19.7.1" "$readme" || ! grep -q '| \*\*v19.7.1\*\*' "$readme"; then
+        fail "the README must carry the v19.7.1 What's New section + changelog row"
+        return
+    fi
+
+    pass "v19.7.1 (Compute Fabric Phase 2 — the roadmap §6 aggregate admission): the resource VECTOR is multi-dimensional (GPU VRAM per UUID + host RAM + CPU threads + KV-cache + storage free bytes + measured read profile + ports — never one scalar score), admission is DETERMINISTIC (sorted candidate iteration, identical inputs → identical decisions) and ATOMIC (all dimensions checked + held under one ledger transaction; any failure reserves NOTHING — the unpersisted reservation is not a reservation), the gate is fail-closed at every join: a STALE snapshot is HARD-REFUSED (KPK-19.7.0-P2-01), an UNVERIFIED or STALE artifact verification is refused (KPK-19.7.0-P2-04 — declared digests are declarations, the gate consumes verification records), a declared-but-not-running backend is refused (the placement × runtime join), a measured-performance floor without a measurement is refused (never schedule from unverified estimates — ENFORCED), pinned RAM is refused by default (the honest no-ledger-yet answer), and GPU assignment is EXCLUSIVE per UUID (the safe v19.7.1 default — sharing without compute-share enforcement is a phantom capability); the LEDGER is durable + fail-closed (0600 enforced, foreign schema refused BY NAME, boot-mismatched holds crash-recovered on the record, expired leases swept — expiry triggers reconciliation, never blind release), leases carry TTL + idempotency keys REPLAY the original decision; the API surface is two ADMIN-gated routes (decide+reserve GET/POST + release POST) with the principal stamped SERVER-SIDE from the resolved token identity and DisallowUnknownFields strict decoding — a refusal is 200 + allowed=false + the machine-readable reason_code (the gate working, never an HTTP error), and the surface is OPT-IN (SCARLIHQ_ADMISSION_ENABLED + SCARLIHQ_ADMISSION_LEDGER, fail-closed construction); the KPK-19.7.0 remediations stand in code: P2-01 per-device filesystem collection (a multi-partition disk never collapses into its first mount), P2-02 empty-vs-unavailable made honest (CollectGPUsWithStatus + BackendPresence — the per-source provenance the v2 snapshot cites), P2-03 the benchmark temp file created EXCLUSIVELY with cleanup failures REPORTED (never swallowed), P2-05 well-known production model-store roots DENIED by default (ErrBenchmarkTargetDenied + the deliberate explicit override), P3-05 remount-ro as the exact-token comparator, P2-04 duplicate model IDs rejected as a GROUP (no file-order winner) + every emitted digest renamed declared_sha256; the budget reservations are CRASH-SAFE (durable records with boot identity, orphaned holds released on the record at startup, month-specific accounting, the v1 aggregate ledger migrated explicitly — KPK-19.6.7-carry-forward-P2-06); acceptance: the admission suite (the §6.7 checklist — concurrent no-overspend, crash recovery, determinism, failure-reserves-nothing, idempotent replay, lease expiry, verified release) + the HTTP suite (503-before-config, 401, 400 strict decode, 405, refusal-is-data, replay, release 409s) + the budget recovery suite (orphaned hold, same-boot survival, month boundary, idempotent recovery, v1 migration); residual honesty: hardware acceptance stays OPEN (KPK-06), no verified manifests ship yet (every admission for a real model refuses model-unverified until an operator records verifications), pinned RAM is refused until a pinned-RAM ledger exists, GPU sharing arrives only with a measured per-backend profile, the v19.7.2 planner is the next milestone; 'LLM navrhuje, politika rozhoduje' — the vector is honest, the reserve is atomic, the ledger survives the crash, and the pen stays with the operator"
+}
+
 # ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
 # execution — the summary reports the number of checks actually executed.
@@ -4351,6 +4576,7 @@ SMOKE_CHECKS=(
     check_35_identity_budgets_media_tools_stale_recursion
     check_36_compute_fabric_phase0_lifecycle
     check_37_unified_inventory_v2
+    check_38_aggregate_admission_v19_7_1
 )
 
 run_check() {

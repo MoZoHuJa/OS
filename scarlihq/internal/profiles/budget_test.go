@@ -189,9 +189,11 @@ func TestBudgetLedgerTamperDiscipline(t *testing.T) {
 		t.Fatal("a group/world-accessible ledger must fail construction")
 	}
 	// A foreign schema version fails construction (a migration, not a
-	// silent reinterpretation).
+	// silent reinterpretation). v19.7.1 made schema 2 the CURRENT
+	// shape (reservation records, KPK-19.6.7-carry-forward-P2-06) —
+	// the future sentinel is now 3.
 	path3 := filepath.Join(dir, "future.json")
-	if err := os.WriteFile(path3, []byte(`{"schema_version":2}`), 0o600); err != nil {
+	if err := os.WriteFile(path3, []byte(`{"schema_version":3}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := NewBudgetLedger(path3); err == nil {

@@ -32,7 +32,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -43,41 +42,72 @@ import (
 // indicates a stuck driver (which the collector should not propagate).
 const nvidiaSmiTimeout = 5 * time.Second
 
-// nvidiaSmiQuery runs `nvidia-smi --query-gpu=<fields> --format=csv,noheader,nounits`
-// and returns parsed CSV rows (one slice per GPU, fields in the order requested).
-// Returns nil if nvidia-smi is unavailable, times out, exits non-zero, or
-// produces no parseable output. Callers MUST treat nil as "no data" and
-// surface an empty slice to their consumers (the []not-nil contract).
+// probeOutcome distinguishes WHY an external probe produced no data
+// (v19.7.1, KPK-19.7.0-P2-02: "empty" and "unavailable" are different
+// facts — an honest empty says "queried successfully, nothing there",
+// an unavailable says "could not query — state unknown").
+type probeOutcome int
+
+const (
+	// probeOK — the command ran and produced parseable output.
+	probeOK probeOutcome = iota
+	// probeBinaryMissing — the tool is not on PATH (no tooling, not "none").
+	probeBinaryMissing
+	// probeExecFailed — non-zero exit, timeout, or signal (driver/daemon
+	// trouble) — the state is UNKNOWN, not empty.
+	probeExecFailed
+	// probeNoOutput — the command ran successfully and reported nothing.
+	probeNoOutput
+)
+
+func (o probeOutcome) String() string {
+	switch o {
+	case probeOK:
+		return "ok"
+	case probeBinaryMissing:
+		return "binary-missing"
+	case probeExecFailed:
+		return "exec-failed"
+	case probeNoOutput:
+		return "no-output"
+	}
+	return "unknown"
+}
+
+// nvidiaSmiQueryEx runs `nvidia-smi --query-gpu=<fields> --format=csv,noheader,nounits`
+// and returns parsed CSV rows PLUS the probe outcome that distinguishes
+// "no tooling" / "tooling failed" / "ran clean, reported nothing" — the
+// v2 provenance contract (the FROZEN v1 nvidiaSmiQuery collapses all of
+// them to nil and must keep doing exactly that).
 //
 // The function is safe to call concurrently (each invocation builds its own
 // context + exec.Cmd). It does not mutate any package-level state.
-func nvidiaSmiQuery(fields string) [][]string {
-	binary, err := exec.LookPath("nvidia-smi")
+func nvidiaSmiQueryEx(fields string) ([][]string, probeOutcome) {
+	binary, err := lookPathFn("nvidia-smi")
 	if err != nil {
 		// nvidia-smi not installed on this host (e.g. dev sandbox without
-		// NVIDIA drivers). This is the common case for CI — return nil.
-		return nil
+		// NVIDIA drivers). This is the common case for CI — no tooling.
+		return nil, probeBinaryMissing
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), nvidiaSmiTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, binary,
+	out, err := runCmdFn(ctx, binary,
 		"--query-gpu="+fields,
 		"--format=csv,noheader,nounits",
 	)
-	out, err := cmd.Output()
 	if err != nil {
 		// Covers: non-zero exit (driver error), context deadline (hang),
-		// signal (SIGKILL'd). In all cases, "no data" is the safe answer.
-		return nil
+		// signal (SIGKILL'd). In all cases the GPU state is UNKNOWN.
+		return nil, probeExecFailed
 	}
 
 	// nvidia-smi with --format=csv,noheader,nounits emits one line per GPU,
 	// comma-separated, with no quoting. Trailing whitespace/newlines stripped.
 	out = []byte(strings.TrimRight(string(out), "\n\r "))
 	if len(out) == 0 {
-		return nil
+		return nil, probeNoOutput
 	}
 
 	lines := strings.Split(string(out), "\n")
@@ -99,6 +129,17 @@ func nvidiaSmiQuery(fields string) [][]string {
 	}
 
 	if len(rows) == 0 {
+		return nil, probeNoOutput
+	}
+	return rows, probeOK
+}
+
+// nvidiaSmiQuery is the FROZEN v1 internal: nil unless the probe ran
+// cleanly (the v1 contract collapses every failure to "no data" — the
+// v2 provenance lives in nvidiaSmiQueryEx / CollectGPUsWithStatus).
+func nvidiaSmiQuery(fields string) [][]string {
+	rows, outcome := nvidiaSmiQueryEx(fields)
+	if outcome != probeOK {
 		return nil
 	}
 	return rows
@@ -141,18 +182,29 @@ func CollectGPUs() []GPU {
 		// nvidia-smi missing, hung, or empty — return empty slice (not nil).
 		return []GPU{}
 	}
+	gpus, _ := parseGPURows(rows)
+	return gpus
+}
 
+// parseGPURows converts raw nvidia-smi CSV rows into GPU records and
+// reports how many malformed rows were skipped (the v2 provenance
+// "partial" input — one bad row does not erase the good ones, but the
+// degradation is counted, never silent).
+func parseGPURows(rows [][]string) ([]GPU, int) {
 	gpus := make([]GPU, 0, len(rows))
+	malformed := 0
 	for _, row := range rows {
 		// Each row must have at least 11 columns; if not, skip with a stderr
 		// note (don't crash the whole collector for one malformed GPU).
 		if len(row) < 11 {
+			malformed++
 			fmt.Fprintf(os.Stderr, "inventory: skipping malformed nvidia-smi row (got %d fields, want 11): %v\n", len(row), row)
 			continue
 		}
 
 		idx, err := strconv.Atoi(row[0])
 		if err != nil {
+			malformed++
 			fmt.Fprintf(os.Stderr, "inventory: skipping GPU row with bad index %q: %v\n", row[0], err)
 			continue
 		}
@@ -194,7 +246,7 @@ func CollectGPUs() []GPU {
 		})
 	}
 
-	return gpus
+	return gpus, malformed
 }
 
 // CollectGPUHealth derives a Health entry for each GPU in gpus and mutates

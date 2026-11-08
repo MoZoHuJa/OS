@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,5 +121,191 @@ func TestBenchmarkSeamIsolation(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "BenchmarkOptions") {
 		t.Error("discovery.go must never reference BenchmarkOptions — the benchmark is opt-in only (read-only charter)")
+	}
+}
+
+// errAfterN is a deterministic context fake for KPK-19.7.0-P2-03: Err()
+// returns nil for the first liveCalls calls, then the planted error on
+// every subsequent call — a cancellation that lands mid-fill WITHOUT
+// timing dependencies on disk speed.
+type errAfterN struct {
+	liveCalls int
+	err       error
+	fired     bool
+}
+
+func (c *errAfterN) Deadline() (deadline time.Time, ok bool) { return time.Time{}, false }
+func (c *errAfterN) Done() <-chan struct{}                   { return nil }
+func (c *errAfterN) Value(key any) any                       { return nil }
+func (c *errAfterN) Err() error {
+	if c.fired {
+		return c.err
+	}
+	c.liveCalls--
+	if c.liveCalls <= 0 {
+		c.fired = true
+		return c.err
+	}
+	return nil
+}
+
+// TestBenchmarkCancelDuringFill (KPK-19.7.0-P2-03 acceptance): a
+// cancellation landing AFTER the first fill chunk exits PROMPTLY, removes
+// the temp file, and returns an error wrapping context.Canceled.
+func TestBenchmarkCancelDuringFill(t *testing.T) {
+	dir := t.TempDir()
+	// Err() call sequence: #1 pre-start, #2 first-chunk guard (one MiB
+	// written), #3 second-chunk guard → cancelled. 32 MiB file, 1 MiB
+	// chunks — cancellation fires ~1-2 MiB into a 32 MiB fill.
+	ctx := &errAfterN{liveCalls: 2, err: context.Canceled}
+	_, err := RunReadBenchmark(ctx, BenchmarkOptions{
+		TargetPath: dir,
+		Duration:   1 * time.Second,
+		FileSize:   32 << 20,
+	})
+	if err == nil {
+		t.Fatal("mid-fill cancellation must error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error must wrap context.Canceled, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cancelled during fill") {
+		t.Errorf("error must name the fill phase, got: %v", err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Errorf("mid-fill-cancelled benchmark left artifacts: %d entries (prompt cleanup required — up to 1 GiB must not be written/synced after cancellation)", len(entries))
+	}
+}
+
+// TestBenchmarkDeadlineDuringFill (KPK-19.7.0-P2-03 acceptance): a
+// deadline expiring during the fill phase behaves like cancellation —
+// prompt exit + cleanup + errors.Is(context.DeadlineExceeded).
+func TestBenchmarkDeadlineDuringFill(t *testing.T) {
+	dir := t.TempDir()
+	ctx := &errAfterN{liveCalls: 2, err: context.DeadlineExceeded}
+	_, err := RunReadBenchmark(ctx, BenchmarkOptions{
+		TargetPath: dir,
+		Duration:   1 * time.Second,
+		FileSize:   32 << 20,
+	})
+	if err == nil {
+		t.Fatal("mid-fill deadline must error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("error must wrap context.DeadlineExceeded, got: %v", err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Errorf("deadline-expired benchmark left artifacts: %d entries", len(entries))
+	}
+}
+
+// TestBenchmarkExclusiveCreateSourceLevel (KPK-19.7.0-P2-03): the temp
+// artifact is created EXCLUSIVELY (O_CREATE|O_EXCL — never truncating an
+// existing same-name file) and the fill loop guards the context BEFORE
+// each write chunk. Source-level assertion (the repo's "prose cannot
+// mask code" discipline — the creation mode is not observable through
+// the public API without a predictable random ID).
+func TestBenchmarkExclusiveCreateSourceLevel(t *testing.T) {
+	raw, err := os.ReadFile("benchmark.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	if !strings.Contains(src, "os.O_CREATE|os.O_EXCL|os.O_WRONLY") {
+		t.Error("the temp artifact must be created with O_CREATE|O_EXCL — a same-name artifact can never be truncated over")
+	}
+	fillIdx := strings.Index(src, "for written < opts.FileSize {")
+	writeIdx := strings.Index(src, "f.Write(seed[:n])")
+	guardIdx := strings.Index(src, "if cerr := ctx.Err(); cerr != nil {")
+	if fillIdx < 0 || writeIdx < 0 || guardIdx < 0 {
+		t.Fatal("fill loop structure not found")
+	}
+	if !(guardIdx > fillIdx && guardIdx < writeIdx) {
+		t.Error("the fill loop must check ctx.Err() BEFORE the write call (cancellation is honored during the most write-intensive phase)")
+	}
+}
+
+// TestBenchmarkTargetUnderRoot — the denylist path matcher: prefix
+// matching respects path boundaries ("/modelsx" is NOT under "/models").
+func TestBenchmarkTargetUnderRoot(t *testing.T) {
+	cases := []struct {
+		target, root string
+		want         bool
+	}{
+		{"/models", "/models", true},
+		{"/models/", "/models", true},
+		{"/models/qwen3-14b", "/models", true},
+		{"/modelsx", "/models", false},
+		{"/modelsx/qwen", "/models", false},
+		{"/var/tmp", "/models", false},
+		{"/", "/models", false},
+		{"/srv/models", "/models", false},
+	}
+	for _, c := range cases {
+		if got := targetUnderRoot(c.target, c.root); got != c.want {
+			t.Errorf("targetUnderRoot(%q, %q)=%v, want %v", c.target, c.root, got, c.want)
+		}
+	}
+}
+
+// TestBenchmarkDenylist (KPK-19.7.0-P2-05): a target under a denied
+// model-store root is REFUSED with the named error; an explicit empty
+// denylist env lifts the refusal (the operator's approval door).
+func TestBenchmarkDenylist(t *testing.T) {
+	root := t.TempDir() // stands in for the model store root
+	target := filepath.Join(root, "qwen")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("SCARLIHQ_BENCHMARK_DENY_ROOTS", root)
+	_, err := RunReadBenchmark(context.Background(), BenchmarkOptions{
+		TargetPath: target,
+		Duration:   1 * time.Second,
+		FileSize:   32 << 20,
+	})
+	if !errors.Is(err, ErrBenchmarkTargetDenied) {
+		t.Fatalf("target under the denied root must be refused with ErrBenchmarkTargetDenied, got: %v", err)
+	}
+	entries, _ := os.ReadDir(target)
+	if len(entries) != 0 {
+		t.Errorf("refused benchmark left artifacts: %d entries", len(entries))
+	}
+
+	// The explicit empty override is the approval door — the benchmark
+	// then runs (and cleans up) normally.
+	t.Setenv("SCARLIHQ_BENCHMARK_DENY_ROOTS", "")
+	res, err := RunReadBenchmark(context.Background(), BenchmarkOptions{
+		TargetPath: target,
+		Duration:   1 * time.Second,
+		FileSize:   32 << 20,
+	})
+	if err != nil {
+		t.Fatalf("explicit empty denylist must allow the benchmark: %v", err)
+	}
+	if _, err := os.Stat(res.TempFile); !os.IsNotExist(err) {
+		t.Errorf("temp artifact %s still present", res.TempFile)
+	}
+}
+
+// TestBenchmarkDenylistDefaultRoots: unset env → the default /models
+// root; explicit empty → nil (disabled).
+func TestBenchmarkDenylistDefaultRoots(t *testing.T) {
+	t.Setenv("SCARLIHQ_BENCHMARK_DENY_ROOTS", "")
+	if got := benchmarkDenyRoots(); got != nil {
+		t.Errorf("explicit empty denylist must disable the refusal, got %v", got)
+	}
+	// unset via a subprocess-free trick: os.Unsetenv + LookupEnv
+	os.Unsetenv("SCARLIHQ_BENCHMARK_DENY_ROOTS")
+	got := benchmarkDenyRoots()
+	if len(got) != 1 || got[0] != "/models" {
+		t.Errorf("unset denylist must default to /models, got %v", got)
+	}
+	t.Setenv("SCARLIHQ_BENCHMARK_DENY_ROOTS", "/a:/b")
+	got = benchmarkDenyRoots()
+	if len(got) != 2 || got[0] != "/a" || got[1] != "/b" {
+		t.Errorf("colon-separated denylist parse failed, got %v", got)
 	}
 }

@@ -40,7 +40,12 @@ type Manifest struct {
 	Checkpoint    struct {
 		Format       string `yaml:"format" json:"format"`
 		Quantization string `yaml:"quantization" json:"quantization"`
-		SHA256       string `yaml:"sha256" json:"sha256"`
+		// SHA256 — the DECLARED fingerprint. The yaml key stays "sha256"
+		// (the on-disk scarlix.model/v2 schema is unchanged); the JSON key
+		// is renamed "declared_sha256" (v19.7.1, KPK-19.7.0-P2-04) so every
+		// EMITTED provenance distinguishes declared from VERIFIED bytes —
+		// verification is VerifyManifestArtifacts' separate answer.
+		SHA256 string `yaml:"sha256" json:"declared_sha256"`
 	} `yaml:"checkpoint" json:"checkpoint"`
 	Architecture struct {
 		Kind             Architecture `yaml:"kind" json:"kind"`
@@ -61,10 +66,11 @@ type Manifest struct {
 	} `yaml:"runtime" json:"runtime"`
 	Artifacts struct {
 		ExpertPack struct {
-			Enabled           bool   `yaml:"enabled" json:"enabled"`
-			Format            string `yaml:"format" json:"format"`
-			Version           string `yaml:"version" json:"version"`
-			SHA256            string `yaml:"sha256" json:"sha256"`
+			Enabled bool   `yaml:"enabled" json:"enabled"`
+			Format  string `yaml:"format" json:"format"`
+			Version string `yaml:"version" json:"version"`
+			// SHA256 — DECLARED fingerprint (see Checkpoint.SHA256 note).
+			SHA256            string `yaml:"sha256" json:"declared_sha256"`
 			CompatibleBackend string `yaml:"compatible_backend" json:"compatible_backend"`
 		} `yaml:"expert_pack" json:"expert_pack"`
 	} `yaml:"artifacts" json:"artifacts"`
@@ -78,6 +84,12 @@ type Manifest struct {
 // hex64Re matches exactly 64 lowercase-or-uppercase hex chars (a SHA-256
 // fingerprint). Uppercase is normalized to lowercase at validation.
 var hex64Re = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+
+// modelIDRe is the CLOSED safe identifier charset for manifest model IDs
+// (v19.7.1, KPK-19.7.0-P2-04: an ID is a join key consumed by maps and
+// paths — arbitrary free text invites collisions and path-shaped IDs).
+// Lowercase slug: starts alnum, then alnum/dot/dash/underscore, ≤128 chars.
+var modelIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
 
 // backendIDRe — backend identities are lowercase slugs ("sglang",
 // "infer_ssd"). The set is deliberately OPEN (not the current runtime
@@ -129,6 +141,13 @@ func ResolveManifestsDir() string {
 // LoadManifests reads every *.manifest.yaml in dir. Files are read,
 // parsed, and validated independently — one broken manifest degrades
 // ONLY itself (its InvalidManifest entry), never the set.
+//
+// DUPLICATE MODEL IDs are rejected as a GROUP (v19.7.1,
+// KPK-19.7.0-P2-04): when two files declare the same id, EVERY
+// conflicting manifest is invalid with a named collision reason — a
+// deterministic file-order winner was silently overwriting the loser
+// in the v2 snapshot's by-ID join; now nobody wins and the operator
+// sees both paths.
 func LoadManifests(dir string) LoadedManifests {
 	res := LoadedManifests{Dir: dir}
 	if dir == "" {
@@ -151,6 +170,11 @@ func LoadManifests(dir string) LoadedManifests {
 	}
 	sort.Strings(names) // reproducible order
 
+	type loaded struct {
+		path string
+		m    Manifest
+	}
+	var valid []loaded
 	for _, name := range names {
 		path := filepath.Join(dir, name)
 		raw, err := os.ReadFile(path)
@@ -167,7 +191,27 @@ func LoadManifests(dir string) LoadedManifests {
 			res.Invalid = append(res.Invalid, InvalidManifest{Path: path, Reasons: reasons})
 			continue
 		}
-		res.Manifests = append(res.Manifests, m)
+		valid = append(valid, loaded{path: path, m: m})
+	}
+
+	// Duplicate-ID group rejection (KPK-19.7.0-P2-04): collect every path
+	// per id; an id claimed by more than one file invalidates ALL of them
+	// with a reason naming every conflicting path. No winner is chosen.
+	byIDPaths := make(map[string][]string)
+	for _, v := range valid {
+		byIDPaths[v.m.ID] = append(byIDPaths[v.m.ID], v.path)
+	}
+	for _, v := range valid {
+		if paths := byIDPaths[v.m.ID]; len(paths) > 1 {
+			res.Invalid = append(res.Invalid, InvalidManifest{
+				Path: v.path,
+				Reasons: []string{fmt.Sprintf(
+					"duplicate model id %q — declared in %v; ALL conflicting manifests are invalid, no winner is chosen (KPK-19.7.0-P2-04)",
+					v.m.ID, paths)},
+			})
+			continue
+		}
+		res.Manifests = append(res.Manifests, v.m)
 	}
 	return res
 }
@@ -200,6 +244,8 @@ func ValidateManifest(m *Manifest) []string {
 	}
 	if strings.TrimSpace(m.ID) == "" {
 		add("id is required (the model identity the planner and the v1 catalog join on)")
+	} else if !modelIDRe.MatchString(m.ID) {
+		add("id %q is not a safe closed identifier (lowercase slug: alnum start, alnum/dot/dash/underscore, max 128) — ids are join keys and path-shaped free text is a collision and escape risk (KPK-19.7.0-P2-04)", m.ID)
 	}
 	if strings.TrimSpace(m.Revision) == "" {
 		add("revision is required (HF revision or local build id — the pack/checkpoint binding anchor)")

@@ -100,8 +100,11 @@ const sysfsSectorBytes = 512
 //  1. /proc/self/mounts → the mount table; virtual filesystems skipped
 //     (skipFSTypes), network filesystems kept as their own devices.
 //  2. Local block-device mounts are grouped onto their PARENT device
-//     (partition → device: nvme0n1p2 → nvme0n1, sda3 → sda); statfs on
-//     the first mount point provides filesystem capacity/available.
+//     (partition → device: nvme0n1p2 → nvme0n1, sda3 → sda); EVERY
+//     distinct filesystem is statfs'd and reported (v19.7.1,
+//     KPK-19.7.0-P2-01 — the first mount no longer stands in for the
+//     whole disk), with same-filesystem mounts merged so capacity is
+//     counted once.
 //  3. /sys/block is scanned for block devices WITHOUT mounts — an
 //     unmounted device is real capacity (raw sysfs size), reported with
 //     Filesystem="" and AvailableBytes=0 (no filesystem → no free-space
@@ -147,14 +150,8 @@ func CollectDevices() ([]Device, []SourceStatus) {
 	// ---- local block devices (mount-driven) --------------------------------
 	// parentName → aggregated device under construction + mount entries.
 	type devAgg struct {
-		name      string
-		mounts    []mountEntry
-		capOK     bool
-		capacity  uint64
-		available uint64
-		readOnly  bool
-		roCount   int
-		statErr   error
+		name   string
+		mounts []mountEntry
 	}
 	byParent := make(map[string]*devAgg)
 	var order []string // first-seen order — stable output within a snapshot
@@ -200,38 +197,41 @@ func CollectDevices() ([]Device, []SourceStatus) {
 			Model:       model,
 			Kind:        kind,
 			MountPoints: make([]string, 0, len(agg.mounts)),
+			Filesystems: []Filesystem{},
 			ObservedAt:  now,
 		}
 
 		for _, m := range agg.mounts {
 			d.MountPoints = append(d.MountPoints, m.MountPoint)
-			if strings.Contains(m.Options, "ro,") || m.Options == "ro" ||
-				strings.HasPrefix(m.Options, "ro,") {
-				agg.roCount++
-			}
 		}
-		d.ReadOnly = agg.roCount == len(agg.mounts) && len(agg.mounts) > 0
 
-		// Filesystem facts from the FIRST mount point (statfs).
-		if len(agg.mounts) > 0 {
-			d.Filesystem = agg.mounts[0].FSType
-			var st syscall.Statfs_t
-			if err := statfsFn(agg.mounts[0].MountPoint, &st); err != nil {
-				agg.statErr = err
-				statuses = append(statuses, SourceStatus{
-					Component: "storage",
-					Source:    "statfs:" + agg.mounts[0].MountPoint,
-					Status:    "partial",
-					Detail:    fmt.Sprintf("device %s capacity unknown: %v", name, err),
-				})
-			} else {
-				d.CapacityBytes = uint64(st.Blocks) * uint64(st.Bsize)
-				d.AvailableBytes = uint64(st.Bavail) * uint64(st.Bsize)
-				agg.capOK = true
+		// ---- per-filesystem accounting (KPK-19.7.0-P2-01) --------------
+		// Every DISTINCT filesystem on this device gets its own entry
+		// with its own statfs figures; the same filesystem mounted
+		// several times (bind mounts, btrfs subvolumes, source-path
+		// aliases) is merged so its capacity counts ONCE. A failed
+		// statfs degrades ONLY that filesystem — the device's other
+		// filesystems keep their numbers.
+		d.Filesystems = collectDeviceFilesystems(agg.mounts, name, &statuses)
+
+		if len(d.Filesystems) > 0 {
+			d.Filesystem = d.Filesystems[0].FSType
+			allRO := true
+			anyStatErr := false
+			for _, fs := range d.Filesystems {
+				if fs.Healthy {
+					d.CapacityBytes += fs.CapacityBytes
+					d.AvailableBytes += fs.AvailableBytes
+				} else {
+					anyStatErr = true
+				}
+				allRO = allRO && fs.ReadOnly
 			}
+			d.ReadOnly = allRO
+			d.Healthy = !anyStatErr && d.CapacityBytes > 0
+		} else {
+			d.Healthy = false // mounts existed but nothing survived grouping
 		}
-		d.Healthy = (len(agg.mounts) > 0 && agg.capOK && d.CapacityBytes > 0) ||
-			(len(agg.mounts) == 0)
 
 		out = append(out, d)
 	}
@@ -268,6 +268,7 @@ func CollectDevices() ([]Device, []SourceStatus) {
 				Model:       model,
 				Kind:        kind,
 				MountPoints: []string{},
+				Filesystems: []Filesystem{},
 				ObservedAt:  now,
 				Healthy:     true, // hardware positively observed via sysfs
 			}
@@ -303,14 +304,25 @@ func CollectDevices() ([]Device, []SourceStatus) {
 			Kind:        DeviceNetwork,
 			Filesystem:  m.FSType,
 			MountPoints: []string{m.MountPoint},
-			ReadOnly:    mountIsReadOnly(m.Options),
-			ObservedAt:  now,
+			Filesystems: []Filesystem{{
+				Source:      m.Device,
+				Sources:     []string{m.Device},
+				MountPoints: []string{m.MountPoint},
+				FSType:      m.FSType,
+				ReadOnly:    mountIsReadOnly(m.Options),
+			}},
+			ReadOnly:   mountIsReadOnly(m.Options),
+			ObservedAt: now,
 		}
 		var st syscall.Statfs_t
 		if err := statfsFn(m.MountPoint, &st); err == nil {
-			d.CapacityBytes = uint64(st.Blocks) * uint64(st.Bsize)
-			d.AvailableBytes = uint64(st.Bavail) * uint64(st.Bsize)
-			d.Healthy = d.CapacityBytes > 0
+			cap, avail := uint64(st.Blocks)*uint64(st.Bsize), uint64(st.Bavail)*uint64(st.Bsize)
+			d.CapacityBytes = cap
+			d.AvailableBytes = avail
+			d.Healthy = cap > 0
+			d.Filesystems[0].CapacityBytes = cap
+			d.Filesystems[0].AvailableBytes = avail
+			d.Filesystems[0].Healthy = cap > 0
 		} else {
 			d.Healthy = false
 			statuses = append(statuses, SourceStatus{
@@ -503,6 +515,116 @@ func isAllDigits(s string) bool {
 		}
 	}
 	return true
+}
+
+// collectDeviceFilesystems builds the per-filesystem view for one
+// physical device's mounts (KPK-19.7.0-P2-01 remediation, v19.7.1).
+//
+// The merge discipline (the audit's "no double-counting" rule):
+//
+//   - mounts are grouped by their SOURCE path first (the kernel's device
+//     path for the filesystem: /dev/nvme0n1p2). Two mount table entries
+//     with one source are one filesystem observed twice (bind mounts,
+//     btrfs subvolumes) — statfs runs ONCE per source and every mount
+//     point is recorded on that single entry;
+//   - after statfs, entries sharing the same fsid (different source
+//     paths that are aliases of one filesystem, e.g. /dev/sda1 and
+//     /dev/disk/by-uuid/...) are merged into the first entry — the
+//     capacity is counted once;
+//   - a statfs failure degrades ONLY its own filesystem (Healthy=false,
+//     a named "partial" source status); the device's other filesystems
+//     keep their figures;
+//   - read-only state uses the EXACT mount-option token parse
+//     (mountIsReadOnly — KPK-19.7.0-P3-05: "errors=remount-ro" is not
+//     a read-only mount; the old substring check false-positived on it).
+//
+// The returned slice is never nil. Failures append to *statuses (the
+// caller owns the status slice).
+func collectDeviceFilesystems(mounts []mountEntry, devName string, statuses *[]SourceStatus) []Filesystem {
+	if len(mounts) == 0 {
+		return []Filesystem{}
+	}
+
+	// Pass 1: group mounts by source (first-seen order preserved).
+	type srcAgg struct {
+		source string
+		fstype string
+		mounts []mountEntry
+	}
+	bySource := make(map[string]*srcAgg)
+	var srcOrder []string
+	for _, m := range mounts {
+		agg, ok := bySource[m.Device]
+		if !ok {
+			agg = &srcAgg{source: m.Device, fstype: m.FSType}
+			bySource[m.Device] = agg
+			srcOrder = append(srcOrder, m.Device)
+		}
+		agg.mounts = append(agg.mounts, m)
+	}
+
+	// Pass 2: statfs once per source; merge fsid aliases.
+	out := make([]Filesystem, 0, len(srcOrder))
+	byFSID := make(map[syscall.Fsid]int) // fsid → index into out
+	for _, src := range srcOrder {
+		agg := bySource[src]
+		mp := agg.mounts[0].MountPoint
+
+		fs := Filesystem{
+			Source:      agg.source,
+			Sources:     []string{agg.source},
+			MountPoints: make([]string, 0, len(agg.mounts)),
+			FSType:      agg.fstype,
+		}
+		allRO := true
+		for _, m := range agg.mounts {
+			fs.MountPoints = append(fs.MountPoints, m.MountPoint)
+			// A bind mount can be remounted read-only at one mount
+			// point while the filesystem stays writable at another —
+			// the filesystem is read-only only when EVERY mount
+			// point is (exact token parse, KPK-19.7.0-P3-05).
+			allRO = allRO && mountIsReadOnly(m.Options)
+		}
+		fs.ReadOnly = allRO
+
+		var st syscall.Statfs_t
+		if err := statfsFn(mp, &st); err != nil {
+			// This filesystem's capacity is unknown — the OTHER
+			// filesystems on the device are untouched (P2-01's
+			// "failed statfs marks that partition partial
+			// without erasing the others").
+			*statuses = append(*statuses, SourceStatus{
+				Component: "storage",
+				Source:    "statfs:" + mp,
+				Status:    "partial",
+				Detail:    fmt.Sprintf("device %s filesystem %s capacity unknown: %v", devName, agg.source, err),
+			})
+			out = append(out, fs) // healthy=false, capacity 0 — honest
+			continue
+		}
+
+		fs.CapacityBytes = uint64(st.Blocks) * uint64(st.Bsize)
+		fs.AvailableBytes = uint64(st.Bavail) * uint64(st.Bsize)
+		fs.Healthy = fs.CapacityBytes > 0
+
+		// Defensive fsid merge: a DIFFERENT source path with the
+		// same NON-ZERO fsid is the same filesystem observed under
+		// an alias — fold its mount points into the existing entry
+		// instead of counting its capacity twice. A zero fsid
+		// (some virtual filesystems report none) proves nothing and
+		// never merges.
+		fsid := st.Fsid
+		if fsid != (syscall.Fsid{}) { // zero fsid proves nothing — never merges
+			if idx, ok := byFSID[fsid]; ok {
+				out[idx].MountPoints = append(out[idx].MountPoints, fs.MountPoints...)
+				out[idx].Sources = append(out[idx].Sources, agg.source)
+				continue
+			}
+			byFSID[fsid] = len(out)
+		}
+		out = append(out, fs)
+	}
+	return out
 }
 
 // isCandidateBlockDevice filters /sys/block entries to real storage

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time" // v18.6 P1: explicit server timeouts
 
+	"github.com/MoZoHuJa/OS/scarlihq/internal/admission"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/agentfabric"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/agentkernel"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/airt"
@@ -27,7 +28,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.7.0"
+var Version = "19.7.1"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -87,6 +88,33 @@ func main() {
 		log.Printf("Compute lifecycle API enabled (allocation store: %s); resource release remains reconciliation-gated", allocationPath)
 	} else {
 		log.Printf("Compute lifecycle API disabled; set SCARLIHQ_COMPUTE_ENABLED=true only after host bridge acceptance")
+	}
+
+	// v19.7.1 (Compute Fabric Phase 2, roadmap §6.4): the aggregate
+	// ADMISSION gate — decide + atomically reserve a multi-dimensional
+	// resource vector (GPU VRAM per UUID, host RAM, CPU threads, KV
+	// cache, storage free bytes + measured read profile, ports) against
+	// the live v19.7.0 inventory snapshot, the models.d manifests, and
+	// the RECORDED artifact verifications. Opt-in like every mutating
+	// act: SCARLIHQ_ADMISSION_ENABLED=true + SCARLIHQ_ADMISSION_LEDGER
+	// (a writable, 0600-capacity-accounting file — construction
+	// fail-closes on a corrupt/tampered ledger; the routes answer 503
+	// until enabled). The surface is ADMIN-gated (reserving capacity is
+	// strictly stronger than reading the inventory) and the release is
+	// reconciliation-verified, never blind.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("SCARLIHQ_ADMISSION_ENABLED")), "true") {
+		ledgerPath := strings.TrimSpace(os.Getenv("SCARLIHQ_ADMISSION_LEDGER"))
+		if ledgerPath == "" {
+			log.Fatal("admission gate enabled but SCARLIHQ_ADMISSION_LEDGER is missing (a writable ledger path — capacity accounting is durable, never memory-only in production)")
+		}
+		admissionMgr, err := admission.NewProductionManager(ledgerPath)
+		if err != nil {
+			log.Fatalf("admission gate initialization failed: %v (fail closed — never run on a tampered capacity ledger)", err)
+		}
+		apiHandler.ConfigureAdmission(admissionMgr)
+		log.Printf("Admission gate enabled (ledger: %s; policy %s, stale-snapshot hard refusal at %s, lease TTL %s)", ledgerPath, admissionMgr.Policy().PolicyVersion, admissionMgr.Policy().MaxSnapshotAge, admissionMgr.Policy().LeaseTTL)
+	} else {
+		log.Printf("Admission gate disabled; set SCARLIHQ_ADMISSION_ENABLED=true + SCARLIHQ_ADMISSION_LEDGER=<path> to enable the Compute Fabric Phase 2 surface")
 	}
 
 	// AK-2 (v19.4.1): Agent Kernel session surface — opt-in, like the compute

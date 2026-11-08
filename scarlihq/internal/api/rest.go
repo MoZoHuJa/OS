@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoZoHuJa/OS/scarlihq/internal/admission"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/agentfabric"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/agentkernel"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/airt"
@@ -25,7 +26,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.7.0"
+var Version = "19.7.1"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -218,6 +219,10 @@ type Handler struct {
 	// means the real read-only collector (inventory.BuildSnapshotV2);
 	// tests inject a fixed snapshot. The surface is GET-only.
 	inventoryV2 func() (*inventory.InventorySnapshotV2, error)
+	// v19.7.1 (Phase 2): the aggregate admission gate — nil until
+	// ConfigureAdmission is called (opt-in like every mutating surface;
+	// 503 without it).
+	admission *admission.Manager
 }
 
 // NewHandler creates a new API handler.
@@ -260,6 +265,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/inventory/v2", h.auth(h.inventoryV2Full))
 	mux.HandleFunc("/api/inventory/v2/storage", h.auth(h.inventoryV2Storage))
 	mux.HandleFunc("/api/inventory/v2/models", h.auth(h.inventoryV2Models))
+
+	// v19.7.1 (Compute Fabric Phase 2, roadmap §6.4): the aggregate
+	// admission surface — ADMIN-gated (it RESERVES capacity, unlike the
+	// read-only inventory above). POST decides+reserves atomically; GET
+	// reports the held state + policy; the release door closes a hold
+	// with verified cleanup.
+	mux.HandleFunc("/api/compute/admission", h.authAdmin(h.admissionRoute))
+	mux.HandleFunc("/api/compute/admission/release", h.authAdmin(h.admissionRelease))
 	// v19.3.1: read-only gaming-stack inventory (Gaming Stack Integration Plan,
 	// Phase 4). Serves the host-bridge-detected entries only — no launch, no
 	// install, no arbitrary command surface is added here.

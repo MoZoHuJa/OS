@@ -55,8 +55,12 @@ type ModelExecution struct {
 	// Revision — the checkpoint revision label (HF revision or local
 	// build id).
 	Revision string `json:"revision"`
-	// CheckpointSHA256 — the verified checkpoint fingerprint (64 hex).
-	CheckpointSHA256 string `json:"checkpoint_sha256"`
+	// CheckpointSHA256 — the DECLARED checkpoint fingerprint (64 hex).
+	// v19.7.1 (KPK-19.7.0-P2-04): the JSON key is declared_checkpoint_sha256
+	// — the emitted provenance distinguishes DECLARED from VERIFIED bytes;
+	// verification (VerifyManifestArtifacts) is the separate, recorded
+	// answer (see ArtifactVerification).
+	CheckpointSHA256 string `json:"declared_checkpoint_sha256"`
 	// Architecture — dense | moe | other.
 	Architecture Architecture `json:"architecture"`
 	// TotalParameters — declared total-parameter label ("14B", "8x7B").
@@ -118,9 +122,10 @@ type ExpertPackArtifact struct {
 	Format string `json:"format,omitempty"`
 	// Version — the pack build version.
 	Version string `json:"version,omitempty"`
-	// SHA256 — the verified pack artifact fingerprint (64 hex, required
-	// when enabled).
-	SHA256 string `json:"sha256,omitempty"`
+	// SHA256 — the DECLARED pack artifact fingerprint (64 hex, required
+	// when enabled). Declared, not verified-by-this-struct — see
+	// CheckpointSHA256's note (v19.7.1, KPK-19.7.0-P2-04).
+	SHA256 string `json:"declared_sha256,omitempty"`
 	// CompatibleBackend — the single backend this pack is validated for
 	// (e.g. "sglang"). Required when enabled.
 	CompatibleBackend string `json:"compatible_backend,omitempty"`

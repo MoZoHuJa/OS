@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.7.0 · Obsidian Lattice" width="100%" />
+  <img src="docs/scargen-cult-github-banner.svg" alt="ScaRgeN CuLT — ScarLiXoS v19.7.1 · Obsidian Lattice" width="100%" />
 </p>
 
-<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.7.0</h1>
+<h1 align="center">ScaRgeN CuLT — ScarLiXoS v19.7.1</h1>
 
 <p align="center">
   <strong>Sovereign AI Cloud · Obsidian Lattice · Local-First · Secure by Design</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.7.0-B36B00?style=flat-square" /></a>
+  <a href="https://github.com/MoZoHuJa/OS/tree/main"><img alt="Version" src="https://img.shields.io/badge/version-v19.7.1-B36B00?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-D4A574?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS"><img alt="Base" src="https://img.shields.io/badge/base-EndeavourOS%20%28Arch%29-A8C5D4?style=flat-square" /></a>
   <a href="https://github.com/MoZoHuJa/OS/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-D4A574?style=flat-square" /></a>
@@ -59,7 +59,7 @@
 > **Verified**: SGLang (GPU0, --disable-flashinfer) + vLLM (GPU1, TP=1, experimental) + BeeLlama (CPU) + Ollama (CPU tertiary fallback).
 > **LiteLLM Gateway** (v19.0.0+): unified OpenAI-compatible API on :4001. Uses a **simplified 3-tier fallback** (SGLang → Ollama → BeeLlama) for external clients — vLLM excluded because it's experimental (.experimental only). scarlix-mode's direct AI path keeps the full 4-tier including vLLM.
 
-**Version:** v19.7.0 (Compute Fabric Phase 1 — unified resource inventory + storage inventory + model execution metadata; Phase 0 stands) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
+**Version:** v19.7.1 (Compute Fabric Phase 2 — resource vector + aggregate admission + reservation; Phase 1 stands) | **Branding:** Obsidian Lattice | **Base:** EndeavourOS (Arch) | **License:** MIT
 
 ### 📑 Changelog Index (v19.6.x / v19.5.x / v19.4.x / v19.3.x / v19.2.x)
 
@@ -67,6 +67,7 @@ Chronological, newest first. Each entry links to its tag; entries with a dedicat
 
 | Version | One line | Reference |
 |---------|----------|-----------|
+| **v19.7.1** | Compute Fabric Phase 2 — **the aggregate admission milestone of the Unified Compute Fabric roadmap (roadmap §6)**: the **resource vector + admission gate** (`internal/admission` — NEW): the multi-dimensional `ResourceVector` (GPU VRAM **per UUID** + host RAM + pinned RAM + CPU threads + KV-cache + storage free bytes + a measured read profile + ports — never one scalar score, roadmap §6.1), the DETERMINISTIC `Manager.Admit` (sorted candidate iteration — identical inputs → identical decisions) implementing the **atomic reserve pattern** (roadmap §6.4 steps 1–9: validate identity → verify snapshot freshness → verify model/backend compatibility → compute the assignment → check ALL dimensions under one ledger transaction → persist → return; **any dimension failure reserves NOTHING**), the **durable fail-closed `Ledger`** (0600 enforced at construction, foreign `schema_version` refused BY NAME, boot-mismatched holds **crash-recovered on the record**, expired leases swept — expiry triggers reconciliation, never blind release; idempotency keys REPLAY the original decision); the gate is fail-closed at every join: a **STALE snapshot is HARD-REFUSED** (`snapshot-stale`, KPK-19.7.0-P2-01 — never reuse an old free-VRAM/free-space value as current capacity), an **UNVERIFIED or STALE artifact verification is refused** (`model-unverified`, KPK-19.7.0-P2-04 — a declared digest is a DECLARATION, the gate consumes verification records; a stale verification is absent verification), a **declared-but-not-running backend is refused** (the placement × runtime join), a **measured-performance floor without a measurement is refused** (`storage-no-read-profile` — "never schedule from unverified estimates" ENFORCED at the gate, not just documented), **pinned RAM is refused by default** (the honest no-ledger-yet answer), and **GPU assignment is EXCLUSIVE per UUID** (roadmap §6's safe v19.7.1 default — sharing without compute-share enforcement is a phantom capability); the **API surface**: `POST/GET /api/compute/admission` + `POST /api/compute/admission/release` — **ADMIN-gated** (reserving capacity is strictly stronger than reading the inventory), the principal stamped **SERVER-SIDE** from the resolved token identity, strict `DisallowUnknownFields` decoding (a typo'd dimension is a refusal), and **a refusal is 200 + `allowed:false` + the machine-readable `reason_code`** — the gate working, never an HTTP error; the surface is **opt-in** (`SCARLIHQ_ADMISSION_ENABLED=true` + `SCARLIHQ_ADMISSION_LEDGER=<path>`, fail-closed construction); **the KPK-19.7.0 audit remediations**: P2-01 filesystems collected **per device** (a multi-partition disk's mounts never collapse into the first — `collectDeviceFilesystems`), P2-02 **empty ≠ unavailable** made honest (`CollectGPUsWithStatus` + `CollectRuntimesWithStatus` + `BackendPresence` — the declared-vs-running join; the v2 snapshot cites the per-source provenance), P2-03 the benchmark temp file created **EXCLUSIVELY** (`O_CREATE|O_EXCL`) + cleanup failures **REPORTED to the caller** (never swallowed — "benchmark completed but cleanup failed"), P2-05 well-known production model-store roots **DENIED by default** (`ErrBenchmarkTargetDenied` + the deliberate explicit `SCARLIHQ_BENCHMARK_DENY_ROOTS=` override), P3-05 `errors=remount-ro` as the **exact-token comparator** (not a substring match), P2-04 duplicate model IDs **rejected as a GROUP** (no deterministic file-order winner — "ALL conflicting manifests are invalid") + every emitted digest renamed **`declared_sha256`** (declared ≠ verified in every consumer's view); **the crash-safe budget reservations** (KPK-19.6.7-carry-forward-P2-06): every profile-budget reservation is a durable RECORD with boot identity — orphaned holds from dead processes are RELEASED at startup on a bounded audit trail (never a silent permanent quota loss, never an invisible carry-forward), month-specific accounting (an abandoned hold from a previous month cannot consume the current month's budget), and the v19.6.x v1 aggregate ledger is MIGRATED explicitly (legacy records released on the record at upgrade); acceptance: the admission suite (roadmap §6.7's checklist — concurrent no-overspend, crash recovery, determinism, failure-reserves-nothing, idempotent replay, lease expiry, verified release — 25 tests) + the HTTP suite (503-before-config, 401, 400 strict decode, 405, refusal-is-data, replay, release 409s) + the budget recovery suite (orphaned hold, same-boot survival, month boundary, idempotent recovery, v1 migration); smoke check_38 w/ negative controls + check_28/check_37 evolved; residuals stay named: hardware acceptance OPEN (KPK-06), no verified manifests ship yet (every admission for a real model refuses `model-unverified` until an operator records verifications), pinned RAM refused until a pinned-RAM ledger exists, GPU sharing only with a measured per-backend profile, the v19.7.2 planner is the next milestone, 'LLM navrhuje, politika rozhoduje' — the vector is honest, the reserve is atomic, the ledger survives the crash, and the pen stays with the operator | 📄 [What's New](#-whats-new-in-v1971--compute-fabric-phase-2-resource-vector--aggregate-admission--reservation) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.7.1) |
 | **v19.7.0** | Compute Fabric Phase 1 — **the unified resource inventory milestone of the Unified Compute Fabric roadmap (roadmap §5)**: the **storage inventory package** (`internal/storage` — NEW): READ-ONLY discovery from `/proc/self/mounts` + `/sys/block` + `statfs(2)` (no exec, no writes, no benchmarks — the charter asserted at the SOURCE level, comments stripped: prose cannot mask code), honest transport classification (USB vs SATA discriminated by the /sys device path; virtio/mmc/unresolvable → `unknown`, never a guess), **identity without serials** (`StableID` = a SHA-256 DIGEST of the identity material — the raw serial is NEVER emitted), **no phantom capacity** (mounted devices report filesystem capacity; UNMOUNTED devices report raw sysfs capacity with `available_bytes: 0` — an LVM PV can never be mistaken for admission capacity; dm-/md/loop/zram/tmpfs/overlay excluded by documented policy), unknown ≠ zero (`temperature_c` is a pointer — null = not measured; a zero ReadProfile = never benchmarked), host resources with swap REPORTED-never-ADMITTED; **the opt-in bounded storage benchmark**: `scarlix-inventory --storage-benchmark <dir> --duration --size [--block]` is the ONLY benchmark door in the repository — bounds fail-closed with named errors (1s..30s / 32MiB..1GiB / 4KiB..8MiB, required options have NO defaults), writes+removes ONE identifiable temp file, and **discovery never calls it** (asserted at the source level); **the model execution metadata package** (`internal/modelmeta` — NEW): the versioned manifest schema **`scarlix.model/v2`** (the roadmap §5.5 shape, loaded from `/etc/scarlix/models.d` or `SCARLIX_MODELS_D`), fail-closed validation with NAMED reasons (schema-version refusal BY NAME — a future schema is future code; 64-hex checkpoint fingerprints; MoE requires expert geometry; lowercase-slug backends as an OPEN set — declaring the future `infer_ssd` is legal, the planner intersects with live runtimes; an enabled expert pack must be verifiable + bound to ONE compatible backend), and **the placement-eligibility gate** — the roadmap's own rule: a manifest with required unknown values must NEVER be used for automatic placement (MoE with unknown expert/shared bytes → ineligible BY NAME; KV-cache bytes/token is optional — runtimes size it); **the v2 unified snapshot** (`inventory.InventorySnapshotV2`): schema version + per-build random snapshot ID + observed_at + Host + GPUs (the FROZEN v1 collector) + Storage + Runtimes + the merged ModelExecutionView (v1 catalog + manifest execution + `manifest_status: verified|none|invalid:<path>` + the placement gate) + Health + **Sources** — the per-component provenance (ok/partial/empty/unavailable, silence is never an answer); **the freshness contract**: the stale marker is evaluated at SERVE time (`freshness: {observed_at, age_seconds, max_age_seconds, stale}` against `SCARLIHQ_INVENTORY_MAX_AGE`, default 60s, non-positive policy = always stale — fail-closed), every component degrades independently, the snapshot is ALWAYS built, and **every consumer must reject/downgrade stale data — never reuse an old free-VRAM/free-space value as current capacity** (the release's must-not-do honored in code: nothing schedules from unverified estimates); **the read-only API + CLI surface**: `GET /api/inventory/v2` (+`/storage`, `/models`) behind the standard Bearer read gate (the `/api/status` precedent — observation grants no control), **non-GET is 405 BY NAME** on all three routes (there is no write surface, no benchmark trigger, no reservation — the route set enforces the roadmap's "inventory must not execute workloads or reserve capacity"), CLI mirrors `--v2 | --v2-storage | --v2-models`; **v1 is FROZEN and untouched** (no v1 JSON key renamed — the v1 tests pass unmodified, the frozen keys re-pinned); acceptance: storage (parse truth tables incl. the dm-0/nvme0n1 partition edge cases, seam-fixture discovery, the read-only charter source assertion, the benchmark bounds fail-closed table + real run + cancellation cleanup + seam isolation), modelmeta (17 named-refusal validation cases, the eligibility matrix, the KV-unknown rule, directory loading), inventory (envelope shape, unique IDs, freshness math, v1 frozen-key re-pin), api (401/405 negative controls on all three routes, stale marking, section filtering, collector-error → 500 never a fabricated snapshot, the REAL collector end-to-end); docs: `INVENTORY_V2_CONTRACT.md` (canonical) + the architecture package map + the example manifest with DELIBERATELY invalid placeholders; smoke check_37 w/ negative controls; residuals stay named: LVM transport `unknown`, temperature not collected (null), page-cache-resident benchmark reads, `ram_pinned_bytes` = 0 until Phase 2's ledger, **no verified manifests ship for the real models yet** (every model: `manifest_status: "none"`, placement-ineligible — the honest default), the v19.7.1 resource vector + v19.7.2 planner are NOT in this release, 'LLM navrhuje, politika rozhoduje' — the inventory observes honestly, the unknowns stay unknown, the gate refuses what it cannot verify | 📄 [What's New](#-whats-new-in-v1970--compute-fabric-phase-1-unified-resource-inventory--model-execution-metadata) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.7.0) |
 | **v19.6.8** | Compute Fabric Phase 0 — **the stabilization milestone of the Unified Compute Fabric roadmap (v19.6.8 → v20.0.0)**: the **lifecycle-vocabulary correction** (roadmap §4.3, the documented §1.3-8 semantic gap): the agent compute intake's `"reserve"` action NEVER reserved anything — it called `computeManager.Start` on an allocation the reservation service had already reserved; the actions are now **`start`** and **`release`**, and the legacy `"reserve"` spelling is REJECTED BY NAME (400) with the boundary and the reservation service named — never a silent alias; the kernel capability name `compute.reserve` stays (grants.json compatibility), the audit type for start actions is the honest new **`compute.start`** (append-only audit history, the legacy type stays valid); the **additive state-machine amendment** (roadmap §4.4 — the FROZEN contract permits additions): **`STOP_REQUESTED`** (a stop request for a live workload is recorded durably BEFORE the driver call — a crash between the request and the outcome leaves an honest marker the retry path accepts idempotently; STOP requests cleanup, it does NOT release capacity by itself) and **`RECONCILE_REQUIRED`** (an AMBIGUOUS stop outcome — the driver answered but could not verify — becomes a reconciler decision, never a blind retry; 15 states total, no rename, no removal, no redirect, old records stay valid); `Manager.Stop` outcome mapping: verified → RELEASING (cleanup verified), explicit failure → CLEANUP_REQUIRED, ambiguous → RECONCILE_REQUIRED; the reservation **release scanner covers RECONCILE_REQUIRED** (an ambiguous allocation is release-lifecycle work — it must never strand) but NOT the transient STOP_REQUESTED; the **documentation reconciliation** (roadmap §4.2): the canonical **`docs/architecture/` trio** (SCARLIXOS_CURRENT_ARCHITECTURE + COMPUTE_FABRIC_CONTRACT + AI_RUNTIME_CONTRACT — one source of truth, code-verified), historical-snapshot banners on the four stale architecture docs (SCARLIX_CURRENT_ARCHITECTURE/ARCHITECTURE/GPU_MAP/RUNTIME_MAP), the **frozen baseline record** `docs/releases/v19.6.8/BASELINE.md` (roadmap §4.1 — the exact repository SHA, toolchain, active compose set, honest TARGET-HOST markers for the facts only the operator can record at acceptance), and **the roadmap itself lives in-repo** (`docs/roadmaps/…IMPLEMENTATION_ROADMAP.md` — v19.7.0 inventory → v19.7.1 admission → v19.7.2 planner → v19.8.0 InferSSD/Expert Pack → v19.9.0 distributed → v20.0.0 production); acceptance: the named-refusal regression test (agentcompute_test), the stop-ordering/ambiguity/retry tests (workload manager_test — the driver observes STOP_REQUESTED at call time), the 15-state count guard + new-transition legality matrix (state_machine_test), the scanner source-state test (release_reconciliation_test); smoke check_36 w/ negative controls; gofmt normalized (the v19.6.7 space-indented lane); residuals stay named: hardware acceptance OPEN (KPK-06), the workload bridge stays disabled until the P5.1 target-host matrix passes, aggregate admission stays conservative (one allocation per GPU/port) until v19.7.1, 'LLM navrhuje, politika rozhoduje' — the vocabulary is honest, the state machine never forgets | 📄 [What's New](#-whats-new-in-v1968--compute-fabric-phase-0-lifecycle-vocabulary--additive-state-machine--canonical-architecture) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.6.8) |
 | **v19.6.7** | Identity-bound family profiles + enforced token budgets + media-tools hardening — **the v19.6.6 KpK audit remediation** (KPK-19.6.6-P1-01 P1 + KPK-19.6.6-P2-02/P2-03 P2 + KPK-19.6.6-P3-04/P3-05 P3 + the SK-audit P2-03 allowlist): **KPK-19.6.6-P1-01 — the family profiles are IDENTITY-BOUND (the P1)**: v19.6.6 enforced a real policy schema against a CALLER-DECLARED profile reference while the auth boundary knew one shared household Bearer — the reference could be OMITTED (skip the policy) or pointed at `zmor` (carry the admin policy); v19.6.7 binds identity to authentication: every profile MAY carry its own Bearer token (`/etc/scarlix/profile-tokens.conf`, `profile:token` per line, chmod 400 — group/world-readable refused; or inline `SCARLIHQ_PROFILE_TOKENS=name:token,...`), collisions and household-token reuse refused at load, resolution constant-time per entry; the household `SCARLIHQ_TOKEN` resolves to the ADMIN principal (the operator) and a `role:admin` profile's own token is admin too; ONE shared authorization function `profiles.Authenticator.Authorize` decides REST `/api/mode` + `/api/ai/chat` + MCP `scarlix_mode_set` — a DECLARED reference must MATCH the principal (403 `ErrProfileMismatch`: a family token cannot select a foreign profile, `X-Scarlix-Profile` header included), an OMITTED reference is DERIVED from the principal (no policy-free path in multi-user mode — HER permissions, HER mode policy, HER content filter), an admin act-as only REDUCES privileges (the target profile's policy still applies), a broken policy file fails CLOSED; operator surfaces (compute start/stop, agent sessions/grants/audit, bar commands/workspaces/executions/approvals, ai probe, ai propose/proposals, ai models POST registration) require the ADMIN principal — a family token is refused 403 there; every decision is an AUDIT EVENT (principal, resolved profile, declared ref, action, decision, reason — NEVER tokens); single-user deployments (no token index) keep the household token as the ONE admin identity — explicit `SCARLIHQ_SINGLE_USER=true` or the implicit default, both logged as such; deployments with NO profiles at all keep the legacy path, named exactly as that; acceptance matrix as REST tests (`internal/api/principal_test.go`, 12) + MCP tests (`internal/mcp/principal_test.go`, 6): hugo/xox token + `profile=zmor` → 403, zmor token + `profile=zmor` → allowed, omitted → derived, the header cannot override; `profiles/zmor.yaml` allowed modes → the FULL enumeration (the derived admin policy must not restrict the operator); **KPK-19.6.6-P2-02 — the monthly token budget is ENFORCED**: new durable ledger `internal/profiles/budget.go` (default `/var/lib/scarlihq-budget/token-budget.json`, 0600/0700, atomic tmp+rename, schema_version 1, tamper fail-closed load); `/api/ai/chat` RESERVES-BEFORE-FORWARD (estimate = input runes/4 + the 4096-token output reserve), SETTLES the provider-reported usage after (the estimate stands when the provider reports none), failed attempts RELEASED whole (not billed), the window is a UTC calendar month key (2-month retention), accounting per profile ACROSS models; exhaustion is a STABLE 429 carrying `{profile, month, monthly, used, reserved, remaining}`; ledger unavailability fails CLOSED (503) — an unaccountable budget is not a budget; without a ledger (unwritable DEFAULT path) budgets degrade to loudly-warned INFORMATIONAL metadata, an EXPLICIT `SCARLIHQ_AIRUNTIME_BUDGET_LEDGER` that fails aborts startup; `budget_test.go` (8 tests incl. the 11-concurrent-reservation race proof) + the REST 429/settle tests; **KPK-19.6.6-P2-03 — media-tools authenticated + bounded**: `MEDIA_TOOLS_TOKEN` Bearer auth (`hmac.compare_digest`; without it the conversion surface fails CLOSED 503, `/health` stays open), `BoundedSemaphore` concurrency (`MEDIA_TOOLS_MAX_CONCURRENCY` default 2, clamp 1..16, 15s queue wait → 503), per-client-IP cap 2 (429), output-name collision lock (409), invalid `Content-Length` → 400, non-object JSON root → 400, 30s read timeout, port/dir env test seams — `tests/test_media_tools.sh` 42 assertions (real ffmpeg conversion, saturation storm, collision); **KPK-19.6.6-P3-04 — strict NESTED `token_budget` YAML**: `TokenBudget.UnmarshalYAML` validates the nested keys BY HAND (unknown/duplicate keys are named errors — a `monthly_limit_typo:` must fail, not ride along silently); **KPK-19.6.6-P3-05 — stale-audit installed-tree recursion**: registered directories read the NEWEST file mtime RECURSIVELY (caches/generated excluded; plain files keep stat) + compose discovery broadened (`docker-compose*.yaml` + `compose.yml`/`compose.yaml`); **SK-audit P2-03 — the time-bounded pin allowlist**: `docker/image-pin-allowlist.conf` (`image\|reason\|review-by`) — the four experimental `:latest` images allowed until 2027-01-31, an expired entry reverts to a UNPINNED finding (`SCARLIX_STALE_AUDIT_PIN_ALLOWLIST` override); residuals stay named: hardware OPEN, keyword-level filter, the budget covers the chat path only (propose is admin-gated), IPv6 dual-stack | 📄 [What's New](#-whats-new-in-v1967--identity-bound-family-profiles--enforced-token-budgets--media-tools-hardening-kpk-1966-remediation) · [tag](https://github.com/MoZoHuJa/OS/releases/tag/v19.6.7) |
@@ -137,6 +138,130 @@ scarlix-mode ai
 # 4. (optional) Open dashboard — token printed by install.sh
 #    http://127.0.0.1:8090/  (localhost only — use Tailscale/SSH tunnel for LAN)
 ```
+
+---
+
+## 🆕 What's New in v19.7.1 — Compute Fabric Phase 2: Resource Vector + Aggregate Admission + Reservation
+
+The **aggregate admission milestone** of the Unified Compute Fabric &
+SSD-Backed Inference Roadmap (`docs/roadmaps/SCARLIXOS_UNIFIED_COMPUTE_FABRIC_IMPLEMENTATION_ROADMAP.md`):
+Phase 0 (v19.6.8) + Phase 1 (v19.7.0) stand → **this release: §6
+Phase 2** → v19.7.2 deterministic planner → v19.8.0 InferSSD + SGLang
+Expert Pack → v19.9.0 distributed fabric → v20.0.0 production control
+plane.
+
+### The resource vector (`scarlihq/internal/admission` — NEW)
+
+Roadmap §6.1's rule — **"Do not model the whole machine as one scalar
+score"** — is now a type: `ResourceVector` carries GPU VRAM **per UUID**
+(`GPURequest` with an exclusive-device requirement), host RAM, pinned
+RAM, CPU threads, KV-cache bytes, storage free bytes with a **measured
+read profile** floor (`StorageRequest`), and host ports. Integer bytes
+and explicit units — no MB/MiB mixing.
+
+### The admission gate: decide + atomically reserve
+
+`admission.Manager.Admit` implements the roadmap §6.4 atomic reserve
+pattern end-to-end:
+
+1. **Validate identity and policy** → `request-invalid` (a non-exclusive
+   GPU ask is refused BY NAME — sharing without compute-share
+   enforcement is a phantom capability);
+2. **Verify inventory snapshot freshness** → `snapshot-stale` is a HARD
+   refusal (KPK-19.7.0-P2-01: never reuse an old free-VRAM/free-space
+   value as current capacity);
+3. **Verify model/backend compatibility** → `model-unverified` (a
+   declared digest is a DECLARATION — the gate consumes verification
+   records; a stale verification is absent verification —
+   KPK-19.7.0-P2-04), `backend-not-declared` / `backend-unavailable`
+   (the placement × runtime join);
+4–7. **Compute, check and persist the assignment atomically** — ALL
+   dimensions under one ledger transaction; **any dimension failure
+   reserves NOTHING** (`failure-reserves-nothing`), and an unpersisted
+   reservation is not a reservation (`ledger-unavailable` refuses whole);
+8. **Return the assignment + lease** (TTL 10 min default);
+9. Every refusal carries the machine-readable `reason_code` + the
+   numbers that failed — never a bare boolean.
+
+Admission is DETERMINISTIC (sorted candidate iteration) and
+safety-margin-first (VRAM/RAM/storage headroom fractions subtracted
+BEFORE allocation, CPU threads reserved for the OS). Pinned RAM is
+**refused by default** — the honest no-ledger-yet answer, not a guess.
+
+### The durable, crash-safe ledger
+
+`admission.Ledger` is fail-closed at construction (a group/world-writable
+ledger file is refused — capacity accounting is not ambient; a foreign
+`schema_version` is refused BY NAME), reconciles **boot-mismatched holds
+on the record** (a hold from a dead process is crash-released with the
+named status), sweeps **expired leases** (expiry triggers
+reconciliation, never blind release), and replays **idempotency keys**
+(the original decision, never a double-admission).
+
+### The API surface (opt-in, ADMIN-gated)
+
+`POST /api/compute/admission` (decide + reserve; GET reports the held
+state + the policy) and `POST /api/compute/admission/release` — behind
+the ADMIN gate (reserving capacity is strictly stronger than reading the
+inventory), the principal stamped **SERVER-SIDE** from the resolved
+token identity, strict `DisallowUnknownFields` decoding. **A refusal is
+200 + `allowed:false` + the reason_code** — the gate working, never an
+HTTP error. Enablement: `SCARLIHQ_ADMISSION_ENABLED=true` +
+`SCARLIHQ_ADMISSION_LEDGER=<path>` (fail-closed construction; the routes
+answer 503 until enabled).
+
+### The KPK-19.7.0 audit remediations
+
+- **P2-01** — storage filesystems are collected **per device**
+  (`collectDeviceFilesystems`): a multi-partition disk's mounts never
+  collapse into the first one; the v2 snapshot's per-source provenance
+  carries the multi-mount truth.
+- **P2-02** — **empty ≠ unavailable** made honest:
+  `CollectGPUsWithStatus` / `CollectRuntimesWithStatus` return the
+  `SourceStatus` alongside the data ("queried, nothing there" vs "could
+  not query — state unknown"), and `BackendPresence` joins declared
+  backends with running ones (the placement × runtime view).
+- **P2-03** — the benchmark temp file is created **EXCLUSIVELY**
+  (`O_CREATE|O_EXCL`) and a failed cleanup is **reported to the caller**
+  ("benchmark completed but cleanup failed") — never swallowed.
+- **P2-04** — duplicate model IDs are **rejected as a GROUP** ("ALL
+  conflicting manifests are invalid" — no deterministic file-order
+  winner), and every emitted digest is renamed **`declared_sha256`**
+  (declared ≠ verified in every consumer's view).
+- **P2-05** — benchmarking a well-known production model store is
+  **DENIED by default** (`ErrBenchmarkTargetDenied`; the deliberate
+  explicit override is `SCARLIHQ_BENCHMARK_DENY_ROOTS=`).
+- **P3-05** — `errors=remount-ro` is the **exact-token comparator**
+  (never a substring match).
+
+### The crash-safe budget reservations (KPK-19.6.7-carry-forward-P2-06)
+
+Profile token budgets no longer hold quota anonymously: every
+reservation is a durable RECORD with the creating process's boot
+identity. At startup the ledger reconciles — orphaned holds from dead
+processes are RELEASED on a bounded audit trail (an explicit recovery
+decision, never a silent permanent quota loss), accounting is
+month-specific (an abandoned hold from a previous month cannot consume
+the current month's budget), and the v19.6.x v1 aggregate ledger is
+migrated explicitly (legacy records released on the record at upgrade).
+
+### Acceptance
+
+The admission suite (roadmap §6.7's checklist: concurrent
+no-overspend, crash recovery, determinism, failure-reserves-nothing,
+idempotent replay, lease expiry, verified release — 25 tests), the HTTP
+suite (503-before-config, 401, 400 strict decode, 405,
+refusal-is-data, replay, release 409s), the budget recovery suite
+(orphaned hold, same-boot survival, month boundary, idempotent recovery,
+v1 migration), `go test -race` clean on the touched packages, and smoke
+check_38 with negative controls. Residual honesty: hardware acceptance
+stays OPEN (KPK-06); no verified manifests ship yet — every admission
+for a real model refuses `model-unverified` until an operator records
+verifications; pinned RAM is refused until a pinned-RAM ledger exists;
+GPU sharing arrives only with a measured per-backend profile; the
+v19.7.2 planner is the next milestone. *'LLM navrhuje, politika
+rozhoduje' — the vector is honest, the reserve is atomic, the ledger
+survives the crash, and the pen stays with the operator.*
 
 ---
 

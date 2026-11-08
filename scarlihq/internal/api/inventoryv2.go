@@ -21,9 +21,16 @@
 // back to the default — this is an informational marker, not an auth
 // boundary; the PLANNER must still reject or downgrade stale data, never
 // reuse an old free-VRAM/free-space value as current capacity).
+//
+// v19.7.1 (KPK-19.7.0-P2-01 of the KpK audit): STRICT CONSUMERS may set
+// SCARLIHQ_INVENTORY_REJECT_STALE=true — the API then HARD-REFUSES a
+// stale snapshot with 503 instead of serving it with a marker (the
+// serve-side enforcement of "a stale snapshot must be rejected, never
+// reused as current capacity"). Default remains informational (false).
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -38,8 +45,9 @@ import (
 // a snapshot older than a minute describes a machine that may have
 // changed — the operator narrows or widens the window explicitly.
 const (
-	inventoryMaxAgeEnv = "SCARLIHQ_INVENTORY_MAX_AGE"
-	inventoryMaxAgeDef = 60 * time.Second
+	inventoryMaxAgeEnv      = "SCARLIHQ_INVENTORY_MAX_AGE"
+	inventoryMaxAgeDef      = 60 * time.Second
+	inventoryRejectStaleEnv = "SCARLIHQ_INVENTORY_REJECT_STALE"
 )
 
 // inventoryV2MaxAge resolves the freshness threshold per request. Parse
@@ -55,6 +63,34 @@ func inventoryV2MaxAge() (time.Duration, bool) {
 		return inventoryMaxAgeDef, false
 	}
 	return time.Duration(secs) * time.Second, true
+}
+
+// inventoryV2RejectStale resolves the STRICT consumer knob: when true,
+// a stale snapshot is refused (503) instead of served with a marker —
+// the serve-side enforcement of the must-not-do ("do not schedule from
+// unverified estimates" / never reuse stale data as capacity).
+func inventoryV2RejectStale() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(inventoryRejectStaleEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// refuseStale applies the strict-consumer gate to a serve-time response.
+// Returns true when the request was refused (the caller must stop).
+func refuseStale(w http.ResponseWriter, resp inventory.SnapshotV2Response) bool {
+	if !resp.Freshness.Stale || !inventoryV2RejectStale() {
+		return false
+	}
+	writeJSONStatus(w, http.StatusServiceUnavailable, map[string]interface{}{
+		"status": "error",
+		"error":  "inventory snapshot stale",
+		"message": fmt.Sprintf("snapshot %s is %.1fs old (max %.1fs) — SCARLIHQ_INVENTORY_REJECT_STALE refuses serving stale data as current capacity (KPK-19.7.0-P2-01)",
+			resp.SnapshotID, resp.Freshness.AgeSeconds, resp.Freshness.MaxAgeSeconds),
+		"freshness": resp.Freshness,
+	})
+	return true
 }
 
 // ConfigureInventoryV2 injects the snapshot collector seam (tests pass a
@@ -85,7 +121,11 @@ func (h *Handler) inventoryV2Full(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	maxAge, _ := inventoryV2MaxAge()
-	writeJSON(w, snap.Response(maxAge))
+	resp := snap.Response(maxAge)
+	if refuseStale(w, resp) {
+		return
+	}
+	writeJSON(w, resp)
 }
 
 // inventoryV2StorageView is the storage-section response: the freshness
@@ -112,6 +152,9 @@ func (h *Handler) inventoryV2Storage(w http.ResponseWriter, r *http.Request) {
 	}
 	maxAge, _ := inventoryV2MaxAge()
 	resp := snap.Response(maxAge)
+	if refuseStale(w, resp) {
+		return
+	}
 	view := inventoryV2StorageView{
 		Freshness: resp.Freshness,
 		Host:      snap.Host,
@@ -141,6 +184,9 @@ func (h *Handler) inventoryV2Models(w http.ResponseWriter, r *http.Request) {
 	}
 	maxAge, _ := inventoryV2MaxAge()
 	resp := snap.Response(maxAge)
+	if refuseStale(w, resp) {
+		return
+	}
 	view := inventoryV2ModelsView{
 		Freshness: resp.Freshness,
 		Models:    snap.Models,

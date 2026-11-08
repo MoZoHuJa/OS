@@ -96,9 +96,52 @@ type ReadProfile struct {
 	ProfileID string `json:"profile_id,omitempty"`
 }
 
+// Filesystem is ONE mounted filesystem belonging to a Device
+// (v19.7.1, KPK-19.7.0-P2-01: a physical disk with several partitions
+// reports EVERY filesystem, not just the first mount's numbers).
+//
+// Multiple mount table entries that are the SAME filesystem (bind mounts,
+// btrfs subvolumes, by-uuid/by-path source aliases) are merged into ONE
+// Filesystem entry — their capacity is counted ONCE (statfs returns the
+// same figures and the same fsid for every mount point of one
+// filesystem). The merge key is the mount SOURCE first (the kernel's
+// device path for the filesystem) and the statfs fsid as a defensive
+// second guard (two different source paths with one fsid are one
+// filesystem observed twice).
+type Filesystem struct {
+	// Source — the mount source as /proc/self/mounts reports it for
+	// this filesystem ("/dev/nvme0n1p2"). For merged entries this is
+	// the first-seen source; every other source alias is recorded in
+	// Sources.
+	Source string `json:"source"`
+	// Sources — every distinct mount source that resolved to this
+	// filesystem (non-nil; usually exactly one entry — Source).
+	Sources []string `json:"sources"`
+	// MountPoints — every mount point of this filesystem (in mount
+	// table order; non-nil).
+	MountPoints []string `json:"mount_points"`
+	// FSType — the filesystem type (ext4, btrfs, nfs4, ...).
+	FSType string `json:"fstype,omitempty"`
+	// CapacityBytes — total capacity of THIS filesystem
+	// (statfs blocks*bsize). 0 when statfs failed (see Healthy).
+	CapacityBytes uint64 `json:"capacity_bytes"`
+	// AvailableBytes — bytes available to unprivileged writes on THIS
+	// filesystem (statfs bavail*bsize). 0 when statfs failed.
+	AvailableBytes uint64 `json:"available_bytes"`
+	// ReadOnly — true iff this filesystem's mount options carry the
+	// exact token "ro" (KPK-19.7.0-P3-05: exact token comparison —
+	// "errors=remount-ro" is NOT a read-only mount).
+	ReadOnly bool `json:"read_only"`
+	// Healthy — true iff statfs succeeded for this filesystem AND
+	// reported a non-zero capacity. A failed statfs marks ONLY this
+	// filesystem degraded (the device's other filesystems keep their
+	// figures; the snapshot's source status names the failed mount).
+	Healthy bool `json:"healthy"`
+}
+
 // Device is the normalized, read-only view of one storage device or
 // network mount. One Device is emitted per block device (with all its
-// mount points) or per network filesystem mount.
+// mount points and filesystems) or per network filesystem mount.
 //
 // Identity policy:
 //
@@ -121,22 +164,35 @@ type Device struct {
 	Model string `json:"model,omitempty"`
 	// Kind — the interface classification (nvme/sata/usb/network/unknown).
 	Kind DeviceKind `json:"kind"`
-	// CapacityBytes — total capacity of the filesystem on the device's
-	// first mount point (statfs blocks*bsize). 0 when statfs failed or
-	// no mount point is attached (the source status carries the reason).
+	// CapacityBytes — the AGGREGATE capacity across the device's
+	// DISTINCT filesystems (v19.7.1, KPK-19.7.0-P2-01: every
+	// partition's filesystem counts, each counted once — bind mounts
+	// and btrfs subvolumes of one filesystem are merged before the
+	// sum). An UNMOUNTED device reports RAW sysfs capacity here
+	// instead. 0 when every statfs failed or no filesystem is
+	// attached (the source status carries the reason).
 	CapacityBytes uint64 `json:"capacity_bytes"`
-	// AvailableBytes — bytes available to unprivileged writes
-	// (statfs bavail*bsize). 0 when statfs failed or no mount point.
+	// AvailableBytes — the aggregate bytes available to unprivileged
+	// writes across the device's distinct filesystems (same dedupe
+	// discipline as CapacityBytes). 0 when statfs failed, no mount
+	// point, or the device is unmounted (free space is UNOBSERVABLE
+	// without a filesystem — never a phantom "free" device).
 	AvailableBytes uint64 `json:"available_bytes"`
-	// Filesystem — the fstype of the primary mount point (ext4, btrfs,
-	// nfs4, ...). Empty when the device has no mounted filesystem.
+	// Filesystem — the fstype of the device's first filesystem (kept
+	// for the v19.7.0 field compatibility; per-filesystem types are in
+	// Filesystems[]). Empty when the device has no mounted filesystem.
 	Filesystem string `json:"filesystem,omitempty"`
+	// Filesystems — EVERY distinct mounted filesystem on this device
+	// with its own capacity, availability, and read-only state
+	// (KPK-19.7.0-P2-01; non-nil, empty when unmounted). A filesystem
+	// shared by several mount points appears ONCE with all of them.
+	Filesystems []Filesystem `json:"filesystems"`
 	// MountPoints — every mount point backed by this device (in
 	// /proc/self/mounts order). Non-nil (empty when unmounted).
 	MountPoints []string `json:"mount_points"`
-	// ReadOnly — true when EVERY mount point of this device is mounted
-	// read-only (a mixed ro/rw device reports false; the mount options
-	// remain the source of truth per mount point).
+	// ReadOnly — true when EVERY filesystem of this device is mounted
+	// read-only (a mixed ro/rw device reports false; the per-
+	// filesystem state is the source of truth in Filesystems[]).
 	ReadOnly bool `json:"read_only"`
 	// TemperatureC — device temperature in Celsius. nil = NOT MEASURED
 	// (the honest unknown — /sys/class/hwmon association is not part of

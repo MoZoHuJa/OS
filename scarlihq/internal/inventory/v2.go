@@ -74,7 +74,7 @@ type InventorySnapshotV2 struct {
 
 // ModelExecutionView is one model's merged view: the v1 catalog record
 // (what models.yaml + the disk scan see) + the manifest execution
-// metadata when a verified manifest declares it + the placement
+// metadata when a schema-valid manifest declares it + the placement
 // eligibility gate (the roadmap's "must not be used for automatic
 // placement" answer, carried per-model with named reasons).
 type ModelExecutionView struct {
@@ -82,17 +82,34 @@ type ModelExecutionView struct {
 	// context, presence). Always present (the v1 catalog is the join
 	// base).
 	Catalog Model `json:"catalog"`
-	// Execution — the manifest execution metadata; nil when NO verified
-	// manifest declares this model (the honest absence — the v1 fields
-	// above are all that is known).
+	// Execution — the manifest execution metadata; nil when NO schema-
+	// valid manifest declares this model (the honest absence — the v1
+	// fields above are all that is known).
 	Execution *modelmeta.ModelExecution `json:"execution,omitempty"`
 	// ManifestStatus — the provenance of the manifest join for THIS
-	// model: "verified" (a valid manifest matched), "none" (no manifest
-	// found), or "invalid:<path>" (a manifest for this ID failed
-	// validation — its reasons are in Placement.Reasons).
+	// model: "declared" (a schema-valid manifest matched — its metadata
+	// is trusted AS A DECLARATION; v19.7.1 renamed this from "verified",
+	// which conflated schema validity with byte verification,
+	// KPK-19.7.0-P2-04), "none" (no manifest found), or
+	// "invalid:<path>" (a manifest for this ID failed validation — its
+	// reasons are in Placement.Reasons).
 	ManifestStatus string `json:"manifest_status"`
-	// Placement — the placement eligibility gate + named reasons.
+	// Placement — the placement eligibility gate + named reasons
+	// (METADATA completeness only — "eligible" never means "the backend
+	// runs"; that is BackendPresence's separate answer).
 	Placement modelmeta.PlacementEligibility `json:"placement"`
+	// BackendPresence — the declared-vs-observed join for every manifest-
+	// declared backend (v19.7.1, KPK-19.7.0-P2-04: an operator seeing
+	// placement.eligible=true must not conclude the backend runs — the
+	// join with live runtime observation travels separately). Non-nil;
+	// empty for models without a manifest.
+	BackendPresence []BackendPresence `json:"backend_presence"`
+	// ArtifactVerification — the RECORDED artifact verification for this
+	// model (from the operator-triggered `--verify-manifests` pass). nil
+	// when no verification record exists — an honest absent, never a
+	// fabricated "verified" (KPK-19.7.0-P2-04). The admission gate
+	// refuses models whose verification is absent.
+	ArtifactVerification *modelmeta.ArtifactVerification `json:"artifact_verification,omitempty"`
 }
 
 // Freshness is the serve-time staleness evaluation (roadmap §5.6: the
@@ -194,46 +211,58 @@ func BuildSnapshotV2() (*InventorySnapshotV2, error) {
 	snap.Storage = devices
 	snap.Sources = append(snap.Sources, storageStatuses...)
 
-	// ---- GPUs (the frozen v1 collector) --------------------------------------
-	gpus := CollectGPUs()
+	// ---- GPUs (v19.7.1: the provenance-aware collector — unavailable ≠
+	// empty; KPK-19.7.0-P2-02) ---------------------------------------------
+	gpus, gpuStatus := CollectGPUsWithStatus()
 	gpuHealth := CollectGPUHealth(gpus)
 	snap.GPUs = gpus
 	snap.Health = append(snap.Health, gpuHealth...)
-	gpuStatus := storage.SourceStatus{
-		Component: "gpus",
-		Source:    "nvidia-smi",
-		Status:    "ok",
-		Detail:    fmt.Sprintf("%d GPUs observed", len(gpus)),
-	}
-	if len(gpus) == 0 {
-		gpuStatus.Status = "empty"
-		gpuStatus.Detail = "nvidia-smi reported no GPUs (unavailable, no driver, or a CPU-only host — honest empty, not an error)"
-	}
 	snap.Sources = append(snap.Sources, gpuStatus)
 
-	// ---- runtimes (the frozen v1 collector) -----------------------------------
-	runtimes := CollectRuntimes()
+	// ---- runtimes (v19.7.1: the static catalog and the live docker
+	// observation are separate facts; KPK-19.7.0-P2-02) ---------------------
+	runtimes, rtStatus := CollectRuntimesWithStatus()
 	snap.Runtimes = runtimes
-	rtStatus := storage.SourceStatus{
-		Component: "runtimes",
-		Source:    "docker ps+compose config (CollectRuntimes)",
-		Status:    "ok",
-		Detail:    fmt.Sprintf("%d runtimes observed", len(runtimes)),
-	}
-	if len(runtimes) == 0 {
-		rtStatus.Status = "empty"
-		rtStatus.Detail = "no runtimes detected (docker unavailable or no containers — honest empty)"
-	}
 	snap.Sources = append(snap.Sources, rtStatus)
-	snap.Health = append(snap.Health, CollectRuntimeHealth(runtimes)...)
+	runtimeHealth := CollectRuntimeHealth(runtimes)
+	snap.Health = append(snap.Health, runtimeHealth...)
 
 	// ---- models: v1 catalog + manifest join -----------------------------------
 	models := CollectModels()
 	manifests := modelmeta.LoadManifests(modelmeta.ResolveManifestsDir())
 
+	// The recorded artifact verifications (operator-triggered pass; an
+	// absent store is the honest default — KPK-19.7.0-P2-04).
+	verifications := map[string]modelmeta.ArtifactVerification{}
+	verifPath := modelmeta.ResolveVerificationStorePath(manifests.Dir)
+	verifStatus := storage.SourceStatus{
+		Component: "models.verification",
+		Source:    "verification store",
+		Status:    "empty",
+		Detail:    "no artifact verification recorded — run scarlix-inventory --verify-manifests (declared digests are NOT byte-verified until then)",
+	}
+	if verifPath != "" {
+		verifStatus.Source = "verification store: " + verifPath
+		if v, err := modelmeta.LoadVerificationStore(verifPath); err != nil {
+			verifStatus.Status = "unavailable"
+			verifStatus.Detail = fmt.Sprintf("verification store unusable: %v (fail-closed — declared digests stay unverified)", err)
+		} else if len(v) > 0 {
+			verifications = v
+			verifiedCount := 0
+			for _, rec := range v {
+				if rec.AllVerified {
+					verifiedCount++
+				}
+			}
+			verifStatus.Status = "ok"
+			verifStatus.Detail = fmt.Sprintf("%d verification records (%d fully verified) — recorded digests, timestamps, and paths; admission refuses absent/stale records", len(v), verifiedCount)
+		}
+	}
+	snap.Sources = append(snap.Sources, verifStatus)
+
 	byID := make(map[string]modelmeta.Manifest, len(manifests.Manifests))
 	for _, m := range manifests.Manifests {
-		byID[m.ID] = m
+		byID[m.ID] = m // duplicate IDs were group-rejected at load (KPK-19.7.0-P2-04)
 	}
 	invalidByID := make(map[string]string, len(manifests.Invalid)) // id → "invalid:<path>"
 	for _, inv := range manifests.Invalid {
@@ -248,8 +277,9 @@ func BuildSnapshotV2() (*InventorySnapshotV2, error) {
 
 	for _, m := range models {
 		view := ModelExecutionView{
-			Catalog:        m,
-			ManifestStatus: "none",
+			Catalog:         m,
+			ManifestStatus:  "none",
+			BackendPresence: []BackendPresence{},
 			Placement: modelmeta.PlacementEligibility{
 				Eligible: false,
 				Reasons:  []string{"no verified manifest declares this model — execution metadata unknown, not defaulted"},
@@ -258,8 +288,15 @@ func BuildSnapshotV2() (*InventorySnapshotV2, error) {
 		if mm, ok := byID[m.ID]; ok {
 			exec := mm.Execution(filepath.Join(manifests.Dir, m.ID+".manifest.yaml"))
 			view.Execution = &exec
-			view.ManifestStatus = "verified"
+			view.ManifestStatus = "declared"
 			view.Placement = modelmeta.PlacementEligible(&mm)
+			// The declared-vs-observed backend join (KPK-19.7.0-P2-04 of the
+			// KpK audit: eligible ≠ running — presence is a separate fact).
+			view.BackendPresence = backendPresenceFor(mm.Runtime.SupportedBackends, runtimes, runtimeHealth)
+			if rec, ok := verifications[m.ID]; ok {
+				vcopy := rec
+				view.ArtifactVerification = &vcopy
+			}
 		} else if status, ok := invalidByID[m.ID]; ok {
 			view.ManifestStatus = status
 			view.Placement = modelmeta.PlacementEligibility{
@@ -286,7 +323,7 @@ func BuildSnapshotV2() (*InventorySnapshotV2, error) {
 		Component: "models.manifests",
 		Source:    "manifests dir: " + manifests.Dir,
 		Status:    "ok",
-		Detail:    fmt.Sprintf("%d verified, %d invalid", len(manifests.Manifests), len(manifests.Invalid)),
+		Detail:    fmt.Sprintf("%d declared (schema-valid), %d invalid", len(manifests.Manifests), len(manifests.Invalid)),
 	}
 	switch {
 	case manifests.DirError != "":

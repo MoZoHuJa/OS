@@ -126,7 +126,8 @@ func TestInventoryV2FullShape(t *testing.T) {
 }
 
 func TestInventoryV2StaleMarking(t *testing.T) {
-	// A 5-minute-old snapshot under the 60s default policy → stale=true.
+	// A 5-minute-old snapshot under the 60s default policy → stale=true,
+	// served with the marker (the DEFAULT informational semantics).
 	_, mux := newInventoryV2TestHandler(t, fixedSnapshot(5*time.Minute))
 	req := httptest.NewRequest(http.MethodGet, "/api/inventory/v2", nil)
 	req.Header.Set("Authorization", "Bearer secret")
@@ -143,6 +144,60 @@ func TestInventoryV2StaleMarking(t *testing.T) {
 	}
 	if env.Freshness.AgeSeconds < 299 {
 		t.Errorf("age_seconds=%v, want >= 300", env.Freshness.AgeSeconds)
+	}
+}
+
+// TestInventoryV2RejectStaleGate (v19.7.1, KPK-19.7.0-P2-01 of the KpK
+// audit): with SCARLIHQ_INVENTORY_REJECT_STALE=true a stale snapshot is
+// HARD-REFUSED (503, named error) instead of served with a marker — the
+// strict-consumer enforcement of "never reuse stale data as capacity".
+func TestInventoryV2RejectStaleGate(t *testing.T) {
+	t.Setenv("SCARLIHQ_INVENTORY_REJECT_STALE", "true")
+	_, mux := newInventoryV2TestHandler(t, fixedSnapshot(5*time.Minute))
+	req := httptest.NewRequest(http.MethodGet, "/api/inventory/v2", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d, want 503 under the strict gate (body: %s)", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Error     string              `json:"error"`
+		Message   string              `json:"message"`
+		Freshness inventory.Freshness `json:"freshness"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if env.Error != "inventory snapshot stale" {
+		t.Errorf("error=%q, want the named stale refusal", env.Error)
+	}
+	if !env.Freshness.Stale {
+		t.Errorf("the refusal must carry the freshness evidence: %+v", env.Freshness)
+	}
+
+	// The same strict gate PASSES a fresh snapshot.
+	_, mux2 := newInventoryV2TestHandler(t, fixedSnapshot(0))
+	req2 := httptest.NewRequest(http.MethodGet, "/api/inventory/v2", nil)
+	req2.Header.Set("Authorization", "Bearer secret")
+	rec2 := httptest.NewRecorder()
+	mux2.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("fresh snapshot refused under the strict gate: %d %s", rec2.Code, rec2.Body.String())
+	}
+}
+
+// TestInventoryV2RejectStaleDefaultOff: without the env, a stale
+// snapshot is SERVED with the marker (the default informational
+// semantics — the gate is opt-in per the audit's "optional" wording).
+func TestInventoryV2RejectStaleDefaultOff(t *testing.T) {
+	_, mux := newInventoryV2TestHandler(t, fixedSnapshot(5*time.Minute))
+	req := httptest.NewRequest(http.MethodGet, "/api/inventory/v2", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200 (the strict gate is opt-in)", rec.Code)
 	}
 }
 

@@ -43,6 +43,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -75,6 +76,67 @@ func errBound(name string, got, min, max interface{}) error {
 // directory (the temp file is created inside it — benchmarking a specific
 // FILE is out of scope for v19.7.0).
 var ErrBenchmarkTarget = errors.New("benchmark target must be an existing directory")
+
+// ErrBenchmarkTargetDenied is returned when the target path lies under a
+// well-known MODEL STORE root (v19.7.1, KPK-19.7.0-P2-05: "do not
+// benchmark a mounted production model store without approval" — the
+// refusal is the approval door). The default denylist is "/models" (the
+// repo's canonical model store root, models.yaml model_path base);
+// SCARLIHQ_BENCHMARK_DENY_ROOTS overrides it with a colon-separated list
+// of absolute roots. An EXPLICIT EMPTY value (SCARLIHQ_BENCHMARK_DENY_ROOTS="")
+// disables the denylist — the operator's deliberate, documented decision to
+// benchmark a production store anyway.
+var ErrBenchmarkTargetDenied = errors.New("benchmark target is under a well-known model store root")
+
+// benchmarkDenyRoots resolves the denylist. Unset → the default ["/models"].
+// An EXPLICIT empty value → nil (the operator's documented decision to
+// disable the model-store refusal — the env knob is the approval door).
+func benchmarkDenyRoots() []string {
+	raw, ok := os.LookupEnv("SCARLIHQ_BENCHMARK_DENY_ROOTS")
+	if !ok {
+		return []string{"/models"}
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil // explicit empty — denylist deliberately disabled
+	}
+	var roots []string
+	for _, r := range strings.Split(raw, ":") {
+		if r = strings.TrimSpace(r); r != "" {
+			roots = append(roots, r)
+		}
+	}
+	return roots
+}
+
+// targetUnderRoot reports whether the cleaned target path lies under root
+// (or equals it). Both sides are evaluated through filepath.Clean; a
+// symlinked target is resolved first when possible (a bind-mounted model
+// store under an alias path is still a model store).
+func targetUnderRoot(target, root string) bool {
+	resolved := target
+	if t, err := filepath.EvalSymlinks(target); err == nil {
+		resolved = t
+	}
+	resolved = filepath.Clean(resolved)
+	root = filepath.Clean(root)
+	if resolved == root {
+		return true
+	}
+	return strings.HasPrefix(resolved, root+string(filepath.Separator))
+}
+
+// checkBenchmarkTargetDenylist refuses targets under any denied root,
+// naming the matched root and the override knob in the error.
+func checkBenchmarkTargetDenylist(target string) error {
+	for _, root := range benchmarkDenyRoots() {
+		if targetUnderRoot(target, root) {
+			return fmt.Errorf("%w: %s is under %s — a production model store is not benchmarked without approval; set SCARLIHQ_BENCHMARK_DENY_ROOTS to an explicit empty value to override deliberately (KPK-19.7.0-P2-05)",
+				ErrBenchmarkTargetDenied, target, root)
+		}
+	}
+	return nil
+}
 
 // BenchmarkOptions is the explicit, operator-supplied benchmark request.
 // Zero values are NOT defaults: Duration and FileSize are REQUIRED — an
@@ -130,6 +192,12 @@ func RunReadBenchmark(ctx context.Context, opts BenchmarkOptions) (*BenchmarkRes
 	if !info.IsDir() {
 		return nil, fmt.Errorf("%w: %q is not a directory", ErrBenchmarkTarget, opts.TargetPath)
 	}
+	// v19.7.1 (KPK-19.7.0-P2-05): the well-known model-store roots are
+	// refused by default — the operator must explicitly lift the denylist
+	// to benchmark a production model store.
+	if err := checkBenchmarkTargetDenylist(opts.TargetPath); err != nil {
+		return nil, err
+	}
 	if opts.Duration < MinBenchmarkDuration || opts.Duration > MaxBenchmarkDuration {
 		return nil, errBound("duration", opts.Duration, MinBenchmarkDuration, MaxBenchmarkDuration)
 	}
@@ -143,6 +211,12 @@ func RunReadBenchmark(ctx context.Context, opts BenchmarkOptions) (*BenchmarkRes
 	if block < MinBenchmarkBlock || block > MaxBenchmarkBlock {
 		return nil, errBound("block_size", block, MinBenchmarkBlock, MaxBenchmarkBlock)
 	}
+	// The context bounds the WHOLE run (fill + warm + measured read) —
+	// an already-cancelled context refuses BEFORE anything is written
+	// (KPK-19.7.0-P2-03: "cancel before fill starts → no temp file").
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("benchmark refused before start: %w", err)
+	}
 
 	// --- the identifiable temp artifact --------------------------------------
 	rnd := make([]byte, 8)
@@ -152,53 +226,70 @@ func RunReadBenchmark(ctx context.Context, opts BenchmarkOptions) (*BenchmarkRes
 	profileID := hex.EncodeToString(rnd)
 	tmp := filepath.Join(opts.TargetPath, benchFilePrefix+profileID)
 
-	removeTemp := func() {
+	// removeTemp removes the artifact and RETURNS the failure (v19.7.1,
+	// KPK-19.7.0-P2-03: a failed cleanup is reported to the caller in the
+	// returned error — never only a stderr print the caller cannot see).
+	removeTemp := func() error {
 		if rmErr := os.Remove(tmp); rmErr != nil && !os.IsNotExist(rmErr) {
-			fmt.Fprintf(os.Stderr, "storage: benchmark temp file removal failed: %v (artifact: %s)\n", rmErr, tmp)
+			return fmt.Errorf("benchmark temp file removal failed (artifact left at %s): %w", tmp, rmErr)
 		}
+		return nil
 	}
 
 	// Fill: non-uniform content so the read measures transfer, not a
 	// zero-page replay. 1 MiB of random seed replicated to FileSize.
-	f, err := os.Create(tmp)
+	//
+	// KPK-19.7.0-P2-03: EXCLUSIVE creation (O_CREATE|O_EXCL) — a same-name
+	// artifact can never be TRUNCATED-over, and the fill loop checks the
+	// context BEFORE every chunk and BEFORE Sync, so a cancelled benchmark
+	// stops writing promptly, cleans up, and returns the wrapped context
+	// error (plus any cleanup failure).
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("benchmark temp file create failed: %w", err)
 	}
 	seed := make([]byte, 1<<20)
 	if _, err := rand.Read(seed); err != nil {
-		f.Close()
-		removeTemp()
-		return nil, fmt.Errorf("benchmark fill seed unavailable: %w", err)
+		_ = f.Close()
+		return nil, fmt.Errorf("benchmark fill seed unavailable: %w", joinErr(removeTemp(), err))
 	}
 	var written int64
 	for written < opts.FileSize {
+		if cerr := ctx.Err(); cerr != nil {
+			_ = f.Close()
+			return nil, fmt.Errorf("benchmark cancelled during fill at %d/%d bytes: %w", written, opts.FileSize, joinErr(removeTemp(), cerr))
+		}
 		n := int64(len(seed))
 		if rem := opts.FileSize - written; rem < n {
 			n = rem
 		}
 		if _, err := f.Write(seed[:n]); err != nil {
-			f.Close()
-			removeTemp()
-			return nil, fmt.Errorf("benchmark fill write failed at %d bytes: %w", written, err)
+			_ = f.Close()
+			return nil, fmt.Errorf("benchmark fill write failed at %d bytes: %w", written, joinErr(removeTemp(), err))
 		}
 		written += n
 	}
+	if cerr := ctx.Err(); cerr != nil {
+		// Cancellation landed between the last chunk and the sync — the file
+		// is complete but unflushed; do NOT sync it (the acceptance case
+		// "cancellation immediately before sync → no sync of a fully filled
+		// test file").
+		_ = f.Close()
+		return nil, fmt.Errorf("benchmark cancelled before sync after filling %d bytes: %w", written, joinErr(removeTemp(), cerr))
+	}
 	if err := f.Sync(); err != nil {
-		f.Close()
-		removeTemp()
-		return nil, fmt.Errorf("benchmark fill sync failed: %w", err)
+		_ = f.Close()
+		return nil, fmt.Errorf("benchmark fill sync failed: %w", joinErr(removeTemp(), err))
 	}
 	if err := f.Close(); err != nil {
-		removeTemp()
-		return nil, fmt.Errorf("benchmark fill close failed: %w", err)
+		return nil, fmt.Errorf("benchmark fill close failed: %w", joinErr(removeTemp(), err))
 	}
 
 	// Warm pass: one full read so the page cache carries the file's
 	// steady-state residency before measurement (documented limitation —
 	// see package doc).
 	if err := readAll(ctx, tmp, block); err != nil {
-		removeTemp()
-		return nil, fmt.Errorf("benchmark warm pass failed: %w", err)
+		return nil, fmt.Errorf("benchmark warm pass failed: %w", joinErr(removeTemp(), err))
 	}
 
 	// Measured pass: sequential reads for the requested window.
@@ -208,13 +299,11 @@ func RunReadBenchmark(ctx context.Context, opts BenchmarkOptions) (*BenchmarkRes
 measure:
 	for {
 		if err := ctx.Err(); err != nil {
-			removeTemp()
-			return nil, fmt.Errorf("benchmark cancelled after %d bytes: %w", total, err)
+			return nil, fmt.Errorf("benchmark cancelled after %d bytes: %w", total, joinErr(removeTemp(), err))
 		}
 		rf, err := os.Open(tmp)
 		if err != nil {
-			removeTemp()
-			return nil, fmt.Errorf("benchmark read open failed: %w", err)
+			return nil, fmt.Errorf("benchmark read open failed: %w", joinErr(removeTemp(), err))
 		}
 		for {
 			if nowFn().Sub(start) >= opts.Duration {
@@ -228,19 +317,21 @@ measure:
 			}
 			if rerr != nil {
 				rf.Close()
-				removeTemp()
-				return nil, fmt.Errorf("benchmark read failed after %d bytes: %w", total, rerr)
+				return nil, fmt.Errorf("benchmark read failed after %d bytes: %w", total, joinErr(removeTemp(), rerr))
 			}
 		}
 		rf.Close()
 	}
 	elapsed := nowFn().Sub(start)
 	if elapsed <= 0 || total == 0 {
-		removeTemp()
-		return nil, fmt.Errorf("benchmark window degenerate (elapsed %v, read %d bytes) — no measurement recorded", elapsed, total)
+		return nil, fmt.Errorf("benchmark window degenerate (elapsed %v, read %d bytes) — no measurement recorded: %w", elapsed, total, removeTemp())
 	}
 
-	removeTemp()
+	if rerr := removeTemp(); rerr != nil {
+		// The measurement stands; the cleanup failure is still reported
+		// (never silently swallowed) — the operator learns the artifact path.
+		return nil, fmt.Errorf("benchmark completed but cleanup failed: %w", rerr)
+	}
 
 	mbps := float64(total) / elapsed.Seconds() / 1e6
 	return &BenchmarkResult{
@@ -281,4 +372,15 @@ func readAll(ctx context.Context, path string, block int) error {
 			return rerr
 		}
 	}
+}
+
+// joinErr folds a cleanup failure into the primary error so BOTH reach
+// the caller (KPK-19.7.0-P2-03: "if cleanup fails, return the cleanup
+// failure alongside the cancellation error"). The primary error stays
+// the outer one — errors.Is(err, context.Canceled) keeps working.
+func joinErr(cleanupErr, primary error) error {
+	if cleanupErr == nil {
+		return primary
+	}
+	return fmt.Errorf("%v (cleanup also failed: %v)", primary, cleanupErr)
 }

@@ -212,12 +212,38 @@ server:/export /mnt/remote nfs4 ro 0 0
 	if len(nvme.MountPoints) != 2 || nvme.MountPoints[0] != "/" || nvme.MountPoints[1] != "/data" {
 		t.Errorf("nvme mounts=%v, want [/ /data]", nvme.MountPoints)
 	}
-	// Capacity from the FIRST mount (/): 1000*4096.
-	if nvme.CapacityBytes != 1000*4096 {
-		t.Errorf("nvme capacity=%d, want %d", nvme.CapacityBytes, 1000*4096)
+	// v19.7.1 (KPK-19.7.0-P2-01): capacity is the AGGREGATE across the
+	// device's DISTINCT filesystems — / (1000 blocks) + /data (2000
+	// blocks), each counted once. The old release reported only the
+	// first mount's 1000*4096, silently losing /data's capacity.
+	if nvme.CapacityBytes != (1000+2000)*4096 {
+		t.Errorf("nvme capacity=%d, want %d (both partitions' filesystems)", nvme.CapacityBytes, (1000+2000)*4096)
 	}
-	if nvme.AvailableBytes != 400*4096 {
-		t.Errorf("nvme available=%d, want %d", nvme.AvailableBytes, 400*4096)
+	if nvme.AvailableBytes != (400+1500)*4096 {
+		t.Errorf("nvme available=%d, want %d", nvme.AvailableBytes, (400+1500)*4096)
+	}
+	// Per-filesystem view: BOTH partitions represented with their own
+	// figures (the P2-01 acceptance test).
+	if len(nvme.Filesystems) != 2 {
+		t.Fatalf("nvme filesystems=%d, want 2 (the two partitions): %+v", len(nvme.Filesystems), nvme.Filesystems)
+	}
+	if nvme.Filesystems[0].Source != "/dev/nvme0n1p2" || nvme.Filesystems[0].MountPoints[0] != "/" {
+		t.Errorf("fs[0] source=%q mounts=%v", nvme.Filesystems[0].Source, nvme.Filesystems[0].MountPoints)
+	}
+	if nvme.Filesystems[1].Source != "/dev/nvme0n1p3" || nvme.Filesystems[1].MountPoints[0] != "/data" {
+		t.Errorf("fs[1] source=%q mounts=%v", nvme.Filesystems[1].Source, nvme.Filesystems[1].MountPoints)
+	}
+	if nvme.Filesystems[0].CapacityBytes != 1000*4096 || nvme.Filesystems[1].CapacityBytes != 2000*4096 {
+		t.Errorf("fs capacities=%d/%d, want %d/%d", nvme.Filesystems[0].CapacityBytes, nvme.Filesystems[1].CapacityBytes, 1000*4096, 2000*4096)
+	}
+	if nvme.Filesystems[0].AvailableBytes != 400*4096 || nvme.Filesystems[1].AvailableBytes != 1500*4096 {
+		t.Errorf("fs available=%d/%d, want %d/%d", nvme.Filesystems[0].AvailableBytes, nvme.Filesystems[1].AvailableBytes, 400*4096, 1500*4096)
+	}
+	if !nvme.Filesystems[0].Healthy || !nvme.Filesystems[1].Healthy {
+		t.Errorf("fs healthy=%v/%v, want both true", nvme.Filesystems[0].Healthy, nvme.Filesystems[1].Healthy)
+	}
+	if nvme.Filesystems == nil || nvme.Filesystems[0].Sources == nil || nvme.Filesystems[0].MountPoints == nil {
+		t.Errorf("filesystems/sources/mount_points must be non-nil (the []-not-null contract)")
 	}
 	// Mixed rw (/ and /data) + ro (/backup is sda, not nvme) → not ro.
 	if nvme.ReadOnly {
@@ -260,6 +286,9 @@ server:/export /mnt/remote nfs4 ro 0 0
 	}
 	if net.ReadOnly != true {
 		t.Errorf("network read_only=%v, want true (ro in opts)", net.ReadOnly)
+	}
+	if len(net.Filesystems) != 1 || net.Filesystems[0].MountPoints[0] != "/mnt/remote" || !net.Filesystems[0].ReadOnly {
+		t.Errorf("network filesystems=%+v, want one ro entry for /mnt/remote", net.Filesystems)
 	}
 
 	if statuses == nil {
@@ -330,6 +359,226 @@ func TestCollectDevicesUnavailableMounts(t *testing.T) {
 	}
 	if statuses[0].Status != "unavailable" {
 		t.Errorf("status=%q, want unavailable", statuses[0].Status)
+	}
+}
+
+// TestCollectDevicesBindMountNoDoubleCount (KPK-19.7.0-P2-01 acceptance):
+// the SAME filesystem mounted at several points (bind mounts / btrfs
+// subvolumes share the mount source) is ONE Filesystem entry — capacity
+// counted ONCE, every mount point listed.
+func TestCollectDevicesBindMountNoDoubleCount(t *testing.T) {
+	withSeams(t, "", map[string]string{
+		"/proc/self/mounts": `/dev/nvme0n1p2 / btrfs rw,relatime,ssd 0 0
+/dev/nvme0n1p2 /home btrfs rw,relatime,ssd,subvol=@home 0 0
+/dev/nvme0n1p2 /mnt/bind btrfs rw,relatime,ssd,subvol=@home,bind 0 0
+`,
+	}, map[string][]string{"/sys/block": {"nvme0n1"}},
+		map[string]syscall.Statfs_t{"/": {Blocks: 500, Bsize: 4096, Bavail: 250}},
+		nil, nil)
+
+	devices, _ := CollectDevices()
+	if len(devices) != 1 {
+		t.Fatalf("devices=%d, want 1", len(devices))
+	}
+	d := devices[0]
+	if len(d.Filesystems) != 1 {
+		t.Fatalf("filesystems=%d, want 1 (all three mounts are ONE btrfs): %+v", len(d.Filesystems), d.Filesystems)
+	}
+	if d.CapacityBytes != 500*4096 {
+		t.Errorf("capacity=%d, want %d (counted ONCE — no double counting)", d.CapacityBytes, 500*4096)
+	}
+	if d.AvailableBytes != 250*4096 {
+		t.Errorf("available=%d, want %d", d.AvailableBytes, 250*4096)
+	}
+	if len(d.Filesystems[0].MountPoints) != 3 {
+		t.Errorf("fs mount_points=%v, want all three", d.Filesystems[0].MountPoints)
+	}
+	if len(d.MountPoints) != 3 {
+		t.Errorf("device mount_points=%v, want all three", d.MountPoints)
+	}
+	if d.ReadOnly {
+		t.Errorf("read_only=true, want false (all mounts rw)")
+	}
+}
+
+// TestCollectDevicesFSTypesNotCollapsed (KPK-19.7.0-P2-01 acceptance):
+// different filesystem types on one physical disk are NOT silently
+// collapsed into the first filesystem's type — each entry keeps its own.
+func TestCollectDevicesFSTypesNotCollapsed(t *testing.T) {
+	withSeams(t, "", map[string]string{
+		"/proc/self/mounts": `/dev/sda2 / ext4 rw,relatime 0 0
+/dev/sda3 /data btrfs rw,relatime,ssd 0 0
+`,
+	}, map[string][]string{"/sys/block": {"sda"}},
+		map[string]syscall.Statfs_t{
+			"/":     {Blocks: 100, Bsize: 4096, Bavail: 40},
+			"/data": {Blocks: 700, Bsize: 4096, Bavail: 300},
+		},
+		nil, nil)
+
+	devices, _ := CollectDevices()
+	if len(devices) != 1 {
+		t.Fatalf("devices=%d, want 1", len(devices))
+	}
+	d := devices[0]
+	if len(d.Filesystems) != 2 {
+		t.Fatalf("filesystems=%d, want 2: %+v", len(d.Filesystems), d.Filesystems)
+	}
+	if d.Filesystems[0].FSType != "ext4" || d.Filesystems[1].FSType != "btrfs" {
+		t.Errorf("fs types=%q/%q, want ext4/btrfs (not collapsed)", d.Filesystems[0].FSType, d.Filesystems[1].FSType)
+	}
+	if d.CapacityBytes != (100+700)*4096 {
+		t.Errorf("capacity=%d, want %d", d.CapacityBytes, (100+700)*4096)
+	}
+}
+
+// TestCollectDevicesPartialStatfs (KPK-19.7.0-P2-01 acceptance): a failed
+// statfs for ONE partition marks that partition partial WITHOUT erasing
+// the others — the healthy filesystem keeps its figures, the device
+// carries the degraded state, a partial source status names the failure.
+func TestCollectDevicesPartialStatfs(t *testing.T) {
+	withSeams(t, "", map[string]string{
+		"/proc/self/mounts": `/dev/nvme0n1p2 / ext4 rw,relatime 0 0
+/dev/nvme0n1p3 /data ext4 rw,relatime 0 0
+`,
+	}, map[string][]string{"/sys/block": {"nvme0n1"}},
+		map[string]syscall.Statfs_t{"/": {Blocks: 1000, Bsize: 4096, Bavail: 400}},
+		nil,
+		map[string]error{"/data": os.ErrPermission})
+
+	devices, statuses := CollectDevices()
+	if len(devices) != 1 {
+		t.Fatalf("devices=%d, want 1", len(devices))
+	}
+	d := devices[0]
+	if len(d.Filesystems) != 2 {
+		t.Fatalf("filesystems=%d, want 2 (the failed one is PRESENT, not erased): %+v", len(d.Filesystems), d.Filesystems)
+	}
+	if !d.Filesystems[0].Healthy || d.Filesystems[0].CapacityBytes != 1000*4096 {
+		t.Errorf("fs[0] healthy=%v capacity=%d — the healthy partition must keep its figures", d.Filesystems[0].Healthy, d.Filesystems[0].CapacityBytes)
+	}
+	if d.Filesystems[1].Healthy || d.Filesystems[1].CapacityBytes != 0 {
+		t.Errorf("fs[1] healthy=%v capacity=%d — the failed partition must be degraded/unknown", d.Filesystems[1].Healthy, d.Filesystems[1].CapacityBytes)
+	}
+	if d.CapacityBytes != 1000*4096 {
+		t.Errorf("device capacity=%d, want only the healthy filesystem's %d", d.CapacityBytes, 1000*4096)
+	}
+	if d.Healthy {
+		t.Errorf("device healthy=true, want false (one filesystem degraded)")
+	}
+	var foundPartial bool
+	for _, s := range statuses {
+		if s.Status == "partial" && strings.Contains(s.Source, "statfs:/data") {
+			foundPartial = true
+		}
+	}
+	if !foundPartial {
+		t.Errorf("no partial source status names the failed statfs: %+v", statuses)
+	}
+}
+
+// TestMountReadOnlyExactToken (KPK-19.7.0-P3-05 acceptance): mount-option
+// tokens are compared EXACTLY — "errors=remount-ro" is a read-write mount;
+// option ordering does not change the result.
+func TestMountReadOnlyExactToken(t *testing.T) {
+	cases := []struct {
+		opts string
+		want bool
+	}{
+		{"rw,relatime,errors=remount-ro,commit=60", false},
+		{"rw,errors=remount-ro", false},
+		{"errors=remount-ro,rw", false},
+		{"ro,relatime", true},
+		{"relatime,ro", true},
+		{"ro", true},
+		{"rw,relatime", false},
+		{"rw", false},
+	}
+	for _, c := range cases {
+		if got := mountIsReadOnly(c.opts); got != c.want {
+			t.Errorf("mountIsReadOnly(%q)=%v, want %v", c.opts, got, c.want)
+		}
+	}
+}
+
+// TestCollectDevicesRemountRONotReadOnly (KPK-19.7.0-P3-05): the local
+// device path uses the exact token parse — an errors=remount-ro root
+// mount is NOT a read-only device (the old substring check
+// false-positived on "ro," inside "remount-ro,").
+func TestCollectDevicesRemountRONotReadOnly(t *testing.T) {
+	withSeams(t, "", map[string]string{
+		"/proc/self/mounts": `/dev/sda2 / ext4 rw,relatime,errors=remount-ro,commit=60 0 0
+`,
+	}, map[string][]string{"/sys/block": {"sda"}},
+		map[string]syscall.Statfs_t{"/": {Blocks: 100, Bsize: 4096, Bavail: 40}},
+		nil, nil)
+
+	devices, _ := CollectDevices()
+	if len(devices) != 1 {
+		t.Fatalf("devices=%d, want 1", len(devices))
+	}
+	if devices[0].ReadOnly {
+		t.Errorf("read_only=true for a rw,errors=remount-ro mount — the exact-token parse must say false")
+	}
+	if len(devices[0].Filesystems) != 1 || devices[0].Filesystems[0].ReadOnly {
+		t.Errorf("filesystem read_only must be false for errors=remount-ro")
+	}
+}
+
+// TestCollectDevicesMixedROMounts (KPK-19.7.0-P3-05 acceptance): mixed
+// ro and rw mount points on one device → device-level read_only=false,
+// with per-filesystem states preserved.
+func TestCollectDevicesMixedROMounts(t *testing.T) {
+	withSeams(t, "", map[string]string{
+		"/proc/self/mounts": `/dev/sda2 / ext4 rw,relatime 0 0
+/dev/sda3 /archive ext4 ro,relatime 0 0
+`,
+	}, map[string][]string{"/sys/block": {"sda"}},
+		map[string]syscall.Statfs_t{
+			"/":        {Blocks: 100, Bsize: 4096, Bavail: 40},
+			"/archive": {Blocks: 100, Bsize: 4096, Bavail: 40},
+		},
+		nil, nil)
+
+	devices, _ := CollectDevices()
+	if len(devices) != 1 {
+		t.Fatalf("devices=%d, want 1", len(devices))
+	}
+	d := devices[0]
+	if d.ReadOnly {
+		t.Errorf("device read_only=true, want false (mixed ro/rw)")
+	}
+	if len(d.Filesystems) != 2 || d.Filesystems[0].ReadOnly || !d.Filesystems[1].ReadOnly {
+		t.Errorf("per-filesystem ro=%v/%v, want false/true (per-fs states preserved)", d.Filesystems[0].ReadOnly, d.Filesystems[1].ReadOnly)
+	}
+}
+
+// TestCollectDevicesFSIDAliasMerge (KPK-19.7.0-P2-01): two different
+// source paths with ONE non-zero statfs fsid under one parent device are
+// one filesystem observed twice — merged, capacity counted once.
+func TestCollectDevicesFSIDAliasMerge(t *testing.T) {
+	st := syscall.Statfs_t{Blocks: 300, Bsize: 4096, Bavail: 100, Fsid: syscall.Fsid{X__val: [2]int32{0x1234, 0x5678}}}
+	withSeams(t, "", map[string]string{
+		"/proc/self/mounts": `/dev/sda1 /primary ext4 rw,relatime 0 0
+/dev/sda /alias ext4 rw,relatime 0 0
+`,
+	}, map[string][]string{"/sys/block": {"sda"}},
+		map[string]syscall.Statfs_t{"/primary": st, "/alias": st},
+		nil, nil)
+
+	devices, _ := CollectDevices()
+	if len(devices) != 1 {
+		t.Fatalf("devices=%d, want 1 (both sources parent to sda)", len(devices))
+	}
+	d := devices[0]
+	if len(d.Filesystems) != 1 {
+		t.Fatalf("filesystems=%d, want 1 (fsid alias merged): %+v", len(d.Filesystems), d.Filesystems)
+	}
+	if d.CapacityBytes != 300*4096 {
+		t.Errorf("capacity=%d, want %d (the aliased filesystem counted ONCE)", d.CapacityBytes, 300*4096)
+	}
+	if len(d.Filesystems[0].MountPoints) != 2 || len(d.Filesystems[0].Sources) != 2 {
+		t.Errorf("fs mounts/sources=%v/%v, want both recorded", d.Filesystems[0].MountPoints, d.Filesystems[0].Sources)
 	}
 }
 
