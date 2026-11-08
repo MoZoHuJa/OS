@@ -1,7 +1,7 @@
 # ScarLiX OS v19.7.2 — Compute Fabric Phase 3: Backend Capability Contracts + Deterministic Execution Planner
 
 **Release:** v19.7.2
-**Commit:** (recorded at packaging — the release-notes genre: the hash lands with the tag)
+**Commit:** [`9afabc67956a81a9e78add20c9be16043a9c385e`](https://github.com/MoZoHuJa/OS/commit/9afabc67956a81a9e78add20c9be16043a9c385e) — recorded at packaging (the release-notes genre: the hash lands with the tag)
 **Baseline commit (pre-change):** `de4896c` (v19.7.1 release-notes hash record)
 **Date:** 2026-11-08
 **Scope:** Compute Fabric **Phase 3 — Backend Capability Contract and
