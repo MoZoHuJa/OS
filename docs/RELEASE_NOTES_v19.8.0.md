@@ -270,3 +270,31 @@ TRANSPORT provider (it is not an HTTP chat runtime).
   conservative allocatable I/O budget from THEIR runs and declares it
   as the profile's floors — the qualification compares
   measured-vs-declared, never advertised-vs-hoped.
+
+## Post-release note: the Pi-Bolt installer pin drift (external, remediated on main)
+
+The `Pin Freshness` CI job on the v19.8.0 tag failed with a REAL
+external finding, caught exactly as designed (KPK-19.2.13-P2-01): the
+upstream Pi-Bolt installer at `https://pi-bolt.opensec.in/install.sh`
+changed — the live SHA-256
+(`91918786f9341ef7d5ef1bf1db6fabeaffdf0434835c9412055bbc5c5fedac39`)
+no longer matched the shipped pin
+(`e5ac52303cf213aeac1e4cf842edfeac63b1472c3061fe090e41d828a0a1cef0`,
+last verified 2026-10-27). This is upstream's release act, not a
+repository regression — no ScarLiX code or configuration changed the
+pin.
+
+The remediation followed the check's own instruction — refresh
+DELIBERATELY: the new installer was downloaded and inspected
+(the documented installer structure unchanged: release download +
+SHA-256 checksum + signature verification against the release public
+key, install to `~/.pi-bolt`, npm-registry/GitHub sources only, no
+`curl | sh` execution patterns, no obfuscation, no unexpected
+destinations), the pin file
+`files/usr/local/share/scarlix/pi-bolt-install.sha256` was recomputed
+and refreshed, and the "last verified" dates in README.md and
+`docs/SCARLIX_SECURITY_MAP.md` moved to 2026-11-08 — a follow-up
+commit on main immediately after the release, recorded here by the
+v19.3.2 post-release-note precedent. The main `CI` workflow on the
+tag is unaffected (it does not run the pin-freshness job); the weekly
+scheduled job goes green again from the remediation commit.
