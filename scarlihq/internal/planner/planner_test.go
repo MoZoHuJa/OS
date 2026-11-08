@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/airuntime"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/backends/infer_ssd"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/modelmeta"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/storage"
@@ -268,7 +269,7 @@ func TestPlanGoldenPathDenseGPU(t *testing.T) {
 	if !hasProposal {
 		t.Fatalf("the explanation must carry the plan-is-proposal reason (admission still required)")
 	}
-	if res.PolicyVersion != "planner/v19.7.2" || res.SnapshotID != f.snap.SnapshotID {
+	if res.PolicyVersion != "planner/v19.8.0" || res.SnapshotID != f.snap.SnapshotID {
 		t.Fatalf("provenance missing: policy=%q snap=%q", res.PolicyVersion, res.SnapshotID)
 	}
 }
@@ -816,5 +817,333 @@ func TestPlanExperimentalBackendCarriedVisibly(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("the experimental selection must be visible in the explanation")
+	}
+}
+
+// ---- the v19.8.0 ssd-backed-moe suite (roadmap §8) -------------------------
+
+// ssdProfileFixture builds a standalone-valid ENABLED InferSSD runtime
+// profile bound to deepseek-moe-test @ cdcd... (the moeManifest fixture's
+// checkpoint).
+func ssdProfileFixture() *infer_ssd.RuntimeProfile {
+	p := &infer_ssd.RuntimeProfile{
+		SchemaVersion: "scarlix.runtime-profile/v1",
+		ProfileID:     "infer-ssd-moe-experimental",
+		BackendID:     "infer_ssd",
+		Enabled:       true,
+		Experimental:  true,
+	}
+	p.Image.Reference = "ghcr.io/scarlix/infer-ssd:v0.1@sha256:" + strings.Repeat("aa", 32)
+	p.Compatibility.ModelManifest = "deepseek-moe-test"
+	p.Compatibility.CheckpointSHA256 = strings.Repeat("cd", 32)
+	p.Compatibility.CUDA = "12.8"
+	p.Compatibility.DriverMinimum = "570.00"
+	p.Compatibility.GPUComputeCapabilities = []string{"sm_120"}
+	p.Execution.Strategy = infer_ssd.StrategySSDBackedMoE
+	p.Execution.ContextLimit = 8192
+	p.Execution.MaxConcurrentRequests = 1
+	p.Resources.GPU.Mode = "exclusive"
+	p.Resources.GPU.VRAMReserveBytes = 1 << 30
+	p.Resources.HostRAMBytes = 4 << 30
+	p.Resources.CPUThreads = 8
+	p.Resources.Storage.DeviceID = "storage.nvme.0"
+	p.Resources.Storage.ModelPath = "/var/lib/scarlix/models/deepseek-moe-test"
+	p.Resources.Storage.ExpertPath = "/var/lib/scarlix/experts/deepseek-moe-test"
+	p.Resources.Storage.MinimumFreeBytes = 64 << 30
+	p.Resources.Storage.MinimumReadMBps = 2000
+	p.Resources.Storage.MinimumRandomReadIOPS = 50000
+	p.Resources.Storage.MaximumP95LatencyMs = 1.5
+	p.Network.NetworkProfile = "scarlix-compute-internal"
+	p.Health.Type = "http"
+	p.Health.Path = "/health"
+	p.Health.StartupTimeoutSeconds = 600
+	return p
+}
+
+// ssdPlannerFixture extends the standard fixture with the §8 state: an
+// observed running+healthy infer_ssd runtime, a measured NVMe device,
+// and the MoE model bound to the profile (the model's context limit
+// fits the profile's ceiling — §8.2's binding rule).
+func ssdPlannerFixture() *plannerFixture {
+	f := newPlannerFixture()
+	f.snap.Runtimes = append(f.snap.Runtimes, inventory.Runtime{ID: "infer_ssd", Running: true, Healthy: true, Port: 30100})
+	f.snap.Storage = []storage.Device{{
+		ID:             "storage.nvme.0",
+		Kind:           storage.DeviceNVMe,
+		CapacityBytes:  2 << 40,
+		AvailableBytes: 1 << 40,
+		Healthy:        true,
+		ReadProfile: &storage.ReadProfile{
+			SequentialReadMBps: 3500,
+			RandomReadIOPS:     120000,
+			RandomReadP50Ms:    0.05,
+			RandomReadP95Ms:    0.8,
+			RandomReadP99Ms:    1.2,
+			RandomBlockBytes:   4 << 10,
+			QueueDepth:         1,
+			MeasuredAt:         f.snap.ObservedAt,
+			ProfileID:          "bench0001",
+		},
+	}}
+	// The §8.2-compatible GPU facts on both fixture GPUs (sm_120,
+	// CUDA 12.8, driver 570.86 ≥ 570.00).
+	for i := range f.snap.GPUs {
+		f.snap.GPUs[i].Vendor = "nvidia"
+		f.snap.GPUs[i].Name = "RTX 5060 Ti"
+		f.snap.GPUs[i].Driver = "570.86"
+		f.snap.GPUs[i].CUDA = "12.8"
+		f.snap.GPUs[i].ComputeCap = "12.0"
+	}
+	m := moeManifest() // context limit 32768 (the model's declared capability)
+	m.Runtime.SupportedBackends = []string{"infer_ssd"}
+	f.models.manifests["deepseek-moe-test"] = m
+	f.models.verifs["deepseek-moe-test"] = freshVerification("deepseek-moe-test", time.Hour)
+	f.policy.SSDProfile = ssdProfileFixture()
+	return f
+}
+
+// ssdRequest is the base request against the ssd fixture's model.
+func ssdRequest() ExecutionRequest {
+	req := baseRequest()
+	req.ModelID = "deepseek-moe-test"
+	req.ContextTokens = 4096
+	req.MaxConcurrent = 4 // the §8.8 cap must bound it to 1
+	return req
+}
+
+// TestPlanSSDBackedMoEGoldenPath: the full §8 chain passes — the
+// presence join observes the runtime, the profile binds the exact
+// checkpoint, the §8.2 GPU join passes, the §8.6 measured qualification
+// passes — and the plan carries the ssd-backed-moe strategy, the
+// profile as its config profile, the storage demand with the measured
+// floors, and the §8.8-capped concurrency.
+func TestPlanSSDBackedMoEGoldenPath(t *testing.T) {
+	f := ssdPlannerFixture()
+	res := f.planner(t).Plan(ssdRequest())
+	if !res.Selected || res.ReasonCode != ReasonPlanOK {
+		t.Fatalf("the golden ssd path must plan: %s — trail: %v", res.ReasonCode, res.Considered)
+	}
+	plan := res.Plan
+	if plan.BackendID != airuntime.BackendInferSSD {
+		t.Fatalf("backend: %s", plan.BackendID)
+	}
+	if plan.Strategy != StrategySSDBackedMoE {
+		t.Fatalf("strategy: %s, want ssd-backed-moe", plan.Strategy)
+	}
+	if plan.ConfigProfileID != f.policy.SSDProfile.ProfileID {
+		t.Fatalf("the config profile must be the runtime profile: %q", plan.ConfigProfileID)
+	}
+	if plan.MaxConcurrent != 1 {
+		t.Fatalf("the §8.8 cap must bound max_concurrent to 1: %d", plan.MaxConcurrent)
+	}
+	// The vector: VRAM = shared + KV + reserve (NOT the expert total —
+	// the experts live on the SSD); the storage demand rides along.
+	m := f.models.manifests["deepseek-moe-test"]
+	kv := uint64(4096) * m.Runtime.KVCache.BytesPerTokenEstimate
+	wantVRAM := m.Architecture.SharedBytes + kv + f.policy.SSDProfile.Resources.GPU.VRAMReserveBytes
+	if plan.ResourceVector.GPU[0].VRAMBytes != wantVRAM {
+		t.Fatalf("VRAM demand %d, want %d (shared + KV + reserve — the experts are paged)", plan.ResourceVector.GPU[0].VRAMBytes, wantVRAM)
+	}
+	experts := uint64(m.Architecture.ExpertCount) * m.Architecture.ExpertBytes
+	if len(plan.ResourceVector.Storage) != 1 || plan.ResourceVector.Storage[0].MinimumFreeBytes != experts+f.policy.SSDProfile.Resources.Storage.MinimumFreeBytes {
+		t.Fatalf("the storage demand must be the experts + the floor: %+v", plan.ResourceVector.Storage)
+	}
+	if plan.ResourceVector.Storage[0].MinimumRandomReadIOPS != f.policy.SSDProfile.Resources.Storage.MinimumRandomReadIOPS {
+		t.Fatalf("the measured random floor must ride the vector (admission revalidates): %+v", plan.ResourceVector.Storage[0])
+	}
+	// The explanation entries exist (profile bound, GPU join,
+	// qualification, the cap) + the backend-experimental flag is
+	// carried visibly.
+	codes := map[string]bool{}
+	for _, e := range plan.Explanation {
+		codes[e.Code] = true
+	}
+	for _, want := range []string{"ssd-profile-bound", "ssd-gpu-compatibility-joined", "ssd-qualified-measured", "ssd-concurrency-capped", "backend-experimental", "plan-is-proposal"} {
+		if !codes[want] {
+			t.Errorf("the explanation must carry %q; got %v", want, codes)
+		}
+	}
+	// The image is the PROFILE's digest-pinned reference.
+	if len(plan.RequiredImages) != 1 || plan.RequiredImages[0].Reference != f.policy.SSDProfile.Image.Reference || !plan.RequiredImages[0].DigestPinned {
+		t.Fatalf("the image must be the profile's pinned reference: %+v", plan.RequiredImages)
+	}
+}
+
+// TestPlanSSDProfileUnconfigured: an observed running infer_ssd runtime
+// with NO enabled profile refuses plan-ssd-profile-unconfigured — §8.8's
+// enablement policy is a hard constraint, not a warning.
+func TestPlanSSDProfileUnconfigured(t *testing.T) {
+	f := ssdPlannerFixture()
+	f.policy.SSDProfile = nil
+	res := f.planner(t).Plan(ssdRequest())
+	if res.Selected || res.ReasonCode != ReasonPlanSSDProfileUnconfigured {
+		t.Fatalf("got %s, want plan-ssd-profile-unconfigured (even a RUNNING infer_ssd runtime plans nothing without the operator's enabled profile)", res.ReasonCode)
+	}
+}
+
+// TestPlanSSDProfileModelMismatch: the profile binds a different
+// checkpoint — the §8.2 exact-combination rule refuses by name.
+func TestPlanSSDProfileModelMismatch(t *testing.T) {
+	f := ssdPlannerFixture()
+	f.policy.SSDProfile.Compatibility.ModelManifest = "another-model"
+	res := f.planner(t).Plan(ssdRequest())
+	if res.Selected || res.ReasonCode != ReasonPlanSSDProfileModelMismatch {
+		t.Fatalf("got %s, want plan-ssd-profile-model-mismatch", res.ReasonCode)
+	}
+	// A different checkpoint hash on the same model id refuses the same way.
+	f2 := ssdPlannerFixture()
+	f2.policy.SSDProfile.Compatibility.CheckpointSHA256 = strings.Repeat("ce", 32)
+	res2 := f2.planner(t).Plan(ssdRequest())
+	if res2.Selected || res2.ReasonCode != ReasonPlanSSDProfileModelMismatch {
+		t.Fatalf("got %s, want plan-ssd-profile-model-mismatch (checkpoint drift)", res2.ReasonCode)
+	}
+}
+
+// TestPlanProfileContextExceedsLimit: the request's context exceeds the
+// profile's serving ceiling — a second, tighter ceiling under the
+// model's own.
+func TestPlanProfileContextExceedsLimit(t *testing.T) {
+	f := ssdPlannerFixture()
+	req := ssdRequest()
+	req.ContextTokens = f.policy.SSDProfile.Execution.ContextLimit + 1
+	res := f.planner(t).Plan(req)
+	if res.Selected || res.ReasonCode != ReasonPlanProfileContextExceedsLimit {
+		t.Fatalf("got %s, want plan-context-exceeds-profile-limit", res.ReasonCode)
+	}
+}
+
+// TestPlanSSDDeviceUnknown: the profile's storage device is not in the
+// observed inventory.
+func TestPlanSSDDeviceUnknown(t *testing.T) {
+	f := ssdPlannerFixture()
+	f.policy.SSDProfile.Resources.Storage.DeviceID = "storage.nvme.9"
+	res := f.planner(t).Plan(ssdRequest())
+	if res.Selected || res.ReasonCode != ReasonPlanSSDDeviceUnknown {
+		t.Fatalf("got %s, want plan-ssd-device-unknown", res.ReasonCode)
+	}
+}
+
+// TestPlanSSDUnqualified: the device carries no MEASURED read profile —
+// a measured-performance floor without a measurement is a named refusal
+// (roadmap §8.6, never schedule from unverified estimates).
+func TestPlanSSDUnqualified(t *testing.T) {
+	f := ssdPlannerFixture()
+	f.snap.Storage[0].ReadProfile = nil
+	res := f.planner(t).Plan(ssdRequest())
+	if res.Selected || res.ReasonCode != ReasonPlanSSDUnqualified {
+		t.Fatalf("got %s, want plan-ssd-unqualified (no measurement)", res.ReasonCode)
+	}
+	// A v19.7.0-shaped measurement (sequential only — the random phase
+	// never ran) refuses the random floor the same way.
+	f2 := ssdPlannerFixture()
+	rp := *f2.snap.Storage[0].ReadProfile
+	rp.RandomReadIOPS = 0
+	rp.RandomReadP95Ms = 0
+	f2.snap.Storage[0].ReadProfile = &rp
+	res2 := f2.planner(t).Plan(ssdRequest())
+	if res2.Selected || res2.ReasonCode != ReasonPlanSSDUnqualified {
+		t.Fatalf("got %s, want plan-ssd-unqualified (sequential-only measurement)", res2.ReasonCode)
+	}
+	// Measured but BELOW the declared floors refuses the same way.
+	f3 := ssdPlannerFixture()
+	rp3 := *f3.snap.Storage[0].ReadProfile
+	rp3.RandomReadIOPS = 10000
+	f3.snap.Storage[0].ReadProfile = &rp3
+	res3 := f3.planner(t).Plan(ssdRequest())
+	if res3.Selected || res3.ReasonCode != ReasonPlanSSDUnqualified {
+		t.Fatalf("got %s, want plan-ssd-unqualified (floors unmet)", res3.ReasonCode)
+	}
+}
+
+// TestPlanSSDStorageInsufficient: the device's observed available bytes
+// cannot hold the expert demand + the minimum free floor.
+func TestPlanSSDStorageInsufficient(t *testing.T) {
+	f := ssdPlannerFixture()
+	f.snap.Storage[0].AvailableBytes = 8 << 30 // experts (4GiB) + floor (64GiB) >> 8GiB
+	res := f.planner(t).Plan(ssdRequest())
+	if res.Selected || res.ReasonCode != ReasonPlanSSDStorageInsufficient {
+		t.Fatalf("got %s, want plan-ssd-storage-insufficient", res.ReasonCode)
+	}
+}
+
+// TestPlanSSDGPUIncompatible: no healthy GPU passes the §8.2 join — the
+// declared combinations are the TESTED combinations.
+func TestPlanSSDGPUIncompatible(t *testing.T) {
+	f := ssdPlannerFixture()
+	// The observed GPUs are sm_89 + CUDA 12.6 — the profile declares
+	// sm_120 + CUDA 12.8.
+	for i := range f.snap.GPUs {
+		f.snap.GPUs[i].ComputeCap = "8.9"
+		f.snap.GPUs[i].CUDA = "12.6"
+	}
+	res := f.planner(t).Plan(ssdRequest())
+	if res.Selected || res.ReasonCode != ReasonPlanSSDGPUIncompatible {
+		t.Fatalf("got %s, want plan-ssd-gpu-incompatible (the §8.2 join)", res.ReasonCode)
+	}
+	// An old driver below the profile's minimum refuses the same way.
+	f2 := ssdPlannerFixture()
+	for i := range f2.snap.GPUs {
+		f2.snap.GPUs[i].Driver = "560.00"
+	}
+	res2 := f2.planner(t).Plan(ssdRequest())
+	if res2.Selected || res2.ReasonCode != ReasonPlanSSDGPUIncompatible {
+		t.Fatalf("got %s, want plan-ssd-gpu-incompatible (driver below minimum)", res2.ReasonCode)
+	}
+}
+
+// TestPlanSSDDeterministic: identical inputs → identical plan INCLUDING
+// the PlanID on the ssd path (the content hash covers the §8 facts —
+// the profile id rides the plan as the config profile).
+func TestPlanSSDDeterministic(t *testing.T) {
+	f := ssdPlannerFixture()
+	p := f.planner(t)
+	var first string
+	for i := 0; i < 20; i++ {
+		res := p.Plan(ssdRequest())
+		if !res.Selected {
+			t.Fatalf("iteration %d: %s", i, res.ReasonCode)
+		}
+		if i == 0 {
+			first = res.Plan.PlanID
+			continue
+		}
+		if res.Plan.PlanID != first {
+			t.Fatalf("iteration %d: PlanID drifted: %s vs %s", i, res.Plan.PlanID, first)
+		}
+	}
+}
+
+// TestPlanExpertPackDeclaredNotPlanned: a model declaring an ENABLED
+// Expert Pack still plans RESIDENT (sglang moe-gpu-resident) — the pack
+// declaration rides the explanation as declared-not-planned (the §8.8
+// enablement policy: pack execution needs pack-byte verification + the
+// §8.7 target-host acceptance matrix).
+func TestPlanExpertPackDeclaredNotPlanned(t *testing.T) {
+	f := newPlannerFixture()
+	m := moeManifest() // supported_backends: sglang + beellama
+	m.Artifacts.ExpertPack.Enabled = true
+	m.Artifacts.ExpertPack.Format = "sglang-expert-pack"
+	m.Artifacts.ExpertPack.Version = "2026.11"
+	m.Artifacts.ExpertPack.SHA256 = strings.Repeat("ef", 32)
+	m.Artifacts.ExpertPack.CompatibleBackend = "sglang"
+	f.models.manifests["deepseek-moe-test"] = m
+	f.models.verifs["deepseek-moe-test"] = freshVerification("deepseek-moe-test", time.Hour)
+	req := baseRequest()
+	req.ModelID = "deepseek-moe-test"
+	res := f.planner(t).Plan(req)
+	if !res.Selected || res.ReasonCode != ReasonPlanOK {
+		t.Fatalf("the pack declaration must not block the resident plan: %s", res.ReasonCode)
+	}
+	if res.Plan.Strategy != StrategyMoEGPUResident {
+		t.Fatalf("strategy: %s, want the RESIDENT moe-gpu-resident (pack execution stays unplanned)", res.Plan.Strategy)
+	}
+	found := false
+	for _, e := range res.Plan.Explanation {
+		if e.Code == "expert-pack-declared-not-planned" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the explanation must carry the expert-pack-declared-not-planned entry (the honest §8.8 answer)")
 	}
 }

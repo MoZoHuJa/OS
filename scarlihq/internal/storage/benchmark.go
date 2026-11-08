@@ -36,13 +36,16 @@ package storage
 
 import (
 	"context"
-	"crypto/rand"
+	cryptorand "crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	mathrand "math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -145,13 +148,31 @@ func checkBenchmarkTargetDenylist(target string) error {
 type BenchmarkOptions struct {
 	// TargetPath — the directory to measure. REQUIRED, must exist.
 	TargetPath string
-	// Duration — the read-measurement window. REQUIRED, [1s, 30s].
+	// Duration — the read-measurement window (applies to the sequential
+	// phase AND, when requested, the random phase — each phase runs its
+	// own full window). REQUIRED, [1s, 30s].
 	Duration time.Duration
 	// FileSize — the temp test file size. REQUIRED, [32MiB, 1GiB].
 	FileSize int64
 	// BlockSize — the sequential read block size. Optional; default
 	// 1 MiB when 0. When set, [4KiB, 8MiB].
 	BlockSize int
+	// RandomReads — v19.8.0 (roadmap §8.6, SSD performance
+	// qualification): ALSO run a random-read phase after the sequential
+	// phase, populating RandomReadIOPS + the p50/p95/p99 latency
+	// percentiles. Opt-in: a v19.7.0-shaped request (false) measures
+	// sequential throughput only, byte-for-byte the v19.7.0 behavior.
+	// The random phase reads the SAME warmed temp file at RandomBlock-
+	// sized, fixed-seed pseudo-random offsets (synchronous, queue depth
+	// 1 — the profile records it; a queued-depth sweep is a future
+	// diagnostic, not silently implied).
+	RandomReads bool
+	// RandomBlock — the random-read block size. Optional; default 4 KiB
+	// when 0 (the expert-paging-relevant size — roadmap §8.6: "random
+	// read IOPS at relevant block sizes"). When set, [4KiB, 8MiB] — the
+	// same bounds as the sequential block; an out-of-bound value is a
+	// NAMED error, never a clamp.
+	RandomBlock int
 }
 
 // BenchmarkResult carries the measurement + the honest caveats.
@@ -211,6 +232,15 @@ func RunReadBenchmark(ctx context.Context, opts BenchmarkOptions) (*BenchmarkRes
 	if block < MinBenchmarkBlock || block > MaxBenchmarkBlock {
 		return nil, errBound("block_size", block, MinBenchmarkBlock, MaxBenchmarkBlock)
 	}
+	// v19.8.0 (§8.6): the random-read block carries the same fail-closed
+	// bounds discipline — a named error, never a silent clamp.
+	randomBlock := opts.RandomBlock
+	if randomBlock == 0 {
+		randomBlock = 4 << 10 // 4 KiB default (only when UNSET — the expert-paging-relevant size)
+	}
+	if randomBlock < MinBenchmarkBlock || randomBlock > MaxBenchmarkBlock {
+		return nil, errBound("random_block", randomBlock, MinBenchmarkBlock, MaxBenchmarkBlock)
+	}
 	// The context bounds the WHOLE run (fill + warm + measured read) —
 	// an already-cancelled context refuses BEFORE anything is written
 	// (KPK-19.7.0-P2-03: "cancel before fill starts → no temp file").
@@ -220,7 +250,7 @@ func RunReadBenchmark(ctx context.Context, opts BenchmarkOptions) (*BenchmarkRes
 
 	// --- the identifiable temp artifact --------------------------------------
 	rnd := make([]byte, 8)
-	if _, err := rand.Read(rnd); err != nil {
+	if _, err := cryptorand.Read(rnd); err != nil {
 		return nil, fmt.Errorf("benchmark id unavailable (crypto/rand): %w", err)
 	}
 	profileID := hex.EncodeToString(rnd)
@@ -249,7 +279,7 @@ func RunReadBenchmark(ctx context.Context, opts BenchmarkOptions) (*BenchmarkRes
 		return nil, fmt.Errorf("benchmark temp file create failed: %w", err)
 	}
 	seed := make([]byte, 1<<20)
-	if _, err := rand.Read(seed); err != nil {
+	if _, err := cryptorand.Read(seed); err != nil {
 		_ = f.Close()
 		return nil, fmt.Errorf("benchmark fill seed unavailable: %w", joinErr(removeTemp(), err))
 	}
@@ -327,6 +357,25 @@ measure:
 		return nil, fmt.Errorf("benchmark window degenerate (elapsed %v, read %d bytes) — no measurement recorded: %w", elapsed, total, removeTemp())
 	}
 
+	// --- the v19.8.0 random-read phase (roadmap §8.6) ------------------------
+	//
+	// SSD-backed expert paging is sensitive to RANDOM reads and latency,
+	// not only advertised sequential MB/s — the qualification needs IOPS
+	// and the p50/p95/p99 percentiles. The phase is OPT-IN
+	// (BenchmarkOptions.RandomReads): a v19.7.0-shaped request never
+	// enters it. The read pattern is a FIXED-SEED pseudo-random offset
+	// sequence over the SAME warmed temp file (synchronous, queue depth
+	// 1): deterministic, reproducible, and honestly recorded as a
+	// single-queue-depth data point — never presented as a queued-depth
+	// sweep.
+	var randomProfile randomReadStats
+	if opts.RandomReads {
+		randomProfile, err = runRandomReadPhase(ctx, tmp, opts.FileSize, randomBlock, opts.Duration)
+		if err != nil {
+			return nil, fmt.Errorf("benchmark random-read phase failed: %w", joinErr(removeTemp(), err))
+		}
+	}
+
 	if rerr := removeTemp(); rerr != nil {
 		// The measurement stands; the cleanup failure is still reported
 		// (never silently swallowed) — the operator learns the artifact path.
@@ -334,19 +383,122 @@ measure:
 	}
 
 	mbps := float64(total) / elapsed.Seconds() / 1e6
+	profile := ReadProfile{
+		SequentialReadMBps: mbps,
+		BlockSizeBytes:     block,
+		MeasuredAt:         start.UTC(),
+		ProfileID:          profileID,
+	}
+	detail := fmt.Sprintf(
+		"sequential read of %s, block %d bytes, window %s, %d bytes read; warm pass included (page-cache resident); one data point, not a guaranteed sustained rate; temp artifact removed",
+		opts.TargetPath, block, opts.Duration.Round(time.Millisecond), total)
+	if opts.RandomReads {
+		profile.RandomReadIOPS = randomProfile.iops
+		profile.RandomReadP50Ms = randomProfile.p50ms
+		profile.RandomReadP95Ms = randomProfile.p95ms
+		profile.RandomReadP99Ms = randomProfile.p99ms
+		profile.RandomBlockBytes = randomBlock
+		profile.QueueDepth = 1 // synchronous single reader — recorded, never implied
+		detail = fmt.Sprintf(
+			"%s; random-read phase: %d ops at block %d bytes over window %s (fixed-seed offsets, synchronous queue depth 1) — p50 %.3f ms / p95 %.3f ms / p99 %.3f ms, %.1f IOPS; one data point per phase, not a guaranteed sustained rate",
+			detail, randomProfile.ops, randomBlock, opts.Duration.Round(time.Millisecond), randomProfile.p50ms, randomProfile.p95ms, randomProfile.p99ms, randomProfile.iops)
+	}
 	return &BenchmarkResult{
-		Profile: ReadProfile{
-			SequentialReadMBps: mbps,
-			BlockSizeBytes:     block,
-			MeasuredAt:         start.UTC(),
-			ProfileID:          profileID,
-		},
+		Profile:   profile,
 		BytesRead: total,
 		TempFile:  tmp,
-		Detail: fmt.Sprintf(
-			"sequential read of %s, block %d bytes, window %s, %d bytes read; warm pass included (page-cache resident); one data point, not a guaranteed sustained rate; temp artifact removed",
-			opts.TargetPath, block, opts.Duration.Round(time.Millisecond), total),
+		Detail:    detail,
 	}, nil
+}
+
+// randomReadStats is the random-read phase's measurement.
+type randomReadStats struct {
+	ops   int64
+	iops  float64
+	p50ms float64
+	p95ms float64
+	p99ms float64
+}
+
+// runRandomReadPhase measures random-read IOPS + latency percentiles at
+// the given block size over the warmed temp file, for the requested
+// window, with a FIXED-SEED offset generator (reproducible pattern — the
+// seed is a named constant, not time-derived). Context cancellation
+// aborts the phase (the caller folds the cleanup into the error).
+func runRandomReadPhase(ctx context.Context, path string, fileSize int64, block int, window time.Duration) (randomReadStats, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return randomReadStats{}, err
+	}
+	defer f.Close()
+	buf := make([]byte, block)
+	// rand.NewSource(1) — the FIXED seed: identical requests produce the
+	// identical offset sequence (deterministic diagnostics; the seed is
+	// part of the measurement's provenance, documented here).
+	rng := mathrand.New(mathrand.NewSource(1))
+	start := nowFn()
+	var ops int64
+	latencies := make([]time.Duration, 0, 1<<16)
+	maxOffset := fileSize - int64(block)
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return randomReadStats{}, err
+		}
+		if nowFn().Sub(start) >= window {
+			break
+		}
+		off := int64(0)
+		if maxOffset > 0 {
+			off = rng.Int63n(maxOffset)
+		}
+		opStart := nowFn()
+		_, rerr := f.ReadAt(buf, off)
+		latencies = append(latencies, nowFn().Sub(opStart))
+		if rerr != nil && rerr != io.EOF {
+			return randomReadStats{}, rerr
+		}
+		ops++
+		if ops >= 1<<26 { // 67M ops safety valve — a runaway window cannot loop forever
+			break
+		}
+	}
+	elapsed := nowFn().Sub(start)
+	if elapsed <= 0 || ops == 0 {
+		return randomReadStats{}, fmt.Errorf("random-read window degenerate (elapsed %v, %d ops) — no measurement recorded", elapsed, ops)
+	}
+	sortDurations(latencies)
+	return randomReadStats{
+		ops:   ops,
+		iops:  float64(ops) / elapsed.Seconds(),
+		p50ms: percentileMs(latencies, 0.50),
+		p95ms: percentileMs(latencies, 0.95),
+		p99ms: percentileMs(latencies, 0.99),
+	}, nil
+}
+
+// sortDurations sorts latencies ascending (in place) for percentile
+// evaluation.
+func sortDurations(ds []time.Duration) { sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] }) }
+
+// percentileMs evaluates the p-th percentile latency in milliseconds
+// (nearest-rank method on the sorted slice — simple, deterministic,
+// documented; 0 < p <= 1). An empty slice is the caller's degenerate
+// window error, not a zero answer here.
+func percentileMs(sorted []time.Duration, p float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	idx := int(math.Ceil(p * float64(len(sorted))))
+	if idx < 1 {
+		idx = 1
+	}
+	if idx > len(sorted) {
+		idx = len(sorted)
+	}
+	return float64(sorted[idx-1].Nanoseconds()) / 1e6
 }
 
 // readAll performs one full sequential read of path (the warm pass).

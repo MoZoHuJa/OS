@@ -309,3 +309,152 @@ func TestBenchmarkDenylistDefaultRoots(t *testing.T) {
 		t.Errorf("colon-separated denylist parse failed, got %v", got)
 	}
 }
+
+// ---- the v19.8.0 random-read phase (roadmap §8.6) --------------------------
+
+// TestBenchmarkRandomReadPhase — the opt-in random phase populates IOPS +
+// the p50/p95/p99 percentiles with provenance, keeps the sequential
+// numbers intact, records the 4 KiB default block + queue depth 1, and
+// leaves NO temp artifact behind.
+func TestBenchmarkRandomReadPhase(t *testing.T) {
+	dir := t.TempDir()
+	res, err := RunReadBenchmark(context.Background(), BenchmarkOptions{
+		TargetPath:  dir,
+		Duration:    1 * time.Second,
+		FileSize:    32 << 20,
+		RandomReads: true,
+	})
+	if err != nil {
+		t.Fatalf("benchmark with random phase failed: %v", err)
+	}
+	p := res.Profile
+	if p.SequentialReadMBps <= 0 {
+		t.Errorf("sequential throughput=%v, want > 0 (the random phase must not disturb it)", p.SequentialReadMBps)
+	}
+	if p.RandomReadIOPS <= 0 {
+		t.Errorf("random IOPS=%v, want > 0", p.RandomReadIOPS)
+	}
+	if p.RandomReadP50Ms <= 0 || p.RandomReadP95Ms <= 0 || p.RandomReadP99Ms <= 0 {
+		t.Errorf("latency percentiles must be measured: p50=%v p95=%v p99=%v", p.RandomReadP50Ms, p.RandomReadP95Ms, p.RandomReadP99Ms)
+	}
+	// The percentile ORDER is the sanity anchor: p50 <= p95 <= p99.
+	if p.RandomReadP50Ms > p.RandomReadP95Ms || p.RandomReadP95Ms > p.RandomReadP99Ms {
+		t.Errorf("percentile order violated: p50=%v p95=%v p99=%v", p.RandomReadP50Ms, p.RandomReadP95Ms, p.RandomReadP99Ms)
+	}
+	if p.RandomBlockBytes != 4<<10 {
+		t.Errorf("default random block=%d, want 4KiB (the expert-paging-relevant size)", p.RandomBlockBytes)
+	}
+	if p.QueueDepth != 1 {
+		t.Errorf("queue depth=%d, want 1 (synchronous single reader — recorded, never implied)", p.QueueDepth)
+	}
+	if !strings.Contains(res.Detail, "random-read phase") {
+		t.Errorf("detail must name the random phase: %q", res.Detail)
+	}
+	if !strings.Contains(res.Detail, "queue depth 1") {
+		t.Errorf("detail must carry the honest single-queue-depth note: %q", res.Detail)
+	}
+	if _, err := os.Stat(res.TempFile); !os.IsNotExist(err) {
+		t.Errorf("temp artifact %s still present", res.TempFile)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Errorf("benchmark left artifacts: %d entries", len(entries))
+	}
+}
+
+// TestBenchmarkRandomPhaseIsOptIn — a v19.7.0-shaped request (RandomReads
+// unset) measures sequential throughput ONLY: no random numbers are
+// fabricated — the fields stay absent/zero (unknown, never guessed).
+func TestBenchmarkRandomPhaseIsOptIn(t *testing.T) {
+	dir := t.TempDir()
+	res, err := RunReadBenchmark(context.Background(), BenchmarkOptions{
+		TargetPath: dir,
+		Duration:   1 * time.Second,
+		FileSize:   32 << 20,
+	})
+	if err != nil {
+		t.Fatalf("v19.7.0-shaped benchmark failed: %v", err)
+	}
+	p := res.Profile
+	if p.RandomReadIOPS != 0 || p.RandomReadP50Ms != 0 || p.RandomReadP95Ms != 0 || p.RandomReadP99Ms != 0 || p.RandomBlockBytes != 0 {
+		t.Errorf("random fields must stay absent without the opt-in: %+v", p)
+	}
+	if p.QueueDepth != 0 {
+		t.Errorf("queue depth=%d, want 0 (not measured)", p.QueueDepth)
+	}
+	if strings.Contains(res.Detail, "random-read phase") {
+		t.Errorf("detail must not mention a phase that did not run: %q", res.Detail)
+	}
+}
+
+// TestBenchmarkRandomBlockBounds — the random block carries the same
+// fail-closed bounds discipline: out-of-bound values are NAMED errors,
+// never silent clamps.
+func TestBenchmarkRandomBlockBounds(t *testing.T) {
+	dir := t.TempDir()
+	for _, rb := range []int{1 << 10, 16 << 20} { // < 4KiB, > 8MiB
+		_, err := RunReadBenchmark(context.Background(), BenchmarkOptions{
+			TargetPath:  dir,
+			Duration:    1 * time.Second,
+			FileSize:    32 << 20,
+			RandomReads: true,
+			RandomBlock: rb,
+		})
+		if err == nil {
+			t.Errorf("random block %d must be refused by name", rb)
+			continue
+		}
+		if !strings.Contains(err.Error(), "random_block") {
+			t.Errorf("error must name the random_block bound: %v", err)
+		}
+	}
+}
+
+// TestBenchmarkRandomPhaseCancellation — a context that dies DURING the
+// random phase leaves no temp artifact (the cleanup folds into the
+// named error).
+func TestBenchmarkRandomPhaseCancellation(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	// Kill the context while the sequential phase still runs — the whole
+	// run (fill + warm + sequential + random) shares one context; the
+	// cancellation must abort with NO artifact left behind.
+	cancel()
+	_, err := RunReadBenchmark(ctx, BenchmarkOptions{
+		TargetPath:  dir,
+		Duration:    1 * time.Second,
+		FileSize:    32 << 20,
+		RandomReads: true,
+	})
+	if err == nil {
+		t.Fatal("cancelled context must error")
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Errorf("cancelled benchmark left artifacts: %d entries", len(entries))
+	}
+}
+
+// TestPercentileMs — the nearest-rank percentile on known inputs.
+func TestPercentileMs(t *testing.T) {
+	// 100 samples of 1ms..100ms (sorted ascending by construction).
+	ds := make([]time.Duration, 100)
+	for i := range ds {
+		ds[i] = time.Duration(i+1) * time.Millisecond
+	}
+	if got := percentileMs(ds, 0.50); got != 50 {
+		t.Errorf("p50=%v, want 50", got)
+	}
+	if got := percentileMs(ds, 0.95); got != 95 {
+		t.Errorf("p95=%v, want 95", got)
+	}
+	if got := percentileMs(ds, 0.99); got != 99 {
+		t.Errorf("p99=%v, want 99", got)
+	}
+	if got := percentileMs(ds, 1.0); got != 100 {
+		t.Errorf("p100=%v, want 100 (nearest-rank ceiling)", got)
+	}
+	if got := percentileMs(nil, 0.5); got != 0 {
+		t.Errorf("empty slice=%v, want 0 (the degenerate window is the caller's named error)", got)
+	}
+}

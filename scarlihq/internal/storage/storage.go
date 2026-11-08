@@ -73,16 +73,32 @@ type ReadProfile struct {
 	// MB/s (decimal megabytes). 0 means not measured (MeasuredAt zero).
 	SequentialReadMBps float64 `json:"sequential_read_mbps,omitempty"`
 	// RandomReadIOPS — measured random-read I/O operations per second.
-	// 0 means not measured. v19.7.0's benchmark measures sequential read
-	// only; the field exists so a future random-read profile can be
-	// recorded without a schema change.
+	// 0 means not measured. v19.7.0's benchmark measured sequential read
+	// only; v19.8.0 (roadmap §8.6 — SSD performance qualification for
+	// SSD-backed expert paging) added the opt-in random-read phase that
+	// populates this field plus the latency percentiles below.
 	RandomReadIOPS float64 `json:"random_read_iops,omitempty"`
+	// RandomReadP50Ms — measured random-read p50 (median) latency in
+	// milliseconds. 0 means not measured (v19.8.0 field; additive and
+	// omitempty — the v2 snapshot JSON contract is unchanged for
+	// profiles measured without the random phase).
+	RandomReadP50Ms float64 `json:"random_read_p50_ms,omitempty"`
 	// RandomReadP95Ms — measured random-read p95 latency in
 	// milliseconds. 0 means not measured.
 	RandomReadP95Ms float64 `json:"random_read_p95_ms,omitempty"`
+	// RandomReadP99Ms — measured random-read p99 latency in
+	// milliseconds. 0 means not measured (v19.8.0 field; roadmap §8.6
+	// requires "p50/p95/p99 latency" — all three percentiles travel with
+	// the record, never one masquerading as the others).
+	RandomReadP99Ms float64 `json:"random_read_p99_ms,omitempty"`
 	// BlockSizeBytes — the read block size the measurement used
 	// (e.g. 1048576 = 1 MiB). 0 means not measured.
 	BlockSizeBytes int `json:"block_size_bytes,omitempty"`
+	// RandomBlockBytes — the random-read block size (v19.8.0; distinct
+	// from the sequential BlockSizeBytes — a device may be profiled at
+	// 1 MiB sequential and 4 KiB random in one run). 0 means the random
+	// phase did not run.
+	RandomBlockBytes int `json:"random_block_bytes,omitempty"`
 	// QueueDepth — the queue depth the measurement used. 0 means not
 	// measured (a single synchronous reader).
 	QueueDepth int `json:"queue_depth,omitempty"`

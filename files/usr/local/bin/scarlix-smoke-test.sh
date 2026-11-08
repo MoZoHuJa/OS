@@ -2292,21 +2292,26 @@ check_28_ai_runtime_foundation() {
     fi
 
     # --- README surface: the CURRENT-release assertions move with the
-    # release (v19.7.2 now — the check_27 precedent: current surface
+    # release (v19.8.0 now — the check_27 precedent: current surface
     # tracked, historical content stays asserted below); the v19.6.0,
-    # v19.6.1, v19.6.2, v19.6.3, v19.6.6, v19.6.7, v19.6.8, v19.7.0 and
-    # v19.7.1 historical surfaces must ALSO stay (the changelog rows +
-    # the What's New sections are the releases' permanent record).
-    if ! grep -q 'ScarLiXoS v19.7.2 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.7.2-B36B00' "$readme"; then
-        fail "README banner/h1/badge must say v19.7.2"
+    # v19.6.1, v19.6.2, v19.6.3, v19.6.6, v19.6.7, v19.6.8, v19.7.0,
+    # v19.7.1 and v19.7.2 historical surfaces must ALSO stay (the
+    # changelog rows + the What's New sections are the releases'
+    # permanent record).
+    if ! grep -q 'ScarLiXoS v19.8.0 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.8.0-B36B00' "$readme"; then
+        fail "README banner/h1/badge must say v19.8.0"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.7.2 (Compute Fabric Phase 3 — backend capability contracts + deterministic execution planner; Phases 0-2 stand)' "$readme"; then
-        fail "README version line must say v19.7.2 (Compute Fabric Phase 3 — backend capability contracts + deterministic execution planner)"
+    if ! grep -q 'Version:\*\* v19.8.0 (Compute Fabric Phase 4 — InferSSD adapter + SGLang Expert Pack, experimental, default OFF; Phases 0-3 stand)' "$readme"; then
+        fail "README version line must say v19.8.0 (Compute Fabric Phase 4 — InferSSD adapter + SGLang Expert Pack, experimental)"
+        return
+    fi
+    if ! grep -q "\\*\\*v19.8.0\\*\\*" "$readme" || ! grep -q "What's New in v19.8.0" "$readme"; then
+        fail "README must carry the v19.8.0 changelog row + What's New section (the current release's own record)"
         return
     fi
     if ! grep -q "\\*\\*v19.7.2\\*\\*" "$readme" || ! grep -q "What's New in v19.7.2" "$readme"; then
-        fail "README must carry the v19.7.2 changelog row + What's New section (the current release's own record)"
+        fail "README must carry the v19.7.2 changelog row + What's New section (the permanent record)"
         return
     fi
     if ! grep -q "\\*\\*v19.7.1\\*\\*" "$readme" || ! grep -q "What's New in v19.7.1" "$readme"; then
@@ -4286,15 +4291,15 @@ check_37_unified_inventory_v2() {
         return
     fi
 
-    # --- The version bump + the release documentation (v19.7.2 evolution:
+    # --- The version bump + the release documentation (v19.8.0 evolution:
     # the current-release guard moved with the release — the v19.7.0
     # record assertions below stay as history).
-    if [[ "$(cat "$version_file" | tr -d '[:space:]')" != "19.7.2" ]]; then
-        fail "VERSION must be 19.7.2"
+    if [[ "$(cat "$version_file" | tr -d '[:space:]')" != "19.8.0" ]]; then
+        fail "VERSION must be 19.8.0"
         return
     fi
     for f in "$REPO_DIR/install.sh" "$REPO_DIR/scarlihq/Dockerfile" "$REPO_DIR/scarlihq/cmd/scarlihq/main.go" "$api_rest"; do
-        if ! grep -q '19\.7\.2' "$f"; then
+        if ! grep -q '19\.8\.0' "$f"; then
             fail "version fallback missing in $f (the five-place bump discipline)"
             return
         fi
@@ -4617,8 +4622,8 @@ check_39_backend_capability_planner_v19_7_2() {
         fail "the adapter-tier ↔ capability-tier alignment must exist (ProviderForBackend + BackendForProvider)"
         return
     fi
-    if ! grep -q 'no runtime adapter in v19.7.2' "$backends_go"; then
-        fail "ProviderForBackend(infer_ssd) must be the honest named error (no v19.7.2 adapter — v19.8.0 owns it)"
+    if ! grep -q 'no transport provider' "$backends_go"; then
+        fail "ProviderForBackend(infer_ssd) must stay the honest named error (v19.8.0 evolution: no TRANSPORT provider — the §8.3 adapter is planning-side; the v19.7.2 no-adapter marker moved with the release)"
         return
     fi
 
@@ -4811,6 +4816,335 @@ check_39_backend_capability_planner_v19_7_2() {
     pass "v19.7.2 (Compute Fabric Phase 3 — the roadmap §7 backend capability contract + deterministic execution planner): the CAPABILITY TIER is separated from the adapter tier (BackendID + BackendCapabilities in internal/airuntime — the closed administrator-owned registry carrying roadmap §7.2's own five backends incl. the declared-future infer_ssd row with its v19.8.0 marker; validated at construction, no registration surface exists — no HTTP route, no env var, no file can add a row; the Provider↔BackendID alignment makes infer_ssd the honest named error: no v19.7.2 adapter, v19.8.0 owns it; §7.3's eleven-step extension procedure encoded at the registry — never merely a string constant); the PLANNER (internal/planner — NEW) is pure + side-effect-free (comment-stripped: no net/http, no os, no exec, no syscall in planner.go — production.go is the only environment seam, roadmap §7.1's 'the planner must not launch containers'), DETERMINISTIC (the PlanID is the SHA-256 CONTENT hash of the decision tuple — identical inputs → identical ID, 20×; candidate evaluation sorted; the tie-break sequence is policy priority → observed utilization (the honest queue-delay proxy) → tightest fit → stable IDs), and fail-closed at every hard constraint (§7.5 constraints BEFORE optimization): a STALE snapshot is HARD-REFUSED (KPK-19.7.0-P2-01's rule), an UNVERIFIED or STALE artifact verification is refused (KPK-19.7.0-P2-04's rule — declared digests are declarations), a declared-but-not-running backend is excluded by the placement × runtime join (the same join refuses every v19.7.2 infer_ssd plan — the declared-future backend is honestly absent), format/architecture/feature compatibility is enforced against the CLOSED capability rows, an unservable context is a named refusal, the capacity check is admission-shaped (the same safety-headroom discipline), a multi-GPU-sized demand is a NAMED refusal (measured per-GPU overhead profiles are v19.8.0+, never a guessed split), and every image is digest-pinned AND operator-declared (the honest v19.7.2 default: the image registry ships EMPTY — every plan refuses plan-image-unconfigured until SCARLIHQ_PLANNER_IMAGES declares references, the same honesty as v19.7.1's no-verified-manifests default); the STRATEGY vocabulary is closed and resident-only (dense-resident / cpu-resident / moe-gpu-resident / moe-cpu-resident — the deployed backends' actual behavior; expert paging + SSD-backed experts are v19.8.0 territory, no v19.7.2 plan carries a storage demand); §7.6's boundary is ENFORCED BY SHAPE (this release's must-not-do 'do not make LLM output directly executable'): ExecutionRequest carries NO steering field (no preferred_backend, no explanation echo — asserted at the source level), the strict decode refuses any injected field as 400, the principal is stamped SERVER-SIDE, the selection order belongs ONLY to the operator-owned PlannerPolicy, and the plan's Explanation is GENERATED by the planner (machine-readable DecisionReason codes + the numbers), never consumed from model output; the API surface is POST/GET /api/compute/plan behind the READ gate (the planner RESERVES NOTHING — observation-grade, like the inventory; admission stays the separately-opt-in ADMIN-gated mutating act) with a refusal as 200 + selected=false + the machine-readable reason_code (the planner working, never an HTTP error) and GET serving the closed registry view; acceptance: the planner suite (determinism 20×, the golden path, the CPU class, the MoE-resident rule, the full hard-constraint matrix, the tie-break sequence incl. the reversed policy priority, the steering-field absence proof, the generated-explanation proof) + the HTTP suite (503-before-config, 401, 400 strict decode incl. LLM-shaped payloads, 405, the registry view, refusal-is-data, HTTP determinism) + the registry suite (closed+validated, per-row honesty, the alignment errors, the tiers, the copy discipline); residual honesty: hardware acceptance stays OPEN (KPK-06), no verified manifests ship yet (every plan for a real model refuses plan-model-unverified until an operator records verifications), the image registry ships empty (plans refuse image-unconfigured until the operator declares digest-pinned references), the runtime-RAM overhead is the honest 0 (no measured profile exists), the utilization proxy for queue delay is OBSERVED data (a real queue model arrives with workload metrics, v19.8.0+), and the admission→planner revalidation join (a live GPU-health × reservation reconciler) stays named future work; 'LLM navrhuje, politika rozhoduje' — the capability rows are honest, the plan is deterministic, the proposal is expiry-bound, and the pen stays with the operator"
 }
 
+# check_40 — v19.8.0 (Compute Fabric Phase 4, roadmap §8): the InferSSD
+# adapter (a DISTINCT inference backend for SSD-backed MoE expert
+# execution — §8.3's structure, never Docker-called, health behind an
+# injectable seam) + the runtime profile (scarlix.runtime-profile/v1,
+# §8.4 field-for-field, placeholders refused by name, experimental
+# required, §8.8's initial status default OFF) + the §8.2 compatibility
+# joins (model binding + GPU capability/CUDA/driver + the §8.6 MEASURED
+# SSD qualification) + the planner's ssd-backed-moe strategy (the ONE
+# v19.8.0 paging member, seven named refusals) + the SGLang Expert Pack
+# at the artifact tier (scarlix.artifact/v1, cross-engine refused BY
+# NAME — this release's must-not-do) + the benchmark's random-read phase.
+check_40_inferssd_expert_pack_v19_8_0() {
+    echo "--- [40] v19.8.0 (Compute Fabric Phase 4 — roadmap §8): the InferSSD adapter (distinct backend, never Docker-called, health seam) + the runtime profile (placeholders refused, experimental required, §8.8 default OFF) + the §8.2/§8.6 joins (GPU compatibility + MEASURED SSD qualification) + the ssd-backed-moe strategy (seven named refusals) + the SGLang Expert Pack at the artifact tier (cross-engine compatibility REFUSED BY NAME — the release's must-not-do) ---"
+    local infer_pkg="$REPO_DIR/scarlihq/internal/backends/infer_ssd"
+    local adapter_go="$infer_pkg/adapter.go"
+    local config_go="$infer_pkg/config.go"
+    local capabilities_go="$infer_pkg/capabilities.go"
+    local health_go="$infer_pkg/health.go"
+    local manifest_go="$infer_pkg/manifest.go"
+    local requirements_go="$infer_pkg/requirements.go"
+    local adapter_test="$infer_pkg/adapter_test.go"
+    local integration_test="$infer_pkg/integration_test.go"
+    local pack_go="$REPO_DIR/scarlihq/internal/modelmeta/expertpack.go"
+    local pack_test="$REPO_DIR/scarlihq/internal/modelmeta/expertpack_test.go"
+    local bench_go="$REPO_DIR/scarlihq/internal/storage/benchmark.go"
+    local bench_test="$REPO_DIR/scarlihq/internal/storage/benchmark_test.go"
+    local backends_go="$REPO_DIR/scarlihq/internal/airuntime/backends.go"
+    local planner_go="$REPO_DIR/scarlihq/internal/planner/planner.go"
+    local planner_prod="$REPO_DIR/scarlihq/internal/planner/production.go"
+    local planner_test="$REPO_DIR/scarlihq/internal/planner/planner_test.go"
+    local api_plan="$REPO_DIR/scarlihq/internal/api/plan.go"
+    local api_rest="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local api_plan_test="$REPO_DIR/scarlihq/internal/api/plan_test.go"
+    local main_go="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local example_pack="$REPO_DIR/models.d/example-moe-model.pack.yaml"
+    local rel_notes="$REPO_DIR/docs/RELEASE_NOTES_v19.8.0.md"
+    local readme="$REPO_DIR/README.md"
+    local roadmap="$REPO_DIR/docs/roadmaps/SCARLIXOS_UNIFIED_COMPUTE_FABRIC_IMPLEMENTATION_ROADMAP.md"
+
+    for f in "$adapter_go" "$config_go" "$capabilities_go" "$health_go" "$manifest_go" "$requirements_go" \
+        "$adapter_test" "$integration_test" "$pack_go" "$pack_test" "$bench_go" "$bench_test" \
+        "$backends_go" "$planner_go" "$planner_prod" "$planner_test" "$api_plan" "$api_rest" \
+        "$api_plan_test" "$main_go" "$example_pack" "$rel_notes" "$roadmap"; do
+        if [[ ! -f "$f" ]]; then
+            fail "v19.8.0 source missing: $f (the Compute Fabric Phase 4 surface)"
+            return
+        fi
+    done
+
+    # --- §8.1/§8.3: the adapter — a DISTINCT backend's planning-side
+    # boundary; the interface exists, the strategy is its own, and the
+    # adapter NEVER CALLS DOCKER (comment-stripped over the whole
+    # package — prose cannot mask code; §8.3: "The adapter must not call
+    # Docker directly. It returns a validated profile for the workload/
+    # Host Bridge path").
+    if ! grep -q 'type BackendAdapter interface' "$adapter_go"; then
+        fail "the §8.3 BackendAdapter boundary must exist (the adapter interface)"
+        return
+    fi
+    if ! grep -q 'type ApprovedRuntimeProfile struct' "$adapter_go"; then
+        fail "BuildProfile must return the validated launch shape (ApprovedRuntimeProfile — the Host Bridge path's input)"
+        return
+    fi
+    local f_raw
+    for f_raw in "$adapter_go" "$config_go" "$capabilities_go" "$health_go" "$manifest_go" "$requirements_go"; do
+        local stripped_one
+        stripped_one=$(_strip_go_comments "$f_raw")
+        if printf '%s\n' "$stripped_one" | grep -qiE 'docker|containerd|exec\.Command|os/exec'; then
+            fail "$f_raw references the container engine API — the adapter must not call Docker directly (roadmap §8.3, asserted comment-stripped)"
+            return
+        fi
+    done
+    if ! grep -q 'StrategySSDBackedMoE = "ssd-backed-moe"' "$capabilities_go"; then
+        fail "the §8.4 strategy constant must exist in the adapter's own package (ssd-backed-moe)"
+        return
+    fi
+    # The health seam: injectable prober + the no-redirect discipline + the
+    # Host-Bridge-owned endpoint assignment (a probe without an endpoint is
+    # a named refusal).
+    if ! grep -q 'type HealthProber interface' "$health_go" || ! grep -q 'http.ErrUseLastResponse' "$health_go"; then
+        fail "the health contract must ride the injectable seam with the no-redirect discipline (HealthProber + ErrUseLastResponse)"
+        return
+    fi
+    if ! grep -q 'no health endpoint bound' "$health_go"; then
+        fail "a probe without a Host-Bridge-bound endpoint must be the named refusal (the adapter never assigns endpoints)"
+        return
+    fi
+    if ! grep -q 'func NewAdapter' "$adapter_go" || ! grep -q 'is DISABLED' "$adapter_go"; then
+        fail "adapter construction must exist AND be fail-closed on a disabled profile (an adapter over documentation is a phantom)"
+        return
+    fi
+
+    # --- §8.4: the runtime profile — scarlix.runtime-profile/v1,
+    # placeholder rejection BY NAME, experimental REQUIRED, exactly-one
+    # concurrency, digest-pinned image.
+    if ! grep -q 'RuntimeProfileSchemaVersion = "scarlix.runtime-profile/v1"' "$config_go"; then
+        fail "the §8.4 schema identity must exist (scarlix.runtime-profile/v1)"
+        return
+    fi
+    local stripped_config
+    stripped_config=$(_strip_go_comments "$config_go")
+    if ! printf '%s\n' "$stripped_config" | grep -q 'strings.Contains(s, "REPLACE_WITH")'; then
+        fail "the profile loader must enforce placeholder rejection BY CODE (strings.Contains(s, \"REPLACE_WITH\") — §8.4: 'the configuration loader must reject them', never prose)"
+        return
+    fi
+    if ! grep -q 'experimental must be true' "$config_go"; then
+        fail "a non-experimental profile is a production claim without hardware acceptance — refused BY NAME (§8.8's initial status)"
+        return
+    fi
+    if ! grep -q 'must be exactly 1 in v19.8.0' "$config_go"; then
+        fail "max_concurrent_requests must be exactly 1 (§8.8's one-active-workload rule — contention evidence or refusal)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_config" | grep -q 'strings.Contains(p.Image.Reference, "@sha256:")'; then
+        fail "the profile's image must be digest-pinned BY CODE (§8.4's exit criterion: runtime profiles are digest-pinned and fixed)"
+        return
+    fi
+    if ! grep -q 'func LoadRuntimeProfile' "$config_go"; then
+        fail "the fail-closed profile loader must exist"
+        return
+    fi
+
+    # --- §8.2: the compatibility joins — the model binding (exact
+    # combination), the GPU join (capability + EXACT CUDA + minimum
+    # driver), and the §8.6 MEASURED qualification.
+    if ! grep -q 'func BindModel' "$manifest_go" || ! grep -q 'ErrModelNotBound' "$manifest_go"; then
+        fail "the §8.2 model binding must exist (BindModel — the profile is the evidence record for ONE exact combination)"
+        return
+    fi
+    if ! grep -q 'func GPUCompatibility' "$requirements_go" || ! grep -q 'func normalizeComputeCap' "$requirements_go"; then
+        fail "the §8.2 GPU compatibility join must exist (GPUCompatibility + the compute-capability normalization)"
+        return
+    fi
+    if ! grep -q 'func QualifySSD' "$requirements_go"; then
+        fail "the §8.6 measured SSD qualification must exist (QualifySSD)"
+        return
+    fi
+    for code in QualificationDeviceUnknown QualificationNoReadProfile QualificationFloorsUnmet QualificationFreeBytesInsufficient; do
+        if ! grep -q "$code" "$requirements_go"; then
+            fail "the qualification's named refusal $code must exist (a hard constraint without its named refusal is a silent constraint)"
+            return
+        fi
+    done
+
+    # --- §8.6: the benchmark's random-read phase — opt-in, bounded,
+    # p50/p95/p99 + IOPS.
+    if ! grep -q 'RandomReads bool' "$bench_go" || ! grep -q 'RandomBlock int' "$bench_go"; then
+        fail "the opt-in random-read phase must exist in the benchmark options (RandomReads + RandomBlock)"
+        return
+    fi
+    if ! grep -q 'func runRandomReadPhase' "$bench_go" || ! grep -q 'func percentileMs' "$bench_go"; then
+        fail "the random-read measurement + the percentile evaluation must exist (§8.6: random IOPS + p50/p95/p99)"
+        return
+    fi
+    if ! grep -q 'RandomReadP50Ms' "$REPO_DIR/scarlihq/internal/storage/storage.go" || ! grep -q 'RandomReadP99Ms' "$REPO_DIR/scarlihq/internal/storage/storage.go"; then
+        fail "ReadProfile must carry the p50/p99 percentile fields (§8.6 requires all three percentiles)"
+        return
+    fi
+    if ! grep -q 'TestBenchmarkRandomReadPhase' "$bench_test" || ! grep -q 'TestBenchmarkRandomPhaseIsOptIn' "$bench_test"; then
+        fail "the random-read regression tests must exist (the measurement + the opt-in boundary)"
+        return
+    fi
+
+    # --- §8.5: the SGLang Expert Pack at the artifact tier —
+    # scarlix.artifact/v1, bound to the exact checkpoint, backend sglang
+    # ONLY (the cross-engine refusal is this release's must-not-do,
+    # enforced BY CODE).
+    if ! grep -q 'SchemaVersionArtifact = "scarlix.artifact/v1"' "$pack_go"; then
+        fail "the §8.5 artifact schema identity must exist (scarlix.artifact/v1)"
+        return
+    fi
+    local stripped_pack
+    stripped_pack=$(_strip_go_comments "$pack_go")
+    if ! printf '%s\n' "$stripped_pack" | grep -q 'p.BackendID != BackendIDSGLang'; then
+        fail "the cross-engine pack refusal must be enforced BY CODE (p.BackendID != BackendIDSGLang — this release's must-not-do: 'Do not claim cross-engine pack compatibility')"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_pack" | grep -q 'strings.Contains(s, "REPLACE_WITH")'; then
+        fail "the pack manifest must enforce placeholder rejection BY CODE (§8.2/§8.4's rule applied to the artifact tier)"
+        return
+    fi
+    if ! grep -q 'func BindExpertPacks' "$pack_go"; then
+        fail "the checkpoint binding must exist (BindExpertPacks — §8.5: 'the manifest must bind the pack to the exact checkpoint. Reject mismatches')"
+        return
+    fi
+    if ! grep -q 'duplicate artifact_id' "$pack_go"; then
+        fail "duplicate artifact ids must be rejected as a GROUP (the KPK-19.7.0-P2-04 collision discipline at the artifact tier)"
+        return
+    fi
+
+    # --- The registry flips: sglang's pack capability WITH the evidence
+    # note; infer_ssd's honest planning-side adapter status.
+    if ! grep -q 'SupportsExpertPack: true' "$backends_go"; then
+        fail "sglang's SupportsExpertPack must be true WITH the §8.5 manifest evidence (the v19.8.0 flip)"
+        return
+    fi
+    if ! grep -q 'sglang_expert_pack capability with §8.5 manifest evidence' "$backends_go"; then
+        fail "sglang's AdapterNote must name the pack capability + its evidence discipline"
+        return
+    fi
+    if ! grep -q 'internal/backends/infer_ssd' "$backends_go"; then
+        fail "infer_ssd's AdapterNote must name the §8.3 planning-side adapter (the v19.8.0 evolution)"
+        return
+    fi
+
+    # --- The planner: the ONE paging strategy + the seven named §8
+    # refusals + the profile seam + the §8.8 default.
+    if ! grep -q 'StrategySSDBackedMoE = infer_ssd.StrategySSDBackedMoE' "$planner_go"; then
+        fail "the planner must alias the adapter's strategy constant (ONE closed vocabulary — the ssd-backed-moe paging member)"
+        return
+    fi
+    for code in ReasonPlanSSDProfileUnconfigured ReasonPlanSSDProfileModelMismatch ReasonPlanProfileContextExceedsLimit ReasonPlanSSDDeviceUnknown ReasonPlanSSDUnqualified ReasonPlanSSDStorageInsufficient ReasonPlanSSDGPUIncompatible; do
+        if ! grep -q "$code" "$planner_go"; then
+            fail "the closed refusal vocabulary must carry $code (a §8 hard constraint without its named refusal is a silent constraint)"
+            return
+        fi
+    done
+    if ! grep -q 'func (p \*Planner) evaluateInferSSD' "$planner_go" || ! grep -q 'func (p \*Planner) pickGPUForProfile' "$planner_go"; then
+        fail "the InferSSD execution class's own evaluation must exist (evaluateInferSSD + pickGPUForProfile — the §8.2 GPU join folded into the tie-break discipline)"
+        return
+    fi
+    local stripped_planner
+    stripped_planner=$(_strip_go_comments "$planner_go")
+    if ! printf '%s\n' "$stripped_planner" | grep -q 'return c, ReasonPlanSSDProfileUnconfigured'; then
+        fail "the §8.8 default must be enforced BY CODE (return c, ReasonPlanSSDProfileUnconfigured — no enabled profile refuses the plan, the honest default)"
+        return
+    fi
+    if ! grep -q 'SSDProfile \*infer_ssd.RuntimeProfile' "$planner_go"; then
+        fail "the policy must carry the SSD profile field (constructor-injected, validated + ENABLED-checked fail-closed)"
+        return
+    fi
+    if ! grep -q 'expert-pack-declared-not-planned' "$planner_go"; then
+        fail "an enabled pack declaration must ride the explanation as declared-not-planned (the §8.8 enablement policy, carried visibly)"
+        return
+    fi
+    if ! grep -q 'InferSSDProfileEnv = "SCARLIHQ_INFERSSD_PROFILE"' "$planner_prod" || ! grep -q 'func LoadInferSSDProfile' "$planner_prod"; then
+        fail "the profile's operator surface must exist (SCARLIHQ_INFERSSD_PROFILE + LoadInferSSDProfile, fail-closed)"
+        return
+    fi
+    # The planner's purity discipline survives the v19.8.0 import: the
+    # planning path still never touches the environment (check_39 asserts
+    # the seam; this check asserts the NEW function lives in planner.go
+    # — the pure file — and the env in production.go only).
+    if printf '%s\n' "$stripped_planner" | grep -q 'os\.Getenv\|net/http'; then
+        fail "planner.go must stay environment-free (the §8 evaluation joins the pure planning path; production.go stays the only seam)"
+        return
+    fi
+
+    # --- The API surface: the READ-gated state view carries the profile
+    # audit view + the pack manifests (no new routes).
+    if ! grep -q 'func (h \*Handler) ConfigureExpertPacks' "$api_plan" || ! grep -q 'expertPacks func() \[\]modelmeta.BoundExpertPack' "$api_rest"; then
+        fail "the expert pack view must ride the handler behind its own configure seam (no new routes)"
+        return
+    fi
+    if ! grep -q '"ssd_profile"' "$api_plan" || ! grep -q '"expert_packs"' "$api_plan"; then
+        fail "the plan state view must carry ssd_profile + expert_packs (the operator's Phase 4 audit surface)"
+        return
+    fi
+
+    # --- main.go: the profile seam + the honest three-state log + the
+    # pack startup summary.
+    if ! grep -q 'planner.InferSSDProfileEnv' "$main_go" || ! grep -q 'InferSSD runtime profile not configured' "$main_go"; then
+        fail "main.go must log the profile's honest three-state line (not configured / disabled / enabled-and-experimental)"
+        return
+    fi
+    if ! grep -q 'SGLang Expert Pack manifests:' "$main_go"; then
+        fail "main.go must log the pack startup summary (loaded / bound / invalid with named reasons)"
+        return
+    fi
+
+    # --- The example pack: invalid-by-design documentation (the example
+    # model manifest's genre).
+    if ! grep -q 'REPLACE_WITH_VERIFIED_CHECKPOINT_HASH' "$example_pack" || ! grep -q 'DELIBERATELY INVALID' "$example_pack"; then
+        fail "the example pack manifest must ship invalid-by-design (placeholders + the declared genre — the schema documentation)"
+        return
+    fi
+
+    # --- The regression proofs (the §8 suites).
+    for t in TestRuntimeProfileValidationTruthTable TestLoadRuntimeProfile TestNewAdapterFailClosed TestAdapterValidateModel TestAdapterEstimate TestAdapterBuildProfile TestAdapterProbe TestAdapterPackageNeverCallsDocker; do
+        if ! grep -q "func $t" "$adapter_test"; then
+            fail "the adapter regression test $t must exist (the §8.3/§8.4 proofs)"
+            return
+        fi
+    done
+    if ! grep -q 'func TestAdapterEstimateAgreesWithPlanner' "$integration_test"; then
+        fail "the adapter↔planner estimate AGREEMENT test must exist (two independent implementations of the §8.4 numbers must not drift)"
+        return
+    fi
+    for t in TestPlanSSDBackedMoEGoldenPath TestPlanSSDProfileUnconfigured TestPlanSSDProfileModelMismatch TestPlanProfileContextExceedsLimit TestPlanSSDDeviceUnknown TestPlanSSDUnqualified TestPlanSSDStorageInsufficient TestPlanSSDGPUIncompatible TestPlanSSDDeterministic TestPlanExpertPackDeclaredNotPlanned; do
+        if ! grep -q "func $t" "$planner_test"; then
+            fail "the planner ssd regression test $t must exist (the §8 chain's proofs)"
+            return
+        fi
+    done
+    for t in TestExpertPackValidationTruthTable TestExpertPackBindTruthTable TestLoadExpertPacks; do
+        if ! grep -q "func $t" "$pack_test"; then
+            fail "the pack manifest regression test $t must exist (the §8.5 proofs)"
+            return
+        fi
+    done
+    if ! grep -q 'func TestPlanStateCarriesSSDProfileView' "$api_plan_test" || ! grep -q 'func TestPlanStateCarriesExpertPacks' "$api_plan_test"; then
+        fail "the HTTP view regression tests must exist (the Phase 4 surface's own proofs)"
+        return
+    fi
+    if ! grep -q 'func TestLoadInferSSDProfile' "$REPO_DIR/scarlihq/internal/planner/production_test.go"; then
+        fail "the production seam regression test must exist (unset/disabled/enabled/malformed/placeholder)"
+        return
+    fi
+
+    # --- The release documentation genre + the README record + the
+    # roadmap pointer.
+    for section in '## Scope' '## Changes' '## Verification' '## Known limitations'; do
+        if ! grep -q "$section" "$rel_notes"; then
+            fail "the v19.8.0 release notes must carry section '$section' (the release genre)"
+            return
+        fi
+    done
+    if ! grep -q "What's New in v19.8.0" "$readme" || ! grep -q '| \*\*v19.8.0\*\*' "$readme"; then
+        fail "the README must carry the v19.8.0 What's New section + changelog row"
+        return
+    fi
+    if ! grep -q 'Phase 4 --- v19.8.0: InferSSD and SGLang Expert Pack' "$roadmap"; then
+        fail "the roadmap must carry the §8 Phase 4 heading (the release's contract — the roadmap stays the planning document)"
+        return
+    fi
+
+    pass "v19.8.0 (Compute Fabric Phase 4 — the roadmap §8 InferSSD adapter + SGLang Expert Pack): the ADAPTER (internal/backends/infer_ssd — NEW, §8.3's structure) is a DISTINCT inference backend for SSD-backed MoE expert execution — not a generic storage mode, not a fifth chat transport (ProviderForBackend(infer_ssd) stays the honest no-transport error; execution flows through the Host Bridge path) — and it NEVER CALLS DOCKER (asserted comment-stripped over the whole package: BuildProfile returns the validated ApprovedRuntimeProfile for the workload/Host Bridge path; the health probe rides the injectable HealthProber seam with the no-redirect discipline, and a probe without a Host-Bridge-bound endpoint is the named refusal); the RUNTIME PROFILE (scarlix.runtime-profile/v1, §8.4 field-for-field) is operator-owned and FAIL-CLOSED: placeholder values are REFUSED BY NAME (REPLACE_WITH/VERIFIED_ markers scanned on every string field — §8.4's own 'the configuration loader must reject them'), the image is digest-pinned BY CODE, experimental:true is REQUIRED (a non-experimental profile is a production claim without hardware acceptance), max_concurrent_requests is EXACTLY 1 (§8.8's one-active-workload rule — contention evidence or refusal), the GPU mode is exclusive, published ports are refused, and a DISABLED profile is honest documentation (§8.8's initial status: nothing ships enabled); the §8.2 COMPATIBILITY JOINS are enforced in code with named refusals: the model binding (the profile binds ONE exact model × checkpoint — BindModel), the GPU join (the OBSERVED compute capability ∈ the declared capabilities with the 12.0→sm_120 normalization, the driver CUDA matching EXACTLY — the tested combination is the approved combination — and the numeric-aware driver minimum), and the §8.6 MEASURED SSD qualification (QualifySSD: sequential + random IOPS + p95 floors + free bytes against the device's RECORDED benchmark — a measured-performance floor without a measurement is a named refusal, never schedule from unverified estimates); the BENCHMARK's opt-in random-read phase (§8.6: SSD-backed expert paging is sensitive to RANDOM reads and latency) measures IOPS + the p50/p95/p99 percentiles at a bounded random block (default 4 KiB, fixed-seed reproducible, queue depth 1 recorded — a v19.7.0-shaped request is byte-for-byte unchanged); the PLANNER's ssd-backed-moe strategy is the ONE v19.8.0 paging member of the closed vocabulary (the pack's moe_expert_pack execution stays UNPLANNED — the §8.8 enablement policy names its prerequisites: pack-byte verification + the §8.7 target-host acceptance matrix; an enabled declaration rides the explanation as expert-pack-declared-not-planned), reached only AFTER the presence join observes a running+healthy infer_ssd runtime, then a SEVEN-refusal chain BY NAME (profile-unconfigured / profile-model-mismatch / context-exceeds-profile-limit / image-not-digest-pinned / ssd-gpu-incompatible + gpu-insufficient / ssd-device-unknown + ssd-unqualified + ssd-storage-insufficient), and the plan carries the profile as its config profile (the field's first real value), the §8.8-capped concurrency, the storage demand WITH the measured floors (admission revalidates), and the generated §8 explanation entries; the EXPERT PACK is MODELED at the artifact tier (scarlix.artifact/v1 — §8.1's split: a SGLang artifact/capability mode, never a fifth provider): bound to the EXACT checkpoint (id + revision + fingerprint + the model's own agreeing declaration — two files disagreeing about one artifact is a collision, not a merge), backend_id sglang ONLY with the cross-engine refusal ENFORCED BY CODE (this release's must-not-do: 'Do not claim cross-engine pack compatibility'), placeholders refused, the container digest pinned, duplicate artifact ids rejected as a group; the registry flip is honest (sglang's SupportsExpertPack true WITH the §8.5 evidence note; infer_ssd's AdapterNote names the planning-side experimental adapter); the operator surfaces: SCARLIHQ_INFERSSD_PROFILE (fail-closed startup), the honest three-state log, GET /api/compute/plan's ssd_profile + expert_packs views, and the invalid-by-design example pack manifest; acceptance: the 33-case profile truth table + the loader suite + the adapter suite (fail-closed construction, the §8.2 model matrix, the estimate numbers, the launch-shape refusals, the probe seam, the no-Docker source assertion) + the integration suite (the adapter↔planner estimate AGREEMENT, the qualification floors, the GPU join incl. the suffix normalization) + the planner ssd suite (the golden path, all seven named refusals, determinism 20×, the pack-declared-not-planned proof) + the pack truth tables + the HTTP view suite + the seam suite; residual honesty: hardware acceptance stays OPEN (KPK-06 — §8.7's target-host matrix is the operator's act), no enabled profile ships (every default deployment refuses every infer_ssd plan — §8.8's initial status, the presence join refuses first), no infer_ssd runtime is observed anywhere yet, pack-byte verification is named future work (declared digests are declarations), the one-active-workload-per-profile ledger rides the Host Bridge integration; 'LLM navrhuje, politika rozhoduje' — the profile is the operator's evidence record, the floors are measured, the combination is exact, and the pen stays with the operator"
+}
+
 # ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
 # execution — the summary reports the number of checks actually executed.
@@ -4855,6 +5189,7 @@ SMOKE_CHECKS=(
     check_37_unified_inventory_v2
     check_38_aggregate_admission_v19_7_1
     check_39_backend_capability_planner_v19_7_2
+    check_40_inferssd_expert_pack_v19_8_0
 )
 
 run_check() {

@@ -1,0 +1,56 @@
+# Example SGLang Expert Pack artifact manifest (scarlix.artifact/v1) — v19.8.0.
+#
+# This file documents the §8.5 pack manifest SHAPE for operators
+# (docs/roadmaps/
+# SCARLIXOS_UNIFIED_COMPUTE_FABRIC_IMPLEMENTATION_ROADMAP.md §8.5).
+# It is a DELIBERATELY INVALID example: the placeholder values (the
+# VERIFIED_... markers) fail modelmeta's pack validation BY DESIGN —
+# "Never enable a profile containing placeholder values. The
+# configuration loader must reject them" (§8.4's rule, applied to the
+# artifact tier too: an unknown compatibility fact never becomes a
+# capability claim). The loader reports it as an invalid entry with the
+# named reasons; the startup log and GET /api/compute/plan carry the
+# verdict.
+#
+# The §8.5 rules this schema enforces:
+#   - backend_id is "sglang" — the ONE engine an Expert Pack is
+#     validated for. A pack declaring any other backend is refused BY
+#     NAME: cross-engine pack compatibility is NOT claimed (the
+#     v19.8.0 must-not-do).
+#   - model.id + model.revision + model.checkpoint_sha256 must match a
+#     scarlix.model/v2 manifest EXACTLY — the pack binds to the exact
+#     checkpoint; mismatches are rejected.
+#   - the model manifest must DECLARE the pack (artifacts.expert_pack
+#     enabled with compatible_backend "sglang" and the SAME
+#     sha256/format/version — two files disagreeing about one artifact
+#     is a collision, not a merge).
+#   - compatibility.container_digest must be @sha256:-pinned.
+#
+# To make a real pack manifest: replace every placeholder with VERIFIED
+# values, place it beside the model manifest (or under
+# SCARLIX_EXPERT_PACKS_D), and record the model-side declaration. The
+# v19.8.0 planner still never schedules pack EXECUTION — pack-byte
+# verification + the §8.7 target-host acceptance matrix are the named
+# prerequisites (the §8.8 enablement policy).
+schema_version: "scarlix.artifact/v1"
+artifact_id: "example-moe-model-sglang-expert-pack"
+artifact_type: "sglang_expert_pack"
+backend_id: "sglang"
+
+model:
+  id: "example-moe-model"
+  revision: "hf-revision-or-local-build-id"
+  checkpoint_sha256: "REPLACE_WITH_VERIFIED_CHECKPOINT_HASH"
+
+pack:
+  format: "VERIFIED_FORMAT"          # the pack artifact format, versioned by the engine
+  version: "VERIFIED_VERSION"        # the pack build version
+  sha256: "REPLACE_WITH_VERIFIED_PACK_HASH"  # the DECLARED pack fingerprint (64 hex; verification is the future machinery)
+  total_bytes: 0                     # the pack's storage demand — a number, never an unknown
+
+compatibility:
+  sglang_version: "VERIFIED_VERSION"       # §8.2's engine dimension: exact repository, commit and release
+  container_digest: "ghcr.io/scarlix/sglang@sha256:VERIFIED_DIGEST"  # digest-pinned and fixed
+  cuda_version: "VERIFIED_VERSION"         # §8.2's CUDA dimension
+  gpu_compute_capabilities:
+    - "VERIFIED_CAPABILITY"                # §8.2's GPU dimension

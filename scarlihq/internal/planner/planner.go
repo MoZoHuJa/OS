@@ -46,15 +46,28 @@
 //   - the numbers behind them), never consumed from model output.
 //     An accepted AI proposal becomes a typed request through
 //     operator action; the request shape itself enforces the boundary.
-//   - v19.7.2 plans are SINGLE-NODE ("local") and SINGLE-GPU, and
-//     carry NO storage demand: the deployed GPU backends serve MoE
-//     models with ALL experts resident in VRAM (expert paging and the
-//     SSD-backed expert store are v19.8.0's InferSSD / Expert Pack
-//     territory), and every planned model's weights are already on
-//     disk — the artifact verification proved them there. A
-//     weights+KV footprint exceeding every single GPU's allocatable is
-//     a NAMED refusal — multi-GPU splits need measured per-GPU
-//     overhead profiles that do not exist yet, never a guessed split.
+//   - v19.7.2 plans are SINGLE-NODE ("local") and SINGLE-GPU, and the
+//     resident strategies carry NO storage demand: the deployed GPU
+//     backends serve MoE models with ALL experts resident in VRAM, and
+//     every planned model's weights are already on disk — the artifact
+//     verification proved them there. A weights+KV footprint exceeding
+//     every single GPU's allocatable is a NAMED refusal — multi-GPU
+//     splits need measured per-GPU overhead profiles that do not exist
+//     yet, never a guessed split.
+//   - v19.8.0 (roadmap §8, Compute Fabric Phase 4): the ONE paging
+//     exception is infer_ssd's ssd-backed-moe strategy — MoE experts
+//     paged from an APPROVED SSD path behind an operator-owned,
+//     enabled, validated, digest-pinned runtime profile, with the §8.2
+//     GPU compatibility join (declared compute capabilities + exact
+//     CUDA + minimum driver against the OBSERVED GPU) and the §8.6 MEASURED
+//     SSD qualification (a measured-performance floor without a
+//     measurement is a named refusal — never schedule from unverified
+//     estimates). Every default deployment refuses every infer_ssd
+//     plan: no profile ships enabled (§8.8's initial status) and no
+//     infer_ssd runtime is observed running. The SGLang Expert Pack is
+//     MODELED at the artifact tier (scarlix.artifact/v1) — pack
+//     EXECUTION stays unplanned until pack-byte verification + the §8.7
+//     target-host acceptance matrix pass (the §8.8 enablement policy).
 package planner
 
 import (
@@ -68,8 +81,10 @@ import (
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/admission"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/airuntime"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/backends/infer_ssd"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/modelmeta"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/storage"
 )
 
 // ---------------------------------------------------------------------------
@@ -197,10 +212,14 @@ type PinnedImage struct {
 
 // Strategy values — the CLOSED execution-strategy vocabulary derived
 // deterministically from (architecture × backend execution class).
-// The v19.7.2 set is deliberately resident-only: the deployed GPU
-// backends serve MoE with ALL experts in VRAM, the CPU backends with
-// the whole checkpoint in RAM — expert paging / SSD-backed experts
-// arrive with v19.8.0's InferSSD + Expert Pack, never guessed here.
+// The v19.7.2 set was resident-only (the deployed GPU backends serve
+// MoE with ALL experts in VRAM, the CPU backends with the whole
+// checkpoint in RAM); v19.8.0 (roadmap §8) adds exactly ONE paging
+// member — infer_ssd's ssd-backed-moe — and nothing else: the SGLang
+// Expert Pack's moe_expert_pack execution mode stays UNPLANNED until
+// pack-byte verification + the §8.7 target-host acceptance matrix
+// pass (the §8.8 enablement policy — a named prerequisite, never a
+// silent capability upgrade).
 const (
 	// StrategyDenseResident — dense weights fully resident in GPU VRAM.
 	StrategyDenseResident = "dense-resident"
@@ -212,6 +231,14 @@ const (
 	// StrategyMoECPUResident — MoE checkpoint fully resident in host
 	// RAM (llama.cpp-family CPU execution).
 	StrategyMoECPUResident = "moe-cpu-resident"
+	// StrategySSDBackedMoE — v19.8.0 (roadmap §8.4): MoE experts paged
+	// from an approved SSD path at serving time (shared weights + KV
+	// resident in GPU VRAM) — infer_ssd ONLY, behind an enabled runtime
+	// profile with a MEASURED SSD qualification. The value lives in the
+	// infer_ssd package (the adapter owns the strategy contract); the
+	// planner aliases it so the vocabulary stays closed and greppable
+	// in ONE place.
+	StrategySSDBackedMoE = infer_ssd.StrategySSDBackedMoE
 )
 
 // NodeLocal is the v19.7.2 node identity: the planner is single-node by
@@ -324,6 +351,39 @@ const (
 	// ReasonPlanImageNotDigestPinned — the declared image reference
 	// carries no @sha256: digest (roadmap §7.4's invariant, enforced).
 	ReasonPlanImageNotDigestPinned = "plan-image-not-digest-pinned"
+	// ReasonPlanSSDProfileUnconfigured — v19.8.0 (roadmap §8.8's
+	// enablement policy): no ENABLED InferSSD runtime profile is
+	// configured — the honest default (no profile ships enabled; the
+	// operator's deliberate act follows the compatibility matrix + the
+	// target-host acceptance).
+	ReasonPlanSSDProfileUnconfigured = "plan-ssd-profile-unconfigured"
+	// ReasonPlanSSDProfileModelMismatch — the runtime profile binds a
+	// DIFFERENT model manifest or checkpoint (roadmap §8.2: the profile
+	// is the evidence record for ONE exact combination).
+	ReasonPlanSSDProfileModelMismatch = "plan-ssd-profile-model-mismatch"
+	// ReasonPlanProfileContextExceedsLimit — the demanded context
+	// exceeds the runtime profile's serving ceiling (§8.4's
+	// execution.context_limit — a second, tighter ceiling under the
+	// model's own).
+	ReasonPlanProfileContextExceedsLimit = "plan-context-exceeds-profile-limit"
+	// ReasonPlanSSDDeviceUnknown — the profile's storage device is not
+	// in the observed inventory (a declared device that is not observed
+	// is not a device).
+	ReasonPlanSSDDeviceUnknown = "plan-ssd-device-unknown"
+	// ReasonPlanSSDUnqualified — the device carries no MEASURED read
+	// profile, or the measurement does not meet the profile's declared
+	// conservative floors (roadmap §8.6: SSD I/O admission uses measured
+	// conservative capacity — never schedule from unverified estimates).
+	ReasonPlanSSDUnqualified = "plan-ssd-unqualified"
+	// ReasonPlanSSDStorageInsufficient — the device's observed available
+	// bytes cannot hold the expert storage demand + the profile's
+	// minimum free floor.
+	ReasonPlanSSDStorageInsufficient = "plan-ssd-storage-insufficient"
+	// ReasonPlanSSDGPUIncompatible — the §8.2 GPU compatibility join
+	// failed for every healthy GPU (declared compute capabilities,
+	// exact CUDA, minimum driver — the declared combinations are the
+	// TESTED combinations; anything else is a named refusal).
+	ReasonPlanSSDGPUIncompatible = "plan-ssd-gpu-incompatible"
 )
 
 // PlanResult is the planner's answer: a plan (a PROPOSAL) or a named
@@ -372,7 +432,9 @@ type PlannerPolicy struct {
 	// PriorityBackends — the operator preference order (tie-break 1).
 	// Backends not listed rank last, stably. The default mirrors the
 	// v19.0.6 release-locked failover order; infer_ssd is deliberately
-	// absent (never preferred while its adapter does not exist).
+	// absent (never preferred while its runtime is not observed running
+	// — and an operator who WANTS it preferred adds it to their own
+	// policy after the §8.8 enablement act).
 	PriorityBackends []airuntime.BackendID
 	// Images — the operator-declared pinned image registry (roadmap
 	// §7.4's "digest-pinned and allowlisted": an image HERE is the
@@ -394,12 +456,22 @@ type PlannerPolicy struct {
 	// subtracted before the capacity check (mirrors admission's 5% so
 	// the proposal is admission-shaped, never optimistic).
 	VRAMSafetyFraction float64
+	// SSDProfile — v19.8.0 (roadmap §8): the ONE enabled, validated
+	// InferSSD runtime profile the planner may derive ssd-backed-moe
+	// strategies from. nil = the honest v19.8.0 default (no profile
+	// ships enabled — §8.8's initial status; every infer_ssd plan
+	// refuses plan-ssd-profile-unconfigured even if a runtime were
+	// observed running). The profile arrives through the production
+	// seam (SCARLIHQ_INFERSSD_PROFILE — loaded, validated, and
+	// ENABLED-checked fail-closed); a DISABLED profile in the policy is
+	// a wiring bug validatePolicy refuses by name.
+	SSDProfile *infer_ssd.RuntimeProfile
 }
 
-// DefaultPlannerPolicy is the documented v19.7.2 policy.
+// DefaultPlannerPolicy is the documented v19.8.0 policy.
 func DefaultPlannerPolicy() PlannerPolicy {
 	return PlannerPolicy{
-		PolicyVersion:           "planner/v19.7.2",
+		PolicyVersion:           "planner/v19.8.0",
 		MaxSnapshotAge:          60 * time.Second,
 		VerificationMaxAge:      7 * 24 * time.Hour,
 		PlanTTL:                 5 * time.Minute,
@@ -408,6 +480,7 @@ func DefaultPlannerPolicy() PlannerPolicy {
 		RuntimeOverheadRAMBytes: 0,
 		DefaultCPUThreads:       4,
 		VRAMSafetyFraction:      0.05,
+		SSDProfile:              nil,
 	}
 }
 
@@ -506,6 +579,19 @@ func validatePolicy(policy PlannerPolicy) error {
 	if policy.PlanTTL <= 0 {
 		return fmt.Errorf("plan_ttl must be > 0 (a plan without expiry violates the revalidation invariant)")
 	}
+	// v19.8.0 (roadmap §8): the SSD profile rides the policy as a
+	// VALIDATED, ENABLED fact — an invalid profile or a disabled one
+	// carried in the policy is a named wiring error (the production
+	// seam turns disabled into not-configured; documentation never
+	// reaches the planning path).
+	if policy.SSDProfile != nil {
+		if reasons := infer_ssd.ValidateRuntimeProfile(policy.SSDProfile); len(reasons) > 0 {
+			return fmt.Errorf("the InferSSD runtime profile is invalid: %s", strings.Join(reasons, "; "))
+		}
+		if !policy.SSDProfile.Enabled {
+			return fmt.Errorf("the InferSSD runtime profile %q is DISABLED — a disabled profile in the policy is a wiring bug (the seam turns disabled into not-configured; documentation never plans)", policy.SSDProfile.ProfileID)
+		}
+	}
 	return nil
 }
 
@@ -523,6 +609,14 @@ type candidate struct {
 	image    PinnedImage
 	util     int     // the observed utilization (queue-delay proxy)
 	frag     float64 // demand/allocatable — higher = tighter fit = lower fragmentation
+
+	// v19.8.0 (roadmap §8): the ssd-backed-moe evaluation's own facts
+	// (zero values for the resident strategies — the strategy itself is
+	// the discriminator).
+	ssdProfile   *infer_ssd.RuntimeProfile // the enabled profile the strategy derived from
+	ssdQual      infer_ssd.Qualification   // the §8.6 measured qualification verdict
+	ssdGPUCompat string                    // the §8.2 GPU join detail (carried into the explanation)
+	ssdCapped    int                       // the §8.8-capped max concurrency (0 = not capped)
 }
 
 // Plan computes the deterministic execution plan for req (or the named
@@ -721,6 +815,15 @@ func (p *Planner) priorityOf(b airuntime.BackendID) int {
 // demand in v19.7.2 — the weights are already on disk, the artifact
 // verification proved them there).
 func (p *Planner) evaluateCapacity(b airuntime.BackendID, row airuntime.BackendCapabilities, m *modelmeta.Manifest, rt *inventory.Runtime, snap *inventory.InventorySnapshotV2, req ExecutionRequest) (candidate, string, string) {
+	// v19.8.0 (roadmap §8, Compute Fabric Phase 4): the InferSSD
+	// execution class has its OWN evaluation — the ssd-backed-moe
+	// strategy behind the operator's enabled runtime profile (the image
+	// comes from the profile, the VRAM demand pages the experts out to
+	// the approved SSD device, and the §8.2 GPU join + the §8.6 measured
+	// qualification are hard constraints the resident path never had).
+	if b == airuntime.BackendInferSSD {
+		return p.evaluateInferSSD(b, row, m, snap, req)
+	}
 	c := candidate{backend: b, row: row}
 
 	// The image hard constraint (operator-declared + digest-pinned).
@@ -861,6 +964,239 @@ func (p *Planner) pickGPU(snap *inventory.InventorySnapshotV2, demand uint64) (*
 	return &gpu, best.alloc, best.util, "", ""
 }
 
+// evaluateInferSSD is the v19.8.0 InferSSD execution class's own hard
+// constraint chain (roadmap §8, Compute Fabric Phase 4) — reached only
+// AFTER the placement × runtime join observed an infer_ssd runtime
+// running + healthy (the join in Plan() refuses every default
+// deployment first). The chain, every refusal BY NAME:
+//
+//	(1) the enabled runtime profile        → plan-ssd-profile-unconfigured
+//	(2) the §8.2 model binding             → plan-ssd-profile-model-mismatch
+//	(3) the profile's serving ceiling      → plan-context-exceeds-profile-limit
+//	(4) the profile's digest-pinned image  → plan-image-not-digest-pinned
+//	(5) the §8.2 GPU compatibility join    → plan-ssd-gpu-incompatible
+//	    + the admission-shaped VRAM check  → plan-gpu-unavailable / -insufficient
+//	(6) the §8.6 measured qualification    → plan-ssd-device-unknown /
+//	                                           plan-ssd-unqualified /
+//	                                           plan-ssd-storage-insufficient
+//
+// The strategy is ssd-backed-moe: shared weights + KV resident in VRAM
+// (plus the profile's own additive demands), experts paged from the
+// approved SSD path — the vector carries the storage demand WITH the
+// profile's measured floors so admission revalidates the same facts.
+func (p *Planner) evaluateInferSSD(b airuntime.BackendID, row airuntime.BackendCapabilities, m *modelmeta.Manifest, snap *inventory.InventorySnapshotV2, req ExecutionRequest) (candidate, string, string) {
+	c := candidate{backend: b, row: row}
+
+	// (1) §8.8's enablement policy: the profile hard constraint. The
+	// honest v19.8.0 default is NO enabled profile — nothing ships one,
+	// and even an observed running runtime plans nothing without the
+	// operator's deliberate, validated, digest-pinned enablement act.
+	profile := p.policy.SSDProfile
+	if profile == nil {
+		return c, ReasonPlanSSDProfileUnconfigured, "no ENABLED InferSSD runtime profile is configured (roadmap §8.8's initial status: enabled=false — the operator's deliberate act follows the compatibility matrix + the target-host acceptance; SCARLIHQ_INFERSSD_PROFILE declares the path)"
+	}
+
+	// (2) the §8.2 model binding (the adapter's own join, reused — one
+	// implementation of the exact-combination rule, the planner and the
+	// Host Bridge path read the same verdict).
+	bind := infer_ssd.BindModel(profile, m.Execution(""))
+	if !bind.Qualified {
+		return c, ReasonPlanSSDProfileModelMismatch, fmt.Sprintf("%s — %s (roadmap §8.2: the profile is the evidence record for ONE exact model × engine combination)", bind.Code, bind.Detail)
+	}
+
+	// (3) the profile's serving ceiling (§8.4's execution.context_limit —
+	// a second, tighter ceiling under the model's own; the request is
+	// what is served, so the request is what is checked).
+	if req.ContextTokens > profile.Execution.ContextLimit {
+		return c, ReasonPlanProfileContextExceedsLimit, fmt.Sprintf("context_tokens %d exceeds the runtime profile's serving ceiling %d (roadmap §8.4's execution.context_limit — the experimental engine's own bound)", req.ContextTokens, profile.Execution.ContextLimit)
+	}
+
+	// (4) the image: the profile's digest-pinned reference IS the image
+	// for this backend (the loader validated the pin; the re-check here
+	// is defense in depth — the same enforcement expression the resident
+	// path uses).
+	ref := profile.Image.Reference
+	if !strings.Contains(ref, "@sha256:") {
+		return c, ReasonPlanImageNotDigestPinned, fmt.Sprintf("the runtime profile's image reference %q carries no @sha256: digest (roadmap §8.4's exit criterion — runtime profiles are digest-pinned and fixed)", ref)
+	}
+	c.image = PinnedImage{Reference: ref, DigestPinned: true}
+
+	// The ssd-backed-moe derivation: shared + KV (+ the profile's own
+	// reserve) resident in VRAM; the experts live on the SSD.
+	kvBytes := uint64(req.ContextTokens) * m.Runtime.KVCache.BytesPerTokenEstimate
+	vramDemand := m.Architecture.SharedBytes + kvBytes + profile.Resources.GPU.VRAMReserveBytes
+	expertTotal := infer_ssd.ExpertStorageBytes(m.Execution(""))
+	c.strategy = StrategySSDBackedMoE
+
+	// (5) the §8.2 GPU compatibility join (declared compute capabilities
+	// + EXACT CUDA + minimum driver against the OBSERVED GPU) folded
+	// into the same admission-shaped capacity + tie-break discipline as
+	// pickGPU: utilization → tightest fit → stable UUID.
+	gpu, alloc, util, compatDetail, exclCode, exclDetail := p.pickGPUForProfile(profile, snap, vramDemand)
+	if exclCode != "" {
+		return c, exclCode, exclDetail
+	}
+	c.gpu = gpu
+	c.util = util
+	c.frag = fragRatio(vramDemand, alloc)
+	c.ssdGPUCompat = compatDetail
+
+	// (6) the §8.6 measured SSD qualification on the profile's device:
+	// MEASURED conservative capacity only — a measured-performance floor
+	// without a measurement is a named refusal, never an estimate.
+	var dev *storage.Device
+	for i := range snap.Storage {
+		if snap.Storage[i].ID == profile.Resources.Storage.DeviceID {
+			dev = &snap.Storage[i]
+			break
+		}
+	}
+	qual := infer_ssd.QualifySSD(profile, dev, expertTotal)
+	if !qual.Qualified {
+		switch qual.Code {
+		case infer_ssd.QualificationDeviceUnknown:
+			return c, ReasonPlanSSDDeviceUnknown, qual.Detail
+		case infer_ssd.QualificationNoReadProfile, infer_ssd.QualificationFloorsUnmet:
+			return c, ReasonPlanSSDUnqualified, qual.Detail
+		case infer_ssd.QualificationFreeBytesInsufficient:
+			return c, ReasonPlanSSDStorageInsufficient, qual.Detail
+		default:
+			return c, ReasonPlanSSDUnqualified, qual.Detail
+		}
+	}
+	c.ssdQual = qual
+
+	// The vector: exclusive GPU hold (shared + KV + reserve), the
+	// profile's additive host demands, and the storage demand WITH the
+	// profile's measured floors (admission revalidates the same facts
+	// the planner checked — the proposal is admission-shaped).
+	c.vector = admission.ResourceVector{
+		GPU: []admission.GPURequest{{
+			GPUUUID:   gpu.UUID,
+			VRAMBytes: vramDemand,
+			Exclusive: true, // §8.8: one allocation per GPU
+		}},
+		RAMBytes:       profile.Resources.HostRAMBytes,
+		PinnedRAMBytes: profile.Resources.PinnedRAMBytes,
+		CPUThreads:     float64(profile.Resources.CPUThreads),
+		KVCacheBytes:   kvBytes,
+		Storage: []admission.StorageRequest{{
+			DeviceID:              profile.Resources.Storage.DeviceID,
+			MinimumFreeBytes:      expertTotal + profile.Resources.Storage.MinimumFreeBytes,
+			MinimumReadMBps:       profile.Resources.Storage.MinimumReadMBps,
+			MinimumRandomReadIOPS: profile.Resources.Storage.MinimumRandomReadIOPS,
+			MaximumP95LatencyMs:   profile.Resources.Storage.MaximumP95LatencyMs,
+			PathClass:             "model",
+		}},
+	}
+	c.ssdProfile = profile
+
+	// §8.8's concurrency capping: the profile's cap (exactly 1 in
+	// v19.8.0) bounds the request's wish — the plan carries the capped
+	// value with a generated explanation entry, never a silent edit.
+	if req.MaxConcurrent > profile.Execution.MaxConcurrentRequests {
+		c.ssdCapped = profile.Execution.MaxConcurrentRequests
+	}
+	return c, "", ""
+}
+
+// pickGPUForProfile is pickGPU with the §8.2 GPU compatibility join
+// folded in: only healthy GPUs whose OBSERVED compute capability ∈ the
+// profile's declared capabilities, whose driver CUDA matches the
+// declared CUDA EXACTLY, and whose driver version meets the declared
+// minimum can serve the profile — the declared combinations are the
+// TESTED combinations, everything else is the named refusal. The
+// tie-break sequence after the filter is unchanged (utilization →
+// tightest fit → stable UUID). No healthy+compatible GPU →
+// plan-ssd-gpu-incompatible; no fitting one → plan-gpu-insufficient.
+func (p *Planner) pickGPUForProfile(profile *infer_ssd.RuntimeProfile, snap *inventory.InventorySnapshotV2, demand uint64) (*inventory.GPU, uint64, int, string, string, string) {
+	type fit struct {
+		gpu    inventory.GPU
+		alloc  uint64
+		util   int
+		compat string
+	}
+	var fits []fit
+	var firstCompatRefusal string
+	for i := range snap.GPUs {
+		g := snap.GPUs[i]
+		if !g.Healthy {
+			continue
+		}
+		ok, compatDetail := infer_ssd.GPUCompatibility(profile, g)
+		if !ok {
+			if firstCompatRefusal == "" {
+				firstCompatRefusal = compatDetail
+			}
+			continue
+		}
+		total := uint64(g.VRAMTotalMB) << 20
+		free := uint64(g.VRAMFreeMB) << 20
+		headroom := uint64(float64(total) * p.policy.VRAMSafetyFraction)
+		alloc := saturatingSub(free, headroom)
+		if demand <= alloc {
+			fits = append(fits, fit{gpu: g, alloc: alloc, util: g.UtilizationPct, compat: compatDetail})
+		}
+	}
+	if len(fits) == 0 {
+		// Distinguish the two refusals honestly: no GPU passed the §8.2
+		// join at all → plan-ssd-gpu-incompatible (the declared
+		// combinations are the tested combinations); a compatible GPU
+		// exists but the demand exceeds its allocatable → the same
+		// plan-gpu-insufficient the resident path names.
+		compatible := 0
+		largest := uint64(0)
+		for i := range snap.GPUs {
+			g := snap.GPUs[i]
+			if !g.Healthy {
+				continue
+			}
+			if ok, _ := infer_ssd.GPUCompatibility(profile, g); !ok {
+				continue
+			}
+			compatible++
+			total := uint64(g.VRAMTotalMB) << 20
+			free := uint64(g.VRAMFreeMB) << 20
+			alloc := saturatingSub(free, uint64(float64(total)*p.policy.VRAMSafetyFraction))
+			if alloc > largest {
+				largest = alloc
+			}
+		}
+		if compatible == 0 {
+			detail := firstCompatRefusal
+			if detail == "" {
+				detail = "no healthy GPU in the snapshot"
+			}
+			return nil, 0, 0, "", ReasonPlanSSDGPUIncompatible, fmt.Sprintf("no healthy GPU passed the §8.2 compatibility join — %s", detail)
+		}
+		return nil, 0, 0, "", ReasonPlanGPUInsufficient, fmt.Sprintf("demand %d bytes exceeds every compatible GPU's allocatable (largest %d bytes after the %v headroom) — the §8.2 join passed but the capacity did not", demand, largest, p.policy.VRAMSafetyFraction)
+	}
+	sort.SliceStable(fits, func(i, j int) bool {
+		if fits[i].util != fits[j].util {
+			return fits[i].util < fits[j].util
+		}
+		if fits[i].alloc != fits[j].alloc {
+			return fits[i].alloc < fits[j].alloc // smaller sufficient allocatable = tighter fit
+		}
+		return fits[i].gpu.UUID < fits[j].gpu.UUID
+	})
+	best := fits[0]
+	gpu := best.gpu
+	return &gpu, best.alloc, best.util, best.compat, "", ""
+}
+
+// strategyExplanationTail renders the strategy-specific closing text of
+// the strategy-derived explanation entry: the resident strategies name
+// the v19.8.0 paging exception's boundary; ssd-backed-moe names its own
+// §8 derivation. GENERATED text, deterministic per strategy — an LLM
+// never authors it.
+func strategyExplanationTail(strategy string) string {
+	if strategy == StrategySSDBackedMoE {
+		return "ssd-backed-moe (roadmap §8): shared weights + KV resident in VRAM, the experts paged from the approved SSD path behind the enabled runtime profile — the vector carries the storage demand WITH the measured floors"
+	}
+	return "infer_ssd's ssd-backed-moe (roadmap §8) is the v19.8.0 paging exception, derived only behind an enabled runtime profile with a measured qualification"
+}
+
 // assemblePlan builds the final plan: the content-hash PlanID (the
 // identity IS the decision), the expiry, the generated explanation
 // trail, and the ask's provenance.
@@ -872,7 +1208,7 @@ func (p *Planner) assemblePlan(req ExecutionRequest, m *modelmeta.Manifest, veri
 		ModelArtifactID: fmt.Sprintf("%s@%s#%s", m.ID, m.Revision, strings.ToLower(m.Checkpoint.SHA256)),
 		ResourceVector:  c.vector,
 		RequiredImages:  []PinnedImage{c.image},
-		ConfigProfileID: "", // honest: no v19.7.2 profile registry — a declared absence, never a guessed profile
+		ConfigProfileID: "", // the resident strategies carry no config profile — a declared absence, never a guessed profile
 		ExpiresAt:       now.Add(p.policy.PlanTTL),
 		RequestID:       req.RequestID,
 		ModelID:         m.ID,
@@ -883,6 +1219,18 @@ func (p *Planner) assemblePlan(req ExecutionRequest, m *modelmeta.Manifest, veri
 		MaxConcurrent:   req.MaxConcurrent,
 		LatencyClass:    req.LatencyClass,
 	}
+	// v19.8.0 (roadmap §8): the ssd-backed-moe plan's config profile IS
+	// the runtime profile the strategy derived from — the first real
+	// value this field ever carries (v19.7.2's honest empty stays for
+	// the resident strategies), and the §8.8 concurrency cap bounds the
+	// ask's wish (the capped value rides the plan + a generated entry —
+	// never a silent edit of the operator-visible ask).
+	if c.ssdProfile != nil {
+		plan.ConfigProfileID = c.ssdProfile.ProfileID
+		if c.ssdCapped > 0 {
+			plan.MaxConcurrent = c.ssdCapped
+		}
+	}
 	if c.gpu != nil {
 		plan.GPUUUIDs = []string{c.gpu.UUID}
 	}
@@ -891,7 +1239,7 @@ func (p *Planner) assemblePlan(req ExecutionRequest, m *modelmeta.Manifest, veri
 	// named; GENERATED here — an LLM never authors an entry).
 	expl := []DecisionReason{
 		{Code: "backend-selected", Detail: fmt.Sprintf("%s (tier %d, policy priority %d) — capability row: formats %v, architectures %v, experimental=%t", c.backend, tierOf(c.backend), p.priorityOf(c.backend)+1, c.row.ModelFormats, c.row.Architectures, c.row.Experimental)},
-		{Code: "strategy-derived", Detail: fmt.Sprintf("%s from architecture %s × execution class (requires_gpu=%t) — resident-only: no v19.7.2 storage demand (expert paging is v19.8.0 territory)", c.strategy, m.Architecture.Kind, c.row.RequiresGPU)},
+		{Code: "strategy-derived", Detail: fmt.Sprintf("%s from architecture %s × execution class (requires_gpu=%t) — the resident strategies carry no storage demand (the weights are already on disk, the artifact verification proved them there); %s", c.strategy, m.Architecture.Kind, c.row.RequiresGPU, strategyExplanationTail(c.strategy))},
 		{Code: "artifact-verified", Detail: fmt.Sprintf("verified at %s (age bound %s) — %s", verif.VerifiedAt.UTC().Format(time.RFC3339), p.policy.VerificationMaxAge, plan.ModelArtifactID)},
 		{Code: "snapshot-fresh", Detail: fmt.Sprintf("snapshot %s within the %s bound", snap.SnapshotID, p.policy.MaxSnapshotAge)},
 		{Code: "image-pinned", Detail: c.image.Reference},
@@ -906,6 +1254,28 @@ func (p *Planner) assemblePlan(req ExecutionRequest, m *modelmeta.Manifest, veri
 	}
 	if c.row.Experimental {
 		expl = append(expl, DecisionReason{Code: "backend-experimental", Detail: fmt.Sprintf("%s is EXPERIMENTAL in the deployed stack — the selection is carried visibly, never silently", c.backend)})
+	}
+	// v19.8.0 (roadmap §8): the ssd-backed-moe plan's own generated
+	// entries — the profile binding, the §8.2 GPU join, the §8.6
+	// measured qualification, and the §8.8 concurrency cap (every
+	// number named; GENERATED here, an LLM never authors one).
+	if c.ssdProfile != nil {
+		expl = append(expl,
+			DecisionReason{Code: "ssd-profile-bound", Detail: fmt.Sprintf("runtime profile %q (experimental, image %s) binds model %q @ checkpoint %s — roadmap §8.2's exact-combination evidence record", c.ssdProfile.ProfileID, c.image.Reference, c.ssdProfile.Compatibility.ModelManifest, c.ssdProfile.Compatibility.CheckpointSHA256)},
+			DecisionReason{Code: "ssd-gpu-compatibility-joined", Detail: c.ssdGPUCompat},
+			DecisionReason{Code: "ssd-qualified-measured", Detail: c.ssdQual.Detail},
+		)
+		if c.ssdCapped > 0 {
+			expl = append(expl, DecisionReason{Code: "ssd-concurrency-capped", Detail: fmt.Sprintf("the ask's max_concurrent %d is capped to the profile's §8.8 limit %d (one active workload per SSD profile unless contention evidence justifies more — none exists in v19.8.0)", req.MaxConcurrent, c.ssdCapped)})
+		}
+	}
+	// v19.8.0: an ENABLED expert pack declaration on the model is
+	// carried HONESTLY — declared, not planned. The §8.8 enablement
+	// policy keeps pack execution off until pack-byte verification +
+	// the §8.7 target-host acceptance matrix pass; the resident
+	// strategy above IS the plan.
+	if m.Artifacts.ExpertPack.Enabled {
+		expl = append(expl, DecisionReason{Code: "expert-pack-declared-not-planned", Detail: fmt.Sprintf("the model declares an ENABLED Expert Pack for backend %q (%s) — v19.8.0 models the pack at the artifact tier (scarlix.artifact/v1) and keeps pack EXECUTION unplanned until pack-byte verification + the §8.7 target-host acceptance matrix pass (the §8.8 enablement policy); the strategy above is the plan", m.Artifacts.ExpertPack.CompatibleBackend, m.Artifacts.ExpertPack.Format)})
 	}
 	expl = append(expl, DecisionReason{Code: "plan-is-proposal", Detail: fmt.Sprintf("nothing is reserved, bound or launched — admission is still required; the plan expires at %s and is revalidated at admission time", plan.ExpiresAt.UTC().Format(time.RFC3339))})
 	plan.Explanation = expl

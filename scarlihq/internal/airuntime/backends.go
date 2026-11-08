@@ -1,6 +1,6 @@
-// Backend capability contract (v19.7.2, Compute Fabric Phase 3, roadmap
-// §7.2/§7.3 of docs/roadmaps/
-// SCARLIXOS_UNIFIED_COMPUTE_FABRIC_IMPLEMENTATION_ROADMAP.md).
+// Backend capability contract (v19.7.2, evolved v19.8.0 — Compute Fabric
+// Phases 3-4, roadmap §7.2/§7.3/§8 of
+// docs/roadmaps/SCARLIXOS_UNIFIED_COMPUTE_FABRIC_IMPLEMENTATION_ROADMAP.md).
 //
 // This file separates the CAPABILITY tier from the ADAPTER tier:
 //
@@ -9,15 +9,17 @@
 //     runtimes that exist TODAY with adapters, probing, failover order,
 //     chat budgets and tests.
 //   - BackendID (here) is the CAPABILITY identity — the administrator-
-//     owned, validated-at-construction registry rows the v19.7.2
-//     deterministic planner consumes. It deliberately includes
-//     infer_ssd (roadmap §7.2's own const block): a DECLARED-future
-//     backend whose capability row exists so manifests declaring it can
-//     be intersected HONESTLY — while it has NO runtime adapter in
-//     v19.7.2, so the planner's placement × runtime join refuses every
-//     infer_ssd plan today (v19.8.0 owns the adapter, the health
-//     semantics and the failover policy — steps 4-8 of §7.3's extension
-//     procedure).
+//     owned, validated-at-construction registry rows the deterministic
+//     planner consumes. It deliberately includes infer_ssd (roadmap
+//     §7.2's own const block): the v19.8.0 §8.3 ADAPTER
+//     (internal/backends/infer_ssd — planning-side: model binding,
+//     estimation, runtime profile, health contract, SSD qualification)
+//     exists behind an operator-owned EXPERIMENTAL runtime profile,
+//     while the backend still has NO transport-tier chat provider
+//     (ProviderForBackend names that honestly) — so the planner's
+//     placement × runtime join refuses every infer_ssd plan in every
+//     default deployment until an enabled profile AND an observed
+//     running runtime both exist.
 //
 // The registry is ADMINISTRATOR-OWNED and VALIDATED at construction
 // (roadmap §7.2: "Do not allow an HTTP caller or LLM to register
@@ -61,12 +63,17 @@ const (
 	BackendBeeLlama BackendID = "beellama"
 	// BackendOllama — Tier 4 CPU backend (starter fallback).
 	BackendOllama BackendID = "ollama"
-	// BackendInferSSD — the declared-future SSD-expert backend
-	// (roadmap §8, v19.8.0). Capability row only in v19.7.2: NO
-	// adapter, NO runtime, NO failover tier — the planner's placement ×
-	// runtime join refuses it today; the row exists so a manifest
-	// declaring infer_ssd intersects honestly instead of erroring as
-	// an unknown slug.
+	// BackendInferSSD — the SSD-expert backend (roadmap §8, v19.8.0:
+	// Compute Fabric Phase 4). The capability row is closed and
+	// administrator-owned as ever; the v19.8.0 ADAPTER (planning-side:
+	// internal/backends/infer_ssd — model binding, estimation, runtime
+	// profile, health contract, SSD qualification) exists and is
+	// EXPERIMENTAL behind an operator-owned, enabled:false,
+	// digest-pinned runtime profile; the backend is STILL refused by
+	// the placement × runtime join in every default deployment (nothing
+	// runs it until the Host Bridge path + the target-host acceptance
+	// land), and it has NO transport-tier chat provider — ProviderForBackend
+	// names that honestly.
 	BackendInferSSD BackendID = "infer_ssd"
 )
 
@@ -145,14 +152,23 @@ type BackendCapabilities struct {
 	// resident; the GPU tiers page experts).
 	SupportsMoE bool `json:"supports_moe"`
 	// SupportsSSDExperts — the backend's OWN SSD-backed expert mode
-	// (infer_ssd's execution; v19.8.0 territory — the flag is honest
-	// capability metadata, the runtime-presence join still refuses the
-	// backend in every v19.7.2 plan).
+	// (infer_ssd's execution). v19.8.0: the adapter exists
+	// (internal/backends/infer_ssd) and the planner derives the
+	// ssd-backed-moe strategy for it — but ONLY behind an enabled,
+	// validated runtime profile with a MEASURED SSD qualification
+	// (roadmap §8.6); every default deployment refuses infer_ssd plans
+	// at the placement × runtime join until then.
 	SupportsSSDExperts bool `json:"supports_ssd_experts"`
 	// SupportsExpertPack — the backend executes the SGLang Expert Pack
-	// artifact (v19.8.0 flips this for sglang WITH the pack-engine
-	// validation evidence; v19.7.2 ships false everywhere — claiming
-	// pack support without validation evidence would be a phantom).
+	// artifact. v19.8.0 flips this TRUE for sglang WITH the pack-engine
+	// validation evidence: the scarlix.artifact/v1 pack manifest
+	// (modelmeta.ExpertPackManifest) binds a pack to the EXACT checkpoint
+	// and to the ONE engine it is validated for (cross-engine pack
+	// compatibility is refused BY NAME — this release's must-not-do).
+	// The flag is the capability CLAIM; USING it for execution still
+	// requires the operator's verified pack manifest + the §8.7
+	// target-host acceptance matrix (the v19.8.0 planner keeps pack
+	// execution unplanned — the §8.8 enablement policy).
 	SupportsExpertPack bool `json:"supports_expert_pack"`
 	// SupportsMultiGPU — tensor-parallel execution across GPUs. v19.7.2
 	// plans remain SINGLE-GPU regardless (multi-GPU splitting needs a
@@ -197,13 +213,20 @@ var backendRegistry = map[BackendID]BackendCapabilities{
 		Features:           []string{"chat", "embed", "radix-attention"},
 		SupportsMoE:        true,
 		SupportsSSDExperts: false,
-		SupportsExpertPack: false,
+		// v19.8.0 (roadmap §8.1/§8.5): the Expert Pack is a SGLang
+		// artifact/capability mode — the claim rides the closed registry
+		// WITH the validation evidence (the scarlix.artifact/v1 manifest
+		// binding: one pack, one exact checkpoint, one engine). Pack
+		// EXECUTION stays unplanned until pack-byte verification + the
+		// §8.7 target-host acceptance matrix pass (the §8.8 enablement
+		// policy — never a silent capability upgrade).
+		SupportsExpertPack: true,
 		SupportsMultiGPU:   true,
 		SupportsCPUOffload: true,
 		HealthRequired:     true,
 		Experimental:       false,
 		RequiresGPU:        true,
-		AdapterNote:        "adapter: provider-tier (sglang, Tier 1, GPU 0)",
+		AdapterNote:        "adapter: provider-tier (sglang, Tier 1, GPU 0; v19.8.0: sglang_expert_pack capability with §8.5 manifest evidence)",
 	},
 	BackendVLLM: {
 		BackendID:          BackendVLLM,
@@ -263,7 +286,7 @@ var backendRegistry = map[BackendID]BackendCapabilities{
 		HealthRequired:     true,
 		Experimental:       true,
 		RequiresGPU:        true,
-		AdapterNote:        "declared-future: NO v19.7.2 adapter — v19.8.0 owns roadmap §8 (the placement × runtime join refuses every v19.7.2 infer_ssd plan)",
+		AdapterNote:        "adapter: experimental (v19.8.0 roadmap §8.3 — internal/backends/infer_ssd, planning-side: model binding + estimation + runtime profile + health contract + SSD qualification; execution flows through the Host Bridge path, not the transport tier; every default deployment still refuses infer_ssd plans — the runtime-presence join + the §8.8 enabled:false profile)",
 	},
 }
 
@@ -368,9 +391,11 @@ func BackendForProvider(p Provider) (BackendID, error) {
 }
 
 // ProviderForBackend maps the capability-tier BackendID to the
-// adapter-tier Provider. infer_ssd is the honest named error: it has NO
-// v19.7.2 adapter (v19.8.0's §7.3 steps 4-8) — callers must never guess
-// an adapter for a declared-future backend.
+// adapter-tier Provider. infer_ssd is the honest named error: it has
+// NO transport-tier chat provider in v19.8.0 — the §8.3 adapter is
+// planning-side (internal/backends/infer_ssd) and its execution flows
+// through the Host Bridge path, never the provider failover chain.
+// Callers must never guess a transport provider for it.
 func ProviderForBackend(b BackendID) (Provider, error) {
 	if err := b.Validate(); err != nil {
 		return "", err
@@ -385,7 +410,7 @@ func ProviderForBackend(b BackendID) (Provider, error) {
 	case BackendOllama:
 		return ProviderOllama, nil
 	case BackendInferSSD:
-		return "", fmt.Errorf("airuntime: backend %q has no runtime adapter in v19.7.2 — v19.8.0 owns the InferSSD adapter (roadmap §8); the planner's placement × runtime join already refuses it today", b)
+		return "", fmt.Errorf("airuntime: backend %q has no transport provider — the v19.8.0 §8.3 adapter is planning-side (internal/backends/infer_ssd); chat execution flows through the Host Bridge path, not the provider tier", b)
 	}
 	return "", fmt.Errorf("airuntime: backend %q has no provider mapping", b)
 }

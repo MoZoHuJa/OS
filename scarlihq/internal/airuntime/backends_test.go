@@ -184,3 +184,46 @@ func containsStr(list []string, s string) bool {
 	}
 	return false
 }
+
+// TestBackendRegistryV19_8_0 — the Compute Fabric Phase 4 flips:
+// sglang's SupportsExpertPack is TRUE with the §8.5 evidence note in
+// the AdapterNote, every OTHER row stays false (cross-engine pack
+// claims are refused at the manifest tier and never ride the registry),
+// and infer_ssd's row carries the experimental §8.3 adapter note +
+// ProviderForBackend(infer_ssd) stays the honest no-transport error.
+func TestBackendRegistryV19_8_0(t *testing.T) {
+	sglang, err := BackendCapabilitiesFor(BackendSGLang)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sglang.SupportsExpertPack {
+		t.Fatalf("v19.8.0 (roadmap §8.1/§8.5): sglang must carry SupportsExpertPack=true — the pack is a SGLang artifact/capability mode with the scarlix.artifact/v1 manifest evidence")
+	}
+	if !strings.Contains(sglang.AdapterNote, "sglang_expert_pack") || !strings.Contains(sglang.AdapterNote, "§8.5") {
+		t.Fatalf("sglang's adapter note must name the pack capability + the §8.5 manifest evidence: %q", sglang.AdapterNote)
+	}
+	// Every other row keeps SupportsExpertPack=false: the pack is a
+	// SGLang artifact (§8.1's conceptual split — cross-engine pack
+	// compatibility is not claimed anywhere).
+	for _, b := range []BackendID{BackendVLLM, BackendBeeLlama, BackendOllama, BackendInferSSD} {
+		row, err := BackendCapabilitiesFor(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row.SupportsExpertPack {
+			t.Fatalf("%s must keep SupportsExpertPack=false — the Expert Pack is a SGLang artifact (roadmap §8.1; cross-engine claims are refused)", b)
+		}
+	}
+	infer, err := BackendCapabilitiesFor(BackendInferSSD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(infer.AdapterNote, "internal/backends/infer_ssd") || !strings.Contains(infer.AdapterNote, "experimental") {
+		t.Fatalf("infer_ssd's v19.8.0 adapter note must name the §8.3 planning-side adapter + its experimental status: %q", infer.AdapterNote)
+	}
+	if _, err := ProviderForBackend(BackendInferSSD); err == nil {
+		t.Fatalf("ProviderForBackend(infer_ssd) must stay the honest named error — no transport-tier chat provider in v19.8.0")
+	} else if !strings.Contains(err.Error(), "no transport provider") || !strings.Contains(err.Error(), "planning-side") {
+		t.Fatalf("the infer_ssd alignment error must name the no-transport + planning-side facts: %v", err)
+	}
+}

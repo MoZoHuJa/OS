@@ -19,6 +19,7 @@ import (
 	"github.com/MoZoHuJa/OS/scarlihq/internal/compute"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/mcp"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/modelmeta"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/planner"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
@@ -29,7 +30,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.7.2"
+var Version = "19.8.0"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -141,6 +142,56 @@ func main() {
 		log.Printf("Execution planner enabled (policy %s, plan TTL %s, %d priority backends; image registry EMPTY — every plan refuses plan-image-unconfigured until SCARLIHQ_PLANNER_IMAGES declares digest-pinned references)", executionPlanner.Policy().PolicyVersion, executionPlanner.Policy().PlanTTL, len(executionPlanner.Policy().PriorityBackends))
 	} else {
 		log.Printf("Execution planner enabled (policy %s, plan TTL %s, %d priority backends, %d digest-pinned image declarations)", executionPlanner.Policy().PolicyVersion, executionPlanner.Policy().PlanTTL, len(executionPlanner.Policy().PriorityBackends), len(executionPlanner.Policy().Images))
+	}
+
+	// v19.8.0 (Compute Fabric Phase 4, roadmap §8): the InferSSD runtime
+	// profile state + the SGLang Expert Pack manifests — the operator's
+	// §8.8 enablement surfaces, logged honestly at startup (the profile
+	// seam is fail-closed inside the planner's construction above; these
+	// lines state WHERE the deployment stands: not configured / disabled
+	// documentation / enabled-and-experimental).
+	if profile := executionPlanner.Policy().SSDProfile; profile != nil {
+		log.Printf("InferSSD runtime profile %s ENABLED (experimental §8.3 planning-side adapter; model %s @ %s; storage device %s with the declared measured floors; every infer_ssd plan still requires the runtime OBSERVED running + healthy — the placement × runtime join)", profile.ProfileID, profile.Compatibility.ModelManifest, profile.Compatibility.CheckpointSHA256, profile.Resources.Storage.DeviceID)
+	} else if path := strings.TrimSpace(os.Getenv(planner.InferSSDProfileEnv)); path != "" {
+		log.Printf("InferSSD runtime profile %s loaded but DISABLED (roadmap §8.8's initial status — the profile is documentation; the planner stays not-configured and every infer_ssd plan refuses plan-ssd-profile-unconfigured)", path)
+	} else {
+		log.Printf("InferSSD runtime profile not configured (roadmap §8.8's initial status — SCARLIHQ_INFERSSD_PROFILE declares the path; every infer_ssd plan refuses plan-ssd-profile-unconfigured)")
+	}
+	// The SGLang Expert Pack manifests (scarlix.artifact/v1, §8.5): loaded
+	// beside the model manifests, validated + checkpoint-bound at view
+	// time, summarized at startup (invalid entries carry their named
+	// reasons — the LoadManifests genre; the example pack ships
+	// invalid-by-design documentation). The planner never schedules from
+	// packs (the §8.8 enablement policy — pack execution needs pack-byte
+	// verification + the §8.7 target-host acceptance matrix, named future
+	// work).
+	packsLoader := func() []modelmeta.BoundExpertPack {
+		manifestsDir := modelmeta.ResolveManifestsDir()
+		packsDir := modelmeta.ResolveExpertPacksDir(manifestsDir)
+		if packsDir == "" {
+			return nil
+		}
+		loaded := modelmeta.LoadExpertPacks(packsDir)
+		manifests := modelmeta.LoadManifests(manifestsDir)
+		return modelmeta.BindExpertPacks(loaded.Packs, manifests.Manifests)
+	}
+	apiHandler.ConfigureExpertPacks(packsLoader)
+	if manifestsDir := modelmeta.ResolveManifestsDir(); manifestsDir != "" {
+		if packsDir := modelmeta.ResolveExpertPacksDir(manifestsDir); packsDir != "" {
+			loaded := modelmeta.LoadExpertPacks(packsDir)
+			manifests := modelmeta.LoadManifests(manifestsDir)
+			bound := modelmeta.BindExpertPacks(loaded.Packs, manifests.Manifests)
+			boundCount := 0
+			for _, b := range bound {
+				if b.Bound {
+					boundCount++
+				}
+			}
+			log.Printf("SGLang Expert Pack manifests: %d loaded, %d checkpoint-bound, %d invalid (scarlix.artifact/v1 — cross-engine packs are refused by name; pack EXECUTION stays unplanned until pack-byte verification + the §8.7 target-host acceptance matrix pass)", len(loaded.Packs), boundCount, len(loaded.Invalid))
+			for _, inv := range loaded.Invalid {
+				log.Printf("Expert Pack manifest INVALID: %s — %s", inv.Path, strings.Join(inv.Reasons, "; "))
+			}
+		}
 	}
 
 	// AK-2 (v19.4.1): Agent Kernel session surface — opt-in, like the compute

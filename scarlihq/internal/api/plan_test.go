@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/airuntime"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/backends/infer_ssd"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/modelmeta"
@@ -83,6 +84,84 @@ func planTestPlanner(t *testing.T) *planner.Planner {
 	policy.Images = map[airuntime.BackendID]string{
 		airuntime.BackendSGLang: "ghcr.io/scarlix/sglang:v0.4@sha256:" + strings.Repeat("11", 32),
 	}
+	p, err := planner.NewPlanner(policy, planSnapshots{snap: snap}, planModels{
+		manifests: map[string]*modelmeta.Manifest{"qwen3-14b-awq": m},
+		verifs: map[string]*modelmeta.ArtifactVerification{"qwen3-14b-awq": {
+			ModelID: "qwen3-14b-awq", AllVerified: true, VerifiedAt: observed.Add(-time.Hour),
+			Checkpoint: &modelmeta.ArtifactDigest{Path: "/models/qwen3-14b-awq", Match: true},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetNow(func() time.Time { return observed.Add(time.Second) })
+	return p
+}
+
+// planTestPlannerWithSSDProfile builds the standard planner fixture
+// with an ENABLED InferSSD runtime profile riding the policy (the
+// v19.8.0 view test's fixture — the profile rides the policy, the
+// planner validates it fail-closed).
+func planTestPlannerWithSSDProfile(t *testing.T) *planner.Planner {
+	t.Helper()
+	profile := &infer_ssd.RuntimeProfile{
+		SchemaVersion: "scarlix.runtime-profile/v1",
+		ProfileID:     "infer-ssd-moe-experimental",
+		BackendID:     "infer_ssd",
+		Enabled:       true,
+		Experimental:  true,
+	}
+	profile.Image.Reference = "ghcr.io/scarlix/infer-ssd:v0.1@sha256:" + strings.Repeat("aa", 32)
+	profile.Compatibility.ModelManifest = "deepseek-moe-test"
+	profile.Compatibility.CheckpointSHA256 = strings.Repeat("cd", 32)
+	profile.Compatibility.CUDA = "12.8"
+	profile.Compatibility.DriverMinimum = "570.00"
+	profile.Compatibility.GPUComputeCapabilities = []string{"sm_120"}
+	profile.Execution.Strategy = infer_ssd.StrategySSDBackedMoE
+	profile.Execution.ContextLimit = 8192
+	profile.Execution.MaxConcurrentRequests = 1
+	profile.Resources.GPU.Mode = "exclusive"
+	profile.Resources.Storage.DeviceID = "storage.nvme.0"
+	profile.Resources.Storage.ModelPath = "/var/lib/scarlix/models/x"
+	profile.Resources.Storage.ExpertPath = "/var/lib/scarlix/experts/x"
+	profile.Resources.Storage.MinimumFreeBytes = 64 << 30
+	profile.Resources.Storage.MinimumReadMBps = 2000
+	profile.Resources.Storage.MinimumRandomReadIOPS = 50000
+	profile.Resources.Storage.MaximumP95LatencyMs = 1.5
+	profile.Network.NetworkProfile = "scarlix-compute-internal"
+	profile.Health.Type = "http"
+	profile.Health.Path = "/health"
+	profile.Health.StartupTimeoutSeconds = 600
+
+	observed := time.Now().UTC()
+	m := &modelmeta.Manifest{
+		SchemaVersion: modelmeta.SchemaVersionV2,
+		ID:            "qwen3-14b-awq",
+		Revision:      "rev-1",
+	}
+	m.Checkpoint.Format = "safetensors"
+	m.Checkpoint.SHA256 = strings.Repeat("ab", 32)
+	m.Architecture.Kind = modelmeta.ArchitectureDense
+	m.Architecture.SharedBytes = 8 << 30
+	m.Runtime.ContextLimit = 32768
+	m.Runtime.KVCache.BytesPerTokenEstimate = 8192
+	m.Runtime.SupportedBackends = []string{"sglang"}
+	m.Storage.ModelPath = "/models/qwen3-14b-awq"
+	snap := &inventory.InventorySnapshotV2{
+		SchemaVersion: inventory.SchemaVersionV2,
+		SnapshotID:    "snap0000000000000000000000000001",
+		ObservedAt:    observed,
+		Host:          storage.HostResources{CPUThreads: 16, RAMTotalBytes: 32 << 30, RAMAvailableBytes: 16 << 30},
+		GPUs: []inventory.GPU{
+			{ID: "gpu.nvidia.0", UUID: "GPU-aaaa", VRAMTotalMB: 16384, VRAMFreeMB: 16384, UtilizationPct: 0, Healthy: true},
+		},
+		Runtimes: []inventory.Runtime{{ID: "sglang", Running: true, Healthy: true, Port: 30000}},
+	}
+	policy := planner.DefaultPlannerPolicy()
+	policy.Images = map[airuntime.BackendID]string{
+		airuntime.BackendSGLang: "ghcr.io/scarlix/sglang:v0.4@sha256:" + strings.Repeat("11", 32),
+	}
+	policy.SSDProfile = profile
 	p, err := planner.NewPlanner(policy, planSnapshots{snap: snap}, planModels{
 		manifests: map[string]*modelmeta.Manifest{"qwen3-14b-awq": m},
 		verifs: map[string]*modelmeta.ArtifactVerification{"qwen3-14b-awq": {
@@ -251,7 +330,7 @@ func TestPlanGoldenPath(t *testing.T) {
 	if len(images) != 1 {
 		t.Fatalf("required_images wrong: %v", images)
 	}
-	if doc["snapshot_id"] != "snap0000000000000000000000000001" || doc["policy_version"] != "planner/v19.7.2" {
+	if doc["snapshot_id"] != "snap0000000000000000000000000001" || doc["policy_version"] != "planner/v19.8.0" {
 		t.Fatalf("provenance missing: %v / %v", doc["snapshot_id"], doc["policy_version"])
 	}
 }
@@ -317,5 +396,87 @@ func TestPlanRequestInvalidIsData(t *testing.T) {
 	}
 	if doc["reason_code"] != planner.ReasonPlanRequestInvalid {
 		t.Fatalf("reason_code=%v", doc["reason_code"])
+	}
+}
+
+// ---- the v19.8.0 Phase 4 views (roadmap §8) -------------------------------
+
+// TestPlanStateCarriesSSDProfileView: the GET view carries the compact
+// InferSSD profile audit view — JSON null when not configured (§8.8's
+// honest initial status), the profile facts when an enabled profile
+// rides the policy.
+func TestPlanStateCarriesSSDProfileView(t *testing.T) {
+	// Not configured: ssd_profile is JSON null (the honest absence).
+	mux := planTestServer(t)
+	_, doc := planDo(t, mux, http.MethodGet, "/api/compute/plan", "")
+	if v, ok := doc["ssd_profile"]; !ok || v != nil {
+		t.Fatalf("ssd_profile must be present-and-null when not configured: %v (%T)", v, v)
+	}
+
+	// Configured: the compact audit view carries the §8 facts.
+	h := NewHandler(guard.New(), scarlix_mode.New(), profiles.New(t.TempDir()), "secret", "19.8.0")
+	h.ConfigurePlanner(planTestPlannerWithSSDProfile(t))
+	mux2 := http.NewServeMux()
+	h.RegisterRoutes(mux2)
+	_, doc2 := planDo(t, mux2, http.MethodGet, "/api/compute/plan", "")
+	profile, ok := doc2["ssd_profile"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("ssd_profile must be the compact view: %v", doc2["ssd_profile"])
+	}
+	if profile["profile_id"] != "infer-ssd-moe-experimental" || profile["enabled"] != true || profile["experimental"] != true {
+		t.Fatalf("the audit view must carry the enablement + experimental facts: %v", profile)
+	}
+	if profile["strategy"] != "ssd-backed-moe" || profile["storage_device_id"] != "storage.nvme.0" {
+		t.Fatalf("the audit view must carry the §8 facts: %v", profile)
+	}
+}
+
+// TestPlanStateCarriesExpertPacks: the GET view carries the expert pack
+// manifests when a loader is wired (bound + unbound verdicts), and
+// OMITS the field entirely when none is (the honest absence, never an
+// empty masquerade).
+func TestPlanStateCarriesExpertPacks(t *testing.T) {
+	// No loader: the field is absent.
+	mux := planTestServer(t)
+	_, doc := planDo(t, mux, http.MethodGet, "/api/compute/plan", "")
+	if _, ok := doc["expert_packs"]; ok {
+		t.Fatalf("expert_packs must be omitted without a loader: %v", doc["expert_packs"])
+	}
+
+	// A loader: the bound + unbound verdicts ride the view.
+	h := NewHandler(guard.New(), scarlix_mode.New(), profiles.New(t.TempDir()), "secret", "19.8.0")
+	h.ConfigurePlanner(planTestPlanner(t))
+	h.ConfigureExpertPacks(func() []modelmeta.BoundExpertPack {
+		bound := modelmeta.ExpertPackManifest{}
+		bound.SchemaVersion = modelmeta.SchemaVersionArtifact
+		bound.ArtifactID = "pack-a"
+		bound.ArtifactType = modelmeta.ArtifactTypeSGLangExpertPack
+		bound.BackendID = modelmeta.BackendIDSGLang
+		unbound := bound
+		unbound.ArtifactID = "pack-orphan"
+		unbound.Model.ID = "unknown-model"
+		return []modelmeta.BoundExpertPack{
+			{Manifest: bound, Bound: true, BoundModelID: "deepseek-moe-test"},
+			{Manifest: unbound, Bound: false, BindingReasons: []string{"no model manifest declares model.id \"unknown-model\""}},
+		}
+	})
+	mux2 := http.NewServeMux()
+	h.RegisterRoutes(mux2)
+	_, doc2 := planDo(t, mux2, http.MethodGet, "/api/compute/plan", "")
+	packs, ok := doc2["expert_packs"].([]interface{})
+	if !ok || len(packs) != 2 {
+		t.Fatalf("expert_packs must carry both verdicts: %v", doc2["expert_packs"])
+	}
+	first, _ := packs[0].(map[string]interface{})
+	if first["bound"] != true || first["bound_model_id"] != "deepseek-moe-test" {
+		t.Fatalf("the bound verdict must ride the view: %v", first)
+	}
+	second, _ := packs[1].(map[string]interface{})
+	if second["bound"] != false {
+		t.Fatalf("the unbound verdict must ride the view: %v", second)
+	}
+	manifest, _ := first["manifest"].(map[string]interface{})
+	if manifest == nil || manifest["backend_id"] != "sglang" {
+		t.Fatalf("the pack manifest must ride the view: %v", first["manifest"])
 	}
 }

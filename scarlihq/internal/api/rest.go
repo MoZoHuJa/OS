@@ -18,6 +18,7 @@ import (
 	"github.com/MoZoHuJa/OS/scarlihq/internal/gaming"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/modelmeta"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/planner"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
@@ -27,7 +28,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.7.2"
+var Version = "19.8.0"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -229,6 +230,11 @@ type Handler struct {
 	// reserves nothing; admission is still required). Nil until
 	// ConfigurePlanner is called.
 	executionPlanner *planner.Planner
+	// v19.8.0 (Phase 4, roadmap §8.5): the SGLang Expert Pack manifest
+	// view loader — re-reads the pack manifests at call time (the
+	// admission model-source discipline). Nil until ConfigureExpertPacks
+	// is called (the GET omits the field — the honest absence).
+	expertPacks func() []modelmeta.BoundExpertPack
 }
 
 // NewHandler creates a new API handler.
