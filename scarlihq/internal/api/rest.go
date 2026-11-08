@@ -18,6 +18,7 @@ import (
 	"github.com/MoZoHuJa/OS/scarlihq/internal/gaming"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/planner"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/status"
@@ -26,7 +27,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.7.1"
+var Version = "19.7.2"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -223,6 +224,11 @@ type Handler struct {
 	// ConfigureAdmission is called (opt-in like every mutating surface;
 	// 503 without it).
 	admission *admission.Manager
+	// v19.7.2 (Phase 3): the deterministic execution planner — the
+	// pure proposal engine behind the READ gate (POST /api/compute/plan
+	// reserves nothing; admission is still required). Nil until
+	// ConfigurePlanner is called.
+	executionPlanner *planner.Planner
 }
 
 // NewHandler creates a new API handler.
@@ -273,6 +279,15 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// with verified cleanup.
 	mux.HandleFunc("/api/compute/admission", h.authAdmin(h.admissionRoute))
 	mux.HandleFunc("/api/compute/admission/release", h.authAdmin(h.admissionRelease))
+	// v19.7.2 (Compute Fabric Phase 3, roadmap §7.4): the
+	// deterministic execution planner surface — the READ gate (the
+	// planner RESERVES NOTHING: it computes a proposal over the
+	// same observed data the inventory serves, a strictly weaker
+	// act than the ADMIN-gated admission above). POST computes the
+	// plan (a refusal is 200 + selected=false + reason_code — the
+	// planner working, never an HTTP error); GET reports the
+	// policy + the closed backend capability registry.
+	mux.HandleFunc("/api/compute/plan", h.auth(h.planRoute))
 	// v19.3.1: read-only gaming-stack inventory (Gaming Stack Integration Plan,
 	// Phase 4). Serves the host-bridge-detected entries only — no launch, no
 	// install, no arbitrary command surface is added here.

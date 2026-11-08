@@ -2292,21 +2292,25 @@ check_28_ai_runtime_foundation() {
     fi
 
     # --- README surface: the CURRENT-release assertions move with the
-    # release (v19.6.4 now — the check_27 precedent: current surface
+    # release (v19.7.2 now — the check_27 precedent: current surface
     # tracked, historical content stays asserted below); the v19.6.0,
-    # v19.6.1, v19.6.2 and v19.6.3 historical surfaces must ALSO stay (the
-    # changelog rows + the What's New sections are the releases' permanent
-    # record).
-    if ! grep -q 'ScarLiXoS v19.7.1 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.7.1-B36B00' "$readme"; then
-        fail "README banner/h1/badge must say v19.7.1"
+    # v19.6.1, v19.6.2, v19.6.3, v19.6.6, v19.6.7, v19.6.8, v19.7.0 and
+    # v19.7.1 historical surfaces must ALSO stay (the changelog rows +
+    # the What's New sections are the releases' permanent record).
+    if ! grep -q 'ScarLiXoS v19.7.2 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.7.2-B36B00' "$readme"; then
+        fail "README banner/h1/badge must say v19.7.2"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.7.1 (Compute Fabric Phase 2 — resource vector + aggregate admission + reservation; Phase 1 stands)' "$readme"; then
-        fail "README version line must say v19.7.1 (Compute Fabric Phase 2 — resource vector + aggregate admission + reservation)"
+    if ! grep -q 'Version:\*\* v19.7.2 (Compute Fabric Phase 3 — backend capability contracts + deterministic execution planner; Phases 0-2 stand)' "$readme"; then
+        fail "README version line must say v19.7.2 (Compute Fabric Phase 3 — backend capability contracts + deterministic execution planner)"
+        return
+    fi
+    if ! grep -q "\\*\\*v19.7.2\\*\\*" "$readme" || ! grep -q "What's New in v19.7.2" "$readme"; then
+        fail "README must carry the v19.7.2 changelog row + What's New section (the current release's own record)"
         return
     fi
     if ! grep -q "\\*\\*v19.7.1\\*\\*" "$readme" || ! grep -q "What's New in v19.7.1" "$readme"; then
-        fail "README must carry the v19.7.1 changelog row + What's New section (the current release's own record)"
+        fail "README must carry the v19.7.1 changelog row + What's New section (the permanent record)"
         return
     fi
     if ! grep -q '\*\*v19.6.0\*\*' "$readme" || ! grep -q "What's New in v19.6.0" "$readme"; then
@@ -4282,15 +4286,15 @@ check_37_unified_inventory_v2() {
         return
     fi
 
-    # --- The version bump + the release documentation (v19.7.1 evolution:
+    # --- The version bump + the release documentation (v19.7.2 evolution:
     # the current-release guard moved with the release — the v19.7.0
     # record assertions below stay as history).
-    if [[ "$(cat "$version_file" | tr -d '[:space:]')" != "19.7.1" ]]; then
-        fail "VERSION must be 19.7.1"
+    if [[ "$(cat "$version_file" | tr -d '[:space:]')" != "19.7.2" ]]; then
+        fail "VERSION must be 19.7.2"
         return
     fi
     for f in "$REPO_DIR/install.sh" "$REPO_DIR/scarlihq/Dockerfile" "$REPO_DIR/scarlihq/cmd/scarlihq/main.go" "$api_rest"; do
-        if ! grep -q '19\.7\.1' "$f"; then
+        if ! grep -q '19\.7\.2' "$f"; then
             fail "version fallback missing in $f (the five-place bump discipline)"
             return
         fi
@@ -4535,6 +4539,279 @@ check_38_aggregate_admission_v19_7_1() {
 }
 
 # ===========================================================================
+# check_39 — v19.7.2 (Compute Fabric Phase 3, roadmap §7): the backend
+# capability contract (the administrator-owned CLOSED registry in
+# internal/airuntime, validated at construction) + the deterministic
+# execution planner (internal/planner — pure, side-effect-free, the
+# proposal engine behind the READ gate) + the §7.6 boundary (LLM output
+# is never selection input — the request structurally carries no
+# steering field)
+# ===========================================================================
+check_39_backend_capability_planner_v19_7_2() {
+    echo "--- [39] v19.7.2 (Compute Fabric Phase 3 — roadmap §7): the backend capability contract (closed administrator-owned registry, validated at startup) + the deterministic execution planner (pure, side-effect-free, hard constraints BEFORE optimization, content-hash PlanID determinism) + the §7.6 boundary (LLM output never becomes directly executable) ---"
+    local backends_go="$REPO_DIR/scarlihq/internal/airuntime/backends.go"
+    local backends_test="$REPO_DIR/scarlihq/internal/airuntime/backends_test.go"
+    local planner_go="$REPO_DIR/scarlihq/internal/planner/planner.go"
+    local planner_prod="$REPO_DIR/scarlihq/internal/planner/production.go"
+    local planner_test="$REPO_DIR/scarlihq/internal/planner/planner_test.go"
+    local api_plan="$REPO_DIR/scarlihq/internal/api/plan.go"
+    local api_plan_test="$REPO_DIR/scarlihq/internal/api/plan_test.go"
+    local api_rest="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local main_go="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local rel_notes="$REPO_DIR/docs/RELEASE_NOTES_v19.7.2.md"
+    local readme="$REPO_DIR/README.md"
+    local roadmap="$REPO_DIR/docs/roadmaps/SCARLIXOS_UNIFIED_COMPUTE_FABRIC_IMPLEMENTATION_ROADMAP.md"
+
+    for f in "$backends_go" "$backends_test" "$planner_go" "$planner_prod" "$planner_test" \
+        "$api_plan" "$api_plan_test" "$api_rest" "$main_go" "$rel_notes" "$roadmap"; do
+        if [[ ! -f "$f" ]]; then
+            fail "v19.7.2 source missing: $f (the Compute Fabric Phase 3 surface)"
+            return
+        fi
+    done
+
+    # --- §7.2: the backend capability contract — BackendID +
+    # BackendCapabilities + the CLOSED registry (the roadmap's own const
+    # block: sglang/vllm/beellama/ollama/infer_ssd).
+    if ! grep -q 'type BackendID string' "$backends_go" || ! grep -q 'type BackendCapabilities struct' "$backends_go"; then
+        fail "the §7.2 contract types must exist (BackendID + BackendCapabilities — the field set is the contract)"
+        return
+    fi
+    for b in BackendSGLang BackendVLLM BackendBeeLlama BackendOllama BackendInferSSD; do
+        if ! grep -q "$b BackendID" "$backends_go"; then
+            fail "the closed capability enumeration must carry $b (roadmap §7.2's own const block)"
+            return
+        fi
+    done
+    # The registry is ADMINISTRATOR-OWNED: no registration surface (no
+    # HTTP route, no env var, no file can add a row) and VALIDATED at
+    # construction (roadmap §7.2's "validated at startup").
+    if ! grep -q 'func ValidateBackendRegistry' "$backends_go"; then
+        fail "the closed registry must be validated at construction (ValidateBackendRegistry — roadmap §7.2's validated-at-startup rule)"
+        return
+    fi
+    local stripped_backends
+    stripped_backends=$(_strip_go_comments "$backends_go")
+    # §7.2's registry rule is the package CHARTER (documentation layer —
+    # the code enforcement is structural: no registration function
+    # exists anywhere in the package; the marker greps the RAW source).
+    if ! grep -q 'an HTTP caller or LLM to register' "$backends_go"; then
+        fail "the §7.2 registry rule must be encoded in the registry source (administrator-owned — no HTTP caller or LLM registers backends)"
+        return
+    fi
+    # The §7.3 discipline: extending is the ELEVEN-STEP act (the
+    # documented procedure; infer_ssd's row is the declared-future
+    # exception its v19.8.0 marker names — that one IS in code, the
+    # AdapterNote + the alignment error).
+    if ! grep -q 'eleven steps' "$backends_go"; then
+        fail "§7.3's extension procedure must be encoded at the registry (eleven steps — never merely a string constant)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_backends" | grep -q 'v19.8.0'; then
+        fail "the declared-future infer_ssd row must carry the v19.8.0 marker IN CODE (the AdapterNote + the alignment error — its adapter arrives with roadmap §8)"
+        return
+    fi
+    # The Provider↔BackendID alignment: infer_ssd is the honest named
+    # error (no v19.7.2 adapter).
+    if ! grep -q 'func ProviderForBackend' "$backends_go" || ! grep -q 'func BackendForProvider' "$backends_go"; then
+        fail "the adapter-tier ↔ capability-tier alignment must exist (ProviderForBackend + BackendForProvider)"
+        return
+    fi
+    if ! grep -q 'no runtime adapter in v19.7.2' "$backends_go"; then
+        fail "ProviderForBackend(infer_ssd) must be the honest named error (no v19.7.2 adapter — v19.8.0 owns it)"
+        return
+    fi
+
+    # --- §7.1: the planner is PURE — no network, no exec, no file I/O
+    # in the planning path (comment-stripped: prose cannot mask code;
+    # production.go is the ONLY seam allowed to touch the environment).
+    local stripped_planner
+    stripped_planner=$(_strip_go_comments "$planner_go")
+    if printf '%s\n' "$stripped_planner" | grep -nE '\bnet/http\b|\bos\.[A-Z]|\bexec\.|\bsyscall\b' >/dev/null; then
+        fail "internal/planner/planner.go must stay network/IO-free by construction (the production seams live in production.go — roadmap §7.1: the planner must not launch containers or touch the environment)"
+        return
+    fi
+    # §7.1's charter marker is the package documentation (the code
+    # enforcement is the purity scan above; the marker greps the RAW
+    # source — the charter IS the marker).
+    if ! grep -q 'launch containers' "$planner_go"; then
+        fail "the §7.1 charter marker must live in the planner source (the planner consumes capabilities and metadata; it must not launch containers)"
+        return
+    fi
+    # production.go is the documented seam: the env surface exists there
+    # and ONLY there.
+    if ! grep -q 'SCARLIHQ_PLANNER_IMAGES' "$planner_prod"; then
+        fail "the production seam must carry the operator image-registry env surface (SCARLIHQ_PLANNER_IMAGES)"
+        return
+    fi
+    if grep -q 'os\.Getenv\|net/http' "$planner_go"; then
+        fail "planner.go must not read the environment or dial the network (production.go is the only seam)"
+        return
+    fi
+
+    # --- §7.4: the planner contract — the request/plan shapes + the
+    # invariants (determinism via the content-hash PlanID, hard
+    # constraints, the proposal invariant, image pinning).
+    if ! grep -q 'type ExecutionRequest struct' "$planner_go" || ! grep -q 'type ExecutionPlan struct' "$planner_go"; then
+        fail "the §7.4 contract types must exist (ExecutionRequest + ExecutionPlan — the field set is the contract)"
+        return
+    fi
+    if ! grep -q 'func (p \*Planner) planContentHash' "$planner_go"; then
+        fail "the PlanID must be the CONTENT hash of the decision tuple (identical inputs → identical ID — the determinism proof, not a random identity)"
+        return
+    fi
+    if ! grep -q 'sha256.Sum256' "$planner_go"; then
+        fail "the PlanID must be a SHA-256 content hash (never a random UUID — determinism is the contract)"
+        return
+    fi
+    if ! grep -q 'func (p \*Planner) Plan(req ExecutionRequest) PlanResult' "$planner_go"; then
+        fail "the Plan entrypoint must exist (the deterministic pipeline)"
+        return
+    fi
+    # The plan EXPIRES and is revalidated at admission (the proposal
+    # invariant — the closing §7.4 rule).
+    if ! printf '%s\n' "$stripped_planner" | grep -q 'ExpiresAt'; then
+        fail "every plan must EXPIRE (ExpiresAt — revalidated at admission; planner output is a proposal, admission is still required)"
+        return
+    fi
+    if ! grep -q 'plan-is-proposal' "$planner_go"; then
+        fail "the generated explanation must carry the plan-is-proposal reason (nothing is reserved, bound or launched)"
+        return
+    fi
+
+    # --- The hard-constraint vocabulary (§7.5: constraints BEFORE
+    # optimization; every refusal BY NAME — the closed stable set).
+    for code in ReasonPlanSnapshotStale ReasonPlanModelUnverified ReasonPlanBackendNoCandidates ReasonPlanGPUInsufficient ReasonPlanRAMInsufficient ReasonPlanImageUnconfigured ReasonPlanImageNotDigestPinned ReasonPlanContextExceedsLimit; do
+        if ! grep -q "$code" "$planner_go"; then
+            fail "the closed refusal vocabulary must carry $code (a hard constraint without its named refusal is a silent constraint)"
+            return
+        fi
+    done
+    # The image invariant (§7.4): digest-pinned AND operator-declared.
+    # The marker is the EXACT enforcement call (a bare '@sha256:' string
+    # would also match refusal-message prose — prose cannot prove the
+    # gate; the code marker can).
+    if ! printf '%s\n' "$stripped_planner" | grep -q 'strings.Contains(ref, "@sha256:")'; then
+        fail "the planner must enforce the digest pin BY CODE (strings.Contains(ref, \"@sha256:\") — a reference without a digest is refused BY NAME, roadmap §7.4's invariant)"
+        return
+    fi
+
+    # --- §7.5: the tie-breaking sequence (policy priority → observed
+    # utilization → tightest fit → stable IDs) — hard constraints first.
+    if ! grep -q 'func (p \*Planner) less' "$planner_go"; then
+        fail "the deterministic candidate comparator must exist (§7.5's tie-break sequence)"
+        return
+    fi
+    if ! grep -q 'func (p \*Planner) priorityOf' "$planner_go"; then
+        fail "the policy-priority lookup must exist (tie-break 1: highest policy priority — the operator-owned order, never request-supplied)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_planner" | grep -q 'sort\.'; then
+        fail "candidate iteration must be SORTED (deterministic evaluation — never map-ordered)"
+        return
+    fi
+
+    # --- §7.6: the boundary — the request structurally carries NO
+    # steering field (LLM output never becomes directly executable —
+    # this release's must-not-do, enforced by the request's shape). The
+    # assertion reads the ExecutionRequest STRUCT BLOCK itself: no
+    # Preferred/Explanation/Policy field may appear in it (OUTPUT
+    # explanation fields on the plan/result are legitimate — the
+    # boundary is the REQUEST's shape).
+    local req_block
+    req_block=$(sed -n '/^type ExecutionRequest struct {/,/^}/p' "$planner_go")
+    if printf '%s\n' "$req_block" | grep -qiE 'Preferred|Explanation|Policy'; then
+        fail "ExecutionRequest must NOT carry a selection-steering field (no preferred_backend, no explanation echo — §7.6's boundary is the request's shape)"
+        return
+    fi
+    if ! grep -qE 'PreferredBackend|preferred_backend' "$api_plan_test"; then
+        fail "the regression suite must prove the steering-field boundary (the strict-decode steering-payload refusal)"
+        return
+    fi
+    if ! grep -q 'LLM never authors one' "$planner_go"; then
+        fail "the §7.5 closing rule must be encoded in the planner source (never let a model-generated explanation alter the deterministic selection — the explanation entries are GENERATED, an LLM never authors one)"
+        return
+    fi
+    if ! grep -q 'LLM OUTPUT IS NEVER SELECTION INPUT' "$planner_go"; then
+        fail "the §7.6 charter marker must live in the planner source (the release's must-not-do)"
+        return
+    fi
+    # The principal is stamped SERVER-SIDE (the api layer).
+    local stripped_api_plan
+    stripped_api_plan=$(_strip_go_comments "$api_plan")
+    if ! printf '%s\n' "$stripped_api_plan" | grep -q 'PrincipalFromContext'; then
+        fail "the plan principal must be stamped server-side (PrincipalFromContext — never caller-supplied)"
+        return
+    fi
+    if ! printf '%s\n' "$stripped_api_plan" | grep -q 'DisallowUnknownFields'; then
+        fail "the plan request decode must DisallowUnknownFields (a steering field in the payload is a 400 refusal — the §7.6 boundary at the decode)"
+        return
+    fi
+
+    # --- The API surface: the READ gate (negative control (a): the
+    # planner reserves nothing — POST /api/compute/plan sits behind
+    # h.auth, the same observation-grade gate as the inventory, NOT the
+    # admin gate and never unauthenticated).
+    if ! grep -q 'h.auth(h.planRoute)' "$api_rest"; then
+        fail "the plan route must sit behind the READ gate (h.auth — the planner reserves nothing; admission stays the separately-opt-in mutating act)"
+        return
+    fi
+    if grep -q 'h.authAdmin(h.planRoute)' "$api_rest"; then
+        fail "the plan route must NOT take the admin gate (planning is observation-grade — reserving is admission's act)"
+        return
+    fi
+    # The main.go wiring: the registry validated at construction +
+    # fail-closed on a malformed image declaration.
+    if ! grep -q 'planner.NewProductionPlanner' "$main_go"; then
+        fail "main.go must construct the production planner (the §7.2 validated-at-startup wiring)"
+        return
+    fi
+    if ! grep -q 'ValidateBackendRegistry' "$planner_go"; then
+        fail "the planner construction must validate the closed capability registry (roadmap §7.2)"
+        return
+    fi
+
+    # --- The regression proofs (the §7.4/§7.5/§7.6 suites).
+    for t in TestPlanDeterministic TestPlanGoldenPathDenseGPU TestPlanCPUExecutionClass TestPlanMoEGPUResident TestPlanRefusesStaleSnapshot TestPlanRefusesUnverifiedModel TestPlanBackendPresenceJoin TestPlanGPUInsufficient TestPlanImageUnconfigured TestPlanImageNotDigestPinned TestPlanPriorityTieBreak TestPlanGPUTieBreakUtilization TestPlanRequestCarriesNoSteeringField TestPlanExplanationIsGenerated; do
+        if ! grep -q "func $t" "$planner_test"; then
+            fail "the planner regression test $t must exist (the §7.4/§7.5/§7.6 proofs)"
+            return
+        fi
+    done
+    for t in TestPlanRouteDisabledWithoutPlanner TestPlanRequiresAuth TestPlanStrictDecodeRefusesSteeringFields TestPlanMethodGuard TestPlanGetRegistryView TestPlanGoldenPath TestPlanRefusalIsData TestPlanDeterministicOverHTTP; do
+        if ! grep -q "func $t" "$api_plan_test"; then
+            fail "the plan HTTP regression test $t must exist (the surface's own proofs)"
+            return
+        fi
+    done
+    for t in TestBackendRegistryClosedAndValidated TestBackendCapabilitiesForEveryMember TestProviderBackendAlignment TestBackendTiers TestBackendRowsAreCopies; do
+        if ! grep -q "func $t" "$backends_test"; then
+            fail "the backend registry regression test $t must exist (the §7.2/§7.3 proofs)"
+            return
+        fi
+    done
+
+    # --- The release documentation genre + the README record + the
+    # roadmap pointer.
+    for section in '## Scope' '## Changes' '## Verification' '## Known limitations'; do
+        if ! grep -q "$section" "$rel_notes"; then
+            fail "the v19.7.2 release notes must carry section '$section' (the release genre)"
+            return
+        fi
+    done
+    if ! grep -q "What's New in v19.7.2" "$readme" || ! grep -q '| \*\*v19.7.2\*\*' "$readme"; then
+        fail "the README must carry the v19.7.2 What's New section + changelog row"
+        return
+    fi
+    if ! grep -q 'Phase 3 --- v19.7.2: Backend capability contract and deterministic execution planner' "$roadmap"; then
+        fail "the roadmap must carry the §7 Phase 3 heading (the release's contract — the roadmap stays the planning document)"
+        return
+    fi
+
+    pass "v19.7.2 (Compute Fabric Phase 3 — the roadmap §7 backend capability contract + deterministic execution planner): the CAPABILITY TIER is separated from the adapter tier (BackendID + BackendCapabilities in internal/airuntime — the closed administrator-owned registry carrying roadmap §7.2's own five backends incl. the declared-future infer_ssd row with its v19.8.0 marker; validated at construction, no registration surface exists — no HTTP route, no env var, no file can add a row; the Provider↔BackendID alignment makes infer_ssd the honest named error: no v19.7.2 adapter, v19.8.0 owns it; §7.3's eleven-step extension procedure encoded at the registry — never merely a string constant); the PLANNER (internal/planner — NEW) is pure + side-effect-free (comment-stripped: no net/http, no os, no exec, no syscall in planner.go — production.go is the only environment seam, roadmap §7.1's 'the planner must not launch containers'), DETERMINISTIC (the PlanID is the SHA-256 CONTENT hash of the decision tuple — identical inputs → identical ID, 20×; candidate evaluation sorted; the tie-break sequence is policy priority → observed utilization (the honest queue-delay proxy) → tightest fit → stable IDs), and fail-closed at every hard constraint (§7.5 constraints BEFORE optimization): a STALE snapshot is HARD-REFUSED (KPK-19.7.0-P2-01's rule), an UNVERIFIED or STALE artifact verification is refused (KPK-19.7.0-P2-04's rule — declared digests are declarations), a declared-but-not-running backend is excluded by the placement × runtime join (the same join refuses every v19.7.2 infer_ssd plan — the declared-future backend is honestly absent), format/architecture/feature compatibility is enforced against the CLOSED capability rows, an unservable context is a named refusal, the capacity check is admission-shaped (the same safety-headroom discipline), a multi-GPU-sized demand is a NAMED refusal (measured per-GPU overhead profiles are v19.8.0+, never a guessed split), and every image is digest-pinned AND operator-declared (the honest v19.7.2 default: the image registry ships EMPTY — every plan refuses plan-image-unconfigured until SCARLIHQ_PLANNER_IMAGES declares references, the same honesty as v19.7.1's no-verified-manifests default); the STRATEGY vocabulary is closed and resident-only (dense-resident / cpu-resident / moe-gpu-resident / moe-cpu-resident — the deployed backends' actual behavior; expert paging + SSD-backed experts are v19.8.0 territory, no v19.7.2 plan carries a storage demand); §7.6's boundary is ENFORCED BY SHAPE (this release's must-not-do 'do not make LLM output directly executable'): ExecutionRequest carries NO steering field (no preferred_backend, no explanation echo — asserted at the source level), the strict decode refuses any injected field as 400, the principal is stamped SERVER-SIDE, the selection order belongs ONLY to the operator-owned PlannerPolicy, and the plan's Explanation is GENERATED by the planner (machine-readable DecisionReason codes + the numbers), never consumed from model output; the API surface is POST/GET /api/compute/plan behind the READ gate (the planner RESERVES NOTHING — observation-grade, like the inventory; admission stays the separately-opt-in ADMIN-gated mutating act) with a refusal as 200 + selected=false + the machine-readable reason_code (the planner working, never an HTTP error) and GET serving the closed registry view; acceptance: the planner suite (determinism 20×, the golden path, the CPU class, the MoE-resident rule, the full hard-constraint matrix, the tie-break sequence incl. the reversed policy priority, the steering-field absence proof, the generated-explanation proof) + the HTTP suite (503-before-config, 401, 400 strict decode incl. LLM-shaped payloads, 405, the registry view, refusal-is-data, HTTP determinism) + the registry suite (closed+validated, per-row honesty, the alignment errors, the tiers, the copy discipline); residual honesty: hardware acceptance stays OPEN (KPK-06), no verified manifests ship yet (every plan for a real model refuses plan-model-unverified until an operator records verifications), the image registry ships empty (plans refuse image-unconfigured until the operator declares digest-pinned references), the runtime-RAM overhead is the honest 0 (no measured profile exists), the utilization proxy for queue delay is OBSERVED data (a real queue model arrives with workload metrics, v19.8.0+), and the admission→planner revalidation join (a live GPU-health × reservation reconciler) stays named future work; 'LLM navrhuje, politika rozhoduje' — the capability rows are honest, the plan is deterministic, the proposal is expiry-bound, and the pen stays with the operator"
+}
+
+# ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
 # execution — the summary reports the number of checks actually executed.
 # Do NOT hardcode the check count in documentation; read it from the output.
@@ -4577,6 +4854,7 @@ SMOKE_CHECKS=(
     check_36_compute_fabric_phase0_lifecycle
     check_37_unified_inventory_v2
     check_38_aggregate_admission_v19_7_1
+    check_39_backend_capability_planner_v19_7_2
 )
 
 run_check() {

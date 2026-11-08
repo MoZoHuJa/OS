@@ -19,6 +19,7 @@ import (
 	"github.com/MoZoHuJa/OS/scarlihq/internal/compute"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/mcp"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/planner"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/webui"
@@ -28,7 +29,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.7.1"
+var Version = "19.7.2"
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -115,6 +116,31 @@ func main() {
 		log.Printf("Admission gate enabled (ledger: %s; policy %s, stale-snapshot hard refusal at %s, lease TTL %s)", ledgerPath, admissionMgr.Policy().PolicyVersion, admissionMgr.Policy().MaxSnapshotAge, admissionMgr.Policy().LeaseTTL)
 	} else {
 		log.Printf("Admission gate disabled; set SCARLIHQ_ADMISSION_ENABLED=true + SCARLIHQ_ADMISSION_LEDGER=<path> to enable the Compute Fabric Phase 2 surface")
+	}
+
+	// v19.7.2 (Compute Fabric Phase 3, roadmap §7): the deterministic
+	// EXECUTION PLANNER — the pure, side-effect-free proposal engine over
+	// the same snapshot + model seams the admission gate reads (one truth
+	// about the machine, two gates). Wired UNCONDITIONALLY like the
+	// read-only inventory: the planner reserves nothing, launches
+	// nothing, and writes nowhere — POST /api/compute/plan computes a
+	// PROPOSAL behind the READ gate (admission, separately opt-in above,
+	// is still required before anything binds). Construction validates the
+	// CLOSED backend capability registry (roadmap §7.2's "validated at
+	// startup") and fail-closes on a malformed SCARLIHQ_PLANNER_IMAGES
+	// declaration (backend=reference pairs, digest-pinned; the honest
+	// default is EMPTY — every plan refuses plan-image-unconfigured until
+	// the operator declares references, the same honesty as v19.7.1's
+	// no-verified-manifests default).
+	executionPlanner, err := planner.NewProductionPlanner()
+	if err != nil {
+		log.Fatalf("execution planner initialization failed: %v (fail closed — a malformed planner policy or an inconsistent capability registry is a startup error, never a per-request surprise)", err)
+	}
+	apiHandler.ConfigurePlanner(executionPlanner)
+	if len(executionPlanner.Policy().Images) == 0 {
+		log.Printf("Execution planner enabled (policy %s, plan TTL %s, %d priority backends; image registry EMPTY — every plan refuses plan-image-unconfigured until SCARLIHQ_PLANNER_IMAGES declares digest-pinned references)", executionPlanner.Policy().PolicyVersion, executionPlanner.Policy().PlanTTL, len(executionPlanner.Policy().PriorityBackends))
+	} else {
+		log.Printf("Execution planner enabled (policy %s, plan TTL %s, %d priority backends, %d digest-pinned image declarations)", executionPlanner.Policy().PolicyVersion, executionPlanner.Policy().PlanTTL, len(executionPlanner.Policy().PriorityBackends), len(executionPlanner.Policy().Images))
 	}
 
 	// AK-2 (v19.4.1): Agent Kernel session surface — opt-in, like the compute
