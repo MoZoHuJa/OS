@@ -1,6 +1,7 @@
 # ScarLiX OS v19.7.1 — Compute Fabric Phase 2: Resource Vector + Aggregate Admission + Reservation
 
 **Release:** v19.7.1
+**Commit:** [`cb725e8cc653b4d9ff18b2bb7fd54001dfb86df4`](https://github.com/MoZoHuJa/OS/commit/cb725e8cc653b4d9ff18b2bb7fd54001dfb86df4) — recorded at packaging (the release-notes genre: the hash lands with the tag)
 **Baseline commit (pre-change):** `f8638ef` (v19.7.0 release-notes hash record)
 **Date:** 2026-11-08
 **Scope:** Compute Fabric **Phase 2 — Resource Vector, Aggregate
