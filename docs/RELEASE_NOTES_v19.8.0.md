@@ -1,7 +1,7 @@
 # ScarLiX OS v19.8.0 — Compute Fabric Phase 4: InferSSD Adapter + SGLang Expert Pack (experimental)
 
 **Release:** v19.8.0
-**Commit:** (recorded at packaging — the release-notes genre: the hash lands with the tag)
+**Commit:** [`095a690edfe267b3f7a99cc7d2fbb3645c1fe047`](https://github.com/MoZoHuJa/OS/commit/095a690edfe267b3f7a99cc7d2fbb3645c1fe047) — recorded at packaging (the release-notes genre: the hash lands with the tag)
 **Baseline commit (pre-change):** `9a95f3f` (v19.7.2 release-notes hash record)
 **Date:** 2026-11-08
 **Scope:** Compute Fabric **Phase 4 — InferSSD and SGLang Expert Pack**
