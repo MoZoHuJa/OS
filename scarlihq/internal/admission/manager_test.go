@@ -43,12 +43,15 @@ func testManifest() *modelmeta.Manifest {
 	return m
 }
 
+// freshVerification builds a record BOUND to testManifest()'s identity
+// (v19.8.1, KPK-19.8.0-P1-02: the fingerprint is what admission matches).
 func freshVerification(age time.Duration) *modelmeta.ArtifactVerification {
 	return &modelmeta.ArtifactVerification{
-		ModelID:     "qwen3-14b-awq",
-		AllVerified: true,
-		VerifiedAt:  time.Now().UTC().Add(-age),
-		Checkpoint:  &modelmeta.ArtifactDigest{Path: "/models/qwen3-14b-awq", Match: true},
+		ModelID:             "qwen3-14b-awq",
+		ManifestFingerprint: modelmeta.ManifestFingerprint(testManifest()),
+		AllVerified:         true,
+		VerifiedAt:          time.Now().UTC().Add(-age),
+		Checkpoint:          &modelmeta.ArtifactDigest{Path: "/models/qwen3-14b-awq", Match: true},
 	}
 }
 
@@ -186,7 +189,7 @@ func TestAdmitAllDimensions(t *testing.T) {
 	if d.LeaseExpiresAt.IsZero() {
 		t.Fatalf("lease expiry missing")
 	}
-	if d.SnapshotID != f.snap.SnapshotID || d.PolicyVersion != "admission/v19.7.1" {
+	if d.SnapshotID != f.snap.SnapshotID || d.PolicyVersion != "admission/v19.8.1" {
 		t.Fatalf("decision provenance missing: snap=%q policy=%q", d.SnapshotID, d.PolicyVersion)
 	}
 }
@@ -690,6 +693,267 @@ func TestResourceVectorValidate(t *testing.T) {
 		if c.bad && len(reasons) > 0 && !strings.Contains(strings.Join(reasons, ";"), c.note) {
 			t.Errorf("%s: reason %v does not mention %q", c.name, reasons, c.note)
 		}
+	}
+}
+
+// ---- the v19.8.1 remediation proofs -------------------------------------------
+
+// TestAdmitRandomReadFloorsEnforced — KPK-19.8.0-P1-01: the admission
+// gate enforces the FULL measured contract, not only the sequential
+// floor. Sequential passes + random IOPS below the floor → refused BY
+// NAME; the random phase missing entirely while a random floor is
+// demanded → refused; p95 above the ceiling → refused; all metrics pass
+// → admission proceeds.
+func TestAdmitRandomReadFloorsEnforced(t *testing.T) {
+	f := newAdmissionFixture()
+	// Give the fixture's benchmarked device a recorded random phase.
+	rp := f.snap.Storage[0].ReadProfile
+	rp.RandomReadIOPS = 40000
+	rp.RandomReadP50Ms = 0.08
+	rp.RandomReadP95Ms = 0.25
+	rp.RandomReadP99Ms = 0.9
+	rp.RandomBlockBytes = 4096
+
+	// (1) sequential passes, random IOPS below the floor.
+	req := baseRequest()
+	req.Requirements.Storage[0].MinimumRandomReadIOPS = 50000
+	if d := f.manager(t).Admit(req); d.Allowed || d.ReasonCode != ReasonStorageReadProfileInsufficient {
+		t.Fatalf("decision=%+v, want storage-read-profile-insufficient (random IOPS below the floor)", d)
+	}
+	// (2) IOPS passes but p95 exceeds the ceiling.
+	req2 := baseRequest()
+	req2.Requirements.Storage[0].MinimumRandomReadIOPS = 30000
+	req2.Requirements.Storage[0].MaximumP95LatencyMs = 0.1
+	if d := f.manager(t).Admit(req2); d.Allowed || d.ReasonCode != ReasonStorageReadProfileInsufficient {
+		t.Fatalf("decision=%+v, want storage-read-profile-insufficient (p95 above the ceiling)", d)
+	}
+	// (3) the random phase is MISSING while a random floor is demanded.
+	req3 := baseRequest()
+	req3.Requirements.Storage[0].MinimumRandomReadIOPS = 30000
+	f2 := newAdmissionFixture() // the fixture's profile has NO random phase
+	if d := f2.manager(t).Admit(req3); d.Allowed || d.ReasonCode != ReasonStorageReadProfileInsufficient {
+		t.Fatalf("decision=%+v, want storage-read-profile-insufficient (unmeasured random floor)", d)
+	}
+	// (4) all metrics pass → admission proceeds.
+	req4 := baseRequest()
+	req4.Requirements.Storage[0].MinimumRandomReadIOPS = 30000
+	req4.Requirements.Storage[0].MaximumP95LatencyMs = 0.5
+	if d := f.manager(t).Admit(req4); !d.Allowed {
+		t.Fatalf("all-metrics-pass admission refused: %s — %s", d.ReasonCode, d.Explanation)
+	}
+}
+
+// TestAdmitBenchmarkStaleRefused — the SK audit's P2-04: a benchmark
+// older than the policy's MaxBenchmarkAge is a named refusal (a
+// benchmark describes the device it ran on, at the time it ran).
+func TestAdmitBenchmarkStaleRefused(t *testing.T) {
+	f := newAdmissionFixture()
+	rp := f.snap.Storage[0].ReadProfile
+	rp.RandomReadIOPS = 40000
+	rp.RandomReadP95Ms = 0.25
+	rp.MeasuredAt = f.snap.ObservedAt.Add(-40 * 24 * time.Hour) // bound is 30 days
+	req := baseRequest()
+	req.Requirements.Storage[0].MinimumReadMBps = 100 // a measured floor demanded
+	if d := f.manager(t).Admit(req); d.Allowed || d.ReasonCode != ReasonStorageReadProfileStale {
+		t.Fatalf("decision=%+v, want storage-read-profile-stale", d)
+	}
+}
+
+// TestAdmitVerificationIdentityMismatch — KPK-19.8.0-P1-02: the
+// verification record is bound to the manifest identity; a manifest that
+// changed after verification is UNVERIFIED until re-verified, and a
+// pre-v19.8.1 record (no fingerprint) is equally refused.
+func TestAdmitVerificationIdentityMismatch(t *testing.T) {
+	// (1) the manifest's revision changed after verification.
+	f := newAdmissionFixture()
+	m := testManifest()
+	m.Revision = "rev-2" // same id, different identity
+	f.models.manifests["qwen3-14b-awq"] = m
+	if d := f.manager(t).Admit(baseRequest()); d.Allowed || d.ReasonCode != ReasonModelVerificationIdentityMismatch {
+		t.Fatalf("decision=%+v, want model-verification-identity-mismatch (revision changed)", d)
+	}
+
+	// (2) the checkpoint digest changed.
+	f2 := newAdmissionFixture()
+	m2 := testManifest()
+	m2.Checkpoint.SHA256 = strings.Repeat("cd", 32)
+	f2.models.manifests["qwen3-14b-awq"] = m2
+	if d := f2.manager(t).Admit(baseRequest()); d.Allowed || d.ReasonCode != ReasonModelVerificationIdentityMismatch {
+		t.Fatalf("decision=%+v, want model-verification-identity-mismatch (checkpoint changed)", d)
+	}
+
+	// (3) a pre-v19.8.1 record (no fingerprint) is refused as unverified.
+	f3 := newAdmissionFixture()
+	f3.models.verifs["qwen3-14b-awq"].ManifestFingerprint = ""
+	if d := f3.manager(t).Admit(baseRequest()); d.Allowed || d.ReasonCode != ReasonModelUnverified {
+		t.Fatalf("decision=%+v, want model-unverified (no fingerprint)", d)
+	}
+}
+
+// TestAdmitKVCountedExactlyOnce — KPK-19.8.0-P2-03: VRAMBytes + KV
+// → the assigned GPU's hold is EXACTLY the sum, never 2× the KV bytes.
+func TestAdmitKVCountedExactlyOnce(t *testing.T) {
+	f := newAdmissionFixture()
+	req := baseRequest()
+	req.Requirements.GPU[0].VRAMBytes = 8 << 30
+	req.Requirements.KVCacheBytes = 1 << 30
+	d := f.manager(t).Admit(req)
+	if !d.Allowed {
+		t.Fatalf("admission refused: %s", d.Explanation)
+	}
+	if got := d.Assignment.GPUs[0].VRAMBytes; got != 9<<30 {
+		t.Fatalf("GPU hold = %d, want EXACTLY %d (VRAM 8 GiB + KV 1 GiB once — the double-count defect reserved %d)", got, 9<<30, 10<<30)
+	}
+	if d.Assignment.GPUs[0].KVCacheBytes != 1<<30 || d.Assignment.KVCacheBytes != 1<<30 {
+		t.Fatalf("KV accounting drift: %+v", d.Assignment)
+	}
+}
+
+// TestAdmitIdempotencyConflict — KPK-19.8.0-P2-04: the same key with a
+// DIFFERENT request (model, vector, principal) is the NAMED conflict,
+// never the prior allocation wearing the new request's name; the exact
+// replay still returns the ORIGINAL decision.
+func TestAdmitIdempotencyConflict(t *testing.T) {
+	f := newAdmissionFixture()
+	m := f.manager(t)
+	req := baseRequest()
+	req.IdempotencyKey = "idem-42"
+	if d := m.Admit(req); !d.Allowed {
+		t.Fatalf("first admission failed: %s", d.Explanation)
+	}
+
+	// Same key, different resource vector → conflict.
+	req2 := baseRequest()
+	req2.RequestID = "req-2"
+	req2.IdempotencyKey = "idem-42"
+	req2.Requirements.GPU[0].VRAMBytes = 6 << 30
+	if d := m.Admit(req2); d.Allowed || d.ReasonCode != ReasonIdempotencyConflict {
+		t.Fatalf("decision=%+v, want idempotency-conflict (different vector)", d)
+	}
+	// Same key, different model → conflict.
+	req3 := baseRequest()
+	req3.IdempotencyKey = "idem-42"
+	req3.ModelID = "ghost-model"
+	req3.RequestID = "req-3"
+	if d := m.Admit(req3); d.Allowed || d.ReasonCode != ReasonIdempotencyConflict {
+		t.Fatalf("decision=%+v, want idempotency-conflict (different model)", d)
+	}
+	// Same key, different principal → conflict.
+	req4 := baseRequest()
+	req4.IdempotencyKey = "idem-42"
+	req4.Principal = "intruder"
+	req4.RequestID = "req-4"
+	if d := m.Admit(req4); d.Allowed || d.ReasonCode != ReasonIdempotencyConflict {
+		t.Fatalf("decision=%+v, want idempotency-conflict (different principal)", d)
+	}
+	// The EXACT replay still returns the original decision.
+	if d := m.Admit(req); !d.Allowed || d.AdmissionID == "" {
+		t.Fatalf("exact replay refused: %+v", d)
+	}
+	// And only ONE hold exists.
+	if held := m.Held(); len(held) != 1 {
+		t.Fatalf("holds=%d, want 1 (the conflicts reserved nothing)", len(held))
+	}
+}
+
+// TestAdmitStaleSnapshotRefusedOnSSDPath — the SK audit's P2-05
+// regression: a stale snapshot is refused by FRESHNESS even when the
+// request carries the full random-read SSD floor set (the freshness
+// gate precedes every dimension check, including the measured floors).
+func TestAdmitStaleSnapshotRefusedOnSSDPath(t *testing.T) {
+	f := newAdmissionFixture()
+	f.snap.ObservedAt = time.Now().UTC().Add(-10 * time.Minute)
+	req := baseRequest()
+	req.Requirements.Storage[0].MinimumReadMBps = 100
+	req.Requirements.Storage[0].MinimumRandomReadIOPS = 30000
+	req.Requirements.Storage[0].MaximumP95LatencyMs = 0.5
+	if d := f.manager(t).Admit(req); d.Allowed || d.ReasonCode != ReasonSnapshotStale {
+		t.Fatalf("decision=%+v, want snapshot-stale on the SSD path (freshness precedes the floors)", d)
+	}
+}
+
+// TestAdmissionRenewExtendsLease — KPK-19.8.0-P2-05: Renew extends the
+// HELD lease durably (past the original expiry); renewing a foreign
+// principal's hold is a NAMED error.
+func TestAdmissionRenewExtendsLease(t *testing.T) {
+	f := newAdmissionFixture()
+	m := f.manager(t)
+	d := m.Admit(baseRequest())
+	if !d.Allowed {
+		t.Fatalf("admission refused: %s", d.Explanation)
+	}
+	// Advance the clock past the ORIGINAL expiry and renew.
+	m.SetNow(func() time.Time { return d.LeaseExpiresAt.Add(-time.Minute) })
+	rec, err := m.Renew(d.AdmissionID, "operator")
+	if err != nil {
+		t.Fatalf("renew failed: %v", err)
+	}
+	if !rec.LeaseExpiresAt.After(d.LeaseExpiresAt) {
+		t.Fatalf("renewal did not extend the lease: %v ≤ %v", rec.LeaseExpiresAt, d.LeaseExpiresAt)
+	}
+	// Advance past the ORIGINAL expiry; the renewed hold survives.
+	m.SetNow(func() time.Time { return d.LeaseExpiresAt.Add(time.Minute) })
+	if closed := m.Reconcile(); closed != 0 {
+		t.Fatalf("reconcile closed %d holds, want 0 (the renewal stands)", closed)
+	}
+	// A foreign principal cannot renew.
+	if _, err := m.Renew(d.AdmissionID, "intruder"); err == nil {
+		t.Fatal("a foreign principal renewing the hold must be a named error")
+	}
+}
+
+// TestAdmissionConfirmStartedLifecycle — KPK-19.8.0-P2-05: HELD →
+// ACTIVE is principal-bound and idempotent; an ACTIVE record survives
+// lease expiry (capacity still counted), and release closes it.
+func TestAdmissionConfirmStartedLifecycle(t *testing.T) {
+	f := newAdmissionFixture()
+	m := f.manager(t)
+	d := m.Admit(baseRequest())
+	if !d.Allowed {
+		t.Fatalf("admission refused: %s", d.Explanation)
+	}
+
+	// A foreign principal cannot confirm.
+	if _, err := m.ConfirmStarted(d.AdmissionID, "intruder"); err == nil {
+		t.Fatal("a foreign principal confirming the start must be a named error")
+	}
+	// The owner confirms; the record becomes ACTIVE.
+	rec, err := m.ConfirmStarted(d.AdmissionID, "operator")
+	if err != nil || rec.Status != StatusActive {
+		t.Fatalf("confirm-started: %v status=%s", err, rec.Status)
+	}
+	if rec.StartedAt == nil {
+		t.Fatalf("the ACTIVE record must carry started_at")
+	}
+	// Confirmation is IDEMPOTENT (retry-safe).
+	rec2, err := m.ConfirmStarted(d.AdmissionID, "operator")
+	if err != nil || rec2.Status != StatusActive {
+		t.Fatalf("idempotent confirm-started: %v status=%s", err, rec2.Status)
+	}
+
+	// Lease expiry no longer frees the hold: advance past the expiry and
+	// sweep — the ACTIVE record stands with its capacity counted.
+	m.SetNow(func() time.Time { return d.LeaseExpiresAt.Add(time.Hour) })
+	if closed := m.Reconcile(); closed != 0 {
+		t.Fatalf("reconcile closed %d ACTIVE holds, want 0 (a timer alone never frees confirmed-start capacity)", closed)
+	}
+	if held := m.Held(); len(held) != 1 || held[0].Status != StatusActive {
+		t.Fatalf("the ACTIVE hold vanished or lost its status: %+v", held)
+	}
+
+	// The capacity is still counted: the SAME GPU is exclusively held.
+	req2 := baseRequest()
+	req2.RequestID = "req-2"
+	if d2 := m.Admit(req2); d2.Allowed || d2.ReasonCode != ReasonGPUExclusiveConflict {
+		t.Fatalf("decision=%+v, want gpu-exclusive-conflict (ACTIVE still consumes the GPU)", d2)
+	}
+
+	// Release closes the ACTIVE hold (explicit teardown).
+	if _, err := m.Release(d.AdmissionID); err != nil {
+		t.Fatalf("releasing an ACTIVE hold failed: %v", err)
+	}
+	if d3 := m.Admit(req2); !d3.Allowed {
+		t.Fatalf("post-release admission refused (capacity not freed): %s", d3.Explanation)
 	}
 }
 

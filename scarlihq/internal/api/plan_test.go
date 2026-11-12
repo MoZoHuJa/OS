@@ -87,7 +87,7 @@ func planTestPlanner(t *testing.T) *planner.Planner {
 	p, err := planner.NewPlanner(policy, planSnapshots{snap: snap}, planModels{
 		manifests: map[string]*modelmeta.Manifest{"qwen3-14b-awq": m},
 		verifs: map[string]*modelmeta.ArtifactVerification{"qwen3-14b-awq": {
-			ModelID: "qwen3-14b-awq", AllVerified: true, VerifiedAt: observed.Add(-time.Hour),
+			ModelID: "qwen3-14b-awq", ManifestFingerprint: modelmeta.ManifestFingerprint(m), AllVerified: true, VerifiedAt: observed.Add(-time.Hour),
 			Checkpoint: &modelmeta.ArtifactDigest{Path: "/models/qwen3-14b-awq", Match: true},
 		}},
 	})
@@ -165,7 +165,7 @@ func planTestPlannerWithSSDProfile(t *testing.T) *planner.Planner {
 	p, err := planner.NewPlanner(policy, planSnapshots{snap: snap}, planModels{
 		manifests: map[string]*modelmeta.Manifest{"qwen3-14b-awq": m},
 		verifs: map[string]*modelmeta.ArtifactVerification{"qwen3-14b-awq": {
-			ModelID: "qwen3-14b-awq", AllVerified: true, VerifiedAt: observed.Add(-time.Hour),
+			ModelID: "qwen3-14b-awq", ManifestFingerprint: modelmeta.ManifestFingerprint(m), AllVerified: true, VerifiedAt: observed.Add(-time.Hour),
 			Checkpoint: &modelmeta.ArtifactDigest{Path: "/models/qwen3-14b-awq", Match: true},
 		}},
 	})
@@ -330,7 +330,7 @@ func TestPlanGoldenPath(t *testing.T) {
 	if len(images) != 1 {
 		t.Fatalf("required_images wrong: %v", images)
 	}
-	if doc["snapshot_id"] != "snap0000000000000000000000000001" || doc["policy_version"] != "planner/v19.8.0" {
+	if doc["snapshot_id"] != "snap0000000000000000000000000001" || doc["policy_version"] != "planner/v19.8.1" {
 		t.Fatalf("provenance missing: %v / %v", doc["snapshot_id"], doc["policy_version"])
 	}
 }

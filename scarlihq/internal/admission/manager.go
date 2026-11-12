@@ -3,6 +3,9 @@
 package admission
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -38,14 +41,25 @@ type Policy struct {
 	// (the honest v19.7.1 default: no pinned-RAM observation or ledger
 	// exists yet — pinning is refused, not guessed).
 	MaxPinnableRAMBytes uint64
-	// LeaseTTL — how long an admission holds before expiry sweeps it.
+	// LeaseTTL — how long an admission holds before expiry sweeps it
+	// (a HELD record only; an ACTIVE record holds until released or
+	// crash-recovered, never swept by the timer — v19.8.1).
 	LeaseTTL time.Duration
+	// MaxBenchmarkAge — how old a device's recorded benchmark may be
+	// when a measured floor is demanded (v19.8.1, the SK audit's P2-04: an
+	// arbitrarily old benchmark describes a device it may no longer be; the
+	// admission gate owns the clock exactly like it owns verification age).
+	MaxBenchmarkAge time.Duration
 }
 
-// DefaultPolicy is the documented v19.7.1 policy.
+// DefaultPolicy is the documented v19.8.1 policy (the v19.7.1 values +
+// the v19.8.1 remediations: the measured random-read contract enforced at
+// the gate, verification records bound to the manifest identity, the
+// idempotency replay bound to the request fingerprint, and the ACTIVE
+// lifecycle after a confirmed start).
 func DefaultPolicy() Policy {
 	return Policy{
-		PolicyVersion:         "admission/v19.7.1",
+		PolicyVersion:         "admission/v19.8.1",
 		MaxSnapshotAge:        60 * time.Second,
 		VerificationMaxAge:    7 * 24 * time.Hour,
 		VRAMSafetyFraction:    0.05,
@@ -54,6 +68,7 @@ func DefaultPolicy() Policy {
 		CPUSafetyThreads:      2,
 		MaxPinnableRAMBytes:   0,
 		LeaseTTL:              10 * time.Minute,
+		MaxBenchmarkAge:       30 * 24 * time.Hour,
 	}
 }
 
@@ -151,21 +166,12 @@ func (m *Manager) Admit(req AdmissionRequest) AdmissionDecision {
 			req.Requirements.PinnedRAMBytes, m.policy.MaxPinnableRAMBytes))
 	}
 
-	// ---- idempotency ------------------------------------------------------
-	if prior := m.ledger.byIdempotency(req.IdempotencyKey); prior != nil {
-		return AdmissionDecision{
-			Allowed:        true,
-			ReasonCode:     ReasonOK,
-			Explanation:    fmt.Sprintf("idempotent replay — admission %s (created %s) stands", prior.AdmissionID, prior.CreatedAt.Format(time.RFC3339)),
-			AdmissionID:    prior.AdmissionID,
-			Assignment:     &prior.Assignment,
-			SnapshotID:     prior.SnapshotID,
-			PolicyVersion:  m.policy.PolicyVersion,
-			LeaseExpiresAt: prior.LeaseExpiresAt,
-		}
-	}
-
 	// ---- 2. snapshot + freshness (HARD GATE) ------------------------------
+	// (v19.8.1, KPK-19.8.0-P2-04: the idempotency replay moved INSIDE the
+	// atomic ledger transaction below — the pre-lock check was a
+	// TOCTOU (two concurrent identical admits could both pass it and
+	// double-admit), and the replay now requires an EXACT principal +
+	// request-fingerprint match, a mismatch being the NAMED conflict.)
 	snap, err := m.snapshots.Current()
 	if err != nil {
 		return refuse(base, ReasonSnapshotUnavailable, "inventory snapshot unavailable: "+err.Error())
@@ -185,10 +191,26 @@ func (m *Manager) Admit(req AdmissionRequest) AdmissionDecision {
 	}
 	_ = manifest // placement metadata already enforced by checkModel
 
-	// ---- 4-7. the atomic dimension check + reserve -------------------------
-	assignment, admID, leaseExpiry, failCode, failExpl := m.reserveAtomic(req, snap, now)
+	// ---- 4-7. the atomic dimension check + reserve (the replay check rides
+	// the SAME ledger transaction — KPK-19.8.0-P2-04: principal +
+	// request-fingerprint bound, inside the lock, never a TOCTOU) ---------
+	replayed, assignment, admID, leaseExpiry, failCode, failExpl := m.reserveAtomic(req, snap, now)
 	if failCode != ReasonOK {
 		return refuse(base, failCode, failExpl)
+	}
+	if replayed != nil {
+		// An EXACT replay (same principal + same canonical request): the
+		// ORIGINAL decision stands — one hold, not two.
+		return AdmissionDecision{
+			Allowed:        true,
+			ReasonCode:     ReasonOK,
+			Explanation:    fmt.Sprintf("idempotent replay — admission %s (created %s) stands; the request fingerprint matches exactly", replayed.AdmissionID, replayed.CreatedAt.Format(time.RFC3339)),
+			AdmissionID:    replayed.AdmissionID,
+			Assignment:     &replayed.Assignment,
+			SnapshotID:     replayed.SnapshotID,
+			PolicyVersion:  m.policy.PolicyVersion,
+			LeaseExpiresAt: replayed.LeaseExpiresAt,
+		}
 	}
 
 	// ---- 8. the decision ---------------------------------------------------
@@ -239,6 +261,23 @@ func (m *Manager) checkModel(modelID, backendID string, snap *inventory.Inventor
 		return ReasonModelUnverified, fmt.Sprintf(
 			"model %q's artifact verification is %s old (policy max %s) — a stale verification is absent verification (KPK-19.7.0-P2-04)",
 			modelID, age.Round(time.Second), m.policy.VerificationMaxAge), nil
+	}
+
+	// The manifest-identity binding (v19.8.1, KPK-19.8.0-P1-02): the record
+	// must be bound to the CURRENT manifest's canonical fingerprint. A
+	// record keyed by model ID alone is a stale authorization token for
+	// whatever manifest later reuses that ID; the seven-day freshness
+	// window is not a substitute for binding the verification to the exact
+	// manifest + artifacts it verified.
+	if verif.ManifestFingerprint == "" {
+		return ReasonModelUnverified, fmt.Sprintf(
+			"model %q's verification record carries NO manifest fingerprint (a pre-v19.8.1 record) — re-run scarlix-inventory --verify-manifests so the record binds to the exact manifest identity",
+			modelID), nil
+	}
+	if current := modelmeta.ManifestFingerprint(manifest); current != verif.ManifestFingerprint {
+		return ReasonModelVerificationIdentityMismatch, fmt.Sprintf(
+			"model %q's verification record (fingerprint %s) is not bound to the current manifest (fingerprint %s) — the manifest's identity-bearing fields changed after verification (revision/checkpoint path+digest/expert-pack declaration); re-run scarlix-inventory --verify-manifests (KPK-19.8.0-P1-02)",
+			modelID, verif.ManifestFingerprint, current), nil
 	}
 
 	// Backend declaration (the manifest declares an OPEN set — never
@@ -346,20 +385,38 @@ func totalsFromHeld(held []Record) heldTotals {
 }
 
 // reserveAtomic performs the whole dimension check + insert + persist in
-// ONE ledger transaction (any failure reserves NOTHING).
-func (m *Manager) reserveAtomic(req AdmissionRequest, snap *inventory.InventorySnapshotV2, now time.Time) (*ResourceAssignment, string, time.Time, string, string) {
+// ONE ledger transaction (any failure reserves NOTHING). v19.8.1: the
+// transaction opens with the idempotency replay check (inside the lock —
+// concurrent identical admits serialize; a mismatched principal or request
+// fingerprint is the NAMED conflict, never a silently-inherited hold), and
+// a successful replay returns the prior record (replayed != nil) without
+// reserving anything new.
+func (m *Manager) reserveAtomic(req AdmissionRequest, snap *inventory.InventorySnapshotV2, now time.Time) (*Record, *ResourceAssignment, string, time.Time, string, string) {
 	var (
 		assignment  ResourceAssignment
 		admID       string
 		leaseExpiry time.Time
 		failCode    string
 		failExpl    string
+		replayed    *Record
 	)
 
 	err := m.ledger.withLock(func(view *ledgerView) error {
 		held := totalsFromHeld(view.held())
 		assignment = ResourceAssignment{}
 		failCode, failExpl = ReasonOK, ""
+
+		// ---- 0. the idempotency replay (INSIDE the transaction) ------
+		if prior := view.byIdempotency(req.IdempotencyKey); prior != nil {
+			if prior.Principal != req.Principal || prior.RequestFingerprint != requestFingerprint(req) {
+				failCode, failExpl = ReasonIdempotencyConflict, fmt.Sprintf(
+					"idempotency key %q is held by admission %s (principal %q, request fingerprint %s) — the replaying request differs (principal %q, fingerprint %s): the same key returns the ORIGINAL decision or a NAMED conflict, never another request's allocation (KPK-19.8.0-P2-04)",
+					req.IdempotencyKey, prior.AdmissionID, prior.Principal, prior.RequestFingerprint, req.Principal, requestFingerprint(req))
+				return errAbort
+			}
+			replayed = prior
+			return nil
+		}
 
 		// ---- GPUs (exclusive per UUID; KV counts against the GPU) ------
 		cands := sortedGPUCandidates(snap)
@@ -435,20 +492,31 @@ func (m *Manager) reserveAtomic(req AdmissionRequest, snap *inventory.InventoryS
 				return errAbort
 			}
 			// Measured-performance floors: NEVER schedule from unverified
-			// estimates — a floor without a measurement is refused.
-			if s.MinimumReadMBps > 0 {
-				if dev.ReadProfile == nil || dev.ReadProfile.MeasuredAt.IsZero() {
-					failCode, failExpl = ReasonStorageNoReadProfile, fmt.Sprintf(
-						"storage[%d]: device %q demands ≥%.0f MB/s measured read but carries NO benchmark record — an unmeasured floor is never assumed (run the opt-in --storage-benchmark)",
-						i, s.DeviceID, s.MinimumReadMBps)
-					return errAbort
-				}
-				if dev.ReadProfile.SequentialReadMBps < s.MinimumReadMBps {
-					failCode, failExpl = ReasonStorageReadProfileInsufficient, fmt.Sprintf(
-						"storage[%d]: device %q measured %.0f MB/s < required %.0f MB/s (profile %s)",
-						i, s.DeviceID, dev.ReadProfile.SequentialReadMBps, s.MinimumReadMBps, dev.ReadProfile.ProfileID)
-					return errAbort
-				}
+			// estimates — a floor without a measurement is refused. v19.8.1
+			// (KPK-19.8.0-P1-01): the FULL measured contract — sequential MB/s +
+			// random-read IOPS + p95 latency ceiling + the benchmark age bound
+			// (SK P2-04) — enforced through the ONE shared predicate
+			// (storage.CheckMeasuredFloors) so the planner-side qualification
+			// and this final gate CANNOT drift apart.
+			outcome, detail := storage.CheckMeasuredFloors(
+				s.MinimumReadMBps, s.MinimumRandomReadIOPS, s.MaximumP95LatencyMs,
+				dev.ReadProfile, now, m.policy.MaxBenchmarkAge)
+			switch outcome {
+			case storage.FloorsAbsent:
+				failCode, failExpl = ReasonStorageNoReadProfile, fmt.Sprintf(
+					"storage[%d]: device %q demands a measured floor but carries NO benchmark record — %s (run the opt-in --storage-benchmark with the random-read phase)",
+					i, s.DeviceID, detail)
+				return errAbort
+			case storage.FloorsStale:
+				failCode, failExpl = ReasonStorageReadProfileStale, fmt.Sprintf(
+					"storage[%d]: device %q — %s",
+					i, s.DeviceID, detail)
+				return errAbort
+			case storage.FloorsUnmet:
+				failCode, failExpl = ReasonStorageReadProfileInsufficient, fmt.Sprintf(
+					"storage[%d]: device %q — %s",
+					i, s.DeviceID, detail)
+				return errAbort
 			}
 			reserved := held.storageByDev[s.DeviceID]
 			safety := uint64(float64(dev.CapacityBytes) * m.policy.StorageSafetyFraction)
@@ -484,19 +552,20 @@ func (m *Manager) reserveAtomic(req AdmissionRequest, snap *inventory.InventoryS
 		}
 		leaseExpiry = now.Add(m.policy.LeaseTTL)
 		view.insert(Record{
-			AdmissionID:    id,
-			RequestID:      req.RequestID,
-			IdempotencyKey: req.IdempotencyKey,
-			Principal:      req.Principal,
-			ModelID:        req.ModelID,
-			BackendID:      req.BackendID,
-			SnapshotID:     snap.SnapshotID,
-			Requirements:   req.Requirements,
-			Assignment:     assignment,
-			Status:         StatusHeld,
-			CreatedAt:      now,
-			LeaseExpiresAt: leaseExpiry,
-			BootID:         bootIdentity(),
+			AdmissionID:        id,
+			RequestID:          req.RequestID,
+			IdempotencyKey:     req.IdempotencyKey,
+			Principal:          req.Principal,
+			ModelID:            req.ModelID,
+			BackendID:          req.BackendID,
+			SnapshotID:         snap.SnapshotID,
+			Requirements:       req.Requirements,
+			Assignment:         assignment,
+			Status:             StatusHeld,
+			CreatedAt:          now,
+			LeaseExpiresAt:     leaseExpiry,
+			BootID:             bootIdentity(),
+			RequestFingerprint: requestFingerprint(req),
 		})
 		admID = id
 		return nil
@@ -506,9 +575,13 @@ func (m *Manager) reserveAtomic(req AdmissionRequest, snap *inventory.InventoryS
 		if failCode == ReasonOK {
 			failCode, failExpl = ReasonLedgerUnavailable, err.Error()
 		}
-		return nil, "", time.Time{}, failCode, failExpl
+		return nil, nil, "", time.Time{}, failCode, failExpl
 	}
-	return &assignment, admID, leaseExpiry, ReasonOK, ""
+	if replayed != nil {
+		// The replay path: nothing new was reserved; the prior record stands.
+		return replayed, nil, "", time.Time{}, ReasonOK, ""
+	}
+	return nil, &assignment, admID, leaseExpiry, ReasonOK, ""
 }
 
 // errAbort marks a dimension failure inside the ledger transaction (the
@@ -611,25 +684,46 @@ func describeAssignment(a *ResourceAssignment) string {
 	return strings.Join(parts, "; ")
 }
 
-// Release closes a HELD admission (verified cleanup: the transition is
-// persisted atomically; a double release is a NAMED error).
+// Release closes a HELD or ACTIVE admission (verified cleanup: the
+// transition is persisted atomically; a double release is a NAMED error).
 func (m *Manager) Release(admissionID string) (Record, error) {
 	return m.ledger.release(admissionID, "explicit release by operator/planner", m.now().UTC())
 }
 
+// Renew extends a HELD admission's lease by the policy TTL (v19.8.1,
+// KPK-19.8.0-P2-05: a hold whose workload is not yet started but whose
+// preparation is longer than one lease gets a principal-bound, durable
+// extension instead of silently losing its capacity). Renewing an ACTIVE
+// record is a NAMED error (the lease no longer governs it).
+func (m *Manager) Renew(admissionID, principal string) (Record, error) {
+	return m.ledger.renew(admissionID, principal, m.policy.LeaseTTL, m.now().UTC())
+}
+
+// ConfirmStarted transitions a HELD admission to ACTIVE (v19.8.1,
+// KPK-19.8.0-P2-05: the workload owner's explicit, principal-bound,
+// idempotent act). From ACTIVE on, the lease expiry NEVER frees the hold
+// (only explicit release or crash recovery do) — a timer alone must
+// not free capacity a confirmed-start workload still consumes.
+func (m *Manager) ConfirmStarted(admissionID, principal string) (Record, error) {
+	return m.ledger.confirmStarted(admissionID, principal, m.now().UTC())
+}
+
 // Reconcile sweeps lease expiry (and, at construction, crash recovery):
-// expired HELD records become EXPIRED with their capacity freed. Returns
-// the number of records closed.
+// expired HELD records become EXPIRED with their capacity freed (ACTIVE
+// records are never swept — v19.8.1). Returns the number of records
+// closed.
 func (m *Manager) Reconcile() int {
 	return m.ledger.sweepExpired(m.now().UTC())
 }
 
-// Held returns the live holds (deterministic order).
+// Held returns the live capacity holds — HELD and ACTIVE alike
+// (v19.8.1: a confirmed-start workload still consumes its reservation)
+// in deterministic order.
 func (m *Manager) Held() []Record {
 	all := m.ledger.Records()
 	out := make([]Record, 0, len(all))
 	for _, r := range all {
-		if r.Status == StatusHeld {
+		if r.Status == StatusHeld || r.Status == StatusActive {
 			out = append(out, r)
 		}
 	}
@@ -638,3 +732,34 @@ func (m *Manager) Held() []Record {
 
 // Records returns every record (live + the bounded audit trail).
 func (m *Manager) Records() []Record { return m.ledger.Records() }
+
+// requestFingerprint computes the canonical SHA-256 of an admission
+// request's identity-bearing content (v19.8.1, KPK-19.8.0-P2-04): the
+// principal, the request id, the model, the backend, and the FULL
+// resource vector. json.Marshal of these structs is deterministic (fixed
+// struct field order; no maps in the vector), so the fingerprint is
+// stable for identical requests and differs for ANY identity-bearing
+// change — exactly what an idempotency replay must prove.
+func requestFingerprint(req AdmissionRequest) string {
+	canon, err := json.Marshal(struct {
+		Principal    string         `json:"principal"`
+		RequestID    string         `json:"request_id"`
+		ModelID      string         `json:"model_id"`
+		BackendID    string         `json:"backend_id"`
+		Requirements ResourceVector `json:"requirements"`
+	}{
+		Principal:    req.Principal,
+		RequestID:    req.RequestID,
+		ModelID:      req.ModelID,
+		BackendID:    req.BackendID,
+		Requirements: req.Requirements,
+	})
+	if err != nil {
+		// Unreachable for these value types (no channels/functions/maps);
+		// a marshal failure still fails CLOSED: the empty fingerprint
+		// matches nothing and every replay is the NAMED conflict.
+		return ""
+	}
+	sum := sha256.Sum256(canon)
+	return hex.EncodeToString(sum[:])
+}

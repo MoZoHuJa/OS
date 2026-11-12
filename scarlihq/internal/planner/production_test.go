@@ -107,7 +107,7 @@ func TestProductionPolicyCarriesProfile(t *testing.T) {
 	if policy.SSDProfile == nil || policy.SSDProfile.ProfileID != "infer-ssd-moe-experimental" {
 		t.Fatalf("the policy must carry the enabled profile: %+v", policy.SSDProfile)
 	}
-	if policy.PolicyVersion != "planner/v19.8.0" {
+	if policy.PolicyVersion != "planner/v19.8.1" {
 		t.Fatalf("policy version: %s", policy.PolicyVersion)
 	}
 	t.Setenv(InferSSDProfileEnv, "")

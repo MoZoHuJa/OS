@@ -157,7 +157,7 @@ func TestAdapterEstimateAgreesWithPlanner(t *testing.T) {
 	policy.SSDProfile = f.profile
 	p, err := planner.NewPlanner(policy, fixedSnapshots{snap: f.snap}, fixedModels{
 		manifest: f.model,
-		verifs:   map[string]*modelmeta.ArtifactVerification{"deepseek-moe-test": {ModelID: "deepseek-moe-test", AllVerified: true, VerifiedAt: f.snap.ObservedAt.Add(-time.Hour)}},
+		verifs:   map[string]*modelmeta.ArtifactVerification{"deepseek-moe-test": {ModelID: "deepseek-moe-test", ManifestFingerprint: modelmeta.ManifestFingerprint(f.model), AllVerified: true, VerifiedAt: f.snap.ObservedAt.Add(-time.Hour)}},
 	})
 	if err != nil {
 		t.Fatal(err)

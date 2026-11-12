@@ -10,7 +10,11 @@ package infer_ssd
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -53,11 +57,49 @@ func NewHTTPHealthProber() *HTTPHealthProber {
 	return &HTTPHealthProber{}
 }
 
-// CheckHealth implements HealthProber (see the type's contract).
+// localOnlyHost enforces the LOCAL-ONLY transport discipline (v19.8.1,
+// the SK audit's P2-02: the health prober must use the same local-only
+// boundary the airt transport enforces): the bound endpoint's host may
+// be a LOOPBACK literal (127.0.0.0/8, ::1), "localhost", or a
+// *.scarlix.internal service name (the compute-internal network's
+// documented convention). Anything else — a public address, a LAN
+// name, an arbitrary hostname — is the named refusal, never dialed: a
+// health probe answering from beyond the host boundary is a misconfigured
+// or compromised tier answering from somewhere else.
+func localOnlyHost(host string) bool {
+	host = strings.TrimSpace(strings.ToLower(host))
+	if host == "" || host == "localhost" {
+		return true // localhost always allowed; empty handled by the caller's parse
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if v4 := ip.To4(); v4 != nil {
+			return v4[0] == 127 // the loopback /8
+		}
+		return ip.IsLoopback() // ::1 and friends
+	}
+	return strings.HasSuffix(host, ".scarlix.internal") // the compute-internal convention
+}
+
+// CheckHealth implements HealthProber (see the type's contract). The
+// endpoint URL must be LOCAL-ONLY (loopback or the compute-internal
+// convention; a Host Bridge binding anything else produced a profile this
+// prober refuses to dial).
 func (h *HTTPHealthProber) CheckHealth(ctx context.Context, target ApprovedRuntimeProfile) HealthResult {
 	checkedAt := time.Now().UTC()
 	if target.HealthEndpointURL == "" {
 		return HealthResult{Healthy: false, Detail: "no health endpoint bound — the Host Bridge path owns endpoint assignment (roadmap §8.3: the adapter returns a validated profile, it never launches or guesses endpoints)", CheckedAt: checkedAt}
+	}
+	u, err := url.Parse(target.HealthEndpointURL)
+	if err != nil || u.Host == "" {
+		return HealthResult{Healthy: false, Detail: fmt.Sprintf("health endpoint %q is not a parseable URL — the probe refuses to dial it", target.HealthEndpointURL), CheckedAt: checkedAt}
+	}
+	if host := u.Hostname(); !localOnlyHost(host) {
+		return HealthResult{Healthy: false, Detail: fmt.Sprintf("health endpoint host %q is NOT local-only (loopback or *.scarlix.internal) — the prober never dials beyond the host boundary (the airt local-only transport discipline, v19.8.1 SK-P2-02)", host), CheckedAt: checkedAt}
+	}
+	if p := u.Port(); p != "" {
+		if _, err := strconv.Atoi(p); err != nil {
+			return HealthResult{Healthy: false, Detail: fmt.Sprintf("health endpoint port %q is not numeric — the probe refuses to dial it", p), CheckedAt: checkedAt}
+		}
 	}
 	client := h.client
 	if client == nil {

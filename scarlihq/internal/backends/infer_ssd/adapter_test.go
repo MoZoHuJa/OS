@@ -265,9 +265,11 @@ func TestAdapterValidateModel(t *testing.T) {
 	}
 }
 
-// TestAdapterEstimate — the §8.3 resource estimation: VRAM = shared +
-// KV + the profile's reserve; the storage demand = experts + the
-// minimum free floor with the measured floors; the profile's additive
+// TestAdapterEstimate — the §8.3 resource estimation with v19.8.1's
+// single-count contract (KPK-19.8.0-P2-03): VRAM = shared + the profile's
+// reserve ONLY, the KV cache rides KVCacheBytes (the admission gate adds
+// it to the assigned GPU exactly once); the storage demand = experts +
+// the minimum free floor with the measured floors; the profile's additive
 // host demands ride the vector.
 func TestAdapterEstimate(t *testing.T) {
 	profile := validProfile()
@@ -282,9 +284,12 @@ func TestAdapterEstimate(t *testing.T) {
 		t.Fatal(err)
 	}
 	kv := uint64(req.ContextTokens) * m.KVCacheBytesPerToken
-	wantVRAM := m.SharedBytes + kv + profile.Resources.GPU.VRAMReserveBytes
+	wantVRAM := m.SharedBytes + profile.Resources.GPU.VRAMReserveBytes // KV EXCLUDED (P2-03)
 	if len(vec.GPU) != 1 || vec.GPU[0].VRAMBytes != wantVRAM || !vec.GPU[0].Exclusive {
-		t.Fatalf("GPU demand: %+v (want VRAM %d exclusive)", vec.GPU, wantVRAM)
+		t.Fatalf("GPU demand: %+v (want VRAM %d exclusive — KV rides KVCacheBytes, never VRAMBytes)", vec.GPU, wantVRAM)
+	}
+	if wantVRAM == m.SharedBytes+kv+profile.Resources.GPU.VRAMReserveBytes {
+		t.Fatalf("the fixture's KV must be non-zero for the single-count assertion to mean anything")
 	}
 	if vec.KVCacheBytes != kv {
 		t.Fatalf("KV bytes: %d, want %d", vec.KVCacheBytes, kv)
@@ -434,6 +439,98 @@ func TestHTTPHealthProberRedirectsNotFollowed(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "http.ErrUseLastResponse") {
 		t.Fatalf("the default health client must carry the no-redirect policy (http.ErrUseLastResponse)")
+	}
+}
+
+// TestHTTPHealthProberLocalOnly — v19.8.1 (the SK audit's P2-02): the
+// prober's local-only transport discipline — a loopback endpoint is
+// dialed; a public address, an arbitrary hostname, or a *.lan name is
+// the NAMED refusal, never dialed.
+func TestHTTPHealthProberLocalOnly(t *testing.T) {
+	p := NewHTTPHealthProber()
+	target := ApprovedRuntimeProfile{HealthPath: "/health"}
+
+	// A loopback endpoint is dialed (and fails to connect — a probe
+	// failure, NOT a transport refusal: the discipline accepted the host).
+	target.HealthEndpointURL = "http://127.0.0.1:1"
+	res := p.CheckHealth(context.Background(), target)
+	if strings.Contains(res.Detail, "NOT local-only") {
+		t.Fatalf("loopback must be dialed, not refused by name: %+v", res)
+	}
+	target.HealthEndpointURL = "http://localhost:1"
+	res = p.CheckHealth(context.Background(), target)
+	if strings.Contains(res.Detail, "NOT local-only") {
+		t.Fatalf("localhost must be dialed, not refused by name: %+v", res)
+	}
+	// The compute-internal convention is dialed.
+	target.HealthEndpointURL = "http://runtime-a.scarlix.internal:1"
+	res = p.CheckHealth(context.Background(), target)
+	if strings.Contains(res.Detail, "NOT local-only") {
+		t.Fatalf("*.scarlix.internal must be dialed, not refused by name: %+v", res)
+	}
+
+	// A public address / arbitrary host / LAN name: the NAMED refusal.
+	for _, host := range []string{"http://93.184.216.34:80", "http://example.com", "http://router.lan", "http://gpu-box.mynetwork.local:8080"} {
+		target.HealthEndpointURL = host
+		res := p.CheckHealth(context.Background(), target)
+		if res.Healthy || !strings.Contains(res.Detail, "NOT local-only") {
+			t.Fatalf("%s must be the named local-only refusal, never dialed: %+v", host, res)
+		}
+	}
+}
+
+// TestLoadRuntimeProfileStrictYAML — v19.8.1 (KPK-19.8.0-P3-06): the
+// runtime profile loader refuses UNKNOWN fields and MULTIPLE documents
+// by name — operator configuration the scarlix.runtime-profile/v1
+// schema never agreed to carry is a named error, never a silent default.
+func TestLoadRuntimeProfileStrictYAML(t *testing.T) {
+	dir := t.TempDir()
+	good := "schema_version: \"scarlix.runtime-profile/v1\"\n" +
+		"profile_id: \"infer-ssd-moe-experimental\"\n" +
+		"backend_id: \"infer_ssd\"\n" +
+		"enabled: false\n" + // disabled = honest documentation, loads
+		"experimental: true\n" +
+		"image:\n  reference: \"ghcr.io/scarlix/infer-ssd:v0.1@sha256:" + strings.Repeat("aa", 32) + "\"\n" +
+		"compatibility:\n  model_manifest: \"deepseek-moe-test\"\n  checkpoint_sha256: \"" + strings.Repeat("cd", 32) + "\"\n  cuda: \"12.8\"\n  driver_minimum: \"570.00\"\n  gpu_compute_capabilities:\n    - \"sm_120\"\n" +
+		"execution:\n  strategy: \"ssd-backed-moe\"\n  context_limit: 8192\n  max_concurrent_requests: 1\n" +
+		"resources:\n  gpu:\n    mode: \"exclusive\"\n    vram_reserve_bytes: 1073741824\n  host_ram_bytes: 4294967296\n  cpu_threads: 8\n  storage:\n    device_id: \"storage.nvme.0\"\n    model_path: \"/var/lib/scarlix/models/x\"\n    expert_path: \"/var/lib/scarlix/experts/x\"\n    minimum_free_bytes: 68719476736\n    minimum_read_mbps: 2000\n    minimum_random_read_iops: 50000\n    maximum_p95_latency_ms: 1.5\n" +
+		"network:\n  network_profile: \"scarlix-compute-internal\"\n  published_ports: []\n" +
+		"health:\n  type: \"http\"\n  path: \"/health\"\n  startup_timeout_seconds: 600\n"
+
+	goodPath := filepath.Join(dir, "good.yaml")
+	if err := os.WriteFile(goodPath, []byte(good), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadRuntimeProfile(goodPath); err != nil {
+		t.Fatalf("the valid profile must load unchanged under strict decoding: %v", err)
+	}
+
+	// An unknown TOP-LEVEL field.
+	unknownPath := filepath.Join(dir, "unknown.yaml")
+	if err := os.WriteFile(unknownPath, []byte(good+"favourite_colour: \"blue\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadRuntimeProfile(unknownPath); err == nil || !strings.Contains(err.Error(), "YAML parse failed") {
+		t.Errorf("an unknown top-level field must be a named parse error: %v", err)
+	}
+
+	// An unknown NESTED field.
+	nestedPath := filepath.Join(dir, "nested.yaml")
+	nested := strings.Replace(good, "    minimum_read_mbps: 2000", "    minimum_read_mbps: 2000\n    elevator_music: true", 1)
+	if err := os.WriteFile(nestedPath, []byte(nested), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadRuntimeProfile(nestedPath); err == nil || !strings.Contains(err.Error(), "YAML parse failed") {
+		t.Errorf("an unknown nested field must be a named parse error: %v", err)
+	}
+
+	// MULTIPLE documents in one file.
+	multiPath := filepath.Join(dir, "multi.yaml")
+	if err := os.WriteFile(multiPath, []byte(good+"---\n"+good), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadRuntimeProfile(multiPath); err == nil || !strings.Contains(err.Error(), "YAML parse failed") {
+		t.Errorf("multiple YAML documents must be a named parse error: %v", err)
 	}
 }
 

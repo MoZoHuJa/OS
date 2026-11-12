@@ -1,13 +1,15 @@
 // Package api — the aggregate admission surface (v19.7.1, Compute
 // Fabric Phase 2, roadmap §6.4).
 //
-// Two ADMIN-gated routes (admission RESERVES capacity — a strictly
-// stronger act than the read-only inventory, so it takes the admin
-// gate, not the observation gate):
+// The ADMIN-gated admission surface (admission RESERVES capacity — a
+// strictly stronger act than the read-only inventory, so it takes the
+// admin gate, not the observation gate):
 //
-//	POST /api/compute/admission           — decide + atomically reserve
-//	GET  /api/compute/admission           — the held state + the policy
-//	POST /api/compute/admission/release   — close a hold (verified cleanup)
+//	POST /api/compute/admission                  — decide + atomically reserve
+//	GET  /api/compute/admission                  — the held state + the policy
+//	POST /api/compute/admission/release          — close a hold (verified cleanup)
+//	POST /api/compute/admission/renew            — extend a HELD lease (v19.8.1)
+//	POST /api/compute/admission/confirm-started  — HELD → ACTIVE (v19.8.1)
 //
 // The POST response is ALWAYS a decision object (allowed true/false +
 // the machine-readable reason_code + the numbers behind it) — a refusal
@@ -105,6 +107,85 @@ func (h *Handler) admissionRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]interface{}{
 		"status": "released",
+		"record": rec,
+	})
+}
+
+// admissionLifecycleBody is the shared body of the v19.8.1 lifecycle
+// routes (renew / confirm-started): the admission id (required) and the
+// authenticated principal stamped SERVER-SIDE.
+type admissionLifecycleBody struct {
+	AdmissionID string `json:"admission_id"`
+}
+
+// admissionRenew extends a HELD admission's lease by the policy TTL
+// (v19.8.1, KPK-19.8.0-P2-05: a long preparation gets a DURABLE,
+// principal-bound extension instead of silently losing capacity).
+// Errors are the NAMED 409 (not HELD / principal mismatch / unknown id).
+func (h *Handler) admissionRenew(w http.ResponseWriter, r *http.Request) {
+	if h.admission == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "admission gate not configured")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "admission renew is POST")
+		return
+	}
+	var body admissionLifecycleBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.AdmissionID == "" {
+		writeJSONError(w, http.StatusBadRequest, "renew requires {\"admission_id\": \"...\"}")
+		return
+	}
+	principal := ""
+	if p := profiles.PrincipalFromContext(r.Context()); p != nil {
+		principal = p.Name
+	}
+	rec, err := h.admission.Renew(body.AdmissionID, principal)
+	if err != nil {
+		writeJSONStatus(w, http.StatusConflict, map[string]interface{}{
+			"status":  "error",
+			"message": err.Error(),
+		})
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"status":  "renewed",
+		"record": rec,
+	})
+}
+
+// admissionConfirmStarted transitions a HELD admission to ACTIVE
+// (v19.8.1, KPK-19.8.0-P2-05: the workload owner's explicit,
+// principal-bound, idempotent act; from ACTIVE on the lease expiry
+// never frees the hold). Errors are the NAMED 409.
+func (h *Handler) admissionConfirmStarted(w http.ResponseWriter, r *http.Request) {
+	if h.admission == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "admission gate not configured")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "admission confirm-started is POST")
+		return
+	}
+	var body admissionLifecycleBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.AdmissionID == "" {
+		writeJSONError(w, http.StatusBadRequest, "confirm-started requires {\"admission_id\": \"...\"}")
+		return
+	}
+	principal := ""
+	if p := profiles.PrincipalFromContext(r.Context()); p != nil {
+		principal = p.Name
+	}
+	rec, err := h.admission.ConfirmStarted(body.AdmissionID, principal)
+	if err != nil {
+		writeJSONStatus(w, http.StatusConflict, map[string]interface{}{
+			"status":  "error",
+			"message": err.Error(),
+		})
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"status":  "active",
 		"record": rec,
 	})
 }

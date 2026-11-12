@@ -268,3 +268,50 @@ func TestResolveExpertPacksDir(t *testing.T) {
 		t.Errorf("no manifests dir → no packs dir; got %q", got)
 	}
 }
+
+// TestLoadExpertPacksStrictYAML — v19.8.1 (KPK-19.8.0-P3-06): the pack
+// loader refuses UNKNOWN fields and MULTIPLE documents by name (an
+// operator-controlled artifact manifest never silently accepts a field
+// the scarlix.artifact/v1 schema does not carry).
+func TestLoadExpertPacksStrictYAML(t *testing.T) {
+	dir := t.TempDir()
+	golden := "schema_version: \"scarlix.artifact/v1\"\n" +
+		"artifact_id: \"pack-a\"\n" +
+		"artifact_type: \"sglang_expert_pack\"\n" +
+		"backend_id: \"sglang\"\n" +
+		"model:\n  id: \"deepseek-moe-test\"\n  revision: \"rev-1\"\n  checkpoint_sha256: \"" + strings.Repeat("cd", 32) + "\"\n" +
+		"pack:\n  format: \"sglang-expert-pack\"\n  version: \"2026.11\"\n  sha256: \"" + strings.Repeat("ef", 32) + "\"\n  total_bytes: 42949672960\n" +
+		"compatibility:\n  sglang_version: \"v0.4.6\"\n  container_digest: \"ghcr.io/x/y@sha256:" + strings.Repeat("11", 32) + "\"\n  cuda_version: \"12.8\"\n  gpu_compute_capabilities:\n    - \"sm_120\"\n"
+
+	if err := os.WriteFile(filepath.Join(dir, "good.pack.yaml"), []byte(golden), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// An unknown top-level field.
+	unknown := golden + "favourite_colour: \"blue\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "unknown.pack.yaml"), []byte(unknown), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// An unknown nested field.
+	nested := strings.Replace(golden, "  version: \"2026.11\"", "  version: \"2026.11\"\n  compression: \"zstd\"", 1)
+	if err := os.WriteFile(filepath.Join(dir, "nested.pack.yaml"), []byte(nested), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Multiple documents.
+	multi := golden + "---\n" + golden
+	if err := os.WriteFile(filepath.Join(dir, "multi.pack.yaml"), []byte(multi), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res := LoadExpertPacks(dir)
+	if len(res.Packs) != 1 {
+		t.Fatalf("valid packs=%d, want 1: %+v", len(res.Packs), res.Invalid)
+	}
+	if len(res.Invalid) != 3 {
+		t.Fatalf("invalid=%d, want 3 (unknown top-level, unknown nested, multiple documents)", len(res.Invalid))
+	}
+	for _, inv := range res.Invalid {
+		if !strings.Contains(strings.Join(inv.Reasons, "; "), "YAML parse failed") {
+			t.Errorf("%s: the strict refusal must ride the named parse error: %v", inv.Path, inv.Reasons)
+		}
+	}
+}

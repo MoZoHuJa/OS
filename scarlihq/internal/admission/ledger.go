@@ -64,11 +64,20 @@ type Record struct {
 	SnapshotID     string             `json:"snapshot_id"`
 	Requirements   ResourceVector     `json:"requirements"`
 	Assignment     ResourceAssignment `json:"assignment"`
-	Status         string             `json:"status"` // HELD | RELEASED | EXPIRED | CRASH_RECOVERED
+	Status         string             `json:"status"` // HELD | ACTIVE | RELEASED | EXPIRED | CRASH_RECOVERED
 	CreatedAt      time.Time          `json:"created_at"`
 	LeaseExpiresAt time.Time          `json:"lease_expires_at"`
 	BootID         string             `json:"boot_id"`
-	// ClosedAt/CloseReason — set when the record left HELD.
+	// RequestFingerprint — the canonical SHA-256 of the admission request
+	// (principal + request id + model + backend + the resource vector) at
+	// ADMIT time (v19.8.1, KPK-19.8.0-P2-04). An idempotency-key replay
+	// must match it EXACTLY — the same key with a different request is a
+	// NAMED conflict, never a silently-inherited allocation.
+	RequestFingerprint string `json:"request_fingerprint,omitempty"`
+	// StartedAt — when the workload start was CONFIRMED (set by
+	// ConfirmStarted; nil while HELD — v19.8.1, KPK-19.8.0-P2-05).
+	StartedAt *time.Time `json:"started_at,omitempty"`
+	// ClosedAt/CloseReason — set when the record left HELD/ACTIVE.
 	ClosedAt    *time.Time `json:"closed_at,omitempty"`
 	CloseReason string     `json:"close_reason,omitempty"`
 }
@@ -142,26 +151,27 @@ func (l *Ledger) reconcileAndPersist(now time.Time) error {
 }
 
 // reconcileLocked (caller holds the mutex): crash + lease recovery.
+// ACTIVE records NEVER expire by lease (v19.8.1, KPK-19.8.0-P2-05) — their
+// capacity hold ends by explicit release or crash recovery; a boot-mismatch
+// ACTIVE record is crash-recovered exactly like a HELD one (the workload
+// start died with its process; the Host Bridge's future reconciliation owns
+// verifying workloads that outlived their admission record).
 func (l *Ledger) reconcileLocked(now time.Time) {
 	boot := bootIdentity()
 	kept := l.recs[:0]
 	for _, r := range l.recs {
-		if r.Status != StatusHeld {
-			kept = append(kept, r)
-			continue
-		}
 		switch {
-		case r.BootID != boot:
+		case r.BootID != boot && (r.Status == StatusHeld || r.Status == StatusActive):
 			closed := now
 			r.Status = StatusCrashRecovered
 			r.ClosedAt = &closed
-			r.CloseReason = fmt.Sprintf("boot identity mismatch (held by %s, this process is %s) — the workload start died with its process; capacity released at reconstruction", r.BootID, boot)
+			r.CloseReason = fmt.Sprintf("boot identity mismatch (held by %s, this process is %s; status was %s) — the workload start died with its process; capacity released at reconstruction", r.BootID, boot, r.Status)
 			kept = append(kept, r)
-		case !r.LeaseExpiresAt.After(now):
+		case r.Status == StatusHeld && !r.LeaseExpiresAt.After(now):
 			closed := now
 			r.Status = StatusExpired
 			r.ClosedAt = &closed
-			r.CloseReason = "lease expired before release/renewal — capacity freed by reconciliation"
+			r.CloseReason = "lease expired before release/renewal or a confirmed start — capacity freed by reconciliation (a never-started hold)"
 			kept = append(kept, r)
 		default:
 			kept = append(kept, r)
@@ -174,8 +184,8 @@ func (l *Ledger) reconcileLocked(now time.Time) {
 func trimTrail(recs []Record) []Record {
 	held := 0
 	for _, r := range recs {
-		if r.Status == StatusHeld {
-			held++
+		if r.Status == StatusHeld || r.Status == StatusActive {
+			held++ // ACTIVE holds capacity exactly like HELD (KPK-19.8.0-P2-05)
 		}
 	}
 	closed := len(recs) - held
@@ -185,7 +195,7 @@ func trimTrail(recs []Record) []Record {
 	drop := closed - ledgerRetained
 	out := recs[:0]
 	for _, r := range recs {
-		if drop > 0 && r.Status != StatusHeld {
+		if drop > 0 && r.Status != StatusHeld && r.Status != StatusActive {
 			drop--
 			continue
 		}
@@ -203,12 +213,15 @@ func newAdmissionID() (string, error) {
 	return "adm-" + hex.EncodeToString(b), nil
 }
 
-// held returns the HELD records (a stable copy, sorted by AdmissionID —
-// deterministic for callers; the caller must not mutate).
+// held returns the CAPACITY-HOLDING records — HELD and ACTIVE alike
+// (v19.8.1, KPK-19.8.0-P2-05: a confirmed-start workload consumes its
+// reserved capacity exactly like a held one; excluding it would
+// double-sell the same VRAM/RAM/storage) — a stable copy, sorted by
+// AdmissionID (deterministic for callers; the caller must not mutate).
 func (l *Ledger) held() []Record {
 	out := make([]Record, 0, len(l.recs))
 	for _, r := range l.recs {
-		if r.Status == StatusHeld {
+		if r.Status == StatusHeld || r.Status == StatusActive {
 			out = append(out, r)
 		}
 	}
@@ -216,13 +229,17 @@ func (l *Ledger) held() []Record {
 	return out
 }
 
-// byIdempotency finds a HELD record with the same key (idempotent admit).
+// byIdempotency finds a capacity-holding (HELD or ACTIVE) record with the
+// same key (idempotent admit). A CLOSED record's key is REUSABLE by a
+// later admission — a deliberate, documented v19.8.1 rule (the prior hold
+// no longer exists; the new admission is a NEW record), not an accident
+// of searching only live holds.
 func (l *Ledger) byIdempotency(key string) *Record {
 	if key == "" {
 		return nil
 	}
 	for i := range l.recs {
-		if l.recs[i].Status == StatusHeld && l.recs[i].IdempotencyKey == key {
+		if (l.recs[i].Status == StatusHeld || l.recs[i].Status == StatusActive) && l.recs[i].IdempotencyKey == key {
 			r := l.recs[i]
 			return &r
 		}
@@ -254,16 +271,16 @@ func (l *Ledger) persistLocked() error {
 	return nil
 }
 
-// release closes a HELD record (verified cleanup: the transition is
-// persisted atomically; releasing a non-HELD record is a NAMED error,
-// never a silent no-op).
+// release closes a HELD or ACTIVE admission (verified cleanup: the
+// transition is persisted atomically; releasing a closed record is a
+// NAMED error, never a silent no-op).
 func (l *Ledger) release(admissionID, reason string, now time.Time) (Record, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for i := range l.recs {
 		if l.recs[i].AdmissionID == admissionID {
-			if l.recs[i].Status != StatusHeld {
-				return l.recs[i], fmt.Errorf("admission %s is %s, not HELD — nothing to release (verified cleanup refuses a double release)", admissionID, l.recs[i].Status)
+			if l.recs[i].Status != StatusHeld && l.recs[i].Status != StatusActive {
+				return l.recs[i], fmt.Errorf("admission %s is %s, not HELD/ACTIVE — nothing to release (verified cleanup refuses a double release)", admissionID, l.recs[i].Status)
 			}
 			closed := now
 			l.recs[i].Status = StatusReleased
@@ -278,6 +295,73 @@ func (l *Ledger) release(admissionID, reason string, now time.Time) (Record, err
 				return out, fmt.Errorf("admission ledger: release persist failed, the hold stands: %v", err)
 			}
 			return out, nil
+		}
+	}
+	return Record{}, fmt.Errorf("admission %s not found", admissionID)
+}
+
+// renew extends a HELD admission's lease (v19.8.1, KPK-19.8.0-P2-05):
+// the new expiry is now + ttl (monotonic — never shortened),
+// persisted atomically with rollback on persist failure. Principal-bound:
+// a mismatched principal is a NAMED error (the hold's owner extends it).
+// An ACTIVE record's hold does not ride the lease — renewing one is a
+// NAMED error (release closes an ACTIVE hold, the lease is behind it).
+func (l *Ledger) renew(admissionID, principal string, ttl time.Duration, now time.Time) (Record, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := range l.recs {
+		if l.recs[i].AdmissionID == admissionID {
+			if l.recs[i].Status != StatusHeld {
+				return l.recs[i], fmt.Errorf("admission %s is %s, not HELD — the lease renewal applies to a pre-start hold (an ACTIVE record holds until released)", admissionID, l.recs[i].Status)
+			}
+			if principal != "" && l.recs[i].Principal != "" && principal != l.recs[i].Principal {
+				return l.recs[i], fmt.Errorf("admission %s is held by principal %q, not %q — the owner renews the hold (principal-bound lifecycle)", admissionID, l.recs[i].Principal, principal)
+			}
+			original := l.recs[i].LeaseExpiresAt
+			if newExpiry := now.Add(ttl); newExpiry.After(original) {
+				l.recs[i].LeaseExpiresAt = newExpiry
+			}
+			if err := l.persistLocked(); err != nil {
+				l.recs[i].LeaseExpiresAt = original // the durable state wins
+				return l.recs[i], fmt.Errorf("admission ledger: renewal persist failed, the original lease stands: %v", err)
+			}
+			return l.recs[i], nil
+		}
+	}
+	return Record{}, fmt.Errorf("admission %s not found", admissionID)
+}
+
+// confirmStarted transitions a HELD admission to ACTIVE (v19.8.1,
+// KPK-19.8.0-P2-05): the workload owner's explicit, principal-bound,
+// IDEMPOTENT act — confirming an already-ACTIVE record returns the
+// record unchanged (retry-safe), a closed record is a NAMED error, a
+// principal mismatch is a NAMED error, and a persist failure rolls the
+// transition back (an unpersisted start is not a start). From ACTIVE on,
+// the lease TTL no longer frees the hold (only explicit release or crash
+// recovery do).
+func (l *Ledger) confirmStarted(admissionID, principal string, now time.Time) (Record, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := range l.recs {
+		if l.recs[i].AdmissionID == admissionID {
+			if l.recs[i].Status == StatusActive {
+				return l.recs[i], nil // idempotent confirmation (retry-safe)
+			}
+			if l.recs[i].Status != StatusHeld {
+				return l.recs[i], fmt.Errorf("admission %s is %s, not HELD — a closed hold cannot be confirmed started", admissionID, l.recs[i].Status)
+			}
+			if principal != "" && l.recs[i].Principal != "" && principal != l.recs[i].Principal {
+				return l.recs[i], fmt.Errorf("admission %s is held by principal %q, not %q — the owner confirms the start (principal-bound lifecycle)", admissionID, l.recs[i].Principal, principal)
+			}
+			started := now
+			l.recs[i].Status = StatusActive
+			l.recs[i].StartedAt = &started
+			if err := l.persistLocked(); err != nil {
+				l.recs[i].Status = StatusHeld
+				l.recs[i].StartedAt = nil // the durable state wins
+				return l.recs[i], fmt.Errorf("admission ledger: confirm-started persist failed, the hold stays HELD: %v", err)
+			}
+			return l.recs[i], nil
 		}
 	}
 	return Record{}, fmt.Errorf("admission %s not found", admissionID)
@@ -315,6 +399,12 @@ func (v *ledgerView) held() []Record { return v.l.held() }
 
 func (v *ledgerView) insert(r Record) { v.l.insertLocked(r) }
 
+// byIdempotency exposes the replay lookup to the Manager's transaction
+// (v19.8.1, KPK-19.8.0-P2-04: the idempotency check runs INSIDE the
+// ledger lock — two concurrent identical admits serialize here and the
+// second sees the first's record, never a double-admit).
+func (v *ledgerView) byIdempotency(key string) *Record { return v.l.byIdempotency(key) }
+
 // Records returns every record (stable copy, sorted by AdmissionID).
 func (l *Ledger) Records() []Record {
 	l.mu.Lock()
@@ -326,7 +416,9 @@ func (l *Ledger) Records() []Record {
 }
 
 // sweepExpired closes HELD records whose lease expired at/before now
-// (persisted atomically; every closure is on the record). Returns the
+// (persisted atomically; every closure is on the record). ACTIVE records
+// are NEVER swept (v19.8.1, KPK-19.8.0-P2-05: a timer alone must not free
+// capacity a confirmed-start workload still consumes). Returns the
 // number closed.
 func (l *Ledger) sweepExpired(now time.Time) int {
 	l.mu.Lock()
@@ -339,7 +431,7 @@ func (l *Ledger) sweepExpired(now time.Time) int {
 		closedAt := now
 		l.recs[i].Status = StatusExpired
 		l.recs[i].ClosedAt = &closedAt
-		l.recs[i].CloseReason = "lease expired before release/renewal — capacity freed by reconciliation"
+		l.recs[i].CloseReason = "lease expired before release/renewal or a confirmed start — capacity freed by reconciliation (a never-started hold)"
 		closed++
 	}
 	if closed > 0 {

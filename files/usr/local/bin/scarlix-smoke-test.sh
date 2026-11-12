@@ -2298,16 +2298,16 @@ check_28_ai_runtime_foundation() {
     # v19.7.1 and v19.7.2 historical surfaces must ALSO stay (the
     # changelog rows + the What's New sections are the releases'
     # permanent record).
-    if ! grep -q 'ScarLiXoS v19.8.0 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.8.0-B36B00' "$readme"; then
-        fail "README banner/h1/badge must say v19.8.0"
+    if ! grep -q 'ScarLiXoS v19.8.1 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.8.1-B36B00' "$readme"; then
+        fail "README banner/h1/badge must say v19.8.1"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.8.0 (Compute Fabric Phase 4 — InferSSD adapter + SGLang Expert Pack, experimental, default OFF; Phases 0-3 stand)' "$readme"; then
-        fail "README version line must say v19.8.0 (Compute Fabric Phase 4 — InferSSD adapter + SGLang Expert Pack, experimental)"
+    if ! grep -q 'Version:\*\* v19.8.1 (KpK remediation — the admission contract completed' "$readme"; then
+        fail "README version line must say v19.8.1 (KpK remediation — the admission contract completed)"
         return
     fi
-    if ! grep -q "\\*\\*v19.8.0\\*\\*" "$readme" || ! grep -q "What's New in v19.8.0" "$readme"; then
-        fail "README must carry the v19.8.0 changelog row + What's New section (the current release's own record)"
+    if ! grep -q "\\*\\*v19.8.1\\*\\*" "$readme" || ! grep -q "What's New in v19.8.1" "$readme"; then
+        fail "README must carry the v19.8.1 changelog row + What's New section (the current release's own record)"
         return
     fi
     if ! grep -q "\\*\\*v19.7.2\\*\\*" "$readme" || ! grep -q "What's New in v19.7.2" "$readme"; then
@@ -4291,15 +4291,15 @@ check_37_unified_inventory_v2() {
         return
     fi
 
-    # --- The version bump + the release documentation (v19.8.0 evolution:
+    # --- The version bump + the release documentation (v19.8.1 evolution:
     # the current-release guard moved with the release — the v19.7.0
     # record assertions below stay as history).
-    if [[ "$(cat "$version_file" | tr -d '[:space:]')" != "19.8.0" ]]; then
-        fail "VERSION must be 19.8.0"
+    if [[ "$(cat "$version_file" | tr -d '[:space:]')" != "19.8.1" ]]; then
+        fail "VERSION must be 19.8.1"
         return
     fi
     for f in "$REPO_DIR/install.sh" "$REPO_DIR/scarlihq/Dockerfile" "$REPO_DIR/scarlihq/cmd/scarlihq/main.go" "$api_rest"; do
-        if ! grep -q '19\.8\.0' "$f"; then
+        if ! grep -q '19\.8\.1' "$f"; then
             fail "version fallback missing in $f (the five-place bump discipline)"
             return
         fi
@@ -5145,6 +5145,188 @@ check_40_inferssd_expert_pack_v19_8_0() {
     pass "v19.8.0 (Compute Fabric Phase 4 — the roadmap §8 InferSSD adapter + SGLang Expert Pack): the ADAPTER (internal/backends/infer_ssd — NEW, §8.3's structure) is a DISTINCT inference backend for SSD-backed MoE expert execution — not a generic storage mode, not a fifth chat transport (ProviderForBackend(infer_ssd) stays the honest no-transport error; execution flows through the Host Bridge path) — and it NEVER CALLS DOCKER (asserted comment-stripped over the whole package: BuildProfile returns the validated ApprovedRuntimeProfile for the workload/Host Bridge path; the health probe rides the injectable HealthProber seam with the no-redirect discipline, and a probe without a Host-Bridge-bound endpoint is the named refusal); the RUNTIME PROFILE (scarlix.runtime-profile/v1, §8.4 field-for-field) is operator-owned and FAIL-CLOSED: placeholder values are REFUSED BY NAME (REPLACE_WITH/VERIFIED_ markers scanned on every string field — §8.4's own 'the configuration loader must reject them'), the image is digest-pinned BY CODE, experimental:true is REQUIRED (a non-experimental profile is a production claim without hardware acceptance), max_concurrent_requests is EXACTLY 1 (§8.8's one-active-workload rule — contention evidence or refusal), the GPU mode is exclusive, published ports are refused, and a DISABLED profile is honest documentation (§8.8's initial status: nothing ships enabled); the §8.2 COMPATIBILITY JOINS are enforced in code with named refusals: the model binding (the profile binds ONE exact model × checkpoint — BindModel), the GPU join (the OBSERVED compute capability ∈ the declared capabilities with the 12.0→sm_120 normalization, the driver CUDA matching EXACTLY — the tested combination is the approved combination — and the numeric-aware driver minimum), and the §8.6 MEASURED SSD qualification (QualifySSD: sequential + random IOPS + p95 floors + free bytes against the device's RECORDED benchmark — a measured-performance floor without a measurement is a named refusal, never schedule from unverified estimates); the BENCHMARK's opt-in random-read phase (§8.6: SSD-backed expert paging is sensitive to RANDOM reads and latency) measures IOPS + the p50/p95/p99 percentiles at a bounded random block (default 4 KiB, fixed-seed reproducible, queue depth 1 recorded — a v19.7.0-shaped request is byte-for-byte unchanged); the PLANNER's ssd-backed-moe strategy is the ONE v19.8.0 paging member of the closed vocabulary (the pack's moe_expert_pack execution stays UNPLANNED — the §8.8 enablement policy names its prerequisites: pack-byte verification + the §8.7 target-host acceptance matrix; an enabled declaration rides the explanation as expert-pack-declared-not-planned), reached only AFTER the presence join observes a running+healthy infer_ssd runtime, then a SEVEN-refusal chain BY NAME (profile-unconfigured / profile-model-mismatch / context-exceeds-profile-limit / image-not-digest-pinned / ssd-gpu-incompatible + gpu-insufficient / ssd-device-unknown + ssd-unqualified + ssd-storage-insufficient), and the plan carries the profile as its config profile (the field's first real value), the §8.8-capped concurrency, the storage demand WITH the measured floors (admission revalidates), and the generated §8 explanation entries; the EXPERT PACK is MODELED at the artifact tier (scarlix.artifact/v1 — §8.1's split: a SGLang artifact/capability mode, never a fifth provider): bound to the EXACT checkpoint (id + revision + fingerprint + the model's own agreeing declaration — two files disagreeing about one artifact is a collision, not a merge), backend_id sglang ONLY with the cross-engine refusal ENFORCED BY CODE (this release's must-not-do: 'Do not claim cross-engine pack compatibility'), placeholders refused, the container digest pinned, duplicate artifact ids rejected as a group; the registry flip is honest (sglang's SupportsExpertPack true WITH the §8.5 evidence note; infer_ssd's AdapterNote names the planning-side experimental adapter); the operator surfaces: SCARLIHQ_INFERSSD_PROFILE (fail-closed startup), the honest three-state log, GET /api/compute/plan's ssd_profile + expert_packs views, and the invalid-by-design example pack manifest; acceptance: the 33-case profile truth table + the loader suite + the adapter suite (fail-closed construction, the §8.2 model matrix, the estimate numbers, the launch-shape refusals, the probe seam, the no-Docker source assertion) + the integration suite (the adapter↔planner estimate AGREEMENT, the qualification floors, the GPU join incl. the suffix normalization) + the planner ssd suite (the golden path, all seven named refusals, determinism 20×, the pack-declared-not-planned proof) + the pack truth tables + the HTTP view suite + the seam suite; residual honesty: hardware acceptance stays OPEN (KPK-06 — §8.7's target-host matrix is the operator's act), no enabled profile ships (every default deployment refuses every infer_ssd plan — §8.8's initial status, the presence join refuses first), no infer_ssd runtime is observed anywhere yet, pack-byte verification is named future work (declared digests are declarations), the one-active-workload-per-profile ledger rides the Host Bridge integration; 'LLM navrhuje, politika rozhoduje' — the profile is the operator's evidence record, the floors are measured, the combination is exact, and the pen stays with the operator"
 }
 
+# check_41 — v19.8.1 (the v19.8.0 KpK remediation): the admission
+# contract completed — P1-01 (the measured random-read floors enforced at
+# the FINAL gate through the ONE shared predicate), P1-02 (verification
+# records bound to the manifest identity), P2-03 (the KV cache counted
+# exactly once), P2-04 (idempotency bound to principal + request
+# fingerprint, inside the lock), P2-05 (the ACTIVE lease lifecycle),
+# P3-06 (strict YAML), and the SK audit's P2 recommendations (the
+# local-only health prober, the benchmark age bound).
+check_41_kpk_remediation_v19_8_1() {
+    echo "--- [41] v19.8.1 KpK remediation (admission contract completed)"
+    local adm_dir="$REPO_DIR/scarlihq/internal/admission"
+    local floors_go="$REPO_DIR/scarlihq/internal/storage/measured_floors.go"
+    local verify_go="$REPO_DIR/scarlihq/internal/modelmeta/verify.go"
+    local strict_go="$REPO_DIR/scarlihq/internal/modelmeta/yaml_strict.go"
+    local adapter_go="$REPO_DIR/scarlihq/internal/backends/infer_ssd/adapter.go"
+    local planner_go="$REPO_DIR/scarlihq/internal/planner/planner.go"
+    local manager_go="$adm_dir/manager.go"
+    local ledger_go="$adm_dir/ledger.go"
+    local admission_go="$adm_dir/admission.go"
+    local api_adm_go="$REPO_DIR/scarlihq/internal/api/admission.go"
+    local api_rest_go="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local health_go="$REPO_DIR/scarlihq/internal/backends/infer_ssd/health.go"
+    local config_go="$REPO_DIR/scarlihq/internal/backends/infer_ssd/config.go"
+    local pack_go="$REPO_DIR/scarlihq/internal/modelmeta/expertpack.go"
+    local manifest_go="$REPO_DIR/scarlihq/internal/modelmeta/manifest.go"
+
+    for f in "$floors_go" "$verify_go" "$strict_go"; do
+        if [[ ! -f "$f" ]]; then
+            fail "v19.8.1 source missing: $f (the shared predicate + the fingerprint + the strict decode)"
+            return
+        fi
+    done
+
+    # --- P1-01: the ONE shared measured-floor predicate ---
+    if ! grep -q 'func CheckMeasuredFloors' "$floors_go" || ! grep -q 'FloorsAbsent\|FloorsStale\|FloorsUnmet' <(cat "$floors_go"); then
+        fail "the shared measured-floor predicate must exist with its closed verdict vocabulary (storage.CheckMeasuredFloors)"
+        return
+    fi
+    if ! grep -q 'storage.CheckMeasuredFloors' "$manager_go"; then
+        fail "the admission gate must enforce the floors through the SHARED predicate (P1-01: planner and admission cannot drift)"
+        return
+    fi
+    if ! grep -q 'storage.CheckMeasuredFloors' "$REPO_DIR/scarlihq/internal/backends/infer_ssd/requirements.go"; then
+        fail "infer_ssd.QualifySSD must call the SAME shared predicate (P1-01: one implementation, two consumers)"
+        return
+    fi
+    if ! grep -q 'ReasonStorageReadProfileStale' "$admission_go" || ! grep -q 'ReasonIdempotencyConflict' "$admission_go"; then
+        fail "the v19.8.1 refusal vocabulary must exist (storage-read-profile-stale + idempotency-conflict)"
+        return
+    fi
+    if ! grep -q 'MaxBenchmarkAge' "$manager_go"; then
+        fail "the benchmark age bound must ride the admission policy (SK P2-04)"
+        return
+    fi
+
+    # --- P1-02: the manifest fingerprint, bound at BOTH gates ---
+    if ! grep -q 'func ManifestFingerprint' "$verify_go" || ! grep -q 'ManifestFingerprint string' "$verify_go"; then
+        fail "the canonical manifest fingerprint must exist + ride the verification record (P1-02)"
+        return
+    fi
+    if ! grep -q 'modelmeta.ManifestFingerprint' "$manager_go" || ! grep -q 'ReasonModelVerificationIdentityMismatch' "$manager_go"; then
+        fail "admission must re-match the fingerprint with the named mismatch refusal (P1-02)"
+        return
+    fi
+    if ! grep -q 'modelmeta.ManifestFingerprint' "$planner_go" || ! grep -q 'ReasonPlanModelVerificationIdentityMismatch' "$planner_go"; then
+        fail "the planner must re-match the fingerprint independently (P1-02: every stage verifies its own conditions)"
+        return
+    fi
+
+    # --- P2-03: the KV cache counted exactly once ---
+    if grep -q 'vramDemand := model.SharedBytes + kvBytes' "$adapter_go"; then
+        fail "the adapter must NOT bake KV into VRAMBytes (P2-03: the single-count contract)"
+        return
+    fi
+    if grep -q 'vramDemand := m.Architecture.SharedBytes + kvBytes' "$planner_go"; then
+        fail "the planner must NOT bake KV into VRAMBytes (P2-03: the single-count contract)"
+        return
+    fi
+    if ! grep -q 'kv_cache_bytes %d with no gpu request' "$adm_dir/vector.go"; then
+        fail "ResourceVector.Validate must refuse KV-without-GPU by name (P2-03's invariant)"
+        return
+    fi
+
+    # --- P2-04: idempotency inside the lock, fingerprint-bound ---
+    if ! grep -q 'RequestFingerprint string' "$ledger_go" || ! grep -q 'requestFingerprint(req)' "$manager_go"; then
+        fail "the record must carry the request fingerprint and the replay must match it (P2-04)"
+        return
+    fi
+    if ! grep -q 'view.byIdempotency' "$manager_go"; then
+        fail "the replay check must run INSIDE the ledger transaction (P2-04: the TOCTOU fix)"
+        return
+    fi
+
+    # --- P2-05: the ACTIVE lifecycle ---
+    if ! grep -q 'func (l \*Ledger) renew(' "$ledger_go" || ! grep -q 'func (l \*Ledger) confirmStarted(' "$ledger_go"; then
+        fail "the ledger must implement renew + confirmStarted (P2-05)"
+        return
+    fi
+    if ! grep -q 'StatusActive = "ACTIVE"' "$admission_go"; then
+        fail "the ACTIVE lifecycle status must exist (P2-05)"
+        return
+    fi
+    if ! grep -q 'r.Status == StatusHeld || r.Status == StatusActive' "$ledger_go"; then
+        fail "ACTIVE must count against capacity exactly like HELD (P2-05: no double-sell)"
+        return
+    fi
+    if ! grep -q 'admissionRenew\|admissionConfirmStarted' <(cat "$api_rest_go") || ! grep -q 'admission/renew\|admission/confirm-started' <(cat "$api_rest_go"); then
+        fail "the lifecycle routes must be registered (POST /api/compute/admission/renew + /confirm-started)"
+        return
+    fi
+
+    # --- P3-06: strict YAML at every operator-manifest loader ---
+    if ! grep -q 'KnownFields(true)' "$strict_go"; then
+        fail "the strict decode must refuse unknown fields BY CODE (P3-06)"
+        return
+    fi
+    for f in "$config_go" "$pack_go" "$manifest_go"; do
+        if ! grep -q 'DecodeSingleStrictYAML' "$f"; then
+            fail "the operator-manifest loader must use the strict single-document decode (P3-06): $f"
+            return
+        fi
+    done
+
+    # --- SK P2-02: the health prober is local-only by code ---
+    if ! grep -q 'func localOnlyHost' "$health_go" || ! grep -q 'NOT local-only' "$health_go"; then
+        fail "the InferSSD health prober must enforce the local-only transport by code (SK P2-02)"
+        return
+    fi
+
+    # --- the policy versions bump honestly ---
+    if ! grep -q 'admission/v19.8.1' "$manager_go"; then
+        fail "the admission policy version must be admission/v19.8.1"
+        return
+    fi
+    if ! grep -q 'planner/v19.8.1' "$planner_go"; then
+        fail "the planner policy version must be planner/v19.8.1"
+        return
+    fi
+
+    # --- the regression tests exist (the remediation's own proofs) ---
+    local adm_tests="$adm_dir/manager_test.go"
+    for t in TestAdmitRandomReadFloorsEnforced TestAdmitBenchmarkStaleRefused TestAdmitVerificationIdentityMismatch TestAdmitKVCountedExactlyOnce TestAdmitIdempotencyConflict TestAdmissionRenewExtendsLease TestAdmissionConfirmStartedLifecycle TestAdmitStaleSnapshotRefusedOnSSDPath; do
+        if ! grep -q "func $t" "$adm_tests"; then
+            fail "the admission regression test $t must exist (the v19.8.1 remediation proofs)"
+            return
+        fi
+    done
+    if ! grep -q 'func TestManifestFingerprintIdentityBinding' "$REPO_DIR/scarlihq/internal/modelmeta/verify_test.go"; then
+        fail "the manifest fingerprint regression test must exist (P1-02's own proof)"
+        return
+    fi
+    if ! grep -q 'func TestHTTPHealthProberLocalOnly' "$REPO_DIR/scarlihq/internal/backends/infer_ssd/adapter_test.go"; then
+        fail "the prober local-only regression test must exist (SK P2-02's own proof)"
+        return
+    fi
+    for t in TestLoadManifestsStrictYAML TestLoadExpertPacksStrictYAML TestLoadRuntimeProfileStrictYAML; do
+        if ! grep -rq "func $t" "$REPO_DIR/scarlihq/internal/modelmeta" "$REPO_DIR/scarlihq/internal/backends/infer_ssd"; then
+            fail "the strict-YAML regression test $t must exist (P3-06's own proof)"
+            return
+        fi
+    done
+    if ! grep -q 'func TestPlanRefusesVerificationIdentityMismatch' "$REPO_DIR/scarlihq/internal/planner/planner_test.go"; then
+        fail "the planner identity-mismatch regression test must exist (P1-02's planner-side proof)"
+        return
+    fi
+
+    # --- the release documentation ---
+    local rel_notes="$REPO_DIR/docs/RELEASE_NOTES_v19.8.1.md"
+    if [[ ! -f "$rel_notes" ]]; then
+        fail "RELEASE_NOTES_v19.8.1.md must exist (the release's own record)"
+        return
+    fi
+    for section in 'KPK-19.8.0-P1-01' 'KPK-19.8.0-P1-02' 'KPK-19.8.0-P2-03' 'KPK-19.8.0-P2-04' 'KPK-19.8.0-P2-05' 'KPK-19.8.0-P3-06'; do
+        if ! grep -q "$section" "$rel_notes"; then
+            fail "the release notes must name the remediated finding $section"
+            return
+        fi
+    done
+
+    pass "v19.8.1 (KpK remediation — the admission contract completed): the measured random-read floors are enforced at the FINAL gate through the ONE shared predicate (storage.CheckMeasuredFloors — sequential + random IOPS + p95 + the age bound; admission AND QualifySSD call it, the drift hole is closed with named refusals storage-no-read-profile/-stale/-insufficient), the verification records are BOUND to the manifest identity (modelmeta.ManifestFingerprint — canonical SHA-256 over every identity-bearing field, recorded at verification, re-matched by BOTH gates with the named mismatch refusals; a pre-v19.8.1 record is refused by name), the KV cache is counted EXACTLY once (VRAMBytes = shared + reserve, KV rides KVCacheBytes, the gate adds it once, Validate refuses KV-without-GPU), the idempotency replay is bound to principal + request fingerprint INSIDE the atomic transaction (the TOCTOU closed; a mismatched key is the named idempotency-conflict), the ACTIVE lease lifecycle is complete (Renew + ConfirmStarted + the ADMIN routes; ACTIVE never expires by lease, still counts capacity, crash recovery covers both), every operator-manifest loader is STRICT (KnownFields + single-document BY NAME), and the SK audit's recommendations are in code (the local-only prober, the benchmark age bound, the stale-SSD regression); the remediation's own regression suites exist for every finding; 'LLM navrhuje, planner vybera, admission rezervuje' — and every stage now verifies its OWN conditions independently"
+}
+
 # ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
 # execution — the summary reports the number of checks actually executed.
@@ -5190,6 +5372,7 @@ SMOKE_CHECKS=(
     check_38_aggregate_admission_v19_7_1
     check_39_backend_capability_planner_v19_7_2
     check_40_inferssd_expert_pack_v19_8_0
+    check_41_kpk_remediation_v19_8_1
 )
 
 run_check() {

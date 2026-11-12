@@ -324,6 +324,11 @@ const (
 	// rule: the planner consumes VERIFIED records, never declared
 	// digests; a stale verification is absent verification).
 	ReasonPlanModelUnverified = "plan-model-unverified"
+	// ReasonPlanModelVerificationIdentityMismatch — the verification record
+	// exists and is fresh but is NOT bound to the current manifest's
+	// identity (v19.8.1, KPK-19.8.0-P1-02: the manifest changed after
+	// verification; the record voids until re-verification).
+	ReasonPlanModelVerificationIdentityMismatch = "plan-model-verification-identity-mismatch"
 	// ReasonPlanModelRevisionMismatch — the requested revision does not
 	// match the manifest's revision.
 	ReasonPlanModelRevisionMismatch = "plan-model-revision-mismatch"
@@ -471,7 +476,7 @@ type PlannerPolicy struct {
 // DefaultPlannerPolicy is the documented v19.8.0 policy.
 func DefaultPlannerPolicy() PlannerPolicy {
 	return PlannerPolicy{
-		PolicyVersion:           "planner/v19.8.0",
+		PolicyVersion:           "planner/v19.8.1",
 		MaxSnapshotAge:          60 * time.Second,
 		VerificationMaxAge:      7 * 24 * time.Hour,
 		PlanTTL:                 5 * time.Minute,
@@ -677,6 +682,21 @@ func (p *Planner) Plan(req ExecutionRequest) PlanResult {
 	}
 	if age := now.Sub(verif.VerifiedAt); age > p.policy.VerificationMaxAge {
 		return p.refuseWith(base, ReasonPlanModelUnverified, fmt.Sprintf("model %q verification is %s old (bound %s) — a stale verification is absent verification", req.ModelID, age.Truncate(time.Second), p.policy.VerificationMaxAge))
+	}
+	// The manifest-identity binding (v19.8.1, KPK-19.8.0-P1-02): the
+	// verification record must be bound to the CURRENT manifest's
+	// canonical fingerprint — a manifest whose revision/checkpoint/
+	// pack declaration changed after verification is UNVERIFIED until the
+	// operator re-runs the verification pass. The planner checks it
+	// independently of the admission gate (every stage verifies its own
+	// conditions).
+	if verif.ManifestFingerprint == "" {
+		return p.refuseWith(base, ReasonPlanModelUnverified, fmt.Sprintf(
+			"model %q's verification record carries NO manifest fingerprint (a pre-v19.8.1 record) — re-run scarlix-inventory --verify-manifests so the record binds to the exact manifest identity", req.ModelID))
+	}
+	if current := modelmeta.ManifestFingerprint(manifest); current != verif.ManifestFingerprint {
+		return p.refuseWith(base, ReasonPlanModelVerificationIdentityMismatch, fmt.Sprintf(
+			"model %q's verification record (fingerprint %s) is not bound to the current manifest (fingerprint %s) — the manifest's identity-bearing fields changed after verification; re-run scarlix-inventory --verify-manifests (KPK-19.8.0-P1-02)", req.ModelID, verif.ManifestFingerprint, current))
 	}
 
 	// 4-6. the capability × presence × capacity × image join over every
@@ -1021,10 +1041,14 @@ func (p *Planner) evaluateInferSSD(b airuntime.BackendID, row airuntime.BackendC
 	}
 	c.image = PinnedImage{Reference: ref, DigestPinned: true}
 
-	// The ssd-backed-moe derivation: shared + KV (+ the profile's own
-	// reserve) resident in VRAM; the experts live on the SSD.
+	// The ssd-backed-moe derivation: shared + the profile's own reserve
+	// resident in VRAM; the KV cache rides ResourceVector.KVCacheBytes and
+	// the ADMISSION gate adds it to the assigned GPU exactly once
+	// (v19.8.1, KPK-19.8.0-P2-03's single-count contract: baking KV into
+	// VRAMBytes made the gate count it twice and refuse workloads that
+	// fit); the experts live on the SSD.
 	kvBytes := uint64(req.ContextTokens) * m.Runtime.KVCache.BytesPerTokenEstimate
-	vramDemand := m.Architecture.SharedBytes + kvBytes + profile.Resources.GPU.VRAMReserveBytes
+	vramDemand := m.Architecture.SharedBytes + profile.Resources.GPU.VRAMReserveBytes
 	expertTotal := infer_ssd.ExpertStorageBytes(m.Execution(""))
 	c.strategy = StrategySSDBackedMoE
 
@@ -1066,10 +1090,11 @@ func (p *Planner) evaluateInferSSD(b airuntime.BackendID, row airuntime.BackendC
 	}
 	c.ssdQual = qual
 
-	// The vector: exclusive GPU hold (shared + KV + reserve), the
-	// profile's additive host demands, and the storage demand WITH the
-	// profile's measured floors (admission revalidates the same facts
-	// the planner checked — the proposal is admission-shaped).
+	// The vector: exclusive GPU hold (shared + reserve; the KV cache rides
+	// KVCacheBytes and admission adds it once — P2-03's single-count
+	// contract), the profile's additive host demands, and the storage
+	// demand WITH the profile's measured floors (admission revalidates the
+	// same facts the planner checked — the proposal is admission-shaped).
 	c.vector = admission.ResourceVector{
 		GPU: []admission.GPURequest{{
 			GPUUUID:   gpu.UUID,

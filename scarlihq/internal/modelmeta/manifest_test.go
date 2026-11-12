@@ -289,3 +289,39 @@ func TestResolveManifestsDirEnvOverride(t *testing.T) {
 		t.Errorf("resolve=%q, want empty for a missing override", got)
 	}
 }
+
+// TestLoadManifestsStrictYAML — v19.8.1 (KPK-19.8.0-P3-06): the manifest
+// loader refuses UNKNOWN fields and MULTIPLE documents by name — a
+// manifest carrying a field this schema never agreed to is operator
+// configuration the system refuses to silently accept.
+func TestLoadManifestsStrictYAML(t *testing.T) {
+	dir := t.TempDir()
+
+	// An unknown TOP-LEVEL field.
+	unknownTop := denseYAML + "favourite_colour: \"blue\"\n"
+	writeManifest(t, dir, "unknown-top.manifest.yaml", unknownTop)
+
+	// An unknown NESTED field.
+	nested := strings.Replace(denseYAML, "  format: \"safetensors\"", "  format: \"safetensors\"\n  checksum_algo: \"md5\"", 1)
+	writeManifest(t, dir, "unknown-nested.manifest.yaml", nested)
+
+	// A VALID manifest alongside (only the broken ones degrade).
+	writeManifest(t, dir, "fine.manifest.yaml", denseYAML)
+
+	// Multiple documents in one file.
+	multi := denseYAML + "---\n" + denseYAML
+	writeManifest(t, dir, "multi.manifest.yaml", multi)
+
+	res := LoadManifests(dir)
+	if len(res.Manifests) != 1 {
+		t.Fatalf("valid manifests=%d, want 1 (the strict refusals degrade only themselves): %+v", len(res.Manifests), res.Invalid)
+	}
+	if len(res.Invalid) != 3 {
+		t.Fatalf("invalid=%d, want 3 (unknown top-level, unknown nested, multiple documents)", len(res.Invalid))
+	}
+	for _, inv := range res.Invalid {
+		if !strings.Contains(strings.Join(inv.Reasons, "; "), "YAML parse failed") {
+			t.Errorf("%s: the strict refusal must ride the named parse error: %v", inv.Path, inv.Reasons)
+		}
+	}
+}

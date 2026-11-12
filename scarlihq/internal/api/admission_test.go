@@ -87,7 +87,7 @@ func admissionTestManager(t *testing.T) *admission.Manager {
 	mgr := admission.NewManager(admission.DefaultPolicy(), fixedSnapshots{snap: snap}, fixedModels{
 		manifests: map[string]*modelmeta.Manifest{"qwen3-14b-awq": m},
 		verifs: map[string]*modelmeta.ArtifactVerification{"qwen3-14b-awq": {
-			ModelID: "qwen3-14b-awq", AllVerified: true, VerifiedAt: observed.Add(-time.Hour),
+			ModelID: "qwen3-14b-awq", ManifestFingerprint: modelmeta.ManifestFingerprint(m), AllVerified: true, VerifiedAt: observed.Add(-time.Hour),
 			Checkpoint: &modelmeta.ArtifactDigest{Path: "/models/qwen3-14b-awq", Match: true},
 		}},
 	}, ledger)
@@ -293,6 +293,91 @@ func TestAdmissionReleaseFlow(t *testing.T) {
 	if rec3.Code != http.StatusConflict {
 		t.Fatalf("unknown release: status=%d (want 409)", rec3.Code)
 	}
+}
+
+// TestAdmissionLifecycleRoutes — v19.8.1 (KPK-19.8.0-P2-05): the renew
+// and confirm-started routes drive the lease lifecycle — renew extends a
+// HELD lease (200 + the record with the later lease_expires_at);
+// confirm-started transitions HELD → ACTIVE (200, status active); a
+// second confirm-started is the idempotent no-op; the ACTIVE hold
+// survives the lease expiry sweep; errors are the NAMED 409; GET is 405;
+// an empty body is 400.
+func TestAdmissionLifecycleRoutes(t *testing.T) {
+	mux, mgr := admissionTestServer(t)
+	_, doc := admissionDo(t, mux, http.MethodPost, "/api/compute/admission", admissionAllowedBody)
+	id, _ := doc["admission_id"].(string)
+	if id == "" {
+		t.Fatalf("no admission_id in the allowed decision")
+	}
+
+	// Renew extends the lease (advance the fixture manager's fixed clock
+	// first — a real renew happens later than the admit; created_at rides
+	// the state surface's held record).
+	_, state := admissionDo(t, mux, http.MethodGet, "/api/compute/admission", "")
+	heldList, _ := state["held"].([]interface{})
+	if len(heldList) != 1 {
+		t.Fatalf("held=%d, want 1 before the lifecycle", len(heldList))
+	}
+	heldRec, _ := heldList[0].(map[string]interface{})
+	createdAt, _ := heldRec["created_at"].(string)
+	created, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		t.Fatalf("created_at unparseable: %v", err)
+	}
+	mgr.SetNow(func() time.Time { return created.Add(5 * time.Minute) })
+
+	rec, rdoc := admissionDo(t, mux, http.MethodPost, "/api/compute/admission/renew", `{"admission_id":"`+id+`"}`)
+	if rec.Code != http.StatusOK || rdoc["status"] != "renewed" {
+		t.Fatalf("renew: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	newLease, _ := rdoc["record"].(map[string]interface{})["lease_expires_at"].(string)
+	oldLease, _ := doc["lease_expires_at"].(string)
+	if newLease <= oldLease {
+		t.Fatalf("renew must extend the lease: %q vs %q", newLease, oldLease)
+	}
+
+	// Confirm-started transitions HELD → ACTIVE.
+	rec2, cdoc := admissionDo(t, mux, http.MethodPost, "/api/compute/admission/confirm-started", `{"admission_id":"`+id+`"}`)
+	if rec2.Code != http.StatusOK || cdoc["status"] != "active" {
+		t.Fatalf("confirm-started: status=%d body=%s", rec2.Code, rec2.Body.String())
+	}
+	// The idempotent second confirmation is 200 (retry-safe).
+	rec3, _ := admissionDo(t, mux, http.MethodPost, "/api/compute/admission/confirm-started", `{"admission_id":"`+id+`"}`)
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("idempotent confirm-started: status=%d body=%s", rec3.Code, rec3.Body.String())
+	}
+
+	// The ACTIVE hold still consumes capacity: the same GPU is refused.
+	greedy := strings.Replace(admissionAllowedBody, `"request_id": "req-1"`, `"request_id": "req-2"`, 1)
+	_, gdoc := admissionDo(t, mux, http.MethodPost, "/api/compute/admission", greedy)
+	if gdoc["allowed"] != false || gdoc["reason_code"] != admission.ReasonGPUExclusiveConflict {
+		t.Fatalf("the ACTIVE hold must keep consuming capacity: %v", gdoc["reason_code"])
+	}
+
+	// The 409s: unknown id, and renewing an ACTIVE record.
+	rec4, _ := admissionDo(t, mux, http.MethodPost, "/api/compute/admission/renew", `{"admission_id":"no-such-id"}`)
+	if rec4.Code != http.StatusConflict {
+		t.Fatalf("unknown renew: status=%d (want 409)", rec4.Code)
+	}
+	rec5, _ := admissionDo(t, mux, http.MethodPost, "/api/compute/admission/renew", `{"admission_id":"`+id+`"}`)
+	if rec5.Code != http.StatusConflict {
+		t.Fatalf("renewing an ACTIVE record: status=%d (want 409 — the lease no longer governs it)", rec5.Code)
+	}
+
+	// 400 + 405 guards.
+	rec6, _ := admissionDo(t, mux, http.MethodPost, "/api/compute/admission/renew", `{"admission_id":""}`)
+	if rec6.Code != http.StatusBadRequest {
+		t.Fatalf("empty renew body: status=%d (want 400)", rec6.Code)
+	}
+	rec7, _ := admissionDo(t, mux, http.MethodGet, "/api/compute/admission/renew", "")
+	if rec7.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET on renew: status=%d (want 405)", rec7.Code)
+	}
+	rec8, _ := admissionDo(t, mux, http.MethodGet, "/api/compute/admission/confirm-started", "")
+	if rec8.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET on confirm-started: status=%d (want 405)", rec8.Code)
+	}
+	_ = mgr
 }
 
 // TestAdmissionReleaseValidation: an empty body is a 400, and GET on the

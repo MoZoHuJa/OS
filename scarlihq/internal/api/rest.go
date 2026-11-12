@@ -28,7 +28,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.8.0"
+var Version = "19.8.1"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -285,6 +285,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// with verified cleanup.
 	mux.HandleFunc("/api/compute/admission", h.authAdmin(h.admissionRoute))
 	mux.HandleFunc("/api/compute/admission/release", h.authAdmin(h.admissionRelease))
+	// v19.8.1 (KPK-19.8.0-P2-05): the admission lease lifecycle — renew
+	// extends a HELD lease (durable, principal-bound); confirm-started
+	// transitions HELD → ACTIVE (from ACTIVE on, lease expiry never frees
+	// the hold — a timer alone must not free capacity a running workload
+	// still consumes). Both ADMIN-gated like every admission mutation.
+	mux.HandleFunc("/api/compute/admission/renew", h.authAdmin(h.admissionRenew))
+	mux.HandleFunc("/api/compute/admission/confirm-started", h.authAdmin(h.admissionConfirmStarted))
 	// v19.7.2 (Compute Fabric Phase 3, roadmap §7.4): the
 	// deterministic execution planner surface — the READ gate (the
 	// planner RESERVES NOTHING: it computes a proposal over the

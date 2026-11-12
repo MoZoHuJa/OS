@@ -146,9 +146,13 @@ func (a *InferSSDAdapter) ValidateModel(model modelmeta.ModelExecution) error {
 }
 
 // Estimate implements BackendAdapter — the §8.3 resource estimation:
-// the ssd-backed-moe vector (VRAM = shared + KV + the profile's
-// reserve — the experts live on the SSD; host RAM + pinned + CPU
-// threads from the profile's declared additive demands; the storage
+// the ssd-backed-moe vector (VRAM = shared + the profile's reserve, the
+// KV cache declared SEPARATELY in KVCacheBytes — v19.8.1's
+// single-count contract, KPK-19.8.0-P2-03: the admission gate adds the KV
+// bytes to the assigned GPU's demand exactly ONCE, so a producer that
+// bakes KV into VRAMBytes made the gate count it twice and refuse
+// workloads that fit; the experts live on the SSD; host RAM + pinned +
+// CPU threads from the profile's declared additive demands; the storage
 // demand = the paged experts' bytes + the minimum free floor, with the
 // profile's measured floors carried for the admission gate).
 func (a *InferSSDAdapter) Estimate(model modelmeta.ModelExecution, req EstimateRequest) (admission.ResourceVector, error) {
@@ -162,7 +166,10 @@ func (a *InferSSDAdapter) Estimate(model modelmeta.ModelExecution, req EstimateR
 		return admission.ResourceVector{}, fmt.Errorf("infer_ssd: estimate refused — context_tokens %d exceeds the profile's serving ceiling %d", req.ContextTokens, a.profile.Execution.ContextLimit)
 	}
 	kvBytes := uint64(req.ContextTokens) * model.KVCacheBytesPerToken
-	vramDemand := model.SharedBytes + kvBytes + a.profile.Resources.GPU.VRAMReserveBytes
+	// KPK-19.8.0-P2-03: VRAMBytes carries shared + the profile reserve ONLY
+	// — the KV cache rides ResourceVector.KVCacheBytes and the admission
+	// gate adds it to the assigned GPU exactly once.
+	vramDemand := model.SharedBytes + a.profile.Resources.GPU.VRAMReserveBytes
 	experts := ExpertStorageBytes(model)
 	storage := admission.StorageRequest{
 		DeviceID:              a.profile.Resources.Storage.DeviceID,

@@ -245,3 +245,71 @@ func TestVerificationStoreRoundTrip(t *testing.T) {
 		t.Errorf("store perms=%v, want 0600", info.Mode().Perm())
 	}
 }
+
+// TestManifestFingerprintIdentityBinding — v19.8.1 (KPK-19.8.0-P1-02):
+// the canonical manifest fingerprint changes with EVERY identity-bearing
+// field (revision, checkpoint digest, expert-pack declaration, storage
+// paths) and is stable under cosmetic changes (digest case, backend
+// declaration order) — exactly the discrimination an admission replay
+// needs.
+func TestManifestFingerprintIdentityBinding(t *testing.T) {
+	base := func() *Manifest {
+		m := &Manifest{SchemaVersion: SchemaVersionV2, ID: "m-1", Revision: "r1"}
+		m.Checkpoint.Format = "safetensors"
+		m.Checkpoint.SHA256 = strings.Repeat("ab", 32)
+		m.Architecture.Kind = ArchitectureMoE
+		m.Architecture.ExpertCount = 8
+		m.Architecture.ExpertsPerToken = 2
+		m.Architecture.ExpertBytes = 512 << 20
+		m.Architecture.SharedBytes = 2 << 30
+		m.Runtime.ContextLimit = 32768
+		m.Runtime.SupportedBackends = []string{"sglang", "beellama"}
+		m.Storage.ModelPath = "/models/m-1"
+		return m
+	}
+
+	fp := ManifestFingerprint(base())
+	if fp == "" || len(fp) != 64 {
+		t.Fatalf("fingerprint must be a 64-hex digest, got %q", fp)
+	}
+	// Stable for the identical manifest.
+	if got := ManifestFingerprint(base()); got != fp {
+		t.Fatalf("identical manifests must fingerprint identically: %s vs %s", got, fp)
+	}
+	// Cosmetics: digest case + backend order do NOT change identity.
+	cos := base()
+	cos.Checkpoint.SHA256 = strings.Repeat("AB", 32) // uppercase form of the same digest
+	cos.Runtime.SupportedBackends = []string{"beellama", "sglang"} // reordered
+	if got := ManifestFingerprint(cos); got != fp {
+		t.Fatalf("cosmetic changes must not void identity: %s vs %s", got, fp)
+	}
+	// Identity-bearing changes DO change it.
+	for name, mutate := range map[string]func(*Manifest){
+		"revision":        func(m *Manifest) { m.Revision = "r2" },
+		"checkpoint sha":  func(m *Manifest) { m.Checkpoint.SHA256 = strings.Repeat("cd", 32) },
+		"checkpoint path": func(m *Manifest) { m.Storage.ModelPath = "/models/m-2" },
+		"expert bytes":    func(m *Manifest) { m.Architecture.ExpertBytes = 256 << 20 },
+		"shared bytes":    func(m *Manifest) { m.Architecture.SharedBytes = 4 << 30 },
+		"context limit":   func(m *Manifest) { m.Runtime.ContextLimit = 16384 },
+		"kv estimate":     func(m *Manifest) { m.Runtime.KVCache.BytesPerTokenEstimate = 8192 },
+		"pack enabled":    func(m *Manifest) { m.Artifacts.ExpertPack.Enabled = true; m.Artifacts.ExpertPack.SHA256 = strings.Repeat("ef", 32); m.Artifacts.ExpertPack.Version = "1"; m.Artifacts.ExpertPack.CompatibleBackend = "sglang" },
+		"new backend":     func(m *Manifest) { m.Runtime.SupportedBackends = []string{"sglang", "beellama", "infer_ssd"} },
+	} {
+		m := base()
+		mutate(m)
+		if got := ManifestFingerprint(m); got == fp {
+			t.Errorf("%s: an identity-bearing change must change the fingerprint", name)
+		}
+	}
+	// And the verification RECORD carries it.
+	m := base()
+	m.Storage.ModelPath = "/models/roundtrip"
+	rec := VerifyManifestArtifacts(m, []string{t.TempDir()})
+	if rec.ManifestFingerprint != ManifestFingerprint(m) {
+		t.Fatalf("VerifyManifestArtifacts must record the manifest fingerprint: %s vs %s", rec.ManifestFingerprint, ManifestFingerprint(m))
+	}
+	// A nil manifest is the honest empty fingerprint (matches nothing).
+	if got := ManifestFingerprint(nil); got != "" {
+		t.Fatalf("nil manifest fingerprint = %q, want empty (matches nothing)", got)
+	}
+}

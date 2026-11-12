@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/storage"
@@ -69,28 +70,27 @@ func QualifySSD(profile *RuntimeProfile, dev *storage.Device, demandBytes uint64
 	if dev == nil {
 		return Qualification{Code: QualificationDeviceUnknown, Detail: fmt.Sprintf("the profile's storage device %q is not in the observed inventory", profile.Resources.Storage.DeviceID)}
 	}
-	rp := dev.ReadProfile
-	if rp == nil || rp.MeasuredAt.IsZero() {
-		return Qualification{Code: QualificationNoReadProfile, Detail: fmt.Sprintf("device %q carries no measured read profile — a measured-performance floor without a measurement is a named refusal (roadmap §8.6: run the operator benchmark with the random-read phase before enabling SSD-backed scheduling)", dev.ID)}
-	}
 	floors := profile.Resources.Storage
-	var unmet []string
-	if rp.SequentialReadMBps < floors.MinimumReadMBps {
-		unmet = append(unmet, fmt.Sprintf("sequential %.1f MB/s < the declared floor %.1f MB/s", rp.SequentialReadMBps, floors.MinimumReadMBps))
-	}
-	if rp.RandomReadIOPS < floors.MinimumRandomReadIOPS {
-		unmet = append(unmet, fmt.Sprintf("random-read %.1f IOPS < the declared floor %.1f IOPS (v19.7.0's benchmark measured sequential only — the v19.8.0 random-read phase populates this; an unmeasured random floor refuses the qualification)", rp.RandomReadIOPS, floors.MinimumRandomReadIOPS))
-	}
-	if rp.RandomReadP95Ms <= 0 || rp.RandomReadP95Ms > floors.MaximumP95LatencyMs {
-		unmet = append(unmet, fmt.Sprintf("random-read p95 %.3f ms is unmeasured or exceeds the declared ceiling %.3f ms", rp.RandomReadP95Ms, floors.MaximumP95LatencyMs))
-	}
-	if len(unmet) > 0 {
-		return Qualification{Code: QualificationFloorsUnmet, Detail: fmt.Sprintf("device %q is measured but the floors are unmet: %s", dev.ID, strings.Join(unmet, "; "))}
+	// v19.8.1 (KPK-19.8.0-P1-01): the numeric predicate is the ONE shared
+	// implementation (storage.CheckMeasuredFloors) the aggregate admission
+	// gate ALSO calls — the planner-side qualification and the final
+	// capacity authority cannot drift apart. The age bound stays ZERO here
+	// (this verdict is deterministic over its inputs; the clock-owning
+	// admission gate enforces the benchmark age under its own policy).
+	outcome, detail := storage.CheckMeasuredFloors(
+		floors.MinimumReadMBps, floors.MinimumRandomReadIOPS, floors.MaximumP95LatencyMs,
+		dev.ReadProfile, time.Time{}, 0)
+	switch outcome {
+	case storage.FloorsAbsent:
+		return Qualification{Code: QualificationNoReadProfile, Detail: fmt.Sprintf("device %q — %s", dev.ID, detail)}
+	case storage.FloorsUnmet, storage.FloorsStale:
+		return Qualification{Code: QualificationFloorsUnmet, Detail: fmt.Sprintf("device %q is measured but the floors are unmet: %s", dev.ID, detail)}
 	}
 	need := demandBytes + floors.MinimumFreeBytes
 	if dev.AvailableBytes < need {
 		return Qualification{Code: QualificationFreeBytesInsufficient, Detail: fmt.Sprintf("device %q: expert demand %d bytes + the minimum free floor %d bytes = %d needed, %d available", dev.ID, demandBytes, floors.MinimumFreeBytes, need, dev.AvailableBytes)}
 	}
+	rp := dev.ReadProfile
 	return Qualification{Qualified: true, Detail: fmt.Sprintf("device %q qualified: sequential %.1f MB/s ≥ %.1f, random %.1f IOPS ≥ %.1f, p95 %.3f ms ≤ %.3f, free %d ≥ %d bytes", dev.ID, rp.SequentialReadMBps, floors.MinimumReadMBps, rp.RandomReadIOPS, floors.MinimumRandomReadIOPS, rp.RandomReadP95Ms, floors.MaximumP95LatencyMs, dev.AvailableBytes, need)}
 }
 

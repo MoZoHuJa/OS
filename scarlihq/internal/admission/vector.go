@@ -59,7 +59,10 @@ type ResourceVector struct {
 	CPUThreads float64 `json:"cpu_threads,omitempty"`
 	// KVCacheBytes — the KV-cache footprint demanded. Accounted against
 	// the ASSIGNED GPU's VRAM (the engines allocate KV from VRAM) and
-	// tracked in the ledger as its own demand signal.
+	// tracked in the ledger as its own demand signal. Counted against the
+	// GPU's allocatable EXACTLY ONCE (the admission gate adds it to the
+	// first GPU request's demand; a GPU request's VRAMBytes never includes
+	// it — KPK-19.8.0-P2-03).
 	KVCacheBytes uint64 `json:"kv_cache_bytes,omitempty"`
 	// Storage — per-device storage requirements.
 	Storage []StorageRequest `json:"storage,omitempty"`
@@ -72,10 +75,12 @@ type GPURequest struct {
 	// GPUUUID — the target GPU's hardware UUID. Empty = any GPU
 	// (deterministic pick: the lowest UUID with capacity).
 	GPUUUID string `json:"gpu_uuid,omitempty"`
-	// VRAMBytes — VRAM demanded for weights + activations (the KV cache
-	// is declared separately in ResourceVector.KVCacheBytes and also
-	// counts against the GPU's allocatable VRAM — conservative, never
-	// under-reserved).
+	// VRAMBytes — VRAM demanded for weights + activations EXCLUDING the
+	// KV cache (v19.8.1, KPK-19.8.0-P2-03's single-count contract: the KV
+	// cache is declared ONCE in ResourceVector.KVCacheBytes and is added to
+	// the assigned GPU's demand exactly ONCE by the admission gate itself
+	// — a producer that bakes KV into VRAMBytes made the gate count it
+	// twice and refuse workloads that fit).
 	VRAMBytes uint64 `json:"vram_bytes"`
 	// Exclusive — v19.7.1 admits EXCLUSIVE GPU assignment only (the
 	// default); a request with Exclusive=false is refused BY NAME unless
@@ -169,6 +174,9 @@ func (v ResourceVector) Validate() []string {
 	}
 	if v.PinnedRAMBytes > v.RAMBytes && v.RAMBytes > 0 {
 		add("pinned_ram_bytes %d exceeds ram_bytes %d — pinned memory is a subset of the RAM demand", v.PinnedRAMBytes, v.RAMBytes)
+	}
+	if v.KVCacheBytes > 0 && len(v.GPU) == 0 {
+		add("kv_cache_bytes %d with no gpu request — the KV cache is charged against the ASSIGNED GPU's VRAM (KPK-19.8.0-P2-03's single-count contract: KV rides the GPU demand, it cannot stand alone)", v.KVCacheBytes)
 	}
 	if v.CPUThreads < 0 {
 		add("cpu_threads %v must be >= 0", v.CPUThreads)

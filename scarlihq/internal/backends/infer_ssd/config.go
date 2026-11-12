@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/modelmeta"
 )
 
 // RuntimeProfileSchemaVersion — the §8.4 schema identity.
@@ -315,7 +315,10 @@ func LoadRuntimeProfile(path string) (*RuntimeProfile, error) {
 		return nil, fmt.Errorf("infer_ssd: runtime profile read failed: %w", err)
 	}
 	var p RuntimeProfile
-	if err := yaml.Unmarshal(raw, &p); err != nil {
+	// v19.8.1 (KPK-19.8.0-P3-06): strict single-document decode —
+	// unknown fields and trailing documents are named errors, never
+	// silently-accepted operator configuration.
+	if err := modelmeta.DecodeSingleStrictYAML(raw, &p); err != nil {
 		return nil, fmt.Errorf("infer_ssd: runtime profile %s YAML parse failed: %w", path, err)
 	}
 	p.SourcePath = path

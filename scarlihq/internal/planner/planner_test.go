@@ -58,12 +58,16 @@ func moeManifest() *modelmeta.Manifest {
 	return m
 }
 
-func freshVerification(modelID string, age time.Duration) *modelmeta.ArtifactVerification {
+// freshVerification builds a record BOUND to the exact manifest's
+// identity (v19.8.1, KPK-19.8.0-P1-02: the planner matches the manifest
+// fingerprint; tests that mutate a manifest pass THAT manifest here).
+func freshVerification(m *modelmeta.Manifest, age time.Duration) *modelmeta.ArtifactVerification {
 	return &modelmeta.ArtifactVerification{
-		ModelID:     modelID,
-		AllVerified: true,
-		VerifiedAt:  time.Now().UTC().Add(-age),
-		Checkpoint:  &modelmeta.ArtifactDigest{Path: "/models/" + modelID, Match: true},
+		ModelID:             m.ID,
+		ManifestFingerprint: modelmeta.ManifestFingerprint(m),
+		AllVerified:         true,
+		VerifiedAt:          time.Now().UTC().Add(-age),
+		Checkpoint:          &modelmeta.ArtifactDigest{Path: "/models/" + m.ID, Match: true},
 	}
 }
 
@@ -130,7 +134,7 @@ func newPlannerFixture() *plannerFixture {
 		snap: snap,
 		models: fixedModels{
 			manifests: map[string]*modelmeta.Manifest{"qwen3-14b-awq": denseManifest()},
-			verifs:    map[string]*modelmeta.ArtifactVerification{"qwen3-14b-awq": freshVerification("qwen3-14b-awq", time.Hour)},
+			verifs:    map[string]*modelmeta.ArtifactVerification{"qwen3-14b-awq": freshVerification(denseManifest(), time.Hour)},
 		},
 		policy: policy,
 	}
@@ -269,7 +273,7 @@ func TestPlanGoldenPathDenseGPU(t *testing.T) {
 	if !hasProposal {
 		t.Fatalf("the explanation must carry the plan-is-proposal reason (admission still required)")
 	}
-	if res.PolicyVersion != "planner/v19.8.0" || res.SnapshotID != f.snap.SnapshotID {
+	if res.PolicyVersion != "planner/v19.8.1" || res.SnapshotID != f.snap.SnapshotID {
 		t.Fatalf("provenance missing: policy=%q snap=%q", res.PolicyVersion, res.SnapshotID)
 	}
 }
@@ -305,8 +309,9 @@ func TestPlanCPUExecutionClass(t *testing.T) {
 // v19.8.0 territory), NO storage demand.
 func TestPlanMoEGPUResident(t *testing.T) {
 	f := newPlannerFixture()
-	f.models.manifests["deepseek-moe-test"] = moeManifest()
-	f.models.verifs["deepseek-moe-test"] = freshVerification("deepseek-moe-test", time.Hour)
+	moe := moeManifest()
+	f.models.manifests["deepseek-moe-test"] = moe
+	f.models.verifs["deepseek-moe-test"] = freshVerification(moe, time.Hour)
 	req := baseRequest()
 	req.ModelID = "deepseek-moe-test"
 	res := f.planner(t).Plan(req)
@@ -386,7 +391,7 @@ func TestPlanRefusesUnverifiedModel(t *testing.T) {
 // verification.
 func TestPlanRefusesStaleVerification(t *testing.T) {
 	f := newPlannerFixture()
-	f.models.verifs["qwen3-14b-awq"] = freshVerification("qwen3-14b-awq", 30*24*time.Hour)
+	f.models.verifs["qwen3-14b-awq"] = freshVerification(denseManifest(), 30*24*time.Hour)
 	res := f.planner(t).Plan(baseRequest())
 	if res.Selected || res.ReasonCode != ReasonPlanModelUnverified {
 		t.Fatalf("got %s", res.ReasonCode)
@@ -485,7 +490,7 @@ func TestPlanBackendPresenceJoin(t *testing.T) {
 	m2 := moeManifest()
 	m2.Runtime.SupportedBackends = []string{"infer_ssd"}
 	f.models.manifests["deepseek-moe-test"] = m2
-	f.models.verifs["deepseek-moe-test"] = freshVerification("deepseek-moe-test", time.Hour)
+	f.models.verifs["deepseek-moe-test"] = freshVerification(m2, time.Hour)
 	req2 := baseRequest()
 	req2.ModelID = "deepseek-moe-test"
 	res2 := f.planner(t).Plan(req2)
@@ -897,7 +902,7 @@ func ssdPlannerFixture() *plannerFixture {
 	m := moeManifest() // context limit 32768 (the model's declared capability)
 	m.Runtime.SupportedBackends = []string{"infer_ssd"}
 	f.models.manifests["deepseek-moe-test"] = m
-	f.models.verifs["deepseek-moe-test"] = freshVerification("deepseek-moe-test", time.Hour)
+	f.models.verifs["deepseek-moe-test"] = freshVerification(m, time.Hour)
 	f.policy.SSDProfile = ssdProfileFixture()
 	return f
 }
@@ -936,13 +941,19 @@ func TestPlanSSDBackedMoEGoldenPath(t *testing.T) {
 	if plan.MaxConcurrent != 1 {
 		t.Fatalf("the §8.8 cap must bound max_concurrent to 1: %d", plan.MaxConcurrent)
 	}
-	// The vector: VRAM = shared + KV + reserve (NOT the expert total —
-	// the experts live on the SSD); the storage demand rides along.
+	// The vector (v19.8.1's single-count contract, KPK-19.8.0-P2-03):
+	// VRAM = shared + reserve (NOT the expert total — the experts live
+	// on the SSD; NOT the KV — the KV cache rides KVCacheBytes and the
+	// admission gate adds it to the assigned GPU exactly once); the
+	// storage demand rides along.
 	m := f.models.manifests["deepseek-moe-test"]
 	kv := uint64(4096) * m.Runtime.KVCache.BytesPerTokenEstimate
-	wantVRAM := m.Architecture.SharedBytes + kv + f.policy.SSDProfile.Resources.GPU.VRAMReserveBytes
+	wantVRAM := m.Architecture.SharedBytes + f.policy.SSDProfile.Resources.GPU.VRAMReserveBytes
 	if plan.ResourceVector.GPU[0].VRAMBytes != wantVRAM {
-		t.Fatalf("VRAM demand %d, want %d (shared + KV + reserve — the experts are paged)", plan.ResourceVector.GPU[0].VRAMBytes, wantVRAM)
+		t.Fatalf("VRAM demand %d, want %d (shared + reserve — KV rides KVCacheBytes, the experts are paged)", plan.ResourceVector.GPU[0].VRAMBytes, wantVRAM)
+	}
+	if plan.ResourceVector.KVCacheBytes != kv {
+		t.Fatalf("KV demand %d, want %d (the KV cache rides KVCacheBytes, never VRAMBytes)", plan.ResourceVector.KVCacheBytes, kv)
 	}
 	experts := uint64(m.Architecture.ExpertCount) * m.Architecture.ExpertBytes
 	if len(plan.ResourceVector.Storage) != 1 || plan.ResourceVector.Storage[0].MinimumFreeBytes != experts+f.policy.SSDProfile.Resources.Storage.MinimumFreeBytes {
@@ -1127,7 +1138,7 @@ func TestPlanExpertPackDeclaredNotPlanned(t *testing.T) {
 	m.Artifacts.ExpertPack.SHA256 = strings.Repeat("ef", 32)
 	m.Artifacts.ExpertPack.CompatibleBackend = "sglang"
 	f.models.manifests["deepseek-moe-test"] = m
-	f.models.verifs["deepseek-moe-test"] = freshVerification("deepseek-moe-test", time.Hour)
+	f.models.verifs["deepseek-moe-test"] = freshVerification(m, time.Hour)
 	req := baseRequest()
 	req.ModelID = "deepseek-moe-test"
 	res := f.planner(t).Plan(req)
@@ -1145,5 +1156,41 @@ func TestPlanExpertPackDeclaredNotPlanned(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("the explanation must carry the expert-pack-declared-not-planned entry (the honest §8.8 answer)")
+	}
+}
+
+// TestPlanRefusesVerificationIdentityMismatch — v19.8.1
+// (KPK-19.8.0-P1-02): the planner's model gate matches the verification
+// record against the CURRENT manifest's canonical fingerprint — a
+// manifest that changed after verification is unverified until the
+// operator re-runs the verification pass; a pre-v19.8.1 record (no
+// fingerprint) is equally refused.
+func TestPlanRefusesVerificationIdentityMismatch(t *testing.T) {
+	// The manifest's revision changed after verification.
+	f := newPlannerFixture()
+	m := denseManifest()
+	m.Revision = "rev-2" // same id, different identity
+	f.models.manifests["qwen3-14b-awq"] = m
+	res := f.planner(t).Plan(baseRequest())
+	if res.Selected || res.ReasonCode != ReasonPlanModelVerificationIdentityMismatch {
+		t.Fatalf("got %s, want plan-model-verification-identity-mismatch (revision changed)", res.ReasonCode)
+	}
+
+	// The checkpoint digest changed.
+	f2 := newPlannerFixture()
+	m2 := denseManifest()
+	m2.Checkpoint.SHA256 = strings.Repeat("cd", 32)
+	f2.models.manifests["qwen3-14b-awq"] = m2
+	res2 := f2.planner(t).Plan(baseRequest())
+	if res2.Selected || res2.ReasonCode != ReasonPlanModelVerificationIdentityMismatch {
+		t.Fatalf("got %s, want plan-model-verification-identity-mismatch (checkpoint changed)", res2.ReasonCode)
+	}
+
+	// A pre-v19.8.1 record (no fingerprint) is refused as unverified.
+	f3 := newPlannerFixture()
+	f3.models.verifs["qwen3-14b-awq"].ManifestFingerprint = ""
+	res3 := f3.planner(t).Plan(baseRequest())
+	if res3.Selected || res3.ReasonCode != ReasonPlanModelUnverified {
+		t.Fatalf("got %s, want plan-model-unverified (no fingerprint)", res3.ReasonCode)
 	}
 }
