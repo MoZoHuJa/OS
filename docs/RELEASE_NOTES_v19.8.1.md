@@ -1,6 +1,7 @@
 # ScarLiX OS v19.8.1 — Release Notes
 
 **Verzia:** 19.8.1
+**Commit:** [`bccb1f8`](https://github.com/MoZoHuJa/OS/commit/bccb1f8) — recorded at packaging (the release-notes genre: the hash lands with the tag)
 **Dátum:** 2026-11-09
 **Typ:** KpK remediation release (the v19.8.0 KpK audit findings fixed in code)
 **Predchádzajúca verzia:** v19.8.0 (commit `095a690edfe267b3f7a99cc7d2fbb3645c1fe047`, tag `v19.8.0` + the post-release pin refresh `54265ff`)
