@@ -227,4 +227,44 @@ check_28/check_37 presunuté na v19.8.1.
 
 ---
 
+## 9. Post-release remediation (2026-11-13, po vydaní — bez zmeny verzie)
+
+Na **čerstvom klone tagu v19.8.1** (sandbox prostredie bolo resetnuté, repozitár
+obnovený z GitHubu) sa preverovala integrita vydania a objavili sa dva defekty
+vlastnej akceptačnej sady v19.8.1 — release claim „30 packages OK" bol
+zastaraný pre finálny stav fixture:
+
+1. **Kódový defekt — poradie braní (admission):** `checkModel` bežala PRED
+   ledger transakciou, takže replay s iným modelom pod rovnakým kľúčom
+   vrátil `model-unknown` namiesto zdokumentovaného `idempotency-conflict`
+   (udalosť zneužitia kľúča zamaskovaná okamžitou validáciou dopytu —
+   presne to zakazuje kontrakt KPK-19.8.0-P2-04), a exaktný replay dopytu,
+   ktorého manifest bol po prvej admisii odstránený, bol odmietnutý namiesto
+   vrátenia PÔVODNÉHO rozhodnutia. **Oprava:** model/backend brány presunuté
+   VNÚTRI atomickej ledger transakcie, ZA idempotency probe (krok 0.5) —
+   mismatched replay teraz vracia `idempotency-conflict` aj keď samotný
+   replay dopyt je nevalidný, a exaktný replay vracia originál bez ohľadu
+   na neskorší stav manifestu; cesta pre čerstvé kľúče je nezmenená.
+2. **Test-only defekty (planner):** 8 fixture mutovalo identity-bearing polia
+   manifestu (backendy / checkpoint formát / shared bytes / KV estimate) bez
+   re-bindu verifikačného záznamu na zmutovanú identitu — P1-02 fingerprint
+   gate (fungujúci podľa dizajnu) ich odmietal: `TestPlanCPUExecutionClass`,
+   `TestPlanBackendPresenceJoin`, `TestPlanBackendFormatMismatch`,
+   `TestPlanGPUInsufficient`, `TestPlanRAMInsufficient`,
+   `TestPlanPriorityTieBreak` (odmietnutie zanechalo `res.Plan` nil →
+   panic), `TestPlanKVUnknownHonest` +
+   `TestPlanExperimentalBackendCarriedVisibly` (zamaskované za panikou).
+   Každý fixture sa teraz re-binduje cez `freshVerification(m, ...)` po
+   mutácii — rovnaká disciplína, ktorou už SSR a pack suite prechádzali.
+
+Akceptancia: `go test ./...` 30 balíkov OK; race čistý (admission + planner +
+api); `go vet` čistý; smoke `--offline` 41 checks 0 FAIL; chirurgický diff
+(37 insertov + 13 deletov v 2 súboroch, bez whitespace churn). Residuals
+nezmenené: hardware acceptance OPEN (KPK-06), žiadny enabled profile,
+pack-byte verification zostáva pomenovaná future work. Remediácia zaznamenaná
+bez verzie bump podľa precedentu v19.8.0 post-release — ďalším release
+zostáva **v19.9.0 (Fáza 5 — Distributed Compute Fabric)**.
+
+---
+
 *v19.8.1 · KpK remediation · ScarLiX OS*

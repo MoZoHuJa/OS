@@ -184,16 +184,15 @@ func (m *Manager) Admit(req AdmissionRequest) AdmissionDecision {
 			snap.SnapshotID, age.Round(time.Millisecond), m.policy.MaxSnapshotAge))
 	}
 
-	// ---- 3. model + backend compatibility ---------------------------------
-	modelReason, modelExpl, manifest := m.checkModel(req.ModelID, req.BackendID, snap)
-	if modelReason != ReasonOK {
-		return refuse(base, modelReason, modelExpl)
-	}
-	_ = manifest // placement metadata already enforced by checkModel
-
-	// ---- 4-7. the atomic dimension check + reserve (the replay check rides
-	// the SAME ledger transaction — KPK-19.8.0-P2-04: principal +
-	// request-fingerprint bound, inside the lock, never a TOCTOU) ---------
+	// ---- 3 + 4-7. the atomic dimension check + reserve (the replay check
+	// AND the model gates ride the SAME ledger transaction — the v19.8.1
+	// post-release ordering remediation: the transaction opens with the
+	// idempotency probe (KPK-19.8.0-P2-04: principal + request-fingerprint
+	// bound, inside the lock, never a TOCTOU), and the model gates run AFTER
+	// it, so a mismatched replay surfaces the NAMED idempotency-conflict
+	// instead of being masked by an incidental model-unknown, and an EXACT
+	// replay returns the ORIGINAL decision even if the manifest was removed
+	// after the first admission) --------------------------------------------
 	replayed, assignment, admID, leaseExpiry, failCode, failExpl := m.reserveAtomic(req, snap, now)
 	if failCode != ReasonOK {
 		return refuse(base, failCode, failExpl)
@@ -388,9 +387,15 @@ func totalsFromHeld(held []Record) heldTotals {
 // ONE ledger transaction (any failure reserves NOTHING). v19.8.1: the
 // transaction opens with the idempotency replay check (inside the lock —
 // concurrent identical admits serialize; a mismatched principal or request
-// fingerprint is the NAMED conflict, never a silently-inherited hold), and
-// a successful replay returns the prior record (replayed != nil) without
-// reserving anything new.
+// fingerprint is the NAMED conflict, never a silently-inherited hold), a
+// successful replay returns the prior record (replayed != nil) without
+// reserving anything new, and the model/backend gates run INSIDE the same
+// transaction AFTER the idempotency probe (the v19.8.1 post-release
+// ordering remediation: a key reused by a different request is the
+// idempotency conflict even when the replaying request itself is invalid —
+// an unknown model must never mask the key-misuse event — and an exact
+// replay returns the original decision even if the manifest was removed
+// afterwards).
 func (m *Manager) reserveAtomic(req AdmissionRequest, snap *inventory.InventorySnapshotV2, now time.Time) (*Record, *ResourceAssignment, string, time.Time, string, string) {
 	var (
 		assignment  ResourceAssignment
@@ -416,6 +421,17 @@ func (m *Manager) reserveAtomic(req AdmissionRequest, snap *inventory.InventoryS
 			}
 			replayed = prior
 			return nil
+		}
+
+		// ---- 0.5 the model + backend gates (INSIDE the transaction, AFTER --
+		// the idempotency probe — the v19.8.1 post-release ordering fix): a
+		// mismatched replay must surface idempotency-conflict (an unknown
+		// model in the replaying request must never MASK the key misuse),
+		// and an exact replay has already returned above, so a manifest
+		// removed after the first admission cannot void the replay either.
+		if modelReason, modelExpl, _ := m.checkModel(req.ModelID, req.BackendID, snap); modelReason != ReasonOK {
+			failCode, failExpl = modelReason, modelExpl
+			return errAbort
 		}
 
 		// ---- GPUs (exclusive per UUID; KV counts against the GPU) ------

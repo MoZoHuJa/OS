@@ -287,6 +287,7 @@ func TestPlanCPUExecutionClass(t *testing.T) {
 	m.Runtime.SupportedBackends = []string{"beellama"}
 	m.Checkpoint.Format = "gguf"
 	f.models.manifests["qwen3-14b-awq"] = m
+	f.models.verifs["qwen3-14b-awq"] = freshVerification(m, time.Hour) // the mutated manifest is a NEW identity — re-bind the verification record to it (KPK-19.8.0-P1-02)
 	res := f.planner(t).Plan(baseRequest())
 	if !res.Selected {
 		t.Fatalf("refused: %s — %s", res.ReasonCode, res.Explanation)
@@ -477,6 +478,7 @@ func TestPlanBackendPresenceJoin(t *testing.T) {
 	m := denseManifest()
 	m.Runtime.SupportedBackends = []string{"vllm"}
 	f.models.manifests["qwen3-14b-awq"] = m
+	f.models.verifs["qwen3-14b-awq"] = freshVerification(m, time.Hour) // the mutated manifest is a NEW identity — re-bind the verification record to it (KPK-19.8.0-P1-02)
 	res := f.planner(t).Plan(baseRequest())
 	if res.Selected || res.ReasonCode != ReasonPlanBackendNoCandidates {
 		t.Fatalf("got %s", res.ReasonCode)
@@ -515,6 +517,7 @@ func TestPlanBackendFormatMismatch(t *testing.T) {
 	m := denseManifest()
 	m.Runtime.SupportedBackends = []string{"beellama"} // beellama: gguf only
 	f.models.manifests["qwen3-14b-awq"] = m
+	f.models.verifs["qwen3-14b-awq"] = freshVerification(m, time.Hour) // the mutated manifest is a NEW identity — re-bind the verification record to it (KPK-19.8.0-P1-02)
 	res := f.planner(t).Plan(baseRequest())
 	if res.Selected || res.ReasonCode != ReasonPlanBackendNoCandidates {
 		t.Fatalf("got %s", res.ReasonCode)
@@ -532,6 +535,7 @@ func TestPlanGPUInsufficient(t *testing.T) {
 	m := denseManifest()
 	m.Architecture.SharedBytes = 16 << 30 // 16GiB weights > ~15.2GiB allocatable on a 16384MB GPU
 	f.models.manifests["qwen3-14b-awq"] = m
+	f.models.verifs["qwen3-14b-awq"] = freshVerification(m, time.Hour) // the mutated manifest is a NEW identity — re-bind the verification record to it (KPK-19.8.0-P1-02)
 	res := f.planner(t).Plan(baseRequest())
 	if res.Selected || res.ReasonCode != ReasonPlanGPUInsufficient {
 		t.Fatalf("got %s", res.ReasonCode)
@@ -563,6 +567,7 @@ func TestPlanRAMInsufficient(t *testing.T) {
 	m.Architecture.SharedBytes = 15 << 30 // > 16GiB available? no — 15 < 16... make it 20
 	m.Architecture.SharedBytes = 20 << 30
 	f.models.manifests["qwen3-14b-awq"] = m
+	f.models.verifs["qwen3-14b-awq"] = freshVerification(m, time.Hour) // the mutated manifest is a NEW identity — re-bind the verification record to it (KPK-19.8.0-P1-02)
 	res := f.planner(t).Plan(baseRequest())
 	if res.Selected || res.ReasonCode != ReasonPlanRAMInsufficient {
 		t.Fatalf("got %s", res.ReasonCode)
@@ -615,6 +620,7 @@ func TestPlanPriorityTieBreak(t *testing.T) {
 	m := denseManifest()
 	m.Runtime.SupportedBackends = []string{"sglang", "vllm"}
 	f.models.manifests["qwen3-14b-awq"] = m
+	f.models.verifs["qwen3-14b-awq"] = freshVerification(m, time.Hour) // the mutated manifest is a NEW identity — re-bind the verification record to it (KPK-19.8.0-P1-02)
 	f.snap.Runtimes = []inventory.Runtime{
 		{ID: "sglang", Running: true, Healthy: true},
 		{ID: "vllm", Running: true, Healthy: true},
@@ -748,6 +754,7 @@ func TestPlanKVUnknownHonest(t *testing.T) {
 	m := denseManifest()
 	m.Runtime.KVCache.BytesPerTokenEstimate = 0
 	f.models.manifests["qwen3-14b-awq"] = m
+	f.models.verifs["qwen3-14b-awq"] = freshVerification(m, time.Hour) // the mutated manifest is a NEW identity — re-bind the verification record to it (KPK-19.8.0-P1-02)
 	res := f.planner(t).Plan(baseRequest())
 	if !res.Selected {
 		t.Fatalf("refused: %s", res.ReasonCode)
@@ -808,6 +815,7 @@ func TestPlanExperimentalBackendCarriedVisibly(t *testing.T) {
 	m := denseManifest()
 	m.Runtime.SupportedBackends = []string{"vllm"}
 	f.models.manifests["qwen3-14b-awq"] = m
+	f.models.verifs["qwen3-14b-awq"] = freshVerification(m, time.Hour) // the mutated manifest is a NEW identity — re-bind the verification record to it (KPK-19.8.0-P1-02)
 	f.snap.Runtimes = []inventory.Runtime{{ID: "vllm", Running: true, Healthy: true}}
 	f.policy.Images[airuntime.BackendVLLM] = "ghcr.io/scarlix/vllm:0.7@sha256:" + strings.Repeat("44", 32)
 	res := f.planner(t).Plan(baseRequest())
