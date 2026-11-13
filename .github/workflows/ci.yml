@@ -316,9 +316,13 @@ jobs:
             echo "(no Go test files yet — OK)"
           fi
 # Exercise concurrency-sensitive allocation and the P5.1 host bridge lifecycle.
-      - name: Lifecycle and host bridge race tests
+# v19.9.0 (Phase 5): the distributed fabric's concurrency-sensitive packages
+# join the race list — nodeidentity (registry mutexes + rotation grace),
+# fabric (observational registry), nodeagent (service + stores), planner
+# (the fabric planner), api (the fabric HTTP surface).
+      - name: Lifecycle, host bridge and fabric race tests
         working-directory: scarlihq
-        run: go test -race ./internal/allocation ./internal/inventory ./internal/reservation ./internal/workload ./internal/hostbridge ./internal/compute
+        run: go test -race ./internal/allocation ./internal/inventory ./internal/reservation ./internal/workload ./internal/hostbridge ./internal/compute ./internal/nodeidentity ./internal/fabric ./internal/nodeagent ./internal/planner ./internal/api
 
   # v17.9.8 P2: Real ScarliHQ Docker build (catches Dockerfile + go.mod issues)
   # v17.9.9 P2: Added runtime smoke test (container starts + /api/health responds)

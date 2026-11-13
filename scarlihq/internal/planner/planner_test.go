@@ -709,14 +709,15 @@ func requestJSONFields(r ExecutionRequest) map[string]bool {
 	// The field set is compile-time fixed; the honest reflection-free
 	// assertion enumerates the struct's tags via a marshal round-trip.
 	b := struct {
-		RequestID     string `json:"request_id"`
-		ModelID       string `json:"model_id"`
-		ModelRevision string `json:"model_revision,omitempty"`
-		Task          string `json:"task"`
-		ContextTokens int    `json:"context_tokens"`
-		MaxConcurrent int    `json:"max_concurrent"`
-		LatencyClass  string `json:"latency_class"`
-		Principal     string `json:"principal,omitempty"`
+		RequestID       string `json:"request_id"`
+		ModelID         string `json:"model_id"`
+		ModelRevision   string `json:"model_revision,omitempty"`
+		Task            string `json:"task"`
+		ContextTokens   int    `json:"context_tokens"`
+		MaxConcurrent   int    `json:"max_concurrent"`
+		LatencyClass    string `json:"latency_class"`
+		DataSensitivity string `json:"data_sensitivity,omitempty"`
+		Principal       string `json:"principal,omitempty"`
 	}(r)
 	_ = b
 	return map[string]bool{

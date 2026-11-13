@@ -1,0 +1,426 @@
+# ScarLiX Compute Fabric — Phase 5 Design: Distributed Compute Fabric (v19.9.0)
+
+**Roadmap section:** §9 of
+`docs/roadmaps/SCARLIXOS_UNIFIED_COMPUTE_FABRIC_IMPLEMENTATION_ROADMAP.md`
+**Status:** IMPLEMENTED in v19.9.0 — every slice of §8 shipped:
+`internal/nodeidentity` (identity/trust/enrollment/rotation/replay),
+`internal/fabric` (observational registry + the pure reconciliation engine),
+`internal/planner/multinode.go` (the network-aware FabricPlanner),
+`internal/nodeagent` + `cmd/scarlix-node-agent` (the narrow typed agent
+boundary), `internal/api/fabric.go` (the admin + agent HTTP surfaces), and the
+extended CI race-test list. Verification: `gofmt`/`go vet` clean, `go build`
+OK, `go test ./...` 33 packages OK, race tests OK on the CI list including the
+new packages. The old-cycle planning documents
+(`SCARLIX_COMPUTE_FABRIC_PHASE_5_REPORT.md`,
+`SCARLIX_COMPUTE_FABRIC_P5_DEPLOYMENT_SIMULATION.md`,
+`SCARLIX_COMPUTE_FABRIC_P6_SCARLIHQ_INTEGRATION.md`,
+`SCARLIX_COMPUTE_FABRIC_P5_1_HOST_ACCEPTANCE.md`,
+`SCARLIX_COMPUTE_FABRIC_P5_1_HOST_BRIDGE.md`) are HISTORICAL — they describe a
+different numbering cycle (branch `19.2.12.P5`, workload-execution scope). The
+workload lifecycle they describe already shipped and is production code in
+`internal/workload`. This document supersedes them for the "Phase 5" name.
+
+**Scope (§9.1):** extend the resource model from one host to multiple trusted
+nodes WITHOUT weakening the local security model. Each node publishes a stable
+identity, an authenticated inventory snapshot with freshness, backend
+capabilities, model/artifact availability, capacity and current reservations,
+network locality, and health/maintenance state.
+
+---
+
+## 1. The architecture decision: hub-and-spoke, one authoritative ledger
+
+### 1.1 Topology
+
+```
+                 ┌────────────────────────────────┐
+                 │  CONTROL PLANE (ScarliHQ host) │
+                 │  - THE reservation ledger      │
+                 │  - THE planner (multi-node)    │
+                 │  - THE admission authority      │
+                 │  - node enrollment + revocation│
+                 └──────────┬─────────────────────┘
+                            │  authenticated, replay-protected
+              ┌─────────────┼─────────────┐
+        ┌─────┴─────┐ ┌─────┴─────┐ ┌─────┴─────┐
+        │ node agent│ │ node agent│ │ node agent│   (N ≤ tailnet size)
+        │  node A   │ │  node B   │ │  node C   │
+        │ NON-auth. │ │ NON-auth. │ │ NON-auth. │
+        │ execution │ │ execution │ │ execution │
+        └───────────┘ └───────────┘ └───────────┘
+```
+
+The control plane keeps the ONLY authoritative reservation ledger, the only
+planner and the only admission path. Node agents hold NON-authoritative state
+only: their own execution records (what they actually started) and a mirror of
+the reservations the control plane told them about (used to validate start
+requests).
+
+### 1.2 Why no per-node schedulers, no consensus
+
+Roadmap §9.5: "A single authoritative reservation ledger or a carefully
+designed consensus/lease protocol is required. Do not run independent
+schedulers with unsynchronized local ledgers."
+
+This design takes the FIRST option. Rationale:
+
+- The fabric is family-scale: one operator, one control plane, a tailnet of
+  single-digit node counts. The failure mode consensus exists to solve — two
+  controllers independently assigning the same resources — cannot occur in a
+  star topology with exactly one admission authority.
+- Split-brain is prevented BY CONSTRUCTION, not by protocol: node agents
+  cannot issue, modify or release reservations at all; they can only execute
+  control-plane-approved actions and report outcomes.
+- A partition between control plane and a node degrades that node's ADMISSION
+  (capacity unknown, admission refused) — never its LEDGER correctness.
+
+**Revisit trigger (recorded deliberately):** if a second control plane or
+control-plane HA is ever required, this decision must be reopened and a
+lease/consensus protocol designed. Until then, adding consensus would add
+failure modes the topology cannot benefit from.
+
+---
+
+## 2. Node identity and trust (§9.2)
+
+### 2.1 The trust rule
+
+"Do not trust a node because it is reachable on LAN or Tailscale." Tailscale
+(transport) is NOT the authorization model. Every node request is
+authenticated with per-node credentials issued by the control plane; every
+node-visible action is scope-checked against the node's enrolled roles.
+
+### 2.2 Node lifecycle and states
+
+```
+INVITED ──enroll(valid invite+proof)──▶ ACTIVE ──revoke──▶ QUARANTINED
+   │                                        │
+   │ invite expires                         │ rotate credential
+   ▼                                        ▼
+EXPIRED                          ACTIVE (new credential; old accepted
+                                          during grace window, then dead)
+```
+
+- **INVITED:** an enrollment invite exists for the node (generated by an
+  ADMIN principal, one-time secret, TTL-bounded — default 30 minutes).
+- **ACTIVE:** the node completed enrollment and holds a per-node credential.
+  Eligible for inventory admission and approved execution.
+- **QUARANTINED:** the credential was revoked. New work is refused; existing
+  reservations are NOT auto-released (capacity is not proven free) — cleanup
+  only through trusted recovery (an operator-driven reconciliation path).
+- **UNREACHABLE:** reachability annotation on an ACTIVE node (not a separate
+  lifecycle state) — capacity becomes UNKNOWN; reservations stay HELD.
+
+### 2.3 Credentials
+
+- Per-node bearer credential: `node_id` + a 64-hex-char secret generated at
+  enrollment. The control plane stores ONLY the sha256 digest (the same
+  pattern as `reservation.TokenIdentityProvider` — constant-time digest
+  compare, digest never leaves the store, raw secret never logged).
+- **Rotation:** the admin issues a new credential for an ACTIVE node; both old
+  and new digests are accepted for a grace window (default 15 minutes); after
+  the window the old digest is dead. Rotation is recorded with timestamps in
+  the node record.
+- **Replay protection:** every authenticated mutating request from a node
+  carries `X-Scarlix-Node-Request-ID` (unique per request) and a timestamp;
+  the control plane rejects timestamps outside a ±90 second window and
+  replays of a (node, request-id) pair within a bounded window (in-memory
+  per-node LRU, 10 minutes, capped size). Unknown/absent IDs fail closed.
+
+### 2.4 Node principals and scopes (resolves §19 #8 for nodes)
+
+- Human users → profile principals (existing `profiles.TokenIndex`, v19.6.7).
+- Agents → agent principals (existing agent token model).
+- **Remote nodes → `node:<node-id>` principals** issued only through
+  enrollment. A node principal can NEVER be an admin principal and NEVER a
+  reconciler-of-record; its scopes are closed:
+  - push its own inventory/health/execution records,
+  - receive start/stop/reconcile for ITS OWN node's allocations only.
+- A node principal addressing another node's resources is a scope violation
+  and is refused (`ALLOCATION_NOT_OWNED` semantics at the fabric layer).
+
+### 2.5 Enrollment flow (administrator-approved)
+
+1. An ADMIN principal creates an enrollment invite for a chosen node ID
+   (control-plane CLI/API). The invite carries a one-time secret and a TTL.
+   The node is recorded INVITED.
+2. The node agent enrolls: presents the invite secret over the encrypted
+   transport (Tailscale/TLS — §9.2 transport) together with its declared
+   node ID and a node-generated nonce. The control plane verifies the
+   invite's digest, TTL and unconsumed state; the nonce is folded into the
+   issued credential's generation record so the issued credential is bound
+   to that specific enrollment event (the raw invite secret is never
+   retained — digest only, same as all credentials in this design).
+3. On a valid, unexpired, unused invite: the control plane generates the
+   per-node credential, returns it ONCE to the enrolling agent, records
+   ACTIVE with `enrolled_at`. The invite is consumed (one-time).
+4. Enrollment is idempotent on (node, invite): a replayed enrollment with an
+   already-consumed invite is refused.
+5. The raw node credential is delivered exactly once; the control plane keeps
+   only the digest. A lost credential forces rotation by the admin.
+
+---
+
+## 3. Node agent boundary (§9.3)
+
+### 3.1 The narrow typed API
+
+The node agent exposes an HTTP API with exactly these typed operations:
+
+| Operation | Direction | Contract |
+|---|---|---|
+| inventory snapshot | control plane polls agent | agent returns the node's `InventorySnapshotV2` (same schema the local planner consumes) |
+| health + capability report | control plane polls agent | typed health summary + the node's runtime/backend capabilities |
+| reserve (notify) | control plane → agent | agent records a NON-authoritative mirror of a reservation the ledger made |
+| start approved profile | control plane → agent | start a workload for an allocation the ledger reserved, validated against the mirror + runtime allowlist |
+| stop owned allocation | control plane → agent | stop ONLY allocations this agent started (checked against its own execution records) |
+| reconcile allocation | control plane → agent | return the agent's execution records for comparison against the ledger |
+
+The agent has NO: arbitrary shell, arbitrary Docker API, arbitrary file access,
+arbitrary port publishing. Start requests carry STRUCTURED identifiers only
+(allocation ID, reservation reference, runtime profile ID, model ID) — no
+command strings, no environment overrides, no volume paths from the caller.
+The runtime profile IDs accepted are the closed allowlist the repo already
+enforces (`sglang`, `vllm`, `beellama`, `ollama`, `litellm` + the
+InferSSD experimental profile behind its flag).
+
+### 3.2 The reservation mirror (agent-side validation)
+
+The agent keeps a mirror of reservations the control plane notified it
+about. A start request referencing a reservation NOT in the mirror, or a
+reservation the mirror marks released, is refused. This closes the rogue-
+start abuse case: even a compromised control-plane-to-agent credential
+cannot start un-ledgered work on the node — the agent only executes what the
+ledger actually reserved. (The mirror is explicitly non-authoritative: on
+mismatch the agent refuses and reports; it never decides capacity.)
+
+### 3.3 Agent authentication of the control plane
+
+The agent validates the control plane caller with a statically configured
+control-plane credential (provisioned at agent setup) plus request IDs for
+idempotency on start/stop/reconcile. Transport may be Tailscale (encrypted);
+the application-layer authentication is what authorizes — as §9.2 demands.
+
+---
+
+## 4. Failure handling (§9.5)
+
+### 4.1 Semantics table (the normative contract)
+
+| Event | Registry effect | Capacity | Existing reservations | New admission on that node |
+|---|---|---|---|---|
+| Node unreachable | reachability=UNREACHABLE, observed_at stops advancing | UNKNOWN | stay HELD (NOT recycled) | refused (`NODE_UNREACHABLE`) |
+| Node reappears | reconcile FIRST, admit later | reconciled or UNKNOWN | mismatches → allocation `RECONCILE_REQUIRED` | only after reconciliation completes |
+| Credential revoked | QUARANTINED | excluded | HELD until trusted recovery | refused (`NODE_QUARANTINED`) |
+| Inventory stale (per-node freshness window) | freshness=STALE | stale | HELD | refused (`INVENTORY_STALE`) |
+| Remote stop ambiguous | — | — | reservation stays HELD until the agent's reconciliation proves cleanup | — |
+| Partition (CP↔node) | same as unreachable; the CP ledger is unaffected — the node cannot modify it, and its agent cannot admit anything on its own | UNKNOWN | HELD | refused |
+
+### 4.2 Reconciliation protocol (node return)
+
+1. The control plane marks the node reachable; it does NOT immediately trust
+   the node's reported capacity.
+2. The control plane requests the agent's execution records (what the agent
+   believes it started/stopped, with outcomes and timestamps).
+3. The control plane compares against the ledger:
+   - ledger reservation HELD + agent says running → normal: reservation
+     stands; admission resumes.
+   - ledger reservation HELD + agent says stopped/never-started → the
+     workload side is gone but the reservation is NOT auto-released: the
+     allocation moves to `RECONCILE_REQUIRED`, and the TRUSTED reconciliation
+     path (existing `reservation` manager semantics — reconciler identity
+     only) releases it after cleanup verification.
+   - agent says running + ledger has NO reservation → un-ledgered execution:
+     the agent is told to stop it (the mirror rule already refuses to have
+     started it — if it nonetheless runs, it is treated as foreign work and
+     reported; never silently admitted retroactively).
+4. Reconciliation is idempotent: repeated reconcile requests converge to the
+   same ledger state; no double-release (release goes through the single
+   ledger's own transition discipline).
+
+### 4.3 Restart behavior
+
+- Control-plane restart: the ledger is durable (JSONL, as today); node
+  records are durable (JSONL, §6); replay-protection state is in-memory and
+  resets (bounded impact: request IDs replay within a 10-minute window across
+  a CP restart are rejected by timestamp freshness anyway).
+- Node-agent restart: the agent reloads its execution records (durable on the
+  node) and re-syncs; the CP treats the gap as unreachable-until-reconciled.
+
+---
+
+## 5. Network-aware scheduling (§9.4)
+
+### 5.1 Inputs (all injected — the planner stays PURE)
+
+Per remote node: artifact locality (which verified models are present),
+latency class, transfer estimate. Per request: origin (local/remote), context
+size, data sensitivity class, task. Policy: transfer thresholds, latency
+class matrix, failure-domain preference.
+
+### 5.2 The deterministic rule set (evaluated in this fixed order)
+
+1. **Hard gates first (unchanged from the single-node planner):** model/
+   backend compatibility against the CLOSED capability registry; placement ×
+   runtime presence (declared AND observed healthy); artifact VERIFIED only;
+   snapshot freshness — per-node (§7).
+2. **Network gates (new, before optimization):**
+   - **Artifact locality gate:** a node without the model artifact present is
+     only eligible if the artifact transfer is permitted by policy.
+   - **Transfer-cost rule (the §9.4 rule, operationalized):** remote admission
+     is REFUSED when the model artifact is absent on the node AND its
+     verified size exceeds `MaxArtifactTransferBytes` (default 10 GiB) —
+     "prefer local execution when the expected transfer cost exceeds the
+     benefit of remote compute."
+   - **Latency-class gate:** the node's declared latency class (A best, B, C
+     worst; default for undeclared is C) must be within the request's
+     acceptable class (default: A or B for interactive requests).
+   - **Sensitivity rule:** requests marked sensitive-local never leave the
+     local node (data-sensitivity gate).
+3. **Optimization (deterministic, stable tie-breaking extended):** policy
+   priority → artifact locality (present beats transfer-eligible) → latency
+   class (A before B before C) → observed utilization → tightest fit →
+   stable node/backend/GPU IDs. The PlanID content hash includes NodeID, so
+   the same inputs always produce the same plan including placement.
+
+### 5.3 Single-node behavior preserved
+
+With no enrolled nodes the multi-node planner evaluates exactly the local
+node — identical decisions to the v19.8.x planner (regression tests pin
+this).
+
+---
+
+## 6. New packages and files
+
+| Unit | Responsibility |
+|---|---|
+| `internal/nodeidentity` | node records, enrollment invites, credentials (digest store + rotation), replay protection, revocation/quarantine; JSONL persistence |
+| `internal/fabric` | the control-plane node registry: reachability + freshness tracking, the remote snapshot cache, the reconciliation engine, the fabric admission guards (unreachable/quarantined/stale) |
+| `internal/planner` (new file `multinode.go`) | the network-aware multi-node planner; reuses the package's existing candidate evaluation; single-node path untouched |
+| `internal/nodeagent` | the agent-side narrow typed API server: execution records, reservation mirror validation, owner checks |
+| `cmd/scarlix-node-agent` | the agent binary entry point |
+| `internal/api` (new file `fabric.go`) | admin endpoints (invite/approve/revoke/rotate/list/reconciliation report) + agent-facing endpoints (enroll, inventory/health push), all principal-checked |
+| `.github/workflows/ci.yml` | the new packages join the race-test list |
+
+---
+
+## 7. Resolved open decisions (roadmap §19)
+
+Each decision below records owner, evidence, date, rationale — as §19
+demands. They are NOW CLOSED for v19.9.0; reopening any of them requires a
+new recorded decision.
+
+### #6 Inventory freshness window (local vs remote admission)
+
+- **Owner:** operator (MoZoHuJa), proposed by the implementation review.
+- **Decision:** local admission keeps the existing default
+  `MaxSnapshotAge = 60s` (v19.8.1 default, unchanged). Remote admission gets
+  a SEPARATE, stricter `RemoteSnapshotMaxAge` default **30s**, evaluated at
+  consumption per node. Both operator-configurable.
+- **Evidence/rationale:** remote snapshots age in transit before the control
+  plane even observes them; the cost of admitting against stale remote
+  capacity — a reservation that cannot start remotely, held against capacity
+  that may already be gone — is strictly higher than the local equivalent
+  (local capacity is at least re-observed by the same host that admits).
+  30s ≤ 60s keeps the remote window inside one poll cycle of the freshness
+  collector cadence.
+- **Date:** 2026-11-13.
+
+### #7 Authoritative allocation/reservation store under distributed execution
+
+- **Owner:** operator (MoZoHuJa).
+- **Decision:** the control-plane `reservation.Manager` remains THE single
+  authoritative ledger. Node agents hold non-authoritative execution records
+  and a reservation mirror only. No per-node schedulers, no consensus
+  protocol in v19.9.0.
+- **Evidence/rationale:** §1.1–§1.2 of this document: family-scale star
+  topology, one operator; split-brain prevented by construction. Revisit
+  trigger: a second control plane or HA requirement reopens this decision.
+- **Date:** 2026-11-13.
+
+### #8 Identity mechanism mapping humans/agents/remote nodes to principals
+
+- **Owner:** operator (MoZoHuJa).
+- **Decision:** humans → existing profile principals (v19.6.7 token index);
+  agents → existing agent token principals; remote nodes → `node:<node-id>`
+  principals created ONLY via admin-approved enrollment, with the closed
+  scope set of §2.4. Node principals are never admin, never reconciler-of-
+  record. Reconciler authority stays with the control-plane trusted
+  identity provider.
+- **Evidence/rationale:** the repo already separates user vs reconciler
+  identity fail-closed (`reservation.Identity`); nodes are a third, strictly
+  narrower kind. Reusing the digest-store + constant-time-compare pattern
+  keeps one authentication discipline across all principal kinds.
+- **Date:** 2026-11-13.
+
+### #10 Which UI surface owns approval vs operational monitoring
+
+- **Owner:** operator (MoZoHuJa).
+- **Decision (recorded now; the UI itself is Phase 6 scope):** ScarliCenter
+  owns approvals — including node enrollment invites, approval, revocation
+  and credential rotation. ScarliMonitor owns operational monitoring — node
+  health, reachability, freshness, reconciliation status. ScarliBar never
+  bypasses the policy path (§10.2 unchanged).
+- **Evidence/rationale:** matches roadmap §10.2's existing split: approval is
+  a consent act (ScarliCenter), monitoring is observation (ScarliMonitor).
+  The v19.9.0 API endpoints in `internal/api/fabric.go` are shaped so the
+  approval set and the monitoring set can mount on separate surfaces
+  without re-splitting the boundary later.
+- **Date:** 2026-11-13.
+
+### Carry-over decisions (#1–#5, #9)
+
+#1–#4 are settled by the §8 hardware-acceptance matrix (OPEN, operator's
+physical act, KPK-06); #5 (GPU exclusivity) is settled YES as recommended;
+#9 (first-token latency/throughput targets) is tied to the same target-host
+benchmark pass and stays with the operator.
+
+---
+
+## 8. Implementation slices (commit order)
+
+1. `internal/nodeidentity` — records, invites, enrollment, credential
+   rotation, replay protection, revocation; JSONL store; full unit tests
+   (enrollment happy path, expired invite, consumed invite replay, rotation
+   grace window, replay rejection, quarantine, digest-only persistence).
+2. `internal/fabric` — node registry (reachability, freshness windows local
+   vs remote), reconciliation engine; tests for the §4.1 semantics table
+   row by row, restart behavior, idempotent reconciliation.
+3. `internal/planner/multinode.go` — network-aware deterministic planner;
+   tests: determinism (same inputs → same PlanID + node placement), transfer-
+   cost refusal, latency gate, sensitivity gate, no-enrolled-nodes ≡ single-
+   node decisions.
+4. `internal/nodeagent` + `cmd/scarlix-node-agent` — narrow typed API,
+   reservation mirror, owner checks; tests: mirror-refused rogue start,
+   owner-refused foreign stop, allowlist enforcement, ambiguous-stop
+   preserving reservation.
+5. `internal/api/fabric.go` — admin + agent endpoints with principal
+   checks; tests: admin-only approval surface, node-principal scope
+   enforcement, replay-protected mutate path.
+6. CI: race-test list extended; docs: roadmap v19.9.0 checkboxes, release
+   notes, README fabric section; VERSION bump; tag `v19.9.0`.
+
+## 9. Definition of done (§9 exit criteria, verbatim mapping)
+
+| §9 exit criterion | Where it is proven |
+|---|---|
+| Node enrollment and revocation tested | nodeidentity tests (slice 1) |
+| Remote allocation ownership is authenticated | nodeagent owner checks + api scope tests (slices 4–5) |
+| Partition and restart behavior tested | fabric reconciliation tests (slice 2) |
+| Remote reservations reconcile safely | fabric reconciliation tests (slice 2) |
+| Network-aware planner is deterministic | planner multinode tests (slice 3) |
+| Tailscale is transport, not authorization | per-node credentials + replay protection enforced regardless of transport; test: a request with transport but no valid node credential is refused |
+
+## 10. Explicit non-goals for v19.9.0
+
+- No real multi-host deployment claim: as with every release so far, the
+  acceptance evidence is automated tests + CI; real target-host fabric
+  acceptance (actual remote nodes over an actual tailnet) belongs to the
+  operator's Phase 6 acceptance matrix, like the InferSSD hardware gate
+  (§8.7) before it.
+- No arbitrary shell/Docker/file access anywhere in the agent — by design,
+  not by configuration.
+- No consensus protocol, no per-node schedulers, no second ledger (§1).
+- No changes to the frozen contracts: allocation states, reservation schema
+  v1, single-node planner behavior — all additive only.

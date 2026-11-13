@@ -91,6 +91,14 @@ func (h *Handler) planState(w http.ResponseWriter) {
 	if h.expertPacks != nil {
 		out["expert_packs"] = h.expertPacks()
 	}
+	// v19.9.0 (Phase 5): the network-aware fabric policy + the node
+	// views' shape when the fabric is configured (the operator's
+	// §9.4 view — what the multi-node planner will consider).
+	if h.fabricPlanner != nil {
+		out["fabric"] = map[string]interface{}{
+			"configured": true,
+		}
+	}
 	writeJSON(w, out)
 }
 
@@ -109,6 +117,15 @@ func (h *Handler) planCompute(w http.ResponseWriter, r *http.Request) {
 	// operator-approved request (roadmap §7.6's boundary).
 	if p := profiles.PrincipalFromContext(r.Context()); p != nil {
 		req.Principal = p.Name
+	}
+	// v19.9.0 (Phase 5, roadmap §9.4): when the distributed fabric is
+	// configured the SAME route computes the network-aware multi-node
+	// plan (the fabric planner reuses this package's §7.4/§7.5 gates;
+	// zero remote views ≡ the single-node decision — the regression
+	// pin). Unconfigured → the single-node planner, unchanged.
+	if h.fabricPlanner != nil {
+		writeJSON(w, h.fabricPlanner.Plan(req))
+		return
 	}
 	writeJSON(w, h.executionPlanner.Plan(req))
 }

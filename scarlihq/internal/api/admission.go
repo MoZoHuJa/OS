@@ -149,7 +149,7 @@ func (h *Handler) admissionRenew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{
-		"status":  "renewed",
+		"status": "renewed",
 		"record": rec,
 	})
 }
@@ -185,7 +185,7 @@ func (h *Handler) admissionConfirmStarted(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, map[string]interface{}{
-		"status":  "active",
+		"status": "active",
 		"record": rec,
 	})
 }

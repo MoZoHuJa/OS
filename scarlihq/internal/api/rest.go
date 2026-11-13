@@ -15,10 +15,12 @@ import (
 	"github.com/MoZoHuJa/OS/scarlihq/internal/agentfabric"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/agentkernel"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/airt"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/fabric"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/gaming"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/modelmeta"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/nodeidentity"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/planner"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
@@ -28,7 +30,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.8.1"
+var Version = "19.9.0"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -230,6 +232,22 @@ type Handler struct {
 	// reserves nothing; admission is still required). Nil until
 	// ConfigurePlanner is called.
 	executionPlanner *planner.Planner
+	// v19.9.0 (Phase 5, roadmap §9): the distributed fabric control-plane
+	// surface — node identity registry (enrollment/revocation/rotation),
+	// the observational fabric registry, the network-aware multi-node
+	// planner (preferred by /api/compute/plan once configured), the node
+	// replay guard, the operator-declared latency classes, the optional
+	// ledger-view provider (reconciliation decisions), and the last
+	// per-node agent execution reports. All nil until ConfigureFabric
+	// is called (opt-in like every mutating surface; 503 without it).
+	fabricNodes    *nodeidentity.Registry
+	fabricRegistry *fabric.Registry
+	fabricPlanner  *planner.FabricPlanner
+	fabricReplay   *nodeidentity.ReplayGuard
+	fabricLatency  map[string]string
+	fabricLedger   FabricLedgerViewProvider
+	fabricMu       sync.Mutex
+	fabricReports  map[string][]fabric.ReconcileDecision
 	// v19.8.0 (Phase 4, roadmap §8.5): the SGLang Expert Pack manifest
 	// view loader — re-reads the pack manifests at call time (the
 	// admission model-source discipline). Nil until ConfigureExpertPacks
@@ -299,8 +317,31 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// act than the ADMIN-gated admission above). POST computes the
 	// plan (a refusal is 200 + selected=false + reason_code — the
 	// planner working, never an HTTP error); GET reports the
-	// policy + the closed backend capability registry.
+	// policy + the closed backend capability registry. v19.9.0
+	// (Phase 5, roadmap §9.4): when the fabric is configured the
+	// same route computes the NETWORK-AWARE multi-node plan (zero
+	// remote views ≡ the single-node decision — the regression
+	// pin; the route is unchanged, the surface is the same).
 	mux.HandleFunc("/api/compute/plan", h.auth(h.planRoute))
+	// v19.9.0 (Compute Fabric Phase 5, roadmap §9.2/§9.3): the
+	// distributed fabric control-plane surface. ADMIN routes:
+	// the node registry (list/invite/revoke/rotate/reactivate) +
+	// the reconciliation view — 503 until ConfigureFabric. AGENT
+	// routes: the node-authenticated inventory/health/execution
+	// pushes (per-node credential + scoped + replay-protected —
+	// Tailscale is transport, never authorization) + the
+	// invite-based one-time enrollment (the invite secret IS the
+	// authorization — no household token exists on the enrolling
+	// node yet, roadmap §9.2's admin-approved enrollment flow).
+	mux.HandleFunc("/api/fabric/nodes", h.authAdmin(h.fabricNodesRoute))
+	mux.HandleFunc("/api/fabric/nodes/revoke", h.authAdmin(h.fabricNodeRevoke))
+	mux.HandleFunc("/api/fabric/nodes/rotate", h.authAdmin(h.fabricNodeRotate))
+	mux.HandleFunc("/api/fabric/nodes/reactivate", h.authAdmin(h.fabricNodeReactivate))
+	mux.HandleFunc("/api/fabric/nodes/reconciliation", h.authAdmin(h.fabricReconciliationView))
+	mux.HandleFunc("/api/fabric/agent/enroll", h.fabricAgentEnroll)
+	mux.HandleFunc("/api/fabric/agent/inventory", h.authNode(nodeidentity.ScopeInventoryPush, true, h.fabricAgentInventory))
+	mux.HandleFunc("/api/fabric/agent/health", h.authNode(nodeidentity.ScopeHealthPush, false, h.fabricAgentHealth))
+	mux.HandleFunc("/api/fabric/agent/executions", h.authNode(nodeidentity.ScopeExecutionReport, true, h.fabricAgentExecutions))
 	// v19.3.1: read-only gaming-stack inventory (Gaming Stack Integration Plan,
 	// Phase 4). Serves the host-bridge-detected entries only — no launch, no
 	// install, no arbitrary command surface is added here.

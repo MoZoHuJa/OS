@@ -99,6 +99,15 @@ const (
 	LatencyBatch       = "batch"
 )
 
+// DataSensitivity values — the CLOSED v19.9.0 vocabulary (roadmap §9.4's
+// data-sensitivity constraint): "" and SensitivityStandard are the same
+// default (additive field, backward compatible); SensitivityLocalOnly
+// never leaves the local node.
+const (
+	SensitivityStandard  = "standard"
+	SensitivityLocalOnly = "local-only"
+)
+
 // ExecutionRequest is the typed operator ask. Deliberately WITHOUT any
 // selection-steering field (roadmap §7.6): no preferred backend, no
 // explanation echo, no policy override — the deterministic selection
@@ -132,6 +141,13 @@ type ExecutionRequest struct {
 	// into the plan; declared metadata for the operator — it does NOT
 	// alter the deterministic selection order).
 	LatencyClass string `json:"latency_class"`
+	// DataSensitivity — v19.9.0 (roadmap §9.4's data-sensitivity
+	// constraint): "" / "standard" (default) or "local-only". A
+	// local-only request NEVER leaves the local node — the fabric
+	// planner refuses every remote candidate for it. Additive field;
+	// empty means standard (backward compatible with every v19.7.2+
+	// client).
+	DataSensitivity string `json:"data_sensitivity,omitempty"`
 	// Principal — the authenticated identity asking for the plan
 	// (stamped SERVER-SIDE at the API layer, never caller-supplied).
 	Principal string `json:"principal,omitempty"`
@@ -179,6 +195,11 @@ func (r ExecutionRequest) Validate() []string {
 	case LatencyInteractive, LatencyThroughput, LatencyBatch:
 	default:
 		add("latency_class %q is not one of interactive/throughput/batch", r.LatencyClass)
+	}
+	switch r.DataSensitivity {
+	case "", SensitivityStandard, SensitivityLocalOnly:
+	default:
+		add("data_sensitivity %q is not one of standard/local-only", r.DataSensitivity)
 	}
 	return reasons
 }
@@ -624,42 +645,22 @@ type candidate struct {
 	ssdCapped    int                       // the §8.8-capped max concurrency (0 = not capped)
 }
 
-// Plan computes the deterministic execution plan for req (or the named
-// refusal). The full §7.4/§7.5 pipeline: validate the request → verify
-// snapshot freshness (HARD) → resolve the model (manifest, eligibility,
-// revision, context, VERIFIED artifact) → the capability × presence ×
-// capacity × image join over every DECLARED backend (hard constraints,
-// named exclusions) → the deterministic priority ordering → assemble
-// the plan (content-hash PlanID, expiry, the generated explanation).
-func (p *Planner) Plan(req ExecutionRequest) PlanResult {
-	now := p.now()
-
-	// 1. request shape.
-	if reasons := req.Validate(); len(reasons) > 0 {
-		return p.refuse(ReasonPlanRequestInvalid, fmt.Sprintf("request invalid: %s", strings.Join(reasons, "; ")), nil)
-	}
-
-	// 2. snapshot availability + freshness (HARD — KPK-19.7.0-P2-01).
-	snap, err := p.snapshots.Current()
-	if err != nil || snap == nil {
-		return p.refuse(ReasonPlanSnapshotUnavailable, fmt.Sprintf("inventory snapshot unavailable: %v", err), nil)
-	}
-	if age := now.Sub(snap.ObservedAt); age > p.policy.MaxSnapshotAge {
-		return p.refuse(ReasonPlanSnapshotStale, fmt.Sprintf("snapshot %s is %s old (bound %s) — a stale free-VRAM/free-space value is never current capacity (KPK-19.7.0-P2-01, HARD refusal)", snap.SnapshotID, age.Truncate(time.Second), p.policy.MaxSnapshotAge), snap)
-	}
-	base := PlanResult{SnapshotID: snap.SnapshotID, PolicyVersion: p.policy.PolicyVersion}
-
-	// 3. model resolution: manifest → schema → placement gate →
-	// revision → context → VERIFIED artifact.
+// modelGates is steps 3 of the §7.4/§7.5 pipeline, extracted verbatim for
+// the v19.9.0 fabric planner (the same gate sequence serves the single-node
+// and multi-node paths — the gates are node-INDEPENDENT by construction:
+// manifest, eligibility, revision, context, VERIFIED artifact, and the
+// v19.8.1 manifest-identity binding all resolve against the control
+// plane's ModelSource). Returns (manifest, verification, refusal, ok).
+func (p *Planner) modelGates(req ExecutionRequest, base PlanResult, now time.Time) (*modelmeta.Manifest, *modelmeta.ArtifactVerification, PlanResult, bool) {
 	manifest, ok := p.models.Manifest(req.ModelID)
 	if !ok || manifest == nil {
-		return p.refuseWith(base, ReasonPlanModelUnknown, fmt.Sprintf("no schema-valid manifest declares model %q", req.ModelID))
+		return nil, nil, p.refuseWith(base, ReasonPlanModelUnknown, fmt.Sprintf("no schema-valid manifest declares model %q", req.ModelID)), false
 	}
 	if invalid := modelmeta.ValidateManifest(manifest); len(invalid) > 0 {
-		return p.refuseWith(base, ReasonPlanModelIneligible, fmt.Sprintf("manifest for %q fails validation: %s", req.ModelID, strings.Join(invalid, "; ")))
+		return nil, nil, p.refuseWith(base, ReasonPlanModelIneligible, fmt.Sprintf("manifest for %q fails validation: %s", req.ModelID, strings.Join(invalid, "; "))), false
 	}
 	if elig := modelmeta.PlacementEligible(manifest); !elig.Eligible {
-		return p.refuseWith(base, ReasonPlanModelIneligible, fmt.Sprintf("manifest for %q is placement-ineligible: %s", req.ModelID, strings.Join(elig.Reasons, "; ")))
+		return nil, nil, p.refuseWith(base, ReasonPlanModelIneligible, fmt.Sprintf("manifest for %q is placement-ineligible: %s", req.ModelID, strings.Join(elig.Reasons, "; "))), false
 	}
 	// The planner's own derivation rule (honest extension of the
 	// placement gate): the VECTOR derivation needs the weights
@@ -668,20 +669,20 @@ func (p *Planner) Plan(req ExecutionRequest) PlanResult {
 	// ("14B" is a declared label, not bytes; never schedule from
 	// unverified estimates).
 	if manifest.Architecture.Kind == modelmeta.ArchitectureDense && manifest.Architecture.SharedBytes == 0 {
-		return p.refuseWith(base, ReasonPlanModelIneligible, fmt.Sprintf("manifest for %q declares no architecture.shared_bytes — the planner's dense vector derivation requires the weights footprint (a parameter label is a label, not bytes; never schedule from unverified estimates)", req.ModelID))
+		return nil, nil, p.refuseWith(base, ReasonPlanModelIneligible, fmt.Sprintf("manifest for %q declares no architecture.shared_bytes — the planner's dense vector derivation requires the weights footprint (a parameter label is a label, not bytes; never schedule from unverified estimates)", req.ModelID)), false
 	}
 	if req.ModelRevision != "" && req.ModelRevision != manifest.Revision {
-		return p.refuseWith(base, ReasonPlanModelRevisionMismatch, fmt.Sprintf("requested revision %q does not match the manifest revision %q", req.ModelRevision, manifest.Revision))
+		return nil, nil, p.refuseWith(base, ReasonPlanModelRevisionMismatch, fmt.Sprintf("requested revision %q does not match the manifest revision %q", req.ModelRevision, manifest.Revision)), false
 	}
 	if req.ContextTokens > manifest.Runtime.ContextLimit {
-		return p.refuseWith(base, ReasonPlanContextExceedsLimit, fmt.Sprintf("context_tokens %d exceeds the model's declared context limit %d — planning an unservable context would be a phantom capability", req.ContextTokens, manifest.Runtime.ContextLimit))
+		return nil, nil, p.refuseWith(base, ReasonPlanContextExceedsLimit, fmt.Sprintf("context_tokens %d exceeds the model's declared context limit %d — planning an unservable context would be a phantom capability", req.ContextTokens, manifest.Runtime.ContextLimit)), false
 	}
 	verif, ok := p.models.Verification(req.ModelID)
 	if !ok || verif == nil || !verif.AllVerified {
-		return p.refuseWith(base, ReasonPlanModelUnverified, fmt.Sprintf("model %q has no fully-verified artifact record (declared digests are declarations — the planner consumes VERIFIED records, KPK-19.7.0-P2-04)", req.ModelID))
+		return nil, nil, p.refuseWith(base, ReasonPlanModelUnverified, fmt.Sprintf("model %q has no fully-verified artifact record (declared digests are declarations — the planner consumes VERIFIED records, KPK-19.7.0-P2-04)", req.ModelID)), false
 	}
 	if age := now.Sub(verif.VerifiedAt); age > p.policy.VerificationMaxAge {
-		return p.refuseWith(base, ReasonPlanModelUnverified, fmt.Sprintf("model %q verification is %s old (bound %s) — a stale verification is absent verification", req.ModelID, age.Truncate(time.Second), p.policy.VerificationMaxAge))
+		return nil, nil, p.refuseWith(base, ReasonPlanModelUnverified, fmt.Sprintf("model %q verification is %s old (bound %s) — a stale verification is absent verification", req.ModelID, age.Truncate(time.Second), p.policy.VerificationMaxAge)), false
 	}
 	// The manifest-identity binding (v19.8.1, KPK-19.8.0-P1-02): the
 	// verification record must be bound to the CURRENT manifest's
@@ -691,22 +692,27 @@ func (p *Planner) Plan(req ExecutionRequest) PlanResult {
 	// independently of the admission gate (every stage verifies its own
 	// conditions).
 	if verif.ManifestFingerprint == "" {
-		return p.refuseWith(base, ReasonPlanModelUnverified, fmt.Sprintf(
-			"model %q's verification record carries NO manifest fingerprint (a pre-v19.8.1 record) — re-run scarlix-inventory --verify-manifests so the record binds to the exact manifest identity", req.ModelID))
+		return nil, nil, p.refuseWith(base, ReasonPlanModelUnverified, fmt.Sprintf(
+			"model %q's verification record carries NO manifest fingerprint (a pre-v19.8.1 record) — re-run scarlix-inventory --verify-manifests so the record binds to the exact manifest identity", req.ModelID)), false
 	}
 	if current := modelmeta.ManifestFingerprint(manifest); current != verif.ManifestFingerprint {
-		return p.refuseWith(base, ReasonPlanModelVerificationIdentityMismatch, fmt.Sprintf(
-			"model %q's verification record (fingerprint %s) is not bound to the current manifest (fingerprint %s) — the manifest's identity-bearing fields changed after verification; re-run scarlix-inventory --verify-manifests (KPK-19.8.0-P1-02)", req.ModelID, verif.ManifestFingerprint, current))
+		return nil, nil, p.refuseWith(base, ReasonPlanModelVerificationIdentityMismatch, fmt.Sprintf(
+			"model %q's verification record (fingerprint %s) is not bound to the current manifest (fingerprint %s) — the manifest's identity-bearing fields changed after verification; re-run scarlix-inventory --verify-manifests (KPK-19.8.0-P1-02)", req.ModelID, verif.ManifestFingerprint, current)), false
 	}
+	return manifest, verif, PlanResult{}, true
+}
 
-	// 4-6. the capability × presence × capacity × image join over every
-	// DECLARED backend — hard constraints with named exclusions.
+// joinBackends is steps 4–6 of the §7.4/§7.5 pipeline, extracted verbatim
+// for the v19.9.0 fabric planner: the capability × presence × capacity ×
+// image join over every DECLARED backend against ONE node's snapshot,
+// with hard constraints and named exclusions. Node-independent in shape —
+// the LOCAL and every REMOTE node view run the identical join against
+// their own snapshot.
+func (p *Planner) joinBackends(manifest *modelmeta.Manifest, snap *inventory.InventorySnapshotV2, req ExecutionRequest) (complete []candidate, trail []string, downstream []string) {
 	declared := append([]string(nil), manifest.Runtime.SupportedBackends...)
 	sort.Strings(declared) // deterministic evaluation order (the trail reads stably)
-	trail := make([]string, 0, len(declared))
-	complete := make([]candidate, 0, len(declared))
-	var downstream []string // the named downstream refusal codes (image/capacity)
-
+	trail = make([]string, 0, len(declared))
+	complete = make([]candidate, 0, len(declared))
 	for _, slug := range declared {
 		b := airuntime.BackendID(slug)
 		row, err := airuntime.BackendCapabilitiesFor(b)
@@ -760,6 +766,46 @@ func (p *Planner) Plan(req ExecutionRequest) PlanResult {
 		complete = append(complete, c)
 		trail = append(trail, fmt.Sprintf("%s: eligible — strategy %s%s (utilization %d%%)", slug, c.strategy, gpuSuffix(c.gpu), c.util))
 	}
+	return complete, trail, downstream
+}
+
+// Plan computes the deterministic execution plan for req (or the named
+// refusal). The full §7.4/§7.5 pipeline: validate the request → verify
+// snapshot freshness (HARD) → resolve the model (manifest, eligibility,
+// revision, context, VERIFIED artifact) → the capability × presence ×
+// capacity × image join over every DECLARED backend (hard constraints,
+// named exclusions) → the deterministic priority ordering → assemble
+// the plan (content-hash PlanID, expiry, the generated explanation).
+func (p *Planner) Plan(req ExecutionRequest) PlanResult {
+	now := p.now()
+
+	// 1. request shape.
+	if reasons := req.Validate(); len(reasons) > 0 {
+		return p.refuse(ReasonPlanRequestInvalid, fmt.Sprintf("request invalid: %s", strings.Join(reasons, "; ")), nil)
+	}
+
+	// 2. snapshot availability + freshness (HARD — KPK-19.7.0-P2-01).
+	snap, err := p.snapshots.Current()
+	if err != nil || snap == nil {
+		return p.refuse(ReasonPlanSnapshotUnavailable, fmt.Sprintf("inventory snapshot unavailable: %v", err), nil)
+	}
+	if age := now.Sub(snap.ObservedAt); age > p.policy.MaxSnapshotAge {
+		return p.refuse(ReasonPlanSnapshotStale, fmt.Sprintf("snapshot %s is %s old (bound %s) — a stale free-VRAM/free-space value is never current capacity (KPK-19.7.0-P2-01, HARD refusal)", snap.SnapshotID, age.Truncate(time.Second), p.policy.MaxSnapshotAge), snap)
+	}
+	base := PlanResult{SnapshotID: snap.SnapshotID, PolicyVersion: p.policy.PolicyVersion}
+
+	// 3. model resolution: manifest → schema → placement gate →
+	// revision → context → VERIFIED artifact (shared with the fabric
+	// planner — modelGates).
+	manifest, verif, refusal, ok := p.modelGates(req, base, now)
+	if !ok {
+		return refusal
+	}
+
+	// 4-6. the capability × presence × capacity × image join over every
+	// DECLARED backend — hard constraints with named exclusions (shared
+	// with the fabric planner — joinBackends).
+	complete, trail, downstream := p.joinBackends(manifest, snap, req)
 	base.Considered = trail
 
 	if len(complete) == 0 {
@@ -785,7 +831,7 @@ func (p *Planner) Plan(req ExecutionRequest) PlanResult {
 	winner := complete[0]
 
 	// 8. assembly: the plan is a PROPOSAL (admission still required).
-	plan := p.assemblePlan(req, manifest, verif, winner, snap, now)
+	plan := p.assemblePlan(req, manifest, verif, winner, snap, now, NodeLocal)
 	out := base
 	out.Selected = true
 	out.ReasonCode = ReasonPlanOK
@@ -1225,11 +1271,11 @@ func strategyExplanationTail(strategy string) string {
 // assemblePlan builds the final plan: the content-hash PlanID (the
 // identity IS the decision), the expiry, the generated explanation
 // trail, and the ask's provenance.
-func (p *Planner) assemblePlan(req ExecutionRequest, m *modelmeta.Manifest, verif *modelmeta.ArtifactVerification, c candidate, snap *inventory.InventorySnapshotV2, now time.Time) *ExecutionPlan {
+func (p *Planner) assemblePlan(req ExecutionRequest, m *modelmeta.Manifest, verif *modelmeta.ArtifactVerification, c candidate, snap *inventory.InventorySnapshotV2, now time.Time, nodeID string) *ExecutionPlan {
 	plan := &ExecutionPlan{
 		BackendID:       c.backend,
 		Strategy:        c.strategy,
-		NodeID:          NodeLocal, // v19.7.2 single-node by construction (v19.9.0 owns multi-node)
+		NodeID:          nodeID, // v19.7.2 local by construction; the v19.9.0 fabric planner passes the selected node (roadmap §9.4)
 		ModelArtifactID: fmt.Sprintf("%s@%s#%s", m.ID, m.Revision, strings.ToLower(m.Checkpoint.SHA256)),
 		ResourceVector:  c.vector,
 		RequiredImages:  []PinnedImage{c.image},

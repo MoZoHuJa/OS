@@ -17,9 +17,11 @@ import (
 	"github.com/MoZoHuJa/OS/scarlihq/internal/allocation"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/api"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/compute"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/fabric"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/guard"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/mcp"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/modelmeta"
+	"github.com/MoZoHuJa/OS/scarlihq/internal/nodeidentity"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/planner"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/profiles"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/scarlix_mode"
@@ -30,7 +32,34 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.8.1"
+var Version = "19.9.0"
+
+// parseFabricLatencyClasses parses the operator's SCARLIHQ_FABRIC_LATENCY
+// declaration ("node-a=A,node-b=B"; whitespace-tolerant; malformed entries
+// are skipped loudly — an unknown node simply defaults to class C,
+// fail-closed, rather than inheriting a typo).
+func parseFabricLatencyClasses(decl string) map[string]string {
+	out := make(map[string]string)
+	for _, pair := range strings.Split(decl, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			log.Printf("SCARLIHQ_FABRIC_LATENCY: skipping malformed entry %q (want node=class)", pair)
+			continue
+		}
+		node := strings.TrimSpace(parts[0])
+		class := strings.ToUpper(strings.TrimSpace(parts[1]))
+		if node == "" || (class != "A" && class != "B" && class != "C") {
+			log.Printf("SCARLIHQ_FABRIC_LATENCY: skipping malformed entry %q (class must be A, B or C)", pair)
+			continue
+		}
+		out[node] = class
+	}
+	return out
+}
 
 //go:embed frontend/dist/index.html
 var indexHTML []byte
@@ -192,6 +221,51 @@ func main() {
 				log.Printf("Expert Pack manifest INVALID: %s — %s", inv.Path, strings.Join(inv.Reasons, "; "))
 			}
 		}
+	}
+
+	// v19.9.0 (Compute Fabric Phase 5, roadmap §9): the DISTRIBUTED FABRIC
+	// — node identity + enrollment (invite-based, digest-only credentials,
+	// rotation grace, quarantine), the observational registry with the
+	// STRICTER remote freshness window (30s default), the replay-protected
+	// agent pushes, and the network-aware multi-node planner behind the SAME
+	// /api/compute/plan route. Opt-in like every mutating surface:
+	// SCARLIHQ_FABRIC_ENABLED=true + SCARLIHQ_FABRIC_NODES_LEDGER (a writable
+	// 0600 JSONL path — node identity is durable, never memory-only in
+	// production). Tailscale/LAN remains TRANSPORT ONLY (roadmap §9.2): the
+	// per-node credentials are the authorization, always. Without the
+	// opt-in the fabric routes answer 503 and the planner stays single-node
+	// — v19.8.1 behavior, unchanged.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("SCARLIHQ_FABRIC_ENABLED")), "true") {
+		nodesPath := strings.TrimSpace(os.Getenv("SCARLIHQ_FABRIC_NODES_LEDGER"))
+		if nodesPath == "" {
+			log.Fatal("distributed fabric enabled but SCARLIHQ_FABRIC_NODES_LEDGER is missing (a writable node-identity JSONL path — node identity is durable, never memory-only in production)")
+		}
+		nodeReg, err := nodeidentity.NewRegistry(nodeidentity.NewStore(nodesPath), nodeidentity.SystemClock{}, nodeidentity.RegistryConfig{})
+		if err != nil {
+			log.Fatalf("distributed fabric initialization failed: %v (fail closed — never run on a corrupt node-identity store)", err)
+		}
+		fabricReg, err := fabric.NewRegistry(fabric.SystemClock{}, fabric.NewIdentityStatusSource(nodeReg), 0)
+		if err != nil {
+			log.Fatalf("fabric registry initialization failed: %v", err)
+		}
+		replayGuard := nodeidentity.NewReplayGuard(nil, 0, 0)
+		// The operator-declared per-node latency classes ("node-a=A,node-b=B"
+		// — cross-node latency is control-plane knowledge, never an agent
+		// self-declaration; unknown nodes default to C, fail-closed).
+		latency := parseFabricLatencyClasses(os.Getenv("SCARLIHQ_FABRIC_LATENCY"))
+		if err := apiHandler.ConfigureFabric(api.FabricConfig{
+			Nodes:          nodeReg,
+			Registry:       fabricReg,
+			Replay:         replayGuard,
+			BasePlanner:    executionPlanner,
+			LocalSnapshots: admission.ProductionSnapshotSource{},
+			LatencyClasses: latency,
+		}); err != nil {
+			log.Fatalf("distributed fabric wiring failed: %v (fail closed)", err)
+		}
+		log.Printf("Distributed fabric enabled (node ledger: %s; %d nodes known, %d latency declarations, remote freshness %s; enroll nodes via POST /api/fabric/nodes — the one-time invite secret is returned exactly once)", nodesPath, len(nodeReg.List()), len(latency), fabricReg.RemoteSnapshotMaxAge())
+	} else {
+		log.Printf("Distributed fabric disabled; set SCARLIHQ_FABRIC_ENABLED=true + SCARLIHQ_FABRIC_NODES_LEDGER=<path> to enable the Compute Fabric Phase 5 surface (node enrollment + authenticated pushes + the network-aware multi-node planner)")
 	}
 
 	// AK-2 (v19.4.1): Agent Kernel session surface — opt-in, like the compute

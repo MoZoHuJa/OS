@@ -14,12 +14,12 @@
 package modelmeta
 
 import (
-        "fmt"
-        "os"
-        "path/filepath"
-        "regexp"
-        "sort"
-        "strings"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 )
 
 // SchemaVersionV2 is the manifest schema identity this package reads.
@@ -32,51 +32,51 @@ const SchemaVersionV2 = "scarlix.model/v2"
 // example's PLACEHOLDERS — the loader treats required placeholders as
 // UNKNOWN, and unknown required values fail placement eligibility.
 type Manifest struct {
-        SchemaVersion string `yaml:"schema_version" json:"schema_version"`
-        ID            string `yaml:"id" json:"id"`
-        Revision      string `yaml:"revision" json:"revision"`
-        Checkpoint    struct {
-                Format       string `yaml:"format" json:"format"`
-                Quantization string `yaml:"quantization" json:"quantization"`
-                // SHA256 — the DECLARED fingerprint. The yaml key stays "sha256"
-                // (the on-disk scarlix.model/v2 schema is unchanged); the JSON key
-                // is renamed "declared_sha256" (v19.7.1, KPK-19.7.0-P2-04) so every
-                // EMITTED provenance distinguishes declared from VERIFIED bytes —
-                // verification is VerifyManifestArtifacts' separate answer.
-                SHA256 string `yaml:"sha256" json:"declared_sha256"`
-        } `yaml:"checkpoint" json:"checkpoint"`
-        Architecture struct {
-                Kind             Architecture `yaml:"kind" json:"kind"`
-                TotalParameters  string       `yaml:"total_parameters" json:"total_parameters"`
-                ActiveParameters string       `yaml:"active_parameters" json:"active_parameters"`
-                ExpertCount      int          `yaml:"expert_count" json:"expert_count"`
-                ExpertsPerToken  int          `yaml:"experts_per_token" json:"experts_per_token"`
-                ExpertBytes      uint64       `yaml:"expert_bytes" json:"expert_bytes"`
-                SharedBytes      uint64       `yaml:"shared_bytes" json:"shared_bytes"`
-        } `yaml:"architecture" json:"architecture"`
-        Runtime struct {
-                ContextLimit int `yaml:"context_limit" json:"context_limit"`
-                KVCache      struct {
-                        Precision             string `yaml:"precision" json:"precision"`
-                        BytesPerTokenEstimate uint64 `yaml:"bytes_per_token_estimate" json:"bytes_per_token_estimate"`
-                } `yaml:"kv_cache" json:"kv_cache"`
-                SupportedBackends []string `yaml:"supported_backends" json:"supported_backends"`
-        } `yaml:"runtime" json:"runtime"`
-        Artifacts struct {
-                ExpertPack struct {
-                        Enabled bool   `yaml:"enabled" json:"enabled"`
-                        Format  string `yaml:"format" json:"format"`
-                        Version string `yaml:"version" json:"version"`
-                        // SHA256 — DECLARED fingerprint (see Checkpoint.SHA256 note).
-                        SHA256            string `yaml:"sha256" json:"declared_sha256"`
-                        CompatibleBackend string `yaml:"compatible_backend" json:"compatible_backend"`
-                } `yaml:"expert_pack" json:"expert_pack"`
-        } `yaml:"artifacts" json:"artifacts"`
-        Storage struct {
-                ModelPath         string `yaml:"model_path" json:"model_path"`
-                ExpertPath        string `yaml:"expert_path" json:"expert_path"`
-                PreferredDeviceID string `yaml:"preferred_device_id" json:"preferred_device_id"`
-        } `yaml:"storage" json:"storage"`
+	SchemaVersion string `yaml:"schema_version" json:"schema_version"`
+	ID            string `yaml:"id" json:"id"`
+	Revision      string `yaml:"revision" json:"revision"`
+	Checkpoint    struct {
+		Format       string `yaml:"format" json:"format"`
+		Quantization string `yaml:"quantization" json:"quantization"`
+		// SHA256 — the DECLARED fingerprint. The yaml key stays "sha256"
+		// (the on-disk scarlix.model/v2 schema is unchanged); the JSON key
+		// is renamed "declared_sha256" (v19.7.1, KPK-19.7.0-P2-04) so every
+		// EMITTED provenance distinguishes declared from VERIFIED bytes —
+		// verification is VerifyManifestArtifacts' separate answer.
+		SHA256 string `yaml:"sha256" json:"declared_sha256"`
+	} `yaml:"checkpoint" json:"checkpoint"`
+	Architecture struct {
+		Kind             Architecture `yaml:"kind" json:"kind"`
+		TotalParameters  string       `yaml:"total_parameters" json:"total_parameters"`
+		ActiveParameters string       `yaml:"active_parameters" json:"active_parameters"`
+		ExpertCount      int          `yaml:"expert_count" json:"expert_count"`
+		ExpertsPerToken  int          `yaml:"experts_per_token" json:"experts_per_token"`
+		ExpertBytes      uint64       `yaml:"expert_bytes" json:"expert_bytes"`
+		SharedBytes      uint64       `yaml:"shared_bytes" json:"shared_bytes"`
+	} `yaml:"architecture" json:"architecture"`
+	Runtime struct {
+		ContextLimit int `yaml:"context_limit" json:"context_limit"`
+		KVCache      struct {
+			Precision             string `yaml:"precision" json:"precision"`
+			BytesPerTokenEstimate uint64 `yaml:"bytes_per_token_estimate" json:"bytes_per_token_estimate"`
+		} `yaml:"kv_cache" json:"kv_cache"`
+		SupportedBackends []string `yaml:"supported_backends" json:"supported_backends"`
+	} `yaml:"runtime" json:"runtime"`
+	Artifacts struct {
+		ExpertPack struct {
+			Enabled bool   `yaml:"enabled" json:"enabled"`
+			Format  string `yaml:"format" json:"format"`
+			Version string `yaml:"version" json:"version"`
+			// SHA256 — DECLARED fingerprint (see Checkpoint.SHA256 note).
+			SHA256            string `yaml:"sha256" json:"declared_sha256"`
+			CompatibleBackend string `yaml:"compatible_backend" json:"compatible_backend"`
+		} `yaml:"expert_pack" json:"expert_pack"`
+	} `yaml:"artifacts" json:"artifacts"`
+	Storage struct {
+		ModelPath         string `yaml:"model_path" json:"model_path"`
+		ExpertPath        string `yaml:"expert_path" json:"expert_path"`
+		PreferredDeviceID string `yaml:"preferred_device_id" json:"preferred_device_id"`
+	} `yaml:"storage" json:"storage"`
 }
 
 // hex64Re matches exactly 64 lowercase-or-uppercase hex chars (a SHA-256
@@ -100,21 +100,21 @@ var backendIDRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 // InvalidManifest is one loaded-but-invalid manifest with its named
 // reasons (fail-closed with visibility — see package doc).
 type InvalidManifest struct {
-        Path    string
-        Reasons []string
+	Path    string
+	Reasons []string
 }
 
 // LoadedManifests is the full result of a directory load: valid manifests
 // (sorted by ID for reproducible output) + invalid entries + the source
 // provenance.
 type LoadedManifests struct {
-        Manifests []Manifest
-        Invalid   []InvalidManifest
-        // Dir — the directory that was read (provenance).
-        Dir string
-        // DirError — non-empty when the directory itself was unreadable
-        // (then Manifests is empty and Invalid is empty: NOTHING was loaded).
-        DirError string
+	Manifests []Manifest
+	Invalid   []InvalidManifest
+	// Dir — the directory that was read (provenance).
+	Dir string
+	// DirError — non-empty when the directory itself was unreadable
+	// (then Manifests is empty and Invalid is empty: NOTHING was loaded).
+	DirError string
 }
 
 // ResolveManifestsDir picks the manifest directory: explicit
@@ -122,18 +122,18 @@ type LoadedManifests struct {
 // fallback). Empty string when no candidate exists (a valid, non-error
 // absence: no manifests declared).
 func ResolveManifestsDir() string {
-        if d := os.Getenv("SCARLIX_MODELS_D"); d != "" {
-                if info, err := os.Stat(d); err == nil && info.IsDir() {
-                        return d
-                }
-                return "" // explicit override that does not exist: honest absence
-        }
-        for _, d := range []string{"/etc/scarlix/models.d", "models.d"} {
-                if info, err := os.Stat(d); err == nil && info.IsDir() {
-                        return d
-                }
-        }
-        return ""
+	if d := os.Getenv("SCARLIX_MODELS_D"); d != "" {
+		if info, err := os.Stat(d); err == nil && info.IsDir() {
+			return d
+		}
+		return "" // explicit override that does not exist: honest absence
+	}
+	for _, d := range []string{"/etc/scarlix/models.d", "models.d"} {
+		if info, err := os.Stat(d); err == nil && info.IsDir() {
+			return d
+		}
+	}
+	return ""
 }
 
 // LoadManifests reads every *.manifest.yaml in dir. Files are read,
@@ -147,74 +147,74 @@ func ResolveManifestsDir() string {
 // in the v2 snapshot's by-ID join; now nobody wins and the operator
 // sees both paths.
 func LoadManifests(dir string) LoadedManifests {
-        res := LoadedManifests{Dir: dir}
-        if dir == "" {
-                res.DirError = "no manifest directory resolved"
-                return res
-        }
-        entries, err := os.ReadDir(dir)
-        if err != nil {
-                res.DirError = err.Error()
-                return res
-        }
-        names := make([]string, 0, len(entries))
-        for _, e := range entries {
-                if e.IsDir() {
-                        continue
-                }
-                if strings.HasSuffix(e.Name(), ".manifest.yaml") {
-                        names = append(names, e.Name())
-                }
-        }
-        sort.Strings(names) // reproducible order
+	res := LoadedManifests{Dir: dir}
+	if dir == "" {
+		res.DirError = "no manifest directory resolved"
+		return res
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		res.DirError = err.Error()
+		return res
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), ".manifest.yaml") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names) // reproducible order
 
-        type loaded struct {
-                path string
-                m    Manifest
-        }
-        var valid []loaded
-        for _, name := range names {
-                path := filepath.Join(dir, name)
-                raw, err := os.ReadFile(path)
-                if err != nil {
-                        res.Invalid = append(res.Invalid, InvalidManifest{Path: path, Reasons: []string{fmt.Sprintf("read failed: %v", err)}})
-                        continue
-                }
-                var m Manifest
-                // v19.8.1 (KPK-19.8.0-P3-06): strict single-document decode —
-                // unknown fields and trailing documents are named errors, never
-                // silently-accepted operator configuration.
-                if err := DecodeSingleStrictYAML(raw, &m); err != nil {
-                        res.Invalid = append(res.Invalid, InvalidManifest{Path: path, Reasons: []string{fmt.Sprintf("YAML parse failed: %v", err)}})
-                        continue
-                }
-                if reasons := ValidateManifest(&m); len(reasons) > 0 {
-                        res.Invalid = append(res.Invalid, InvalidManifest{Path: path, Reasons: reasons})
-                        continue
-                }
-                valid = append(valid, loaded{path: path, m: m})
-        }
+	type loaded struct {
+		path string
+		m    Manifest
+	}
+	var valid []loaded
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			res.Invalid = append(res.Invalid, InvalidManifest{Path: path, Reasons: []string{fmt.Sprintf("read failed: %v", err)}})
+			continue
+		}
+		var m Manifest
+		// v19.8.1 (KPK-19.8.0-P3-06): strict single-document decode —
+		// unknown fields and trailing documents are named errors, never
+		// silently-accepted operator configuration.
+		if err := DecodeSingleStrictYAML(raw, &m); err != nil {
+			res.Invalid = append(res.Invalid, InvalidManifest{Path: path, Reasons: []string{fmt.Sprintf("YAML parse failed: %v", err)}})
+			continue
+		}
+		if reasons := ValidateManifest(&m); len(reasons) > 0 {
+			res.Invalid = append(res.Invalid, InvalidManifest{Path: path, Reasons: reasons})
+			continue
+		}
+		valid = append(valid, loaded{path: path, m: m})
+	}
 
-        // Duplicate-ID group rejection (KPK-19.7.0-P2-04): collect every path
-        // per id; an id claimed by more than one file invalidates ALL of them
-        // with a reason naming every conflicting path. No winner is chosen.
-        byIDPaths := make(map[string][]string)
-        for _, v := range valid {
-                byIDPaths[v.m.ID] = append(byIDPaths[v.m.ID], v.path)
-        }
-        for _, v := range valid {
-                if paths := byIDPaths[v.m.ID]; len(paths) > 1 {
-                        res.Invalid = append(res.Invalid, InvalidManifest{
-                                Path: v.path,
-                                Reasons: []string{fmt.Sprintf(
-                                        "duplicate model id %q — declared in %v; ALL conflicting manifests are invalid, no winner is chosen (KPK-19.7.0-P2-04)",
-                                        v.m.ID, paths)},
-                        })
-                        continue
-                }
-                res.Manifests = append(res.Manifests, v.m)
-        }
-        return res
+	// Duplicate-ID group rejection (KPK-19.7.0-P2-04): collect every path
+	// per id; an id claimed by more than one file invalidates ALL of them
+	// with a reason naming every conflicting path. No winner is chosen.
+	byIDPaths := make(map[string][]string)
+	for _, v := range valid {
+		byIDPaths[v.m.ID] = append(byIDPaths[v.m.ID], v.path)
+	}
+	for _, v := range valid {
+		if paths := byIDPaths[v.m.ID]; len(paths) > 1 {
+			res.Invalid = append(res.Invalid, InvalidManifest{
+				Path: v.path,
+				Reasons: []string{fmt.Sprintf(
+					"duplicate model id %q — declared in %v; ALL conflicting manifests are invalid, no winner is chosen (KPK-19.7.0-P2-04)",
+					v.m.ID, paths)},
+			})
+			continue
+		}
+		res.Manifests = append(res.Manifests, v.m)
+	}
+	return res
 }
 
 // ValidateManifest returns the named reasons a manifest is invalid
@@ -235,71 +235,71 @@ func LoadManifests(dir string) LoadedManifests {
 //     compatible_backend (single slug), and a version; a DISABLED pack
 //     is documentation and unconstrained.
 func ValidateManifest(m *Manifest) []string {
-        var reasons []string
-        add := func(format string, args ...interface{}) {
-                reasons = append(reasons, fmt.Sprintf(format, args...))
-        }
+	var reasons []string
+	add := func(format string, args ...interface{}) {
+		reasons = append(reasons, fmt.Sprintf(format, args...))
+	}
 
-        if m.SchemaVersion != SchemaVersionV2 {
-                add("schema_version %q is not %q — a future schema must be read by future code, this loader refuses it by name", m.SchemaVersion, SchemaVersionV2)
-        }
-        if strings.TrimSpace(m.ID) == "" {
-                add("id is required (the model identity the planner and the v1 catalog join on)")
-        } else if !modelIDRe.MatchString(m.ID) {
-                add("id %q is not a safe closed identifier (lowercase slug: alnum start, alnum/dot/dash/underscore, max 128) — ids are join keys and path-shaped free text is a collision and escape risk (KPK-19.7.0-P2-04)", m.ID)
-        }
-        if strings.TrimSpace(m.Revision) == "" {
-                add("revision is required (HF revision or local build id — the pack/checkpoint binding anchor)")
-        }
-        if strings.TrimSpace(m.Checkpoint.Format) == "" {
-                add("checkpoint.format is required (safetensors, gguf, ...)")
-        }
-        if !hex64Re.MatchString(m.Checkpoint.SHA256) {
-                add("checkpoint.sha256 %q is not a 64-hex-char SHA-256 fingerprint — the verified checkpoint fingerprint is required (placement binds to it)", m.Checkpoint.SHA256)
-        }
-        switch m.Architecture.Kind {
-        case ArchitectureDense, ArchitectureMoE, ArchitectureOther:
-        default:
-                add("architecture.kind %q is not one of dense|moe|other", m.Architecture.Kind)
-        }
-        if m.Architecture.Kind == ArchitectureMoE {
-                if m.Architecture.ExpertCount <= 0 {
-                        add("moe requires architecture.expert_count > 0 (unknown MoE geometry blocks automatic placement)")
-                }
-                if m.Architecture.ExpertsPerToken <= 0 {
-                        add("moe requires architecture.experts_per_token > 0 (unknown MoE geometry blocks automatic placement)")
-                }
-        }
-        if m.Runtime.ContextLimit <= 0 {
-                add("runtime.context_limit must be > 0 (the context budget every admission decision divides)")
-        }
-        if len(m.Runtime.SupportedBackends) == 0 {
-                add("runtime.supported_backends is required non-empty (which engines may serve this artifact)")
-        }
-        seen := map[string]bool{}
-        for _, b := range m.Runtime.SupportedBackends {
-                if !backendIDRe.MatchString(b) {
-                        add("runtime.supported_backends entry %q is not a lowercase backend slug", b)
-                        continue
-                }
-                if seen[b] {
-                        add("runtime.supported_backends entry %q is duplicated", b)
-                }
-                seen[b] = true
-        }
-        if m.Artifacts.ExpertPack.Enabled {
-                ep := m.Artifacts.ExpertPack
-                if !hex64Re.MatchString(ep.SHA256) {
-                        add("artifacts.expert_pack.sha256 %q is not a 64-hex-char fingerprint — an ENABLED pack must be verifiable", ep.SHA256)
-                }
-                if !backendIDRe.MatchString(ep.CompatibleBackend) {
-                        add("artifacts.expert_pack.compatible_backend %q is required as a single lowercase backend slug when the pack is enabled (cross-engine compatibility is never claimed)", ep.CompatibleBackend)
-                }
-                if strings.TrimSpace(ep.Version) == "" {
-                        add("artifacts.expert_pack.version is required when the pack is enabled")
-                }
-        }
-        return reasons
+	if m.SchemaVersion != SchemaVersionV2 {
+		add("schema_version %q is not %q — a future schema must be read by future code, this loader refuses it by name", m.SchemaVersion, SchemaVersionV2)
+	}
+	if strings.TrimSpace(m.ID) == "" {
+		add("id is required (the model identity the planner and the v1 catalog join on)")
+	} else if !modelIDRe.MatchString(m.ID) {
+		add("id %q is not a safe closed identifier (lowercase slug: alnum start, alnum/dot/dash/underscore, max 128) — ids are join keys and path-shaped free text is a collision and escape risk (KPK-19.7.0-P2-04)", m.ID)
+	}
+	if strings.TrimSpace(m.Revision) == "" {
+		add("revision is required (HF revision or local build id — the pack/checkpoint binding anchor)")
+	}
+	if strings.TrimSpace(m.Checkpoint.Format) == "" {
+		add("checkpoint.format is required (safetensors, gguf, ...)")
+	}
+	if !hex64Re.MatchString(m.Checkpoint.SHA256) {
+		add("checkpoint.sha256 %q is not a 64-hex-char SHA-256 fingerprint — the verified checkpoint fingerprint is required (placement binds to it)", m.Checkpoint.SHA256)
+	}
+	switch m.Architecture.Kind {
+	case ArchitectureDense, ArchitectureMoE, ArchitectureOther:
+	default:
+		add("architecture.kind %q is not one of dense|moe|other", m.Architecture.Kind)
+	}
+	if m.Architecture.Kind == ArchitectureMoE {
+		if m.Architecture.ExpertCount <= 0 {
+			add("moe requires architecture.expert_count > 0 (unknown MoE geometry blocks automatic placement)")
+		}
+		if m.Architecture.ExpertsPerToken <= 0 {
+			add("moe requires architecture.experts_per_token > 0 (unknown MoE geometry blocks automatic placement)")
+		}
+	}
+	if m.Runtime.ContextLimit <= 0 {
+		add("runtime.context_limit must be > 0 (the context budget every admission decision divides)")
+	}
+	if len(m.Runtime.SupportedBackends) == 0 {
+		add("runtime.supported_backends is required non-empty (which engines may serve this artifact)")
+	}
+	seen := map[string]bool{}
+	for _, b := range m.Runtime.SupportedBackends {
+		if !backendIDRe.MatchString(b) {
+			add("runtime.supported_backends entry %q is not a lowercase backend slug", b)
+			continue
+		}
+		if seen[b] {
+			add("runtime.supported_backends entry %q is duplicated", b)
+		}
+		seen[b] = true
+	}
+	if m.Artifacts.ExpertPack.Enabled {
+		ep := m.Artifacts.ExpertPack
+		if !hex64Re.MatchString(ep.SHA256) {
+			add("artifacts.expert_pack.sha256 %q is not a 64-hex-char fingerprint — an ENABLED pack must be verifiable", ep.SHA256)
+		}
+		if !backendIDRe.MatchString(ep.CompatibleBackend) {
+			add("artifacts.expert_pack.compatible_backend %q is required as a single lowercase backend slug when the pack is enabled (cross-engine compatibility is never claimed)", ep.CompatibleBackend)
+		}
+		if strings.TrimSpace(ep.Version) == "" {
+			add("artifacts.expert_pack.version is required when the pack is enabled")
+		}
+	}
+	return reasons
 }
 
 // PlacementEligibility answers the roadmap's placement gate for one
@@ -309,10 +309,10 @@ func ValidateManifest(m *Manifest) []string {
 // values are unknown (the distinction the roadmap draws between schema
 // validity and placement readiness).
 type PlacementEligibility struct {
-        // Eligible — true iff every placement-required value is known.
-        Eligible bool `json:"eligible"`
-        // Reasons — the named unknowns (empty when eligible).
-        Reasons []string `json:"reasons"`
+	// Eligible — true iff every placement-required value is known.
+	Eligible bool `json:"eligible"`
+	// Reasons — the named unknowns (empty when eligible).
+	Reasons []string `json:"reasons"`
 }
 
 // PlacementEligible evaluates the placement gate:
@@ -330,24 +330,24 @@ type PlacementEligibility struct {
 //
 // Invalid manifests are trivially ineligible (validate first).
 func PlacementEligible(m *Manifest) PlacementEligibility {
-        var reasons []string
-        add := func(format string, args ...interface{}) {
-                reasons = append(reasons, fmt.Sprintf(format, args...))
-        }
+	var reasons []string
+	add := func(format string, args ...interface{}) {
+		reasons = append(reasons, fmt.Sprintf(format, args...))
+	}
 
-        if invalid := ValidateManifest(m); len(invalid) > 0 {
-                return PlacementEligibility{Eligible: false, Reasons: append([]string{"manifest fails schema validation:"}, invalid...)}
-        }
-        switch m.Architecture.Kind {
-        case ArchitectureMoE:
-                if m.Architecture.ExpertBytes == 0 {
-                        add("moe placement requires architecture.expert_bytes > 0 (expert paging sizes the expert store from it)")
-                }
-                if m.Architecture.SharedBytes == 0 {
-                        add("moe placement requires architecture.shared_bytes > 0 (the resident dense footprint of the MoE)")
-                }
-        }
-        return PlacementEligibility{Eligible: len(reasons) == 0, Reasons: reasons}
+	if invalid := ValidateManifest(m); len(invalid) > 0 {
+		return PlacementEligibility{Eligible: false, Reasons: append([]string{"manifest fails schema validation:"}, invalid...)}
+	}
+	switch m.Architecture.Kind {
+	case ArchitectureMoE:
+		if m.Architecture.ExpertBytes == 0 {
+			add("moe placement requires architecture.expert_bytes > 0 (expert paging sizes the expert store from it)")
+		}
+		if m.Architecture.SharedBytes == 0 {
+			add("moe placement requires architecture.shared_bytes > 0 (the resident dense footprint of the MoE)")
+		}
+	}
+	return PlacementEligibility{Eligible: len(reasons) == 0, Reasons: reasons}
 }
 
 // Execution converts a VALID manifest into the normalized ModelExecution
@@ -356,44 +356,44 @@ func PlacementEligible(m *Manifest) PlacementEligibility {
 // carries every remaining unknown as the honest zero (the eligibility
 // reasons live in PlacementEligibility, not re-derived here).
 func (m *Manifest) Execution(manifestPath string) ModelExecution {
-        me := ModelExecution{
-                ID:                   m.ID,
-                Revision:             m.Revision,
-                CheckpointSHA256:     strings.ToLower(m.Checkpoint.SHA256),
-                Architecture:         m.Architecture.Kind,
-                TotalParameters:      m.Architecture.TotalParameters,
-                ActiveParameters:     m.Architecture.ActiveParameters,
-                Quantization:         m.Checkpoint.Quantization,
-                Format:               m.Checkpoint.Format,
-                ContextLimit:         m.Runtime.ContextLimit,
-                KVCacheBytesPerToken: m.Runtime.KVCache.BytesPerTokenEstimate,
-                DenseFootprintBytes:  m.Architecture.SharedBytes, // dense footprint = shared bytes in MoE; for dense models the declared storage is the checkpoint itself
-                ExpertCount:          m.Architecture.ExpertCount,
-                ExpertsPerToken:      m.Architecture.ExpertsPerToken,
-                ExpertBytes:          m.Architecture.ExpertBytes,
-                SharedBytes:          m.Architecture.SharedBytes,
-                SupportedBackends:    append([]string(nil), m.Runtime.SupportedBackends...),
-                RequiredFeatures:     nil,
-                ManifestPath:         manifestPath,
-        }
-        if m.Architecture.Kind == ArchitectureDense {
-                // For a dense model the whole checkpoint is the dense footprint —
-                // shared_bytes is the MoE field; dense models declare total size
-                // through the same channel when they have it, else it stays
-                // unknown (0) and the eligibility gate reports it.
-                me.DenseFootprintBytes = m.Architecture.SharedBytes
-        }
-        if m.Artifacts.ExpertPack.Enabled || m.Artifacts.ExpertPack.Format != "" {
-                me.ExpertPack = &ExpertPackArtifact{
-                        Enabled:           m.Artifacts.ExpertPack.Enabled,
-                        Format:            m.Artifacts.ExpertPack.Format,
-                        Version:           m.Artifacts.ExpertPack.Version,
-                        SHA256:            strings.ToLower(m.Artifacts.ExpertPack.SHA256),
-                        CompatibleBackend: m.Artifacts.ExpertPack.CompatibleBackend,
-                }
-        }
-        if me.SupportedBackends == nil {
-                me.SupportedBackends = []string{}
-        }
-        return me
+	me := ModelExecution{
+		ID:                   m.ID,
+		Revision:             m.Revision,
+		CheckpointSHA256:     strings.ToLower(m.Checkpoint.SHA256),
+		Architecture:         m.Architecture.Kind,
+		TotalParameters:      m.Architecture.TotalParameters,
+		ActiveParameters:     m.Architecture.ActiveParameters,
+		Quantization:         m.Checkpoint.Quantization,
+		Format:               m.Checkpoint.Format,
+		ContextLimit:         m.Runtime.ContextLimit,
+		KVCacheBytesPerToken: m.Runtime.KVCache.BytesPerTokenEstimate,
+		DenseFootprintBytes:  m.Architecture.SharedBytes, // dense footprint = shared bytes in MoE; for dense models the declared storage is the checkpoint itself
+		ExpertCount:          m.Architecture.ExpertCount,
+		ExpertsPerToken:      m.Architecture.ExpertsPerToken,
+		ExpertBytes:          m.Architecture.ExpertBytes,
+		SharedBytes:          m.Architecture.SharedBytes,
+		SupportedBackends:    append([]string(nil), m.Runtime.SupportedBackends...),
+		RequiredFeatures:     nil,
+		ManifestPath:         manifestPath,
+	}
+	if m.Architecture.Kind == ArchitectureDense {
+		// For a dense model the whole checkpoint is the dense footprint —
+		// shared_bytes is the MoE field; dense models declare total size
+		// through the same channel when they have it, else it stays
+		// unknown (0) and the eligibility gate reports it.
+		me.DenseFootprintBytes = m.Architecture.SharedBytes
+	}
+	if m.Artifacts.ExpertPack.Enabled || m.Artifacts.ExpertPack.Format != "" {
+		me.ExpertPack = &ExpertPackArtifact{
+			Enabled:           m.Artifacts.ExpertPack.Enabled,
+			Format:            m.Artifacts.ExpertPack.Format,
+			Version:           m.Artifacts.ExpertPack.Version,
+			SHA256:            strings.ToLower(m.Artifacts.ExpertPack.SHA256),
+			CompatibleBackend: m.Artifacts.ExpertPack.CompatibleBackend,
+		}
+	}
+	if me.SupportedBackends == nil {
+		me.SupportedBackends = []string{}
+	}
+	return me
 }

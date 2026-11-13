@@ -1914,12 +1914,26 @@ authentication, policy, admission or Host Bridge checks.
 
 ## v19.9.0 --- Distributed fabric
 
--   [ ] Node enrollment/authentication implemented.
--   [ ] Per-node identity and scoped authorization enforced.
--   [ ] Remote inventory authenticated and freshness-aware.
--   [ ] Partition/restart reconciliation tested.
--   [ ] Network-aware planning deterministic.
--   [ ] No split-brain reservation behavior.
+-   [x] Node enrollment/authentication implemented. (internal/nodeidentity:
+    invite-based one-time enrollment, per-node sha256-digest credentials,
+    rotation grace window, revocation→quarantine, trusted recovery; the
+    design record is docs/SCARLIX_COMPUTE_FABRIC_PHASE_5_DISTRIBUTED_DESIGN.md)
+-   [x] Per-node identity and scoped authorization enforced. (`node:<id>`
+    principals with the closed scope set; the api authNode gate +
+    agent-side mirror/ownership gates; Tailscale = transport only)
+-   [x] Remote inventory authenticated and freshness-aware. (authenticated
+    + replay-protected pushes into the observational fabric registry;
+    remote window 30s default, STRICTER than the local 60s — decision #6)
+-   [x] Partition/restart reconciliation tested. (the pure
+    fabric.ReconcileNode engine + the §4.1 semantics tests; unreachable =
+    capacity UNKNOWN, reservations retained, reconcile-before-admit)
+-   [x] Network-aware planning deterministic. (planner.FabricPlanner:
+    artifact locality, transfer-cost rule, latency-class gate,
+    data-sensitivity gate; PlanID includes NodeID — determinism proofs +
+    the zero-remote-views ≡ single-node regression pin)
+-   [x] No split-brain reservation behavior. (hub-and-spoke with ONE
+    authoritative ledger — the control-plane reservation Manager; node
+    agents are non-authoritative by construction; design §1, decision #7)
 
 ## v20.0.0 --- Production control plane
 

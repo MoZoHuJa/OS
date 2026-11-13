@@ -278,7 +278,7 @@ func TestManifestFingerprintIdentityBinding(t *testing.T) {
 	}
 	// Cosmetics: digest case + backend order do NOT change identity.
 	cos := base()
-	cos.Checkpoint.SHA256 = strings.Repeat("AB", 32) // uppercase form of the same digest
+	cos.Checkpoint.SHA256 = strings.Repeat("AB", 32)               // uppercase form of the same digest
 	cos.Runtime.SupportedBackends = []string{"beellama", "sglang"} // reordered
 	if got := ManifestFingerprint(cos); got != fp {
 		t.Fatalf("cosmetic changes must not void identity: %s vs %s", got, fp)
@@ -292,8 +292,13 @@ func TestManifestFingerprintIdentityBinding(t *testing.T) {
 		"shared bytes":    func(m *Manifest) { m.Architecture.SharedBytes = 4 << 30 },
 		"context limit":   func(m *Manifest) { m.Runtime.ContextLimit = 16384 },
 		"kv estimate":     func(m *Manifest) { m.Runtime.KVCache.BytesPerTokenEstimate = 8192 },
-		"pack enabled":    func(m *Manifest) { m.Artifacts.ExpertPack.Enabled = true; m.Artifacts.ExpertPack.SHA256 = strings.Repeat("ef", 32); m.Artifacts.ExpertPack.Version = "1"; m.Artifacts.ExpertPack.CompatibleBackend = "sglang" },
-		"new backend":     func(m *Manifest) { m.Runtime.SupportedBackends = []string{"sglang", "beellama", "infer_ssd"} },
+		"pack enabled": func(m *Manifest) {
+			m.Artifacts.ExpertPack.Enabled = true
+			m.Artifacts.ExpertPack.SHA256 = strings.Repeat("ef", 32)
+			m.Artifacts.ExpertPack.Version = "1"
+			m.Artifacts.ExpertPack.CompatibleBackend = "sglang"
+		},
+		"new backend": func(m *Manifest) { m.Runtime.SupportedBackends = []string{"sglang", "beellama", "infer_ssd"} },
 	} {
 		m := base()
 		mutate(m)
