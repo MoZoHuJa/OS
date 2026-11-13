@@ -1,7 +1,7 @@
 # ScarLiX OS v19.9.0 — Release Notes
 
 **Verzia:** 19.9.0
-**Commit:** [`<TBD>`](https://github.com/MoZoHuJa/OS/commit/TBD) — recorded at packaging (the release-notes genre: the hash lands with the tag)
+**Commit:** [`25ff783`](https://github.com/MoZoHuJa/OS/commit/25ff783fa1eae1c0830435a7206115268f15223f) — recorded at packaging (the release-notes genre: the hash lands with the tag)
 **Dátum:** 2026-11-13
 **Typ:** Feature release — Compute Fabric **Phase 5: Distributed Compute Fabric** (roadmap §9)
 **Predchádzajúca verzia:** v19.8.1 (commit `bccb1f8`, tag `v19.8.1` + the post-release acceptance remediation `e1ca753`)
