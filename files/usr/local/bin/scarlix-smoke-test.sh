@@ -2292,22 +2292,22 @@ check_28_ai_runtime_foundation() {
     fi
 
     # --- README surface: the CURRENT-release assertions move with the
-    # release (v19.8.0 now — the check_27 precedent: current surface
+    # release (v19.9.0 now — the check_27 precedent: current surface
     # tracked, historical content stays asserted below); the v19.6.0,
     # v19.6.1, v19.6.2, v19.6.3, v19.6.6, v19.6.7, v19.6.8, v19.7.0,
     # v19.7.1 and v19.7.2 historical surfaces must ALSO stay (the
     # changelog rows + the What's New sections are the releases'
     # permanent record).
-    if ! grep -q 'ScarLiXoS v19.8.1 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.8.1-B36B00' "$readme"; then
-        fail "README banner/h1/badge must say v19.8.1"
+    if ! grep -q 'ScarLiXoS v19.9.0 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.9.0-B36B00' "$readme"; then
+        fail "README banner/h1/badge must say v19.9.0"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.8.1 (KpK remediation — the admission contract completed' "$readme"; then
-        fail "README version line must say v19.8.1 (KpK remediation — the admission contract completed)"
+    if ! grep -q 'Version:\*\* v19.9.0 (Distributed Compute Fabric' "$readme"; then
+        fail "README version line must say v19.9.0 (Distributed Compute Fabric — Phase 5)"
         return
     fi
-    if ! grep -q "\\*\\*v19.8.1\\*\\*" "$readme" || ! grep -q "What's New in v19.8.1" "$readme"; then
-        fail "README must carry the v19.8.1 changelog row + What's New section (the current release's own record)"
+    if ! grep -q "\\*\\*v19.9.0\\*\\*" "$readme" || ! grep -q "What's New in v19.9.0" "$readme"; then
+        fail "README must carry the v19.9.0 changelog row + What's New section (the current release's own record)"
         return
     fi
     if ! grep -q "\\*\\*v19.7.2\\*\\*" "$readme" || ! grep -q "What's New in v19.7.2" "$readme"; then
@@ -4291,15 +4291,15 @@ check_37_unified_inventory_v2() {
         return
     fi
 
-    # --- The version bump + the release documentation (v19.8.1 evolution:
+    # --- The version bump + the release documentation (v19.9.0 evolution:
     # the current-release guard moved with the release — the v19.7.0
     # record assertions below stay as history).
-    if [[ "$(cat "$version_file" | tr -d '[:space:]')" != "19.8.1" ]]; then
-        fail "VERSION must be 19.8.1"
+    if [[ "$(cat "$version_file" | tr -d '[:space:]')" != "19.9.0" ]]; then
+        fail "VERSION must be 19.9.0"
         return
     fi
     for f in "$REPO_DIR/install.sh" "$REPO_DIR/scarlihq/Dockerfile" "$REPO_DIR/scarlihq/cmd/scarlihq/main.go" "$api_rest"; do
-        if ! grep -q '19\.8\.1' "$f"; then
+        if ! grep -q '19\.9\.0' "$f"; then
             fail "version fallback missing in $f (the five-place bump discipline)"
             return
         fi
@@ -5164,7 +5164,6 @@ check_41_kpk_remediation_v19_8_1() {
     local manager_go="$adm_dir/manager.go"
     local ledger_go="$adm_dir/ledger.go"
     local admission_go="$adm_dir/admission.go"
-    local api_adm_go="$REPO_DIR/scarlihq/internal/api/admission.go"
     local api_rest_go="$REPO_DIR/scarlihq/internal/api/rest.go"
     local health_go="$REPO_DIR/scarlihq/internal/backends/infer_ssd/health.go"
     local config_go="$REPO_DIR/scarlihq/internal/backends/infer_ssd/config.go"
@@ -5327,6 +5326,92 @@ check_41_kpk_remediation_v19_8_1() {
     pass "v19.8.1 (KpK remediation — the admission contract completed): the measured random-read floors are enforced at the FINAL gate through the ONE shared predicate (storage.CheckMeasuredFloors — sequential + random IOPS + p95 + the age bound; admission AND QualifySSD call it, the drift hole is closed with named refusals storage-no-read-profile/-stale/-insufficient), the verification records are BOUND to the manifest identity (modelmeta.ManifestFingerprint — canonical SHA-256 over every identity-bearing field, recorded at verification, re-matched by BOTH gates with the named mismatch refusals; a pre-v19.8.1 record is refused by name), the KV cache is counted EXACTLY once (VRAMBytes = shared + reserve, KV rides KVCacheBytes, the gate adds it once, Validate refuses KV-without-GPU), the idempotency replay is bound to principal + request fingerprint INSIDE the atomic transaction (the TOCTOU closed; a mismatched key is the named idempotency-conflict), the ACTIVE lease lifecycle is complete (Renew + ConfirmStarted + the ADMIN routes; ACTIVE never expires by lease, still counts capacity, crash recovery covers both), every operator-manifest loader is STRICT (KnownFields + single-document BY NAME), and the SK audit's recommendations are in code (the local-only prober, the benchmark age bound, the stale-SSD regression); the remediation's own regression suites exist for every finding; 'LLM navrhuje, planner vybera, admission rezervuje' — and every stage now verifies its OWN conditions independently"
 }
 
+# check_42 — v19.9.0 (Compute Fabric Phase 5): the distributed fabric.
+# The release's own source-of-record assertions (added post-release by
+# the CI-catch remediation — the every-release-evolves-its-check
+# discipline restored): the node identity & trust package (§9.2 —
+# reachability is not trust, Tailscale is transport, NEVER
+# authorization), the observational fabric registry + the PURE
+# ReconcileNode engine (§9.3/§9.5), the network-aware FabricPlanner
+# (§9.4 — the transfer-cost rule operationalized), the node agent's
+# six typed operations with the reservation mirror, the admin/agent
+# HTTP surfaces, the design doc with the §19 decisions closed
+# (owner + evidence + date + rationale), and the CI race extensions.
+check_42_distributed_fabric_v19_9_0() {
+    echo "--- [42] v19.9.0 (Compute Fabric Phase 5 — roadmap §9): node identity & trust + the fabric registry/reconciliation + the network-aware planner + the node agent boundary + the admin/agent HTTP surfaces (the release's own check — restored by the post-release remediation)"
+    local nid_types="$REPO_DIR/scarlihq/internal/nodeidentity/types.go"
+    local nid_registry="$REPO_DIR/scarlihq/internal/nodeidentity/registry.go"
+    local nid_replay="$REPO_DIR/scarlihq/internal/nodeidentity/replay.go"
+    local fab_registry="$REPO_DIR/scarlihq/internal/fabric/registry.go"
+    local fab_reconcile="$REPO_DIR/scarlihq/internal/fabric/reconcile.go"
+    local agent_service="$REPO_DIR/scarlihq/internal/nodeagent/service.go"
+    local agent_main="$REPO_DIR/scarlihq/cmd/scarlix-node-agent/main.go"
+    local planner_multi="$REPO_DIR/scarlihq/internal/planner/multinode.go"
+    local api_fabric="$REPO_DIR/scarlihq/internal/api/fabric.go"
+    local design_doc="$REPO_DIR/docs/SCARLIX_COMPUTE_FABRIC_PHASE_5_DISTRIBUTED_DESIGN.md"
+    local rel_notes="$REPO_DIR/docs/RELEASE_NOTES_v19.9.0.md"
+    local ci_yml="$REPO_DIR/.github/workflows/ci.yml"
+
+    for f in "$nid_types" "$nid_registry" "$nid_replay" "$fab_registry" "$fab_reconcile" \
+        "$agent_service" "$agent_main" "$planner_multi" "$api_fabric" "$design_doc" "$rel_notes"; do
+        if [[ ! -f "$f" ]]; then
+            fail "v19.9.0 source missing: $f (the distributed fabric surface)"
+            return
+        fi
+    done
+
+    # §9.2 — the trust rule IN THE TYPE LAYER: reachability is not trust.
+    if ! grep -q 'A node is NOT trusted because it is reachable' "$nid_types"; then
+        fail "the §9.2 reachability-is-not-trust rule must stand in the node identity types"
+        return
+    fi
+    if ! grep -q 'StatusQuarantined' "$nid_types"; then
+        fail "revocation must be QUARANTINE (new work refused, cleanup only via trusted recovery)"
+        return
+    fi
+    # §9.2 — the replay guard exists as its own file (the ±90s freshness window).
+    if ! grep -qi 'replay' "$nid_replay"; then
+        fail "the replay guard (±90s freshness + per-node bounded LRU) must exist"
+        return
+    fi
+    # §9.3/§9.5 — the PURE deterministic reconciliation engine.
+    if ! grep -q 'func ReconcileNode' "$fab_reconcile"; then
+        fail "the deterministic ReconcileNode engine must exist (typed decisions, releases only through the trusted path)"
+        return
+    fi
+    # §9.3 — the agent's reservation MIRROR (the rogue-start closure at the node itself).
+    if ! grep -q 'reservation mirror' "$agent_service"; then
+        fail "the node agent must carry the reservation mirror (a start without a live ledger reservation is refused)"
+        return
+    fi
+    # §9.4 — the transfer-cost rule operationalized (unknown size fails closed).
+    if ! grep -q 'MaxArtifactTransferBytes' "$planner_multi"; then
+        fail "the network-aware planner must carry the transfer-cost bound (MaxArtifactTransferBytes)"
+        return
+    fi
+    # The HTTP surfaces: the admin set + the agent set (decision #10's shape).
+    if ! grep -q 'func (h \*Handler) fabricNodesRoute' "$api_fabric"; then
+        fail "the admin fabric surface must exist (list/invite/revoke/rotate/reactivate/reconciliation)"
+        return
+    fi
+    if ! grep -q 'func (h \*Handler) fabricAgentEnroll' "$api_fabric"; then
+        fail "the agent enroll surface must exist (the invite secret IS the authorization)"
+        return
+    fi
+    # The §19 decisions closed with owner+evidence+date+rationale.
+    if ! grep -q 'Resolved open decisions' "$design_doc" || ! grep -q '#7 Authoritative allocation' "$design_doc"; then
+        fail "the design doc must record the §19 decisions closed (owner + evidence + date + rationale)"
+        return
+    fi
+    # The CI race list extended with the new packages.
+    if ! grep -q 'internal/nodeidentity ./internal/fabric ./internal/nodeagent' "$ci_yml"; then
+        fail "the CI race list must include nodeidentity/fabric/nodeagent"
+        return
+    fi
+
+    pass "v19.9.0 (Compute Fabric Phase 5 — the distributed fabric): node identity & trust (§9.2: invite-based admin-approved enrollment, per-node credentials issued EXACTLY once with sha256-digest-only persistence, rotation grace, revocation = QUARANTINE, the closed scope set, the replay guard — Tailscale is transport, NEVER authorization), the observational fabric registry (§9.3/§9.5: unreachable = capacity UNKNOWN, the last snapshot RETAINED, reservations HELD — never recycled, never forgotten) + the PURE deterministic ReconcileNode engine (typed decisions, releases only through the trusted reservation-manager path), the network-aware FabricPlanner (§9.4: artifact locality, the transfer-cost rule, latency classes, data sensitivity, the zero-remote ≡ single-node regression pin), the node agent's six typed operations with the reservation mirror, and the admin/agent HTTP surfaces — the release's own check restored by the post-release remediation (the CI catch: the version bumps the release missed)"
+}
+
 # ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
 # execution — the summary reports the number of checks actually executed.
@@ -5373,6 +5458,7 @@ SMOKE_CHECKS=(
     check_39_backend_capability_planner_v19_7_2
     check_40_inferssd_expert_pack_v19_8_0
     check_41_kpk_remediation_v19_8_1
+    check_42_distributed_fabric_v19_9_0
 )
 
 run_check() {

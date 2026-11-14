@@ -203,3 +203,57 @@ Vykonané na release kandidátovi (Go 1.23.4, čistý strom):
   pripravený (rozhranie + report-only fallback), plné zapojenie release cesty
   patrí do fázy 6 production control plane.
 - Artifact staging (transfer) sa modeluje, nevykonáva (§4).
+
+---
+
+## Post-release note: the CI catch — the version bumps the release missed + the Pi-Bolt installer pin drift (external, remediated on main)
+
+The `CI` workflow on the v19.9.0 tag failed with a REAL finding, caught
+exactly as designed. Four smoke checks and one shellcheck error exposed
+that the v19.9.0 release act itself was INCOMPLETE at the edges the
+Go-level verification does not cover:
+
+1. **`install.sh VERSION` lagged the release** (`19.8.1` while the
+   VERSION file says `19.9.0` — the five-place bump discipline missed
+   one place).
+2. **`scarlihq/Dockerfile ARG SCARLIX_VERSION` lagged the release**
+   (the v19.0.5 P2 header-drift precedent: the header, the ARG, VERSION,
+   main.go and rest.go move TOGETHER).
+3. **The smoke test's own current-release expectations lagged the
+   release** — check_05's README banner/badge/version-line assertions
+   and the VERSION-file guard still expected v19.8.1 (the
+   every-release-moves-the-guard discipline missed), so the checks
+   failed against a correctly-bumped README/VERSION.
+4. **The release's own check was missing** — the every release evolves
+   its check inventory discipline (check_40 for v19.8.0, check_41 for
+   v19.8.1) was not honored: no check_42 existed for the v19.9.0
+   fabric surface.
+5. **shellcheck SC2034** — `api_adm_go`, a check_41 fixture variable
+   declared but never used (a new shellcheck 0.10 warning surface on
+   the already-shipped script).
+
+The `Pin Freshness` job on the tag ALSO failed — the second EXTERNAL
+upstream drift of the Pi-Bolt installer (the v19.8.0 precedent, KPK-
+19.2.13-P2-01 working as designed): the live installer SHA-256 changed
+from the shipped pin
+(`91918786f9341ef7d5ef1bf1db6fabeaffdf0434835c9412055bbc5c5fedac39`,
+last verified 2026-11-08) to
+`79981303f2d11eb8c52a69d2a3ce2fb01718986926950a98a27b8384897440dd`.
+The new installer was downloaded and inspected: the documented
+structure unchanged (release download + checksum + signature
+verification, npm/GitHub sources only, no curl|sh patterns) — the pin
+file recomputed and the "last verified" dates in README.md and
+docs/SCARLIX_SECURITY_MAP.md moved to 2026-11-14.
+
+Remediated on main (this commit): install.sh + Dockerfile bumped to
+19.9.0, the smoke test's current-release expectations moved to
+v19.9.0, **check_42 added** (the v19.9.0 fabric surface's own check —
+node identity & trust §9.2 markers, the ReconcileNode engine, the
+transfer-cost bound, the agent reservation mirror, the admin/agent
+HTTP surfaces, the §19 decisions record, the CI race extensions),
+the unused check_41 variable removed (SC2034), and the pin refreshed.
+The Go-level verification claims in §5 stand (the CI `go-build` job —
+vet/gofmt/build/test/race — was green on the tag); what the release
+act missed was exactly the shell-level release discipline. The
+v19.3.2 post-release-note precedent; the v19.8.0 pin-drift
+precedent.
