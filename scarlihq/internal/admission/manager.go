@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -78,6 +79,35 @@ type SnapshotSource interface {
 	Current() (*inventory.InventorySnapshotV2, error)
 }
 
+// NodeSnapshots resolves a NODE's verified inventory snapshot for the
+// admission gates (v20.0.0, roadmap §10 "authenticated single- and
+// multi-node execution" — the Phase 5 design's named Phase 6 residual,
+// closed): a node-tagged admission's capacity gates run against THAT
+// node's VERIFIED fabric observation — never a locally-built guess. The
+// seam enforces the §4.1 admission semantics (quarantined → unreachable
+// → no-snapshot → stale-remote-window) and returns the typed
+// NodeSnapshotRefusal; FAIL-CLOSED: attaching the seam is the operator's
+// fabric act (the production adapter maps the fabric Registry's guards
+// onto the typed refusals), and node requests without it refuse BY NAME.
+type NodeSnapshots interface {
+	// SnapshotFor returns the node's CURRENT verified snapshot at now, or
+	// a typed refusal (node-unknown / node-quarantined / node-unreachable
+	// / node-inventory-absent / node-inventory-stale — the Reason* codes).
+	SnapshotFor(nodeID string, now time.Time) (*inventory.InventorySnapshotV2, error)
+}
+
+// NodeSnapshotRefusal is the seam's typed named-refusal (the code is one
+// of the admission Reason* node constants; the manager surfaces it as
+// the decision's reason_code verbatim — never a guessed capacity).
+type NodeSnapshotRefusal struct {
+	// Code — one of ReasonNode* (the machine-readable refusal).
+	Code string
+	// Detail — the numbers and identities behind the refusal.
+	Detail string
+}
+
+func (e *NodeSnapshotRefusal) Error() string { return e.Code + ": " + e.Detail }
+
 // ModelSource resolves manifests and RECORDED artifact verifications
 // (production: the models.d manifests + the verification store; tests:
 // fixtures).
@@ -97,6 +127,11 @@ type ModelSource interface {
 type Manager struct {
 	policy    Policy
 	snapshots SnapshotSource
+	// nodeSnaps — the per-node snapshot seam (v20.0.0): nil until
+	// SetNodeSnapshots attaches it (the operator's fabric act — the
+	// production adapter maps the fabric registry's §4.1 guards onto the
+	// typed refusals); node-tagged admissions refuse BY NAME without it.
+	nodeSnaps NodeSnapshots
 	models    ModelSource
 	ledger    *Ledger
 	now       func() time.Time
@@ -113,6 +148,34 @@ func NewManager(policy Policy, snapshots SnapshotSource, models ModelSource, led
 
 // SetNow overrides the clock (tests).
 func (m *Manager) SetNow(now func() time.Time) { m.now = now }
+
+// HasNodeSnapshots reports whether the per-node seam is attached (the
+// v20.0.0 control-plane capability row: node-tagged admission is LIVE
+// only when the fabric act happened — the resources/controlplane views
+// label the surface honestly instead of guessing).
+func (m *Manager) HasNodeSnapshots() bool { return m.nodeSnaps != nil }
+
+// SetNodeSnapshots attaches the per-node snapshot seam (v20.0.0, the
+// production fabric act — main.go wires the fabric Registry adapter once
+// BOTH the admission gate and the distributed fabric are enabled). The
+// seam is deliberately NOT a constructor parameter: the admission gate
+// and the fabric are independently opt-in and either may be constructed
+// first; nil detaches (the node-tagged path refuses BY NAME again).
+func (m *Manager) SetNodeSnapshots(ns NodeSnapshots) { m.nodeSnaps = ns }
+
+// normalizeNodeID maps the request's node reference onto the routing
+// key: empty or "local" (case/whitespace-insensitive) means the control
+// plane's own host; anything else is the enrolled node identity. A
+// pre-v20.0.0 ledger record's empty NodeID normalizes to "local" the
+// same way — the totals key on the NORMALIZED value, so two nodes may
+// carry the same GPU UUID without colliding.
+func normalizeNodeID(id string) string {
+	v := strings.TrimSpace(strings.ToLower(id))
+	if v == "" || v == "local" {
+		return "local"
+	}
+	return v
+}
 
 // Policy returns the active policy (operator surface).
 func (m *Manager) Policy() Policy { return m.policy }
@@ -172,9 +235,30 @@ func (m *Manager) Admit(req AdmissionRequest) AdmissionDecision {
 	// TOCTOU (two concurrent identical admits could both pass it and
 	// double-admit), and the replay now requires an EXACT principal +
 	// request-fingerprint match, a mismatch being the NAMED conflict.)
-	snap, err := m.snapshots.Current()
-	if err != nil {
-		return refuse(base, ReasonSnapshotUnavailable, "inventory snapshot unavailable: "+err.Error())
+	// v20.0.0 (roadmap §10): the snapshot ROUTES by the request's node —
+	// "local" (or empty) reads the LOCAL source exactly as v19.9.0 did (the
+	// decision path byte-identical); a node-tagged request demands the
+	// seam (the attached node source; a node request without it refuses
+	// BY NAME) and runs against THAT node's VERIFIED fabric observation,
+	// the seam's named refusals surfaced verbatim as reason codes.
+	node := normalizeNodeID(req.NodeID)
+	var snap *inventory.InventorySnapshotV2
+	var err error
+	if node == "local" {
+		snap, err = m.snapshots.Current()
+		if err != nil {
+			return refuse(base, ReasonSnapshotUnavailable, "inventory snapshot unavailable: "+err.Error())
+		}
+	} else if m.nodeSnaps == nil {
+		return refuse(base, ReasonNodeSourceUnconfigured, fmt.Sprintf(
+			"node %q: the fabric node snapshot source is not attached (both SCARLIHQ_ADMISSION_ENABLED and SCARLIHQ_FABRIC_ENABLED are required — node capacity is NEVER guessed from the local host's snapshot; attach the seam or drop node_id)",
+			node))
+	} else if snap, err = m.nodeSnaps.SnapshotFor(node, now); err != nil {
+		var refusal *NodeSnapshotRefusal
+		if errors.As(err, &refusal) && refusal.Code != "" {
+			return refuse(base, refusal.Code, fmt.Sprintf("node %q: %s", node, refusal.Detail))
+		}
+		return refuse(base, ReasonNodeSnapshotUnavailable, fmt.Sprintf("node %q snapshot unavailable: %s", node, err.Error()))
 	}
 	base.SnapshotID = snap.SnapshotID
 	if !snap.FreshWithin(m.policy.MaxSnapshotAge) {
@@ -383,6 +467,21 @@ func totalsFromHeld(held []Record) heldTotals {
 	return t
 }
 
+// nodeHeld filters the ledger's held records to ONE node's (v20.0.0): the
+// records whose NORMALIZED NodeID matches (a pre-v20.0.0 record's empty
+// NodeID normalizes to "local"). Two nodes carrying the same GPU UUID
+// never collide — the per-node totals key on this filter, and the ledger
+// itself stays ONE authoritative store.
+func nodeHeld(held []Record, node string) []Record {
+	out := make([]Record, 0, len(held))
+	for _, r := range held {
+		if normalizeNodeID(r.NodeID) == node {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // reserveAtomic performs the whole dimension check + insert + persist in
 // ONE ledger transaction (any failure reserves NOTHING). v19.8.1: the
 // transaction opens with the idempotency replay check (inside the lock —
@@ -407,7 +506,14 @@ func (m *Manager) reserveAtomic(req AdmissionRequest, snap *inventory.InventoryS
 	)
 
 	err := m.ledger.withLock(func(view *ledgerView) error {
-		held := totalsFromHeld(view.held())
+		// v20.0.0 (roadmap §10): the capacity totals are PER-NODE — the
+		// ledger is ONE authoritative store, but two nodes may carry the
+		// same GPU UUID (or the same device id) without colliding: a
+		// local hold never consumes a remote node's allocatable and vice
+		// versa (the hub-and-spoke §1 decision — the ledger is the single
+		// authority, the node tag is the routing key).
+		node := normalizeNodeID(req.NodeID)
+		held := totalsFromHeld(nodeHeld(view.held(), node))
 		assignment = ResourceAssignment{}
 		failCode, failExpl = ReasonOK, ""
 
@@ -574,6 +680,7 @@ func (m *Manager) reserveAtomic(req AdmissionRequest, snap *inventory.InventoryS
 			Principal:          req.Principal,
 			ModelID:            req.ModelID,
 			BackendID:          req.BackendID,
+			NodeID:             node,
 			SnapshotID:         snap.SnapshotID,
 			Requirements:       req.Requirements,
 			Assignment:         assignment,
@@ -762,12 +869,14 @@ func requestFingerprint(req AdmissionRequest) string {
 		RequestID    string         `json:"request_id"`
 		ModelID      string         `json:"model_id"`
 		BackendID    string         `json:"backend_id"`
+		NodeID       string         `json:"node_id"`
 		Requirements ResourceVector `json:"requirements"`
 	}{
 		Principal:    req.Principal,
 		RequestID:    req.RequestID,
 		ModelID:      req.ModelID,
 		BackendID:    req.BackendID,
+		NodeID:       normalizeNodeID(req.NodeID),
 		Requirements: req.Requirements,
 	})
 	if err != nil {

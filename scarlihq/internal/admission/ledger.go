@@ -80,6 +80,16 @@ type Record struct {
 	// ClosedAt/CloseReason — set when the record left HELD/ACTIVE.
 	ClosedAt    *time.Time `json:"closed_at,omitempty"`
 	CloseReason string     `json:"close_reason,omitempty"`
+	// NodeID — the node whose capacity this hold reserves against
+	// (v20.0.0, roadmap §10 "authenticated single- and multi-node
+	// execution"): "local" (or empty — a pre-v20.0.0 record) means the
+	// control plane's own host; an enrolled node identity means the hold
+	// reserves THAT node's verified capacity while staying a row in THE
+	// one authoritative control-plane ledger (the Phase 5 design's §1
+	// hub-and-spoke decision). The per-node capacity totals key on the
+	// NORMALIZED value — two nodes may carry the same GPU UUID without
+	// colliding.
+	NodeID string `json:"node_id,omitempty"`
 }
 
 // LedgerRetained returns the audit-trail retention bound (tests).

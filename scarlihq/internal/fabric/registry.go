@@ -292,3 +292,36 @@ func (r *Registry) AdmissionGuard(nodeID string, now time.Time) error {
 
 // RemoteSnapshotMaxAge exposes the configured remote freshness window.
 func (r *Registry) RemoteSnapshotMaxAge() time.Duration { return r.remoteAge }
+
+// SnapshotFor returns the node's CURRENT verified snapshot at now, or a
+// NAMED sentinel error (v20.0.0, roadmap §10 — the admission Manager's
+// per-node seam's fabric side): the §4.1 admission semantics
+// (quarantined → unreachable → no-snapshot → stale-remote-window)
+// evaluated under ONE lock — the guard and the observation cannot drift
+// apart mid-read. The registry deliberately satisfies the admission
+// seam's SHAPE structurally; the api-layer adapter maps these sentinel
+// errors onto the admission package's typed refusals (the vocabulary
+// translation lives in ONE place, next to the HTTP surfaces that own
+// both packages' imports).
+func (r *Registry) SnapshotFor(nodeID string, now time.Time) (*inventory.InventorySnapshotV2, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	st, ok := r.nodes[nodeID]
+	if !ok {
+		return nil, fmt.Errorf("%w (node %s)", ErrUnknownNode, nodeID)
+	}
+	obs := st.observations
+	if !r.status.NodeActive(nodeID) {
+		return nil, fmt.Errorf("%w (node %s)", ErrNodeQuarantined, nodeID)
+	}
+	if !obs.Reachable {
+		return nil, fmt.Errorf("%w (node %s)", ErrNodeUnreachable, nodeID)
+	}
+	if obs.Snapshot == nil {
+		return nil, fmt.Errorf("%w (node %s)", ErrInventoryAbsent, nodeID)
+	}
+	if age := now.Sub(obs.Snapshot.ObservedAt); age > r.remoteAge {
+		return nil, fmt.Errorf("%w (node %s: snapshot %s is %s old, bound %s)", ErrInventoryStale, nodeID, obs.Snapshot.SnapshotID, age.Truncate(time.Second), r.remoteAge)
+	}
+	return obs.Snapshot, nil
+}

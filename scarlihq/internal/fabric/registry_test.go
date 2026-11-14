@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -253,5 +254,72 @@ func TestReconcileNodeEmptyInputs(t *testing.T) {
 	agent := []AgentExecutionRecord{{AllocationID: "x", State: AgentExecStopped, ObservedAt: time.Now()}}
 	if got := ReconcileNode(agent, nil); len(got) != 0 {
 		t.Fatalf("stopped agent work with no ledger needs no decisions, got %+v", got)
+	}
+}
+
+// TestSnapshotForGuardOrder (v20.0.0): the per-node seam's fabric side —
+// the §4.1 semantics under ONE lock, each refusal the NAMED sentinel in
+// the documented order (unknown → quarantined → unreachable → absent →
+// stale), and the verified snapshot returned exactly when all guards
+// pass.
+func TestSnapshotForGuardOrder(t *testing.T) {
+	reg, clock, status := newTestRegistry(t)
+	now := clock.Now()
+
+	// Unknown node: the first guard.
+	if _, err := reg.SnapshotFor("node-z", now); !errors.Is(err, ErrUnknownNode) {
+		t.Fatalf("unknown node must be ErrUnknownNode, got %v", err)
+	}
+
+	// Quarantined: observed reachable AND fresh, still refused — the
+	// identity layer's status outranks the observational record.
+	if err := reg.ObserveInventory("node-a", testSnapshot("s1", now), "A"); err != nil {
+		t.Fatal(err)
+	}
+	status.active["node-a"] = false
+	if _, err := reg.SnapshotFor("node-a", now); !errors.Is(err, ErrNodeQuarantined) {
+		t.Fatalf("quarantined node must be ErrNodeQuarantined, got %v", err)
+	}
+	status.active["node-a"] = true
+
+	// Unreachable: capacity UNKNOWN, admission refused (the retained
+	// snapshot is never served as current capacity).
+	reg.MarkUnreachable("node-a")
+	if _, err := reg.SnapshotFor("node-a", now); !errors.Is(err, ErrNodeUnreachable) {
+		t.Fatalf("unreachable node must be ErrNodeUnreachable, got %v", err)
+	}
+
+	// Absent: reachable again, but the observation's snapshot is gone.
+	if err := reg.ObserveInventory("node-a", testSnapshot("s2", now), "A"); err != nil {
+		t.Fatal(err)
+	}
+	reg.mu.Lock()
+	st := reg.nodes["node-a"]
+	st.observations.Snapshot = nil
+	reg.mu.Unlock()
+	if _, err := reg.SnapshotFor("node-a", now); !errors.Is(err, ErrInventoryAbsent) {
+		t.Fatalf("absent snapshot must be ErrInventoryAbsent, got %v", err)
+	}
+
+	// Stale: the STRICTER remote window (default 30s) — a snapshot 31s
+	// old is refused even though the local policy would allow 60s.
+	if err := reg.ObserveInventory("node-a", testSnapshot("s3", now.Add(-31*time.Second)), "A"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.SnapshotFor("node-a", now); !errors.Is(err, ErrInventoryStale) {
+		t.Fatalf("31s-old remote snapshot must be ErrInventoryStale, got %v", err)
+	}
+
+	// Fresh + reachable + active: the EXACT verified snapshot returns.
+	fresh := testSnapshot("s4", now.Add(-29*time.Second))
+	if err := reg.ObserveInventory("node-a", fresh, "A"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := reg.SnapshotFor("node-a", now)
+	if err != nil {
+		t.Fatalf("fresh snapshot must return, got %v", err)
+	}
+	if got.SnapshotID != "s4" {
+		t.Fatalf("the node's own snapshot must return verbatim, got %s", got.SnapshotID)
 	}
 }

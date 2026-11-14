@@ -30,7 +30,7 @@ import (
 
 // Version is the fallback default for /api/health when Handler has no version passed.
 // v18.2 P1: main.go now passes Version to NewHandler — this is only used if not set.
-var Version = "19.9.0"
+var Version = "20.0.0"
 
 // v18.7.3 P1: Short-lived WS ticket store (replaces permanent token in URL).
 // Tickets are 32-byte random hex strings, valid for 30s, single-use.
@@ -323,6 +323,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// remote views ≡ the single-node decision — the regression
 	// pin; the route is unchanged, the surface is the same).
 	mux.HandleFunc("/api/compute/plan", h.auth(h.planRoute))
+	// v20.0.0 (roadmap §10.2): the control-plane resource accounting —
+	// the UI contract with the CLOSED value-label vocabulary
+	// (observed/estimated/reserved/allocatable/unknown/stale). READ gate:
+	// the view reserves nothing (observation grade, like the inventory).
+	mux.HandleFunc("/api/compute/resources", h.auth(h.resourcesRoute))
+	// v20.0.0 (roadmap §10.1): the capability summary — which surface is
+	// configured, the fabric census, the admission counts, the windows.
+	mux.HandleFunc("/api/controlplane", h.auth(h.controlplaneRoute))
 	// v19.9.0 (Compute Fabric Phase 5, roadmap §9.2/§9.3): the
 	// distributed fabric control-plane surface. ADMIN routes:
 	// the node registry (list/invite/revoke/rotate/reactivate) +

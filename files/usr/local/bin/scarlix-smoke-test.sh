@@ -2298,16 +2298,16 @@ check_28_ai_runtime_foundation() {
     # v19.7.1 and v19.7.2 historical surfaces must ALSO stay (the
     # changelog rows + the What's New sections are the releases'
     # permanent record).
-    if ! grep -q 'ScarLiXoS v19.9.0 · Obsidian Lattice' "$readme" || ! grep -q 'version-v19.9.0-B36B00' "$readme"; then
-        fail "README banner/h1/badge must say v19.9.0"
+    if ! grep -q 'ScarLiXoS v20.0.0 · Obsidian Lattice' "$readme" || ! grep -q 'version-v20.0.0-B36B00' "$readme"; then
+        fail "README banner/h1/badge must say v20.0.0"
         return
     fi
-    if ! grep -q 'Version:\*\* v19.9.0 (Distributed Compute Fabric' "$readme"; then
-        fail "README version line must say v19.9.0 (Distributed Compute Fabric — Phase 5)"
+    if ! grep -q 'Version:\*\* v20.0.0 (Unified Production Control Plane' "$readme"; then
+        fail "README version line must say v20.0.0 (Unified Production Control Plane — Phase 6)"
         return
     fi
-    if ! grep -q "\\*\\*v19.9.0\\*\\*" "$readme" || ! grep -q "What's New in v19.9.0" "$readme"; then
-        fail "README must carry the v19.9.0 changelog row + What's New section (the current release's own record)"
+    if ! grep -q "\\*\\*v20.0.0\\*\\*" "$readme" || ! grep -q "What's New in v20.0.0" "$readme"; then
+        fail "README must carry the v20.0.0 changelog row + What's New section (the current release's own record)"
         return
     fi
     if ! grep -q "\\*\\*v19.7.2\\*\\*" "$readme" || ! grep -q "What's New in v19.7.2" "$readme"; then
@@ -4294,12 +4294,12 @@ check_37_unified_inventory_v2() {
     # --- The version bump + the release documentation (v19.9.0 evolution:
     # the current-release guard moved with the release — the v19.7.0
     # record assertions below stay as history).
-    if [[ "$(cat "$version_file" | tr -d '[:space:]')" != "19.9.0" ]]; then
-        fail "VERSION must be 19.9.0"
+    if [[ "$(cat "$version_file" | tr -d '[:space:]')" != "20.0.0" ]]; then
+        fail "VERSION must be 20.0.0"
         return
     fi
     for f in "$REPO_DIR/install.sh" "$REPO_DIR/scarlihq/Dockerfile" "$REPO_DIR/scarlihq/cmd/scarlihq/main.go" "$api_rest"; do
-        if ! grep -q '19\.9\.0' "$f"; then
+        if ! grep -q '20\.0\.0' "$f"; then
             fail "version fallback missing in $f (the five-place bump discipline)"
             return
         fi
@@ -5412,6 +5412,125 @@ check_42_distributed_fabric_v19_9_0() {
     pass "v19.9.0 (Compute Fabric Phase 5 — the distributed fabric): node identity & trust (§9.2: invite-based admin-approved enrollment, per-node credentials issued EXACTLY once with sha256-digest-only persistence, rotation grace, revocation = QUARANTINE, the closed scope set, the replay guard — Tailscale is transport, NEVER authorization), the observational fabric registry (§9.3/§9.5: unreachable = capacity UNKNOWN, the last snapshot RETAINED, reservations HELD — never recycled, never forgotten) + the PURE deterministic ReconcileNode engine (typed decisions, releases only through the trusted reservation-manager path), the network-aware FabricPlanner (§9.4: artifact locality, the transfer-cost rule, latency classes, data sensitivity, the zero-remote ≡ single-node regression pin), the node agent's six typed operations with the reservation mirror, and the admin/agent HTTP surfaces — the release's own check restored by the post-release remediation (the CI catch: the version bumps the release missed)"
 }
 
+# check_43 — v20.0.0 (Compute Fabric Phase 6): the unified production
+# control plane. The release's own source-of-record assertions: the
+# node-tagged admission contract (the seam + the per-node ledger tag +
+# the named refusal vocabulary), the production ledger view, the
+# resource-accounting surface with the CLOSED label vocabulary (the
+# §10.2 DoD row), the capability census, the wiring, and the operator
+# runbook with the acceptance matrices (§10.3).
+check_43_production_control_plane_v20_0_0() {
+    echo "--- [43] v20.0.0 (Compute Fabric Phase 6 — roadmap §10): node-tagged admission + the production ledger view + the control-plane surfaces (resource accounting with the label contract + the capability census) + the operator runbook"
+    local adm_admission="$REPO_DIR/scarlihq/internal/admission/admission.go"
+    local adm_manager="$REPO_DIR/scarlihq/internal/admission/manager.go"
+    local adm_ledger="$REPO_DIR/scarlihq/internal/admission/ledger.go"
+    local adm_node_test="$REPO_DIR/scarlihq/internal/admission/admission_node_test.go"
+    local fab_registry="$REPO_DIR/scarlihq/internal/fabric/registry.go"
+    local api_fabric="$REPO_DIR/scarlihq/internal/api/fabric.go"
+    local api_resources="$REPO_DIR/scarlihq/internal/api/resources.go"
+    local api_controlplane="$REPO_DIR/scarlihq/internal/api/controlplane.go"
+    local api_rest="$REPO_DIR/scarlihq/internal/api/rest.go"
+    local main_go="$REPO_DIR/scarlihq/cmd/scarlihq/main.go"
+    local design_doc="$REPO_DIR/docs/SCARLIX_COMPUTE_FABRIC_PHASE_6_CONTROL_PLANE_DESIGN.md"
+    local runbook="$REPO_DIR/docs/OPERATOR_RUNBOOK_v20.0.0.md"
+    local rel_notes="$REPO_DIR/docs/RELEASE_NOTES_v20.0.0.md"
+
+    for f in "$adm_admission" "$adm_manager" "$adm_ledger" "$adm_node_test"         "$fab_registry" "$api_fabric" "$api_resources" "$api_controlplane" "$api_rest"         "$main_go" "$design_doc" "$runbook" "$rel_notes"; do
+        if [[ ! -f "$f" ]]; then
+            fail "v20.0.0 source missing: $f (the production control plane surface)"
+            return
+        fi
+    done
+
+    # The node-tagged admission contract: the request field + the named
+    # refusal vocabulary + the per-node seam + the ledger tag.
+    if ! grep -q 'NodeID string `json:"node_id,omitempty"`' "$adm_admission"; then
+        fail "the admission request must carry the additive node_id field"
+        return
+    fi
+    if ! grep -q 'ReasonNodeSourceUnconfigured = "node-source-unconfigured"' "$adm_admission"; then
+        fail "the fail-closed node-source refusal must exist BY NAME (node capacity is never guessed locally)"
+        return
+    fi
+    if ! grep -q 'type NodeSnapshots interface' "$adm_manager"; then
+        fail "the per-node snapshot seam must exist (the fabric act the admission gates route through)"
+        return
+    fi
+    if ! grep -q 'func (m \*Manager) SetNodeSnapshots' "$adm_manager"; then
+        fail "the seam attachment act must exist (the operator's fabric wiring)"
+        return
+    fi
+    if ! grep -q 'NodeID string `json:"node_id,omitempty"`' "$adm_ledger"; then
+        fail "the ledger record must carry the node tag (the routing key on the ONE authority)"
+        return
+    fi
+    if ! grep -q 'nodeHeld' "$adm_manager"; then
+        fail "the per-node capacity totals filter must exist (two nodes, one GPU UUID, zero collision)"
+        return
+    fi
+    # The fabric side: the §4.1 guards under one lock.
+    if ! grep -q 'func (r \*Registry) SnapshotFor' "$fab_registry"; then
+        fail "the fabric registry must expose SnapshotFor (the one-lock §4.1 guards)"
+        return
+    fi
+    # The adapters + the production ledger view.
+    if ! grep -q 'type FabricNodeSnapshots struct' "$api_fabric"; then
+        fail "the sentinel→refusal adapter must exist (the vocabulary translation in one place)"
+        return
+    fi
+    if ! grep -q 'type FabricAdmissionLedger struct' "$api_fabric"; then
+        fail "the PRODUCTION ledger view must exist (the v19.9.0 report-only residual closed)"
+        return
+    fi
+    # The resource accounting: the CLOSED label vocabulary + the
+    # never-a-guess rules.
+    if ! grep -q 'LabelAllocatable *= "allocatable"' "$api_resources"; then
+        fail "the closed label vocabulary must exist as constants (the §10.2 machine contract)"
+        return
+    fi
+    if ! grep -q 'reservations_configured' "$api_resources"; then
+        fail "the honest reservations_configured flag must exist (zero is a fact, not a guess)"
+        return
+    fi
+    if ! grep -q 'TestResourcesLabelsContract\|TestResourcesAllocatableMath\|TestResourcesStaleSnapshotNeverGuesses' "$REPO_DIR/scarlihq/internal/api/resources_test.go"; then
+        fail "the resources surface's own proofs must exist (labels + math + stale-never-guesses)"
+        return
+    fi
+    # The capability census.
+    if ! grep -q '/api/controlplane' "$api_rest" || ! grep -q '/api/compute/resources' "$api_rest"; then
+        fail "both control-plane routes must be registered (READ gate)"
+        return
+    fi
+    if ! grep -q 'node-tagged-admission' "$api_controlplane"; then
+        fail "the census must carry the node-tagged-admission capability row (the live-path signal)"
+        return
+    fi
+    # The wiring.
+    if ! grep -q 'SetNodeSnapshots(api.FabricNodeSnapshots{Registry: fabricReg})' "$main_go"; then
+        fail "main.go must wire the seam when both surfaces are enabled"
+        return
+    fi
+    if ! grep -q 'FabricAdmissionLedger{Manager: admissionMgr}' "$main_go"; then
+        fail "main.go must wire the production ledger view"
+        return
+    fi
+    # The §10.3 deliverables.
+    if ! grep -q 'Multi-node fabric acceptance' "$runbook"; then
+        fail "the runbook must carry the multi-node acceptance matrix (the operator's Phase 6 act)"
+        return
+    fi
+    if ! grep -q 'Rollback' "$runbook"; then
+        fail "the runbook must carry the rollback guide"
+        return
+    fi
+    if ! grep -q '#11 Node-tagged admission' "$design_doc" || ! grep -q '#13 The value-label vocabulary' "$design_doc"; then
+        fail "the design doc must record the §19-discipline decisions (#11 the ledger routing key, #13 the label contract)"
+        return
+    fi
+
+    pass "v20.0.0 (Compute Fabric Phase 6 — the unified production control plane): node-tagged admission (the authenticated multi-node execution path: the per-node snapshot seam with the §4.1 guards under one lock, the NAMED refusal vocabulary surfaced verbatim, per-node capacity totals — two nodes may share a GPU UUID without colliding, the node_id idempotency binding, the ledger restart survival, the LOCAL path regression-pinned byte-identical), the PRODUCTION FabricLedgerViewProvider (the executions push computes REAL reconciliation decisions against the single authoritative ledger), GET /api/compute/resources (the §10.2 value-label contract: observed/estimated/reserved/allocatable/unknown/stale as a machine-readable surface — allocatable NULL on stale/unreachable/quarantined, never a guess; the KV counted exactly once; the honest zero without the gate), GET /api/controlplane (the §10.1 capability census with honest states — the node-tagged row flips only when the seam is attached, the runbook row stays documented), and the operator runbook with the acceptance matrices (single-node, multi-node, KPK-06) — 'LLM navrhuje, politika rozhoduje' — the surfaces expose, the operator decides"
+}
+
 # ===========================================================================
 # Explicit schedule, verified against the defined check_* functions before
 # execution — the summary reports the number of checks actually executed.
@@ -5459,6 +5578,7 @@ SMOKE_CHECKS=(
     check_40_inferssd_expert_pack_v19_8_0
     check_41_kpk_remediation_v19_8_1
     check_42_distributed_fabric_v19_9_0
+    check_43_production_control_plane_v20_0_0
 )
 
 run_check() {

@@ -985,6 +985,18 @@ handling. v19.6.7 (`media-tools/server.py`):
   output-name collision twin (200/409). 42 run, 0 failed, 0 skipped at
   tag.
 
+## (v) The v20.0.0 control-plane surfaces — node-tagged admission + the resource accounting (v20.0.0)
+
+| Property | Enforcement |
+|---|---|
+| Node-tagged admission gate | `POST /api/compute/admission` with `node_id` routes through `admission.NodeSnapshots` — the fabric Registry's §4.1 guards (quarantined → unreachable → absent → stale-remote-window) under ONE lock; the refusal vocabulary is CLOSED and surfaces VERBATIM as reason codes (`node-unknown`/`node-quarantined`/`node-unreachable`/`node-inventory-absent`/`node-inventory-stale` + the generic `node-snapshot-unavailable`). Without the seam (the fabric not enabled): the NAMED `node-source-unconfigured` — node capacity is NEVER guessed from the local host's snapshot. |
+| One authoritative ledger | The node tag (`Record.node_id`) is a ROUTING KEY on the single control-plane ledger — no per-node stores, no consensus, no second ledger (the Phase 5 design's §1 hub-and-spoke stands). Per-node capacity totals key on the normalized node id: a local hold never consumes a remote node's allocatable and vice versa. |
+| Idempotency across nodes | `node_id` rides the request fingerprint — the same idempotency key against a different node is the NAMED `idempotency-conflict`, never a silently-inherited hold. |
+| Resource accounting (READ) | `GET /api/compute/resources` — observation grade (`h.auth`): the view reserves nothing. The closed label vocabulary (observed/estimated/reserved/allocatable/unknown/stale) is the machine contract; **allocatable is NULL for stale/unreachable/quarantined nodes** (never a guess from aged figures); without the admission gate the reserved view is the honest ZERO with `reservations_configured=false`. |
+| Capability census (READ) | `GET /api/controlplane` — observation grade; the rows never claim operator-owned acts (hardware acceptance KPK-06, real multi-host acceptance stay in the runbook's matrices). |
+| Production ledger view | `api.FabricAdmissionLedger` — the executions push computes REAL reconciliation decisions against the HELD/ACTIVE ledger records (the v19.9.0 report-only fallback closed); an unknown node returns the EMPTY view (every agent-reported execution is foreign work — §4.2). |
+| Tailscale = transport, NEVER authorization | unchanged (§9.2): the per-node credential + replay guard gate every push regardless of network reachability. |
+
 ## Other security properties
 
 - **REST/MCP/WS auth:** Bearer token only (no `?token=` URL — v18.6 P2 removed the URL fallback that leaked tokens into logs/referrer/proxy). `crypto/subtle.ConstantTimeCompare` (v18.0.0 P1 — was: custom `secureCompare`). **v19.6.7:** the presented Bearer RESOLVES to an identity-bound principal (per-profile token index first, the household token = the admin principal — §r); operator surfaces additionally require the admin principal (`authAdmin`); the 401/503 semantics for the household token are unchanged.

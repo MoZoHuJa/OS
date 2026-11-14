@@ -23,6 +23,16 @@ type AdmissionRequest struct {
 	// IdempotencyKey — optional; an identical key within the idempotency
 	// window returns the ORIGINAL decision instead of double-admitting.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	// NodeID — the node whose capacity this admission asks against
+	// (v20.0.0, roadmap §10 "authenticated single- and multi-node
+	// execution"): empty or "local" means the control plane's own
+	// host (the v19.9.0 behavior, byte-identical); an enrolled node
+	// identity routes the capacity gates to THAT node's VERIFIED
+	// fabric snapshot while the reservation is recorded in THE one
+	// authoritative control-plane ledger (the Phase 5 design's §1
+	// hub-and-spoke decision — node agents hold non-authoritative
+	// mirrors, never a second ledger).
+	NodeID string `json:"node_id,omitempty"`
 }
 
 // AdmissionDecision is the deterministic answer. Every refusal carries a
@@ -126,11 +136,42 @@ const (
 	// closed: an unpersisted reservation is not a reservation).
 	ReasonLedgerUnavailable = "ledger-unavailable"
 	// ReasonIdempotencyConflict — the idempotency key was REUSED with a
-	// DIFFERENT request (principal, model, backend, or resource vector
-	// differ from the original admission — v19.8.1, KPK-19.8.0-P2-04:
-	// a replayed key returns the ORIGINAL decision or a NAMED conflict,
-	// never another request's allocation wearing this key's name).
+	// DIFFERENT request (principal, model, backend, resource vector, or
+	// node differ from the original admission — v19.8.1,
+	// KPK-19.8.0-P2-04: a replayed key returns the ORIGINAL decision or a
+	// NAMED conflict, never another request's allocation wearing this
+	// key's name; v20.0.0 adds node_id to the fingerprint — the same key
+	// against a different node is a different request).
 	ReasonIdempotencyConflict = "idempotency-conflict"
+	// ReasonNodeSourceUnconfigured — a node-tagged admission arrived
+	// while the fabric's node snapshot source is not attached (v20.0.0,
+	// roadmap §10: node capacity is NEVER guessed from the local
+	// snapshot — attaching the seam is the operator's fabric act;
+	// node requests without it refuse BY NAME, fail-closed).
+	ReasonNodeSourceUnconfigured = "node-source-unconfigured"
+	// ReasonNodeUnknown — the node identity is not enrolled (the fabric
+	// registry has no observation for it).
+	ReasonNodeUnknown = "node-unknown"
+	// ReasonNodeQuarantined — the node's credential was revoked; new
+	// work is refused and cleanup happens only through trusted
+	// recovery (roadmap §9.2/§9.5, the Phase 5 design's §4.1 table).
+	ReasonNodeQuarantined = "node-quarantined"
+	// ReasonNodeUnreachable — the node is unreachable; its capacity is
+	// UNKNOWN (admission refused, existing reservations retained —
+	// never recycled, never forgotten).
+	ReasonNodeUnreachable = "node-unreachable"
+	// ReasonNodeInventoryAbsent — the node is enrolled and reachable
+	// but no inventory snapshot has been observed yet (the honest
+	// absence — no snapshot, no admission).
+	ReasonNodeInventoryAbsent = "node-inventory-absent"
+	// ReasonNodeInventoryStale — the node's snapshot exceeds the
+	// STRICTER remote freshness window (design decision #6: remote
+	// 30s default vs the local 60s — remote capacity ages in transit).
+	ReasonNodeInventoryStale = "node-inventory-stale"
+	// ReasonNodeSnapshotUnavailable — the node snapshot source failed
+	// without a named refusal (an I/O or construction failure — the
+	// generic fail-closed answer, never a guessed capacity).
+	ReasonNodeSnapshotUnavailable = "node-snapshot-unavailable"
 )
 
 // RecordStatus — the admission lifecycle (a small, honest state machine).

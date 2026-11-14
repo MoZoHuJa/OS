@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoZoHuJa/OS/scarlihq/internal/admission"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/fabric"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/inventory"
 	"github.com/MoZoHuJa/OS/scarlihq/internal/nodeidentity"
@@ -36,6 +37,101 @@ import (
 // when the ledger provider is wired).
 type FabricLedgerViewProvider interface {
 	HeldReservations(nodeID string) []fabric.LedgerReservationView
+}
+
+// FabricAdmissionLedger is the PRODUCTION ledger view (v20.0.0, roadmap
+// §10 — the v19.9.0 named residual closed): the admission Manager's
+// SINGLE authoritative ledger mapped onto the reconciliation view for
+// ONE node — the /api/fabric/agent/executions push computes REAL
+// decisions (reservation-stands / reconcile-required /
+// stop-foreign-execution) against the actual HELD/ACTIVE records, not
+// the report-only fallback. Wired by main.go whenever BOTH the
+// admission gate and the fabric are enabled.
+type FabricAdmissionLedger struct {
+	// Manager — the constructed production admission manager (the single
+	// ledger authority; nil is a wiring error main.go never makes).
+	Manager *admission.Manager
+}
+
+// HeldReservations maps the node's HELD/ACTIVE records onto the
+// reconciliation view (capacity-holding records only — a RELEASED or
+// EXPIRED record is history, not a live reservation the agent could
+// still affirm). An unknown node honestly returns the EMPTY view (the
+// reconciliation engine then treats every agent-reported execution as
+// un-ledgered foreign work — exactly the §4.2 contract).
+func (a FabricAdmissionLedger) HeldReservations(nodeID string) []fabric.LedgerReservationView {
+	if a.Manager == nil {
+		return nil
+	}
+	node := fabricNodeKey(nodeID)
+	out := []fabric.LedgerReservationView{}
+	for _, r := range a.Manager.Held() {
+		if fabricNodeKey(r.NodeID) != node {
+			continue
+		}
+		out = append(out, fabric.LedgerReservationView{
+			AllocationID: r.AdmissionID,
+			Held:         r.Status == admission.StatusHeld || r.Status == admission.StatusActive,
+		})
+	}
+	return out
+}
+
+// fabricNodeKey normalizes a node reference onto the ledger's routing
+// key (the admission Manager's normalization: empty or "local" means
+// the control plane's own host; enrolled identities are case-insensitive
+// — the ledger stores the normalized key).
+func fabricNodeKey(nodeID string) string {
+	v := strings.TrimSpace(strings.ToLower(nodeID))
+	if v == "" || v == "local" {
+		return "local"
+	}
+	return v
+}
+
+// FabricNodeSnapshots adapts the fabric Registry onto the admission
+// Manager's NodeSnapshots seam (v20.0.0, roadmap §10 "authenticated
+// single- and multi-node execution"): the registry's §4.1 admission
+// semantics evaluated under ONE lock (Registry.SnapshotFor), its
+// sentinel errors mapped ONE-TO-ONE onto the admission package's typed
+// refusals — the vocabulary translation lives here, next to the HTTP
+// surfaces that own both packages' imports. Wired by main.go whenever
+// BOTH the admission gate and the fabric are enabled; a node-tagged
+// admission without it refuses BY NAME (node-source-unconfigured).
+type FabricNodeSnapshots struct {
+	// Registry — the observational fabric registry (the retained
+	// per-node snapshots + the §4.1 guards).
+	Registry *fabric.Registry
+}
+
+// SnapshotFor runs the fabric guards and returns the node's VERIFIED
+// snapshot, mapping each sentinel onto the typed refusal the manager
+// surfaces verbatim as the decision's reason_code.
+func (a FabricNodeSnapshots) SnapshotFor(nodeID string, now time.Time) (*inventory.InventorySnapshotV2, error) {
+	snap, err := a.Registry.SnapshotFor(nodeID, now)
+	if err != nil {
+		refusal := &admission.NodeSnapshotRefusal{Detail: err.Error()}
+		switch {
+		case errors.Is(err, fabric.ErrUnknownNode):
+			refusal.Code = admission.ReasonNodeUnknown
+		case errors.Is(err, fabric.ErrNodeQuarantined):
+			refusal.Code = admission.ReasonNodeQuarantined
+		case errors.Is(err, fabric.ErrNodeUnreachable):
+			refusal.Code = admission.ReasonNodeUnreachable
+		case errors.Is(err, fabric.ErrInventoryAbsent):
+			refusal.Code = admission.ReasonNodeInventoryAbsent
+		case errors.Is(err, fabric.ErrInventoryStale):
+			refusal.Code = admission.ReasonNodeInventoryStale
+		default:
+			// The registry's contract says the named sentinels are the ONLY
+			// refusal errors it returns; anything else is an unexpected
+			// failure — the generic fail-closed answer, never a guessed
+			// capacity.
+			return nil, err
+		}
+		return nil, refusal
+	}
+	return snap, nil
 }
 
 // FabricConfig is the opt-in wiring input for ConfigureFabric.

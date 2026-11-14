@@ -32,7 +32,7 @@ import (
 // v18.2 P1: Changed from `const` to `var` — ldflags `-X main.Version` only works on vars.
 // v18.0.0: injected via -ldflags "-X main.Version=$VERSION" in Dockerfile.
 // Default here matches VERSION file (used when running `go run` without ldflags).
-var Version = "19.9.0"
+var Version = "20.0.0"
 
 // parseFabricLatencyClasses parses the operator's SCARLIHQ_FABRIC_LATENCY
 // declaration ("node-a=A,node-b=B"; whitespace-tolerant; malformed entries
@@ -133,12 +133,18 @@ func main() {
 	// until enabled). The surface is ADMIN-gated (reserving capacity is
 	// strictly stronger than reading the inventory) and the release is
 	// reconciliation-verified, never blind.
+	// v20.0.0 (roadmap §10): hoisted past the opt-in block — the fabric
+	// block below attaches the per-node seam + the ledger view onto the
+	// SAME manager when BOTH surfaces are enabled (either order, one
+	// authority).
+	var admissionMgr *admission.Manager
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("SCARLIHQ_ADMISSION_ENABLED")), "true") {
 		ledgerPath := strings.TrimSpace(os.Getenv("SCARLIHQ_ADMISSION_LEDGER"))
 		if ledgerPath == "" {
 			log.Fatal("admission gate enabled but SCARLIHQ_ADMISSION_LEDGER is missing (a writable ledger path — capacity accounting is durable, never memory-only in production)")
 		}
-		admissionMgr, err := admission.NewProductionManager(ledgerPath)
+		var err error
+		admissionMgr, err = admission.NewProductionManager(ledgerPath)
 		if err != nil {
 			log.Fatalf("admission gate initialization failed: %v (fail closed — never run on a tampered capacity ledger)", err)
 		}
@@ -253,15 +259,32 @@ func main() {
 		// — cross-node latency is control-plane knowledge, never an agent
 		// self-declaration; unknown nodes default to C, fail-closed).
 		latency := parseFabricLatencyClasses(os.Getenv("SCARLIHQ_FABRIC_LATENCY"))
-		if err := apiHandler.ConfigureFabric(api.FabricConfig{
+		// v20.0.0 (roadmap §10 "authenticated single- and multi-node
+		// execution"): when the admission gate is ALSO enabled, the fabric
+		// carries the PRODUCTION ledger view (the executions push computes
+		// REAL reconciliation decisions against the single authoritative
+		// ledger — the v19.9.0 report-only residual closed) and the
+		// admission manager gains the per-node snapshot seam (a node-tagged
+		// POST /api/compute/admission runs its capacity gates against THAT
+		// node's VERIFIED fabric observation; without the admission gate the
+		// fabric stays planning-only — the seam is never guessed).
+		fabricCfg := api.FabricConfig{
 			Nodes:          nodeReg,
 			Registry:       fabricReg,
 			Replay:         replayGuard,
 			BasePlanner:    executionPlanner,
 			LocalSnapshots: admission.ProductionSnapshotSource{},
 			LatencyClasses: latency,
-		}); err != nil {
+		}
+		if admissionMgr != nil {
+			fabricCfg.Ledger = api.FabricAdmissionLedger{Manager: admissionMgr}
+		}
+		if err := apiHandler.ConfigureFabric(fabricCfg); err != nil {
 			log.Fatalf("distributed fabric wiring failed: %v (fail closed)", err)
+		}
+		if admissionMgr != nil {
+			admissionMgr.SetNodeSnapshots(api.FabricNodeSnapshots{Registry: fabricReg})
+			log.Printf("Node-tagged admission enabled (the per-node seam attached: POST /api/compute/admission accepts node_id — the fabric's §4.1 guards gate it, the reservation lands in THE one authoritative ledger with the node tag; /api/fabric/agent/executions computes REAL reconciliation decisions)")
 		}
 		log.Printf("Distributed fabric enabled (node ledger: %s; %d nodes known, %d latency declarations, remote freshness %s; enroll nodes via POST /api/fabric/nodes — the one-time invite secret is returned exactly once)", nodesPath, len(nodeReg.List()), len(latency), fabricReg.RemoteSnapshotMaxAge())
 	} else {
