@@ -156,3 +156,16 @@ resets):
   label.
 - Estimated pohľad je manifest DEKLARÁCIA (placement-eligible ≠ backend
   beží — BackendPresence je inde; zámerné oddelenie labelov).
+
+
+---
+
+## Release commit
+
+- **Commit:** `c7c8564` (tag `v20.0.0`) — the release-notes genre: the hash
+  lands with the tag, the v19.8.1/v19.9.0 precedent.
+- **CI on the tag:** SUCCESS (all jobs — shellcheck, smoke-test online,
+  go vet/gofmt/build/test + race, compose/systemd/yaml/bash validation,
+  docker build, integration test) + **Pin Freshness SUCCESS** (the
+  refreshed pin from the v19.9.0 post-release remediation verified
+  against the live upstream installer on the release tag).
